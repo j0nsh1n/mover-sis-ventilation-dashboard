@@ -84,7 +84,39 @@ src/dashboard/app.py        # Streamlit UI
 - Mixed datetime formats
 - `PID` = surgery ID (not longitudinal patient ID)
 
-## Next steps
+## Testing & guardrails
+
+Safety is enforced in code, not only by convention.
+
+### Run tests
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+PYTHONPATH=. pytest
+# with coverage:
+PYTHONPATH=. pytest --cov=src --cov-report=term-missing
+```
+
+CI runs the same suite on every push/PR (`.github/workflows/ci.yml`).
+
+### What is guarded
+
+| Layer | Behavior |
+|-------|----------|
+| **Config** | `thresholds.yaml` schema, warn/critical ordering, clean range low&lt;high, MAC values |
+| **CLI params** | `n_cases`, `preset`, `vent_scan_rows`, `min_vent_rows`, `pad_minutes` bounds |
+| **Paths** | Required EMR files present & non-empty; refuse writes outside the repo unless `MOVER_ALLOW_EXTERNAL_OUTPUT=1` |
+| **Stage checks** | Raw/cleaned schemas, non-empty vent after filter, sorted unique minute timeseries |
+| **Outputs** | Case/flag/episode invariants; scores non-negative; flag PIDs ⊆ case PIDs |
+| **Writes** | Atomic parquet/JSON (temp + replace) to avoid half-written caches |
+| **Dashboard** | Re-validates processed parquets before serving; catches guardrail errors in UI |
+
+Custom exceptions live under `src/guardrails/` (`ConfigValidationError`, `DataValidationError`, `SafetyLimitError`, `PathSafetyError`, `PipelineError`).
+
+Disable stage validation only if you must: `python -m src.pipeline.run --no-validate` (not recommended).
+
+### Next steps
 
 1. Increase `--n-cases` or pass explicit PIDs once you are happy with thresholds  
 2. Tune `src/config/thresholds.yaml` (or use `strict` / `lenient` presets)  

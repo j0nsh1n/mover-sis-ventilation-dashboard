@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Validate thresholds config
+        run: PYTHONPATH=. python -c "from src.config import load_thresholds; load_thresholds('default'); load_thresholds('strict'); load_thresholds('lenient'); print('thresholds OK')"
+
+      - name: Run tests
+        run: PYTHONPATH=. pytest --cov=src --cov-report=term-missing
+
+      - name: Import dashboard modules
+        run: PYTHONPATH=. python -c "from src.dashboard.components import case_timeline_figure; from src.pipeline.run import run_pipeline; print('imports OK')"

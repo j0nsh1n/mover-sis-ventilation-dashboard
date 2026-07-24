@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import argparse
-import json
+import logging
 from pathlib import Path
 
 import pandas as pd
 
 from src.config import load_thresholds
+from src.guardrails.exceptions import GuardrailError, PipelineError
+from src.guardrails.validate_data import (
+    assert_cleaned_cases,
+    assert_raw_cases,
+    assert_raw_ventilator,
+    assert_raw_vitals,
+    validate_pipeline_outputs,
+)
+from src.guardrails.validate_io import (
+    atomic_write_json,
+    atomic_write_parquet,
+    resolve_emr_dir,
+    resolve_output_dir,
+    validate_emr_dir,
+    validate_pipeline_params,
+)
 from src.pipeline.clean import (
     clean_case_info,
     clean_procedure_events,
@@ -27,6 +43,8 @@ from src.pipeline.load import (
 )
 from src.pipeline.merge import merge_vent_vitals
 
+logger = logging.getLogger(__name__)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -42,31 +60,46 @@ def run_pipeline(
     vent_scan_rows: int = 400_000,
     min_vent_rows: int = 30,
     write_sample_csv: bool = True,
+    pad_minutes: float = 5.0,
+    validate: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """
     Run the full cleaning / merge / flag pipeline on a sample of cases.
 
-    Returns dict with keys: cases, timeseries, flags, episodes, scores.
+    Guardrails:
+      - parameter bounds
+      - EMR directory + required files
+      - threshold schema validation
+      - stage schema checks
+      - final output invariants
+      - atomic parquet/json writes (no partial files)
+
+    Returns dict with keys: cases, timeseries, flags, episodes, scores, events.
     """
+    validate_pipeline_params(
+        n_cases=n_cases,
+        preset=preset,
+        seed=seed,
+        vent_scan_rows=vent_scan_rows,
+        min_vent_rows=min_vent_rows,
+        pad_minutes=pad_minutes,
+        pids=pids,
+    )
+
     root = repo_root()
-    if emr_dir is None:
-        emr_dir = root / "data" / "raw" / "EMR"
-    else:
-        emr_dir = Path(emr_dir)
+    emr_path = validate_emr_dir(emr_dir) if emr_dir is not None else validate_emr_dir(
+        resolve_emr_dir(None)
+    )
+    out_path = resolve_output_dir(output_dir, create=True)
 
-    if output_dir is None:
-        output_dir = root / "data" / "processed"
-    else:
-        output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    thresholds = load_thresholds(preset)
-    print(f"[pipeline] preset={preset} emr_dir={emr_dir}")
+    thresholds = load_thresholds(preset, validate=validate)
+    logger.info("pipeline start preset=%s emr=%s out=%s", preset, emr_path, out_path)
+    print(f"[pipeline] preset={preset} emr_dir={emr_path}")
 
     # --- select PIDs ---
     if pids is None:
         pids = sample_pids_with_ventilator(
-            emr_dir,
+            emr_path,
             n=n_cases,
             min_vent_rows=min_vent_rows,
             seed=seed,
@@ -74,27 +107,40 @@ def run_pipeline(
         )
         print(f"[pipeline] sampled {len(pids)} PIDs with ventilator data")
     else:
-        pids = [str(p) for p in pids]
+        pids = [str(p).strip() for p in pids if str(p).strip()]
         print(f"[pipeline] using {len(pids)} provided PIDs")
 
     if not pids:
-        raise RuntimeError("No PIDs selected — check ventilator file path / scan size.")
+        raise PipelineError(
+            "No PIDs selected — check ventilator file path / scan size / min_vent_rows."
+        )
 
     # --- load ---
     print("[pipeline] loading case info…")
-    cases_raw = load_case_info(emr_dir)
+    cases_raw = load_case_info(emr_path)
     cases_raw["PID"] = cases_raw["PID"].astype(str)
     cases_raw = cases_raw[cases_raw["PID"].isin(pids)].copy()
+    if validate:
+        if cases_raw.empty:
+            raise PipelineError(
+                f"None of the selected PIDs appear in patient_information "
+                f"(n_pids={len(pids)})"
+            )
+        assert_raw_cases(cases_raw)
 
     print("[pipeline] loading ventilator…")
-    vent_raw = load_ventilator(emr_dir, pids=pids)
+    vent_raw = load_ventilator(emr_path, pids=pids)
     print(f"  vent rows: {len(vent_raw)}")
+    if validate:
+        assert_raw_ventilator(vent_raw)
 
     print("[pipeline] loading vitals…")
-    vitals_raw = load_vitals(emr_dir, pids=pids)
+    vitals_raw = load_vitals(emr_path, pids=pids)
     print(f"  vitals rows: {len(vitals_raw)}")
+    if validate:
+        assert_raw_vitals(vitals_raw)
 
-    events_raw = load_procedure_events(emr_dir, pids=pids)
+    events_raw = load_procedure_events(emr_path, pids=pids)
 
     # --- clean ---
     print("[pipeline] cleaning…")
@@ -103,13 +149,28 @@ def run_pipeline(
     vitals = clean_vitals(vitals_raw, thresholds)
     events = clean_procedure_events(events_raw)
 
-    vent = filter_to_case_window(vent, cases, pad_minutes=5)
-    vitals = filter_to_case_window(vitals, cases, pad_minutes=5)
+    if validate:
+        assert_cleaned_cases(cases)
+
+    vent = filter_to_case_window(vent, cases, pad_minutes=pad_minutes)
+    vitals = filter_to_case_window(vitals, cases, pad_minutes=pad_minutes)
+
+    if vent.empty:
+        raise PipelineError(
+            "No ventilator rows remain after cleaning/window filter. "
+            "Check timestamps and case OR windows."
+        )
 
     # --- merge + features ---
     print("[pipeline] merging & features…")
     ts = merge_vent_vitals(vent, vitals, cases)
+    if ts.empty:
+        raise PipelineError("Merged timeseries is empty")
     ts = add_features(ts, thresholds)
+    # Enforce sort + unique minutes (invariant for flagging and plots)
+    ts = ts.sort_values(["PID", "Obs_time"]).drop_duplicates(
+        subset=["PID", "Obs_time"], keep="last"
+    ).reset_index(drop=True)
     print(f"  timeseries rows: {len(ts)}  cases: {ts['PID'].nunique()}")
 
     # --- flags ---
@@ -119,9 +180,11 @@ def run_pipeline(
     scores = score_cases(flags, thresholds)
 
     case_summary = build_case_summary(ts, flags)
-    # Drop flag-count columns from build_case_summary; prefer score_cases
-    drop_pre = [c for c in ["n_info", "n_warn", "n_critical", "n_composite_rows", "n_rule_types"]
-                if c in case_summary.columns]
+    drop_pre = [
+        c
+        for c in ["n_info", "n_warn", "n_critical", "n_composite_rows", "n_rule_types"]
+        if c in case_summary.columns
+    ]
     case_summary = case_summary.drop(columns=drop_pre, errors="ignore")
     case_summary["PID"] = case_summary["PID"].astype(str)
     if scores is not None and not scores.empty:
@@ -136,16 +199,26 @@ def run_pipeline(
         case_summary["top_rules"] = ""
     else:
         case_summary["top_rules"] = case_summary["top_rules"].fillna("")
-    case_summary = case_summary.sort_values("anomaly_score", ascending=False).reset_index(drop=True)
+    case_summary = case_summary.sort_values(
+        "anomaly_score", ascending=False
+    ).reset_index(drop=True)
 
-    # --- write ---
-    print(f"[pipeline] writing outputs → {output_dir}")
-    ts.to_parquet(output_dir / "timeseries.parquet", index=False)
-    case_summary.to_parquet(output_dir / "cases.parquet", index=False)
-    flags.to_parquet(output_dir / "flags.parquet", index=False)
-    episodes.to_parquet(output_dir / "episodes.parquet", index=False)
+    if validate:
+        validate_pipeline_outputs(
+            timeseries=ts,
+            cases=case_summary,
+            flags=flags,
+            episodes=episodes,
+        )
+
+    # --- write (atomic) ---
+    print(f"[pipeline] writing outputs → {out_path}")
+    atomic_write_parquet(ts, out_path / "timeseries.parquet")
+    atomic_write_parquet(case_summary, out_path / "cases.parquet")
+    atomic_write_parquet(flags, out_path / "flags.parquet")
+    atomic_write_parquet(episodes, out_path / "episodes.parquet")
     if not events.empty:
-        events.to_parquet(output_dir / "events.parquet", index=False)
+        atomic_write_parquet(events, out_path / "events.parquet")
 
     meta = {
         "n_cases": int(case_summary["PID"].nunique()),
@@ -153,9 +226,10 @@ def run_pipeline(
         "n_flag_rows": int(len(flags)),
         "preset": preset,
         "pids": pids,
+        "emr_dir": str(emr_path),
+        "guardrails_validated": bool(validate),
     }
-    with open(output_dir / "run_meta.json", "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    atomic_write_json(meta, out_path / "run_meta.json")
 
     if write_sample_csv:
         sample_dir = root / "data" / "sample"
@@ -164,7 +238,20 @@ def run_pipeline(
         flags.head(500).to_csv(sample_dir / "flags_preview.csv", index=False)
 
     print("[pipeline] done.")
-    print(case_summary[["PID", "primary_agent_name", "anomaly_score", "n_warn", "n_critical", "top_rules"]].head(10).to_string(index=False))
+    cols = [
+        c
+        for c in [
+            "PID",
+            "primary_agent_name",
+            "anomaly_score",
+            "n_warn",
+            "n_critical",
+            "top_rules",
+        ]
+        if c in case_summary.columns
+    ]
+    if cols:
+        print(case_summary[cols].head(10).to_string(index=False))
 
     return {
         "cases": case_summary,
@@ -177,23 +264,42 @@ def run_pipeline(
 
 
 def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     parser = argparse.ArgumentParser(description="Run MOVER SIS ventilation pipeline")
     parser.add_argument("--emr-dir", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--n-cases", type=int, default=50)
-    parser.add_argument("--preset", type=str, default="default", choices=["default", "strict", "lenient"])
+    parser.add_argument(
+        "--preset",
+        type=str,
+        default="default",
+        choices=sorted(["default", "strict", "lenient"]),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--vent-scan-rows", type=int, default=400_000)
+    parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Disable stage/output guardrails (not recommended)",
+    )
     args = parser.parse_args(argv)
 
-    run_pipeline(
-        emr_dir=args.emr_dir,
-        output_dir=args.output_dir,
-        n_cases=args.n_cases,
-        preset=args.preset,
-        seed=args.seed,
-        vent_scan_rows=args.vent_scan_rows,
-    )
+    try:
+        run_pipeline(
+            emr_dir=args.emr_dir,
+            output_dir=args.output_dir,
+            n_cases=args.n_cases,
+            preset=args.preset,
+            seed=args.seed,
+            vent_scan_rows=args.vent_scan_rows,
+            validate=not args.no_validate,
+        )
+    except GuardrailError as e:
+        logger.error("Pipeline blocked by guardrail: %s", e)
+        raise SystemExit(2) from e
 
 
 if __name__ == "__main__":

@@ -48,20 +48,40 @@ def _default_emr_dir(data_root: Path | str | None = None) -> Path:
 
 
 def read_csv(path: Path, **kwargs) -> pd.DataFrame:
-    """Read a SIS CSV with consistent NA handling."""
+    """Read a SIS CSV with consistent NA handling. Fails fast if path missing."""
+    path = Path(path)
+    if not path.is_file():
+        from src.guardrails.exceptions import PipelineError
+
+        raise PipelineError(f"Required CSV not found: {path}")
     defaults = dict(
         na_values=NA_VALUES,
         keep_default_na=True,
         low_memory=False,
     )
     defaults.update(kwargs)
-    return pd.read_csv(path, **defaults)
+    try:
+        return pd.read_csv(path, **defaults)
+    except pd.errors.EmptyDataError as e:
+        from src.guardrails.exceptions import PipelineError
+
+        raise PipelineError(f"CSV is empty or unreadable: {path}") from e
+    except Exception as e:
+        from src.guardrails.exceptions import PipelineError
+
+        raise PipelineError(f"Failed to read CSV {path}: {e}") from e
 
 
 def load_case_info(emr_dir: Path | str | None = None) -> pd.DataFrame:
     path = _default_emr_dir(emr_dir) / "patient_information.csv"
     df = read_csv(path)
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = [c.strip().strip('"') for c in df.columns]
+    if "PID" not in df.columns:
+        from src.guardrails.exceptions import DataValidationError
+
+        raise DataValidationError(
+            f"patient_information missing PID column; got {list(df.columns)}"
+        )
     return df
 
 
@@ -72,8 +92,14 @@ def load_ventilator(
 ) -> pd.DataFrame:
     path = _default_emr_dir(emr_dir) / "patient_ventilator.csv"
     df = read_csv(path, nrows=nrows)
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = [c.strip().strip('"') for c in df.columns]
     df = df.rename(columns=VENT_RENAME)
+    if "PID" not in df.columns or "Obs_time" not in df.columns:
+        from src.guardrails.exceptions import DataValidationError
+
+        raise DataValidationError(
+            f"ventilator missing PID/Obs_time; got {list(df.columns)}"
+        )
     if pids is not None:
         pid_set = set(map(str, pids))
         df = df[df["PID"].astype(str).isin(pid_set)].copy()
@@ -87,8 +113,14 @@ def load_vitals(
 ) -> pd.DataFrame:
     path = _default_emr_dir(emr_dir) / "patient_vitals.csv"
     df = read_csv(path, nrows=nrows)
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = [c.strip().strip('"') for c in df.columns]
     df = df.rename(columns=VITALS_RENAME)
+    if "PID" not in df.columns or "Obs_time" not in df.columns:
+        from src.guardrails.exceptions import DataValidationError
+
+        raise DataValidationError(
+            f"vitals missing PID/Obs_time; got {list(df.columns)}"
+        )
     if pids is not None:
         pid_set = set(map(str, pids))
         df = df[df["PID"].astype(str).isin(pid_set)].copy()

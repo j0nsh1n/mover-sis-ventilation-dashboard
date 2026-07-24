@@ -5,3 +5,7 @@ streamlit>=1.28
 plotly>=5.18
 pyyaml>=6.0
 scipy>=1.11
+
+# Dev / CI
+pytest>=7.4
+pytest-cov>=4.1
