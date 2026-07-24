@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+
+# Local SIS extracts and pipeline outputs (large; DUA-restricted source data)
+data/raw/**
+!data/raw/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+data/sample/
+*.parquet
+*.csv

@@ -1,0 +1,198 @@
+# Rule thresholds for MOVER SIS ventilation / anesthesia flags.
+# Tunable without code changes. Severities: info | warn | critical
+
+presets:
+  default: {}
+  strict:
+    pip_high: {warn: 28, critical: 32}
+    etco2_high: {warn: 48, critical: 55}
+    spo2_low: {warn: 94, critical: 90}
+  lenient:
+    pip_high: {warn: 35, critical: 40}
+    etco2_high: {warn: 55, critical: 65}
+    spo2_low: {warn: 90, critical: 85}
+
+# --- Physiologic keep ranges (cleaning clamps; outside → NaN) ---
+clean_ranges:
+  TV: [50, 1500]
+  RR: [4, 40]
+  PIP: [0, 50]
+  PEEP: [0, 25]
+  ETCO2: [5, 80]
+  FICO2: [0, 10]
+  FIO2: [21, 100]
+  ETO2: [5, 100]
+  Agent_Et: [0, 12]
+  Agent_Fi: [0, 12]
+  FIN2O: [0, 80]
+  ETN2O: [0, 80]
+  HR: [30, 200]
+  SPO2: [50, 100]
+  nSBP: [50, 250]
+  nMAP: [30, 180]
+  nDBP: [20, 150]
+
+# Age-40 MAC (vol %) for volatile agents
+mac_age40:
+  S: 1.8   # sevoflurane
+  I: 1.2   # isoflurane
+  D: 6.6   # desflurane
+  N: null  # none
+
+# Age adjustment: MAC_age = MAC_40 * 10 ** (-0.00269 * (age - 40))
+mac_age_coef: -0.00269
+
+rules:
+  pip_high:
+    warn: 30
+    critical: 35
+    unit: cmH2O
+    description: "Elevated peak inspiratory pressure"
+
+  pip_rising:
+    window_min: 10
+    min_slope_cmh2o_per_min: 0.5
+    min_duration_min: 5
+    min_pip: 20
+    description: "Rising PIP suggesting reduced compliance / obstruction"
+
+  peep_high:
+    warn: 12
+    critical: 15
+    unit: cmH2O
+    description: "Elevated PEEP"
+
+  peep_zero_long:
+    max_peep: 0
+    min_duration_min: 15
+    min_tv: 200
+    min_rr: 6
+    description: "Prolonged zero/negative PEEP during mechanical ventilation"
+
+  tv_low_mlkg:
+    warn: 4
+    critical: 3
+    unit: mL/kg IBW
+    description: "Low tidal volume per ideal body weight"
+
+  tv_high_mlkg:
+    warn: 10
+    critical: 12
+    unit: mL/kg IBW
+    description: "High tidal volume per ideal body weight"
+
+  tv_abs_extreme:
+    adult_age_min: 16
+    low: 100
+    high: 1000
+    unit: mL
+    description: "Absolute tidal volume outside adult physiologic band"
+
+  rr_low:
+    warn: 6
+    critical: 4
+    description: "Low respiratory rate"
+
+  rr_high:
+    warn: 20
+    critical: 30
+    description: "High respiratory rate"
+
+  etco2_high:
+    warn: 50
+    critical: 60
+    unit: mmHg
+    description: "Elevated end-tidal CO2"
+
+  etco2_low:
+    warn: 28
+    critical: 22
+    unit: mmHg
+    description: "Low end-tidal CO2 (excluding zeros)"
+
+  etco2_zero_vent:
+    min_tv: 200
+    min_rr: 8
+    min_duration_min: 3
+    description: "Zero ETCO2 while ventilated (disconnect / sensor / esophageal)"
+
+  fio2_high_long:
+    fio2_min: 90
+    min_duration_min: 30
+    skip_first_min: 15
+    description: "Prolonged high FiO2 after induction window"
+
+  fio2_room_air_vent:
+    fio2_max: 25
+    min_tv: 200
+    min_rr: 6
+    min_duration_min: 5
+    description: "Near room-air FiO2 while mechanically ventilated"
+
+  agent_high:
+    warn_mac: 1.5
+    critical_mac: 2.0
+    description: "High end-tidal agent relative to age-adjusted MAC"
+
+  agent_low_maint:
+    max_mac: 0.3
+    case_frac_start: 0.2
+    case_frac_end: 0.8
+    n2o_et_exempt: 30
+    description: "Very low agent MAC during mid-case maintenance window"
+
+  agent_drift:
+    window_min: 15
+    min_duration_min: 5
+    delta_vol_pct:
+      S: 0.5
+      I: 0.5
+      D: 1.5
+      N: 0.5
+    description: "Agent concentration drift from recent median"
+
+  agent_fi_et_gap:
+    min_duration_min: 10
+    case_frac_start: 0.15
+    case_frac_end: 0.85
+    gap_vol_pct:
+      S: 1.0
+      I: 1.0
+      D: 3.0
+    description: "Large Fi–Et agent gap mid-case"
+
+  spo2_low:
+    warn: 92
+    critical: 88
+    unit: "%"
+    description: "Low oxygen saturation"
+
+  hr_high:
+    warn: 120
+    critical: 140
+    description: "Tachycardia"
+
+  hr_low:
+    warn: 45
+    critical: 40
+    description: "Bradycardia"
+
+  map_low:
+    warn: 60
+    critical: 50
+    unit: mmHg
+    description: "Low noninvasive MAP"
+
+  compliance_concern:
+    description: "Rising PIP with stable/falling TV (compliance pattern)"
+
+  hypoventilation_pattern:
+    description: "High ETCO2 with low TV or low RR"
+
+  desat_with_vent_issue:
+    description: "Desaturation concurrent with ventilation anomaly"
+
+scoring:
+  warn_minute_weight: 1
+  critical_minute_weight: 3
+  composite_episode_weight: 5
