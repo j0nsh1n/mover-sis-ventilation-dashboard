@@ -20,7 +20,9 @@ from src.guardrails.limits import (
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    from src.runtime_paths import app_dir
+
+    return app_dir()
 
 
 def _resolve(path: Path) -> Path:
@@ -34,7 +36,12 @@ def resolve_emr_dir(emr_dir: Path | str | None = None) -> Path:
     Accepts the EMR folder itself, or a parent that contains EMR/.
     """
     if emr_dir is None:
+        from src.runtime_paths import data_dir, emr_dir as default_emr
+
         candidates = [
+            default_emr(),
+            data_dir() / "raw" / "EMR",
+            data_dir() / "raw",
             repo_root() / "data" / "raw" / "EMR",
             repo_root() / "data" / "raw",
         ]
@@ -88,12 +95,14 @@ def resolve_output_dir(
     create: bool = True,
 ) -> Path:
     """
-    Resolve output directory. By default must stay under the repo root
+    Resolve output directory. By default must stay under the app/data root
     unless MOVER_ALLOW_EXTERNAL_OUTPUT=1.
     """
-    root = repo_root()
+    from src.runtime_paths import app_dir, processed_dir as default_processed
+
+    root = app_dir()
     if output_dir is None:
-        out = root / "data" / "processed"
+        out = default_processed()
     else:
         out = Path(output_dir)
 

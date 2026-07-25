@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    from src.runtime_paths import app_dir
+
+    return app_dir()
 
 
 def run_pipeline(
@@ -87,9 +89,10 @@ def run_pipeline(
     )
 
     root = repo_root()
-    emr_path = validate_emr_dir(emr_dir) if emr_dir is not None else validate_emr_dir(
-        resolve_emr_dir(None)
-    )
+    if emr_dir is not None:
+        emr_path = validate_emr_dir(emr_dir)
+    else:
+        emr_path = validate_emr_dir(resolve_emr_dir(None))
     out_path = resolve_output_dir(output_dir, create=True)
 
     thresholds = load_thresholds(preset, validate=validate)

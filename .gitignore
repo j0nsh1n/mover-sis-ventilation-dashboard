@@ -7,6 +7,13 @@ htmlcov/
 .streamlit/secrets.toml
 .ipynb_checkpoints/
 
+# Packaging outputs
+build/
+dist/
+*.spec.bak
+packaging/__pycache__/
+
+
 # Local SIS extracts and pipeline outputs (large; DUA-restricted source data)
 data/raw/**
 !data/raw/.gitkeep

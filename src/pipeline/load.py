@@ -34,9 +34,9 @@ VITALS_RENAME = {
 
 def _default_emr_dir(data_root: Path | str | None = None) -> Path:
     if data_root is None:
-        # repo_root/data/raw/EMR
-        here = Path(__file__).resolve()
-        return here.parents[2] / "data" / "raw" / "EMR"
+        from src.runtime_paths import emr_dir
+
+        return emr_dir()
     root = Path(data_root)
     if (root / "patient_information.csv").exists():
         return root
