@@ -12,8 +12,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 
+def _qt_available() -> bool:
+    try:
+        from PySide6.QtWidgets import QApplication  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 @pytest.fixture(scope="module")
 def qapp():
+    if not _qt_available():
+        pytest.skip("PySide6/Qt system libs unavailable (e.g. missing libEGL)")
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
