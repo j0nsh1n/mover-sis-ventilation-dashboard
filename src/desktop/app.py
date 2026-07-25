@@ -57,10 +57,15 @@ from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.__version__ import get_version
 from src.runtime_paths import (
     apply_persisted_settings,
+    configure_emr_directory,
     configure_from_user_directory,
+    configure_wave_directory,
     emr_dir,
     processed_dir,
+    wave_dir,
+    waveform_case_dir,
 )
+from src.search import filter_cases_by_keywords
 
 # Shared light theme for clearer visual hierarchy
 APP_STYLESHEET = """
@@ -298,10 +303,14 @@ class MainWindow(QMainWindow):
     # ----- menu -----
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
-        open_data = QAction("Open data folder…", self)
-        open_data.setShortcut("Ctrl+O")
-        open_data.triggered.connect(self._browse_data_folder)
-        file_menu.addAction(open_data)
+        open_emr = QAction("Open EMR folder…", self)
+        open_emr.setShortcut("Ctrl+O")
+        open_emr.triggered.connect(self._browse_emr_folder)
+        file_menu.addAction(open_emr)
+        open_wave = QAction("Open Wave folder…", self)
+        open_wave.setShortcut("Ctrl+Shift+O")
+        open_wave.triggered.connect(self._browse_wave_folder)
+        file_menu.addAction(open_wave)
         reload_act = QAction("Reload processed data", self)
         reload_act.setShortcut("Ctrl+R")
         reload_act.triggered.connect(self._autoload_processed)
@@ -361,32 +370,54 @@ class MainWindow(QMainWindow):
         side_l.setContentsMargins(0, 0, 0, 0)
         side_l.setSpacing(8)
 
-        # Data locations
+        # Data locations — EMR and Wave are separate MOVER archives
         data_box = QGroupBox("Data locations")
         dl = QVBoxLayout(data_box)
         hint = QLabel(
-            "Choose the SIS EMR folder (contains patient_information.csv) "
-            "or a parent folder with EMR/ / raw/EMR/."
+            "EMR = tabular SIS tables (patient_*.csv). "
+            "Wave = waveform archives (sis_wave*.tar.gz or Waveforms/ folders). "
+            "They live in different places — set both."
         )
         hint.setObjectName("pathHint")
         hint.setWordWrap(True)
         dl.addWidget(hint)
 
-        self.edit_data_root = QLineEdit()
-        self.edit_data_root.setPlaceholderText("Data root or EMR folder…")
-        self.edit_data_root.setClearButtonEnabled(True)
-        row1 = QHBoxLayout()
-        row1.addWidget(self.edit_data_root, stretch=1)
-        btn_browse = QPushButton("Browse…")
-        btn_browse.setObjectName("secondaryBtn")
-        btn_browse.clicked.connect(self._browse_data_folder)
-        row1.addWidget(btn_browse)
-        dl.addLayout(row1)
+        # EMR
+        dl.addWidget(QLabel("EMR folder"))
+        self.edit_emr = QLineEdit()
+        self.edit_emr.setPlaceholderText("…/data/raw/EMR or folder with patient_information.csv")
+        self.edit_emr.setClearButtonEnabled(True)
+        row_emr = QHBoxLayout()
+        row_emr.addWidget(self.edit_emr, stretch=1)
+        btn_emr = QPushButton("Browse…")
+        btn_emr.setObjectName("secondaryBtn")
+        btn_emr.clicked.connect(self._browse_emr_folder)
+        row_emr.addWidget(btn_emr)
+        dl.addLayout(row_emr)
+
+        # Wave
+        dl.addWidget(QLabel("Wave folder (optional)"))
+        self.edit_wave = QLineEdit()
+        self.edit_wave.setPlaceholderText("…/MOVER DATA or extracted sis_wave_v2/")
+        self.edit_wave.setClearButtonEnabled(True)
+        row_wave = QHBoxLayout()
+        row_wave.addWidget(self.edit_wave, stretch=1)
+        btn_wave = QPushButton("Browse…")
+        btn_wave.setObjectName("secondaryBtn")
+        btn_wave.clicked.connect(self._browse_wave_folder)
+        row_wave.addWidget(btn_wave)
+        dl.addLayout(row_wave)
 
         self.lbl_emr_path = QLabel("EMR: —")
         self.lbl_emr_path.setObjectName("pathHint")
         self.lbl_emr_path.setWordWrap(True)
         self.lbl_emr_path.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.lbl_wave_path = QLabel("Wave: —")
+        self.lbl_wave_path.setObjectName("pathHint")
+        self.lbl_wave_path.setWordWrap(True)
+        self.lbl_wave_path.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.lbl_proc_path = QLabel("Processed: —")
@@ -396,11 +427,12 @@ class MainWindow(QMainWindow):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         dl.addWidget(self.lbl_emr_path)
+        dl.addWidget(self.lbl_wave_path)
         dl.addWidget(self.lbl_proc_path)
 
-        btn_apply = QPushButton("Use this folder")
+        btn_apply = QPushButton("Apply paths")
         btn_apply.setObjectName("primaryBtn")
-        btn_apply.clicked.connect(self._apply_data_folder_from_field)
+        btn_apply.clicked.connect(self._apply_paths_from_fields)
         btn_reload = QPushButton("Reload cache")
         btn_reload.setObjectName("secondaryBtn")
         btn_reload.clicked.connect(self._autoload_processed)
@@ -432,8 +464,18 @@ class MainWindow(QMainWindow):
         side_l.addWidget(ctrl)
 
         # Filters
-        filt = QGroupBox("Filters & case")
+        filt = QGroupBox("Search & filters")
         ff = QFormLayout(filt)
+        self.edit_search = QLineEdit()
+        self.edit_search.setPlaceholderText('Keywords: "chole" pip_high sevo…')
+        self.edit_search.setClearButtonEnabled(True)
+        self.edit_search.setToolTip(
+            "Case-insensitive search across procedure, PID, agent, top_rules, "
+            "and flag rule IDs. Use quotes for phrases. Multiple words = AND."
+        )
+        self.edit_search.textChanged.connect(self._on_filters_changed)
+        ff.addRow("Keywords", self.edit_search)
+
         self.combo_agent = QComboBox()
         self.combo_agent.addItem("(all)")
         self.combo_agent.currentTextChanged.connect(self._on_filters_changed)
@@ -449,6 +491,14 @@ class MainWindow(QMainWindow):
         self.chk_vitals.setChecked(True)
         self.chk_vitals.toggled.connect(self._refresh_case_timeline)
         ff.addRow(self.chk_vitals)
+
+        self.chk_wave_only = QCheckBox("Only cases with wave folder")
+        self.chk_wave_only.setToolTip(
+            "When a wave directory is set, keep only cases that have a matching "
+            "Waveforms/<prefix>/<PID>/ folder."
+        )
+        self.chk_wave_only.toggled.connect(self._on_filters_changed)
+        ff.addRow(self.chk_wave_only)
 
         self.combo_pid = QComboBox()
         self.combo_pid.setSizePolicy(
@@ -517,52 +567,104 @@ class MainWindow(QMainWindow):
     def _sync_path_fields_from_runtime(self) -> None:
         emr = emr_dir()
         proc = processed_dir()
-        # Prefer showing parent data root when standard layout
-        root = emr
-        if emr.name == "EMR" and emr.parent.name == "raw":
-            root = emr.parent.parent
-        self.edit_data_root.setText(str(root))
+        wave = wave_dir()
+        self.edit_emr.setText(str(emr))
+        self.edit_wave.setText(str(wave) if wave else "")
         self.lbl_emr_path.setText(f"EMR: {emr}")
+        self.lbl_wave_path.setText(f"Wave: {wave if wave else '(not set)'}")
         self.lbl_proc_path.setText(f"Processed: {proc}")
 
     def _update_status_paths(self, prefix: str = "") -> None:
-        msg = f"{prefix}  ·  EMR: {emr_dir()}  ·  Processed: {processed_dir()}"
+        wave = wave_dir()
+        wave_s = str(wave) if wave else "—"
+        msg = (
+            f"{prefix}  ·  EMR: {emr_dir()}  ·  Wave: {wave_s}  ·  "
+            f"Processed: {processed_dir()}"
+        )
         self.statusBar().showMessage(msg)
 
-    def _browse_data_folder(self) -> None:
-        start = self.edit_data_root.text().strip() or str(emr_dir())
+    def _browse_emr_folder(self) -> None:
+        start = self.edit_emr.text().strip() or str(emr_dir())
         chosen = QFileDialog.getExistingDirectory(
             self,
-            "Select SIS data or EMR folder",
+            "Select SIS EMR folder (patient_information.csv)",
             start,
             QFileDialog.Option.ShowDirsOnly,
         )
         if not chosen:
             return
-        self.edit_data_root.setText(chosen)
-        self._apply_data_folder(Path(chosen))
-
-    def _apply_data_folder_from_field(self) -> None:
-        text = self.edit_data_root.text().strip()
-        if not text:
-            QMessageBox.warning(self, "Data folder", "Enter or browse to a folder.")
-            return
-        self._apply_data_folder(Path(text))
-
-    def _apply_data_folder(self, path: Path) -> None:
+        self.edit_emr.setText(chosen)
         try:
-            resolved = configure_from_user_directory(path, persist=True)
+            configure_emr_directory(chosen, persist=True)
         except Exception as e:
-            QMessageBox.critical(
+            QMessageBox.critical(self, "Invalid EMR folder", str(e))
+            return
+        self._sync_path_fields_from_runtime()
+        self._update_status_paths("EMR folder set")
+        self._autoload_processed()
+
+    def _browse_wave_folder(self) -> None:
+        start = self.edit_wave.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Select SIS wave folder (Waveforms/ or sis_wave*.tar.gz)",
+            start,
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not chosen:
+            return
+        self.edit_wave.setText(chosen)
+        try:
+            configure_wave_directory(chosen, persist=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Invalid wave folder", str(e))
+            return
+        self._sync_path_fields_from_runtime()
+        self._update_status_paths("Wave folder set")
+        self._on_filters_changed()
+
+    def _browse_data_folder(self) -> None:
+        """Menu shortcut: same as EMR browse (legacy)."""
+        self._browse_emr_folder()
+
+    def _apply_paths_from_fields(self) -> None:
+        """Apply both EMR and wave paths typed into the fields."""
+        emr_text = self.edit_emr.text().strip()
+        wave_text = self.edit_wave.text().strip()
+        errors = []
+        if emr_text:
+            try:
+                configure_emr_directory(emr_text, persist=True)
+            except Exception as e:
+                errors.append(f"EMR: {e}")
+        if wave_text:
+            try:
+                configure_wave_directory(wave_text, persist=True)
+            except Exception as e:
+                errors.append(f"Wave: {e}")
+        if not emr_text and not wave_text:
+            QMessageBox.warning(
                 self,
-                "Invalid data folder",
-                str(e),
+                "Paths",
+                "Enter an EMR folder and/or a Wave folder.",
             )
             return
         self._sync_path_fields_from_runtime()
-        self._update_status_paths(
-            f"Data folder set · EMR {resolved['emr_dir'].name}"
-        )
+        if errors:
+            QMessageBox.critical(self, "Path errors", "\n\n".join(errors))
+            return
+        self._update_status_paths("Paths applied")
+        self._autoload_processed()
+
+    def _apply_data_folder(self, path: Path) -> None:
+        """Compatibility helper used by older tests / menu."""
+        try:
+            configure_from_user_directory(path, persist=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Invalid data folder", str(e))
+            return
+        self._sync_path_fields_from_runtime()
+        self._update_status_paths("EMR folder set")
         self._autoload_processed()
 
     # ----- workers -----
@@ -680,6 +782,24 @@ class MainWindow(QMainWindow):
             df = df[df["primary_agent_name"] == agent]
         if "anomaly_score" in df.columns:
             df = df[df["anomaly_score"] >= self.spin_min_score.value()]
+
+        # Keyword search (procedure, PID, agent, top_rules, flag rule_ids)
+        q = self.edit_search.text().strip() if hasattr(self, "edit_search") else ""
+        if q:
+            df = filter_cases_by_keywords(df, q, flags=self.flags, match_all=True)
+
+        # Optional: only cases with on-disk waveform folders
+        if (
+            hasattr(self, "chk_wave_only")
+            and self.chk_wave_only.isChecked()
+            and wave_dir() is not None
+            and "PID" in df.columns
+        ):
+            mask = df["PID"].astype(str).map(
+                lambda pid: waveform_case_dir(pid) is not None
+            )
+            df = df.loc[mask]
+
         return df
 
     def _on_filters_changed(self) -> None:
@@ -751,8 +871,10 @@ class MainWindow(QMainWindow):
         self.metric_cases.setText(str(len(filtered)))
         self.metric_flags.setText(str(n_flagged))
         self.metric_score.setText(str(int(filtered["anomaly_score"].max())))
+        q = self.edit_search.text().strip() if hasattr(self, "edit_search") else ""
+        qbit = f" · search “{q}”" if q else ""
         self.lbl_case_meta.setText(
-            f"{len(filtered)} cases in view · double-click a table row for timeline"
+            f"{len(filtered)} cases in view{qbit} · double-click a row for timeline"
         )
 
     def _refresh_charts_if_needed(self) -> None:
