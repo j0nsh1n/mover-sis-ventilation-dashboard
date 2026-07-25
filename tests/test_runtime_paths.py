@@ -31,10 +31,12 @@ def test_dev_paths_point_at_repo():
 
 
 def test_env_overrides(monkeypatch, tmp_path):
+    from src.runtime_paths import clear_session_path_overrides
+
+    clear_session_path_overrides()
     monkeypatch.setenv("MOVER_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "e"))
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "p"))
-    # re-import functions pick env at call time
     from src.runtime_paths import data_dir as dd
     from src.runtime_paths import emr_dir as ed
     from src.runtime_paths import processed_dir as pd

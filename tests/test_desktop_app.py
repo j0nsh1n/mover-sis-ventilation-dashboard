@@ -13,8 +13,25 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 
+def _qt_available() -> bool:
+    try:
+        from PySide6.QtWidgets import QApplication  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+requires_qt = pytest.mark.skipif(
+    not _qt_available(),
+    reason="PySide6/Qt system libs unavailable (e.g. missing libEGL)",
+)
+
+
 @pytest.fixture(scope="module")
 def qapp():
+    if not _qt_available():
+        pytest.skip("PySide6/Qt system libs unavailable (e.g. missing libEGL)")
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
@@ -30,6 +47,7 @@ def qapp():
     return app
 
 
+@requires_qt
 def test_charts_pure_matplotlib_no_plotly():
     """Desktop chart module must not import plotly."""
     import src.desktop.charts as charts
@@ -77,6 +95,7 @@ def test_charts_pure_matplotlib_no_plotly():
     assert fig3 is not None
 
 
+@requires_qt
 def test_mainwindow_constructs_fast(qapp, monkeypatch, tmp_path):
     """Window shell should appear quickly even with no data."""
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "empty_processed"))
@@ -94,6 +113,7 @@ def test_mainwindow_constructs_fast(qapp, monkeypatch, tmp_path):
     win.close()
 
 
+@requires_qt
 def test_mainwindow_loads_processed_data(qapp, pipeline_result, monkeypatch, tmp_path):
     """End-to-end: load processed outputs into the UI and populate selectors."""
     # Write pipeline outputs to a temp processed dir
@@ -129,6 +149,7 @@ def test_mainwindow_loads_processed_data(qapp, pipeline_result, monkeypatch, tmp
     win.close()
 
 
+@requires_qt
 def test_startup_budget_with_data(qapp, pipeline_result, monkeypatch, tmp_path):
     """Total time from MainWindow() to interactive data < 3s offscreen."""
     out = tmp_path / "processed2"

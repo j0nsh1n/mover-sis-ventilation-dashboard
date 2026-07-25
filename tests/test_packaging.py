@@ -39,12 +39,15 @@ def test_spec_bundles_thresholds_and_shiboken():
 def test_entrypoint_imports_without_gui_show(monkeypatch):
     """Import chain for frozen entry must resolve (offscreen)."""
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    # Ensure project importable
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
-    # Import desktop main without executing event loop
-    from src.desktop import app as desktop_app
-
+    try:
+        from src.desktop import app as desktop_app
+    except ImportError as e:
+        # CI hosts without libEGL/Qt system libs
+        if "libEGL" in str(e) or "libGL" in str(e):
+            pytest.skip(f"Qt system libs missing: {e}")
+        raise
     assert callable(desktop_app.main)
     assert hasattr(desktop_app, "MainWindow")
 
