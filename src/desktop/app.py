@@ -20,13 +20,17 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStatusBar,
@@ -50,35 +54,165 @@ from src.desktop.charts import (
 )
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
+from src.runtime_paths import (
+    apply_persisted_settings,
+    configure_from_user_directory,
+    emr_dir,
+    processed_dir,
+)
+
+# Shared light theme for clearer visual hierarchy
+APP_STYLESHEET = """
+QMainWindow, QWidget {
+    background: #f4f6f8;
+    color: #1f2933;
+    font-size: 13px;
+}
+QGroupBox {
+    background: #ffffff;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding: 12px 10px 10px 10px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #334e68;
+}
+QLineEdit, QSpinBox, QComboBox {
+    background: #ffffff;
+    border: 1px solid #bcccdc;
+    border-radius: 6px;
+    padding: 5px 8px;
+    min-height: 24px;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border: 1px solid #486581;
+}
+QPushButton {
+    background: #486581;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-weight: 600;
+}
+QPushButton:hover { background: #334e68; }
+QPushButton:disabled { background: #9fb3c8; }
+QPushButton#secondaryBtn {
+    background: #e2e8f0;
+    color: #243b53;
+}
+QPushButton#secondaryBtn:hover { background: #cbd5e1; }
+QPushButton#primaryBtn {
+    background: #0f766e;
+}
+QPushButton#primaryBtn:hover { background: #0d9488; }
+QTabWidget::pane {
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    background: #ffffff;
+    top: -1px;
+}
+QTabBar::tab {
+    background: #e2e8f0;
+    border: 1px solid #d9e2ec;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    padding: 8px 14px;
+    margin-right: 3px;
+    color: #486581;
+}
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #102a43;
+    font-weight: 600;
+}
+QTableWidget {
+    background: #ffffff;
+    gridline-color: #e2e8f0;
+    border: none;
+    alternate-background-color: #f8fafc;
+}
+QHeaderView::section {
+    background: #f0f4f8;
+    padding: 6px;
+    border: none;
+    border-right: 1px solid #d9e2ec;
+    border-bottom: 1px solid #d9e2ec;
+    font-weight: 600;
+}
+QStatusBar {
+    background: #e2e8f0;
+    color: #334e68;
+}
+QLabel#heroTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #102a43;
+}
+QLabel#heroSub {
+    color: #627d98;
+}
+QLabel#pathHint {
+    color: #486581;
+    font-size: 11px;
+}
+QFrame#metricCard {
+    background: #ffffff;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    padding: 8px;
+}
+QTextEdit {
+    background: #ffffff;
+    border: 1px solid #d9e2ec;
+    border-radius: 6px;
+}
+"""
 
 
 class DataLoadWorker(QThread):
-    """Load processed parquets off the UI thread."""
-
     finished_ok = Signal(object)
     failed = Signal(str)
+
+    def __init__(self, processed: Path | None = None, parent=None):
+        super().__init__(parent)
+        self.processed = processed
 
     def run(self) -> None:
         try:
             from src.services.data import load_processed
 
-            data = load_processed(validate=False)
+            data = load_processed(self.processed, validate=False)
             self.finished_ok.emit(data)
         except Exception as e:
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
 class PipelineWorker(QThread):
-    """Run pipeline off the UI thread."""
-
     finished_ok = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, n_cases: int, preset: str, force: bool, parent=None):
+    def __init__(
+        self,
+        n_cases: int,
+        preset: str,
+        force: bool,
+        emr: Path | None = None,
+        processed: Path | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.n_cases = n_cases
         self.preset = preset
         self.force = force
+        self.emr = emr
+        self.processed = processed
 
     def run(self) -> None:
         try:
@@ -88,6 +222,8 @@ class PipelineWorker(QThread):
                 n_cases=self.n_cases,
                 preset=self.preset,
                 force=self.force,
+                emr_dir=self.emr,
+                processed_dir=self.processed,
             )
             self.finished_ok.emit(data)
         except Exception as e:
@@ -117,11 +253,27 @@ def _df_to_table(table: QTableWidget, df: pd.DataFrame, max_rows: int = 500) -> 
         table.setUpdatesEnabled(True)
 
 
+def _metric_card(title: str, value_label: QLabel) -> QFrame:
+    frame = QFrame()
+    frame.setObjectName("metricCard")
+    lay = QVBoxLayout(frame)
+    lay.setContentsMargins(10, 8, 10, 8)
+    t = QLabel(title)
+    t.setStyleSheet("color:#627d98; font-size:11px; font-weight:600;")
+    value_label.setStyleSheet("font-size:16px; font-weight:700; color:#102a43;")
+    lay.addWidget(t)
+    lay.addWidget(value_label)
+    return frame
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MOVER SIS — Ventilation & Anesthesia Monitor")
-        self.resize(1280, 800)
+        self.resize(1380, 860)
+        self.setStyleSheet(APP_STYLESHEET)
+
+        apply_persisted_settings()
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
@@ -133,14 +285,24 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_ui()
+        self._sync_path_fields_from_runtime()
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("Starting…")
+        self._update_status_paths("Ready")
 
-        # Show empty shell immediately; load data on a worker thread
         QTimer.singleShot(0, self._autoload_processed)
 
+    # ----- menu -----
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
+        open_data = QAction("Open data folder…", self)
+        open_data.setShortcut("Ctrl+O")
+        open_data.triggered.connect(self._browse_data_folder)
+        file_menu.addAction(open_data)
+        reload_act = QAction("Reload processed data", self)
+        reload_act.setShortcut("Ctrl+R")
+        reload_act.triggered.connect(self._autoload_processed)
+        file_menu.addAction(reload_act)
+        file_menu.addSeparator()
         quit_act = QAction("E&xit", self)
         quit_act.setShortcut("Ctrl+Q")
         quit_act.triggered.connect(self.close)
@@ -151,29 +313,103 @@ class MainWindow(QMainWindow):
         about.triggered.connect(self._about)
         help_menu.addAction(about)
 
+    # ----- layout -----
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(12, 10, 12, 8)
+        outer.setSpacing(10)
 
-        side = QWidget()
-        side.setMaximumWidth(320)
-        side.setMinimumWidth(260)
-        form_wrap = QVBoxLayout(side)
-
+        # Header
+        header = QHBoxLayout()
+        hero = QVBoxLayout()
         title = QLabel("MOVER SIS Monitor")
-        title.setFont(QFont("", 14, QFont.Weight.Bold))
-        form_wrap.addWidget(title)
-        caption = QLabel(
-            "Desktop app for de-identified perioperative ventilation data.\n"
-            "Flags are research aids — not clinical diagnoses."
+        title.setObjectName("heroTitle")
+        sub = QLabel(
+            "Research dashboard for intraoperative ventilation & anesthesia depth  ·  Not for clinical care"
         )
-        caption.setWordWrap(True)
-        caption.setStyleSheet("color: #555;")
-        form_wrap.addWidget(caption)
+        sub.setObjectName("heroSub")
+        sub.setWordWrap(True)
+        hero.addWidget(title)
+        hero.addWidget(sub)
+        header.addLayout(hero, stretch=1)
 
+        self.metric_cases = QLabel("—")
+        self.metric_flags = QLabel("—")
+        self.metric_score = QLabel("—")
+        metrics = QHBoxLayout()
+        metrics.setSpacing(8)
+        metrics.addWidget(_metric_card("Cases loaded", self.metric_cases))
+        metrics.addWidget(_metric_card("With flags", self.metric_flags))
+        metrics.addWidget(_metric_card("Max score", self.metric_score))
+        header.addLayout(metrics)
+        outer.addLayout(header)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # ---- Sidebar ----
+        side = QWidget()
+        side.setMinimumWidth(300)
+        side.setMaximumWidth(360)
+        side_l = QVBoxLayout(side)
+        side_l.setContentsMargins(0, 0, 0, 0)
+        side_l.setSpacing(8)
+
+        # Data locations
+        data_box = QGroupBox("Data locations")
+        dl = QVBoxLayout(data_box)
+        hint = QLabel(
+            "Choose the SIS EMR folder (contains patient_information.csv) "
+            "or a parent folder with EMR/ / raw/EMR/."
+        )
+        hint.setObjectName("pathHint")
+        hint.setWordWrap(True)
+        dl.addWidget(hint)
+
+        self.edit_data_root = QLineEdit()
+        self.edit_data_root.setPlaceholderText("Data root or EMR folder…")
+        self.edit_data_root.setClearButtonEnabled(True)
+        row1 = QHBoxLayout()
+        row1.addWidget(self.edit_data_root, stretch=1)
+        btn_browse = QPushButton("Browse…")
+        btn_browse.setObjectName("secondaryBtn")
+        btn_browse.clicked.connect(self._browse_data_folder)
+        row1.addWidget(btn_browse)
+        dl.addLayout(row1)
+
+        self.lbl_emr_path = QLabel("EMR: —")
+        self.lbl_emr_path.setObjectName("pathHint")
+        self.lbl_emr_path.setWordWrap(True)
+        self.lbl_emr_path.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.lbl_proc_path = QLabel("Processed: —")
+        self.lbl_proc_path.setObjectName("pathHint")
+        self.lbl_proc_path.setWordWrap(True)
+        self.lbl_proc_path.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        dl.addWidget(self.lbl_emr_path)
+        dl.addWidget(self.lbl_proc_path)
+
+        btn_apply = QPushButton("Use this folder")
+        btn_apply.setObjectName("primaryBtn")
+        btn_apply.clicked.connect(self._apply_data_folder_from_field)
+        btn_reload = QPushButton("Reload cache")
+        btn_reload.setObjectName("secondaryBtn")
+        btn_reload.clicked.connect(self._autoload_processed)
+        row_actions = QHBoxLayout()
+        row_actions.addWidget(btn_apply)
+        row_actions.addWidget(btn_reload)
+        dl.addLayout(row_actions)
+        side_l.addWidget(data_box)
+
+        # Pipeline
         ctrl = QGroupBox("Pipeline")
         fl = QFormLayout(ctrl)
+        fl.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         self.spin_cases = QSpinBox()
         self.spin_cases.setRange(max(1, MIN_N_CASES), min(200, MAX_N_CASES))
         self.spin_cases.setSingleStep(10)
@@ -186,11 +422,13 @@ class MainWindow(QMainWindow):
         fl.addRow("Threshold preset", self.combo_preset)
 
         self.btn_run = QPushButton("Run / reload pipeline")
+        self.btn_run.setObjectName("primaryBtn")
         self.btn_run.clicked.connect(self._run_pipeline)
         fl.addRow(self.btn_run)
-        form_wrap.addWidget(ctrl)
+        side_l.addWidget(ctrl)
 
-        filt = QGroupBox("Filters")
+        # Filters
+        filt = QGroupBox("Filters & case")
         ff = QFormLayout(filt)
         self.combo_agent = QComboBox()
         self.combo_agent.addItem("(all)")
@@ -207,25 +445,25 @@ class MainWindow(QMainWindow):
         self.chk_vitals.setChecked(True)
         self.chk_vitals.toggled.connect(self._refresh_case_timeline)
         ff.addRow(self.chk_vitals)
-        form_wrap.addWidget(filt)
 
-        case_box = QGroupBox("Case")
-        cf = QFormLayout(case_box)
         self.combo_pid = QComboBox()
-        self.combo_pid.currentIndexChanged.connect(self._refresh_case_timeline)
-        cf.addRow("Surgery (PID)", self.combo_pid)
-        form_wrap.addWidget(case_box)
-
-        self.lbl_metrics = QLabel("—")
-        self.lbl_metrics.setWordWrap(True)
-        self.lbl_metrics.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
+        self.combo_pid.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        form_wrap.addWidget(self.lbl_metrics)
-        form_wrap.addStretch(1)
+        self.combo_pid.currentIndexChanged.connect(self._refresh_case_timeline)
+        ff.addRow("Surgery (PID)", self.combo_pid)
+        side_l.addWidget(filt)
 
+        self.lbl_case_meta = QLabel("Select a case to inspect the timeline.")
+        self.lbl_case_meta.setWordWrap(True)
+        self.lbl_case_meta.setObjectName("pathHint")
+        side_l.addWidget(self.lbl_case_meta)
+        side_l.addStretch(1)
+
+        # ---- Tabs ----
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self._on_tab_changed)
+
         self.plot_summary_top = ChartView()
         self.plot_summary_rules = ChartView()
         self.table_cases = QTableWidget()
@@ -233,54 +471,117 @@ class MainWindow(QMainWindow):
         self.table_cases.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_cases.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_cases.doubleClicked.connect(self._case_table_activated)
+        self.table_cases.setSortingEnabled(True)
 
-        summary_split = QSplitter(Qt.Orientation.Vertical)
+        summary = QWidget()
+        sum_l = QVBoxLayout(summary)
+        sum_l.setContentsMargins(8, 8, 8, 8)
         charts = QSplitter(Qt.Orientation.Horizontal)
         charts.addWidget(self.plot_summary_top)
         charts.addWidget(self.plot_summary_rules)
-        summary_split.addWidget(charts)
-        summary_split.addWidget(self.table_cases)
-        summary_split.setStretchFactor(0, 3)
-        summary_split.setStretchFactor(1, 2)
-        self.tabs.addTab(summary_split, "Summary")
+        charts.setSizes([500, 500])
+        sum_l.addWidget(charts, stretch=3)
+        table_label = QLabel("Cases (double-click a row to open timeline)")
+        table_label.setStyleSheet("font-weight:600; color:#334e68; margin-top:4px;")
+        sum_l.addWidget(table_label)
+        sum_l.addWidget(self.table_cases, stretch=2)
+        self.tabs.addTab(summary, "1 · Summary")
 
+        case_tab = QWidget()
+        case_l = QVBoxLayout(case_tab)
+        case_l.setContentsMargins(8, 8, 8, 8)
         self.plot_timeline = ChartView()
         self.table_episodes = QTableWidget()
         self.table_episodes.setAlternatingRowColors(True)
         self.table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        case_split = QSplitter(Qt.Orientation.Vertical)
-        case_split.addWidget(self.plot_timeline)
-        case_split.addWidget(self.table_episodes)
-        case_split.setStretchFactor(0, 4)
-        case_split.setStretchFactor(1, 1)
-        self.tabs.addTab(case_split, "Case timeline")
+        case_l.addWidget(self.plot_timeline, stretch=4)
+        ep_label = QLabel("Flag episodes / minute flags")
+        ep_label.setStyleSheet("font-weight:600; color:#334e68;")
+        case_l.addWidget(ep_label)
+        case_l.addWidget(self.table_episodes, stretch=1)
+        self.tabs.addTab(case_tab, "2 · Case timeline")
 
         self.rules_text = QTextEdit()
         self.rules_text.setReadOnly(True)
-        self.tabs.addTab(self.rules_text, "Rule reference")
+        self.tabs.addTab(self.rules_text, "3 · Rule reference")
 
-        root.addWidget(side)
-        root.addWidget(self.tabs, stretch=1)
+        body.addWidget(side)
+        body.addWidget(self.tabs, stretch=1)
+        outer.addLayout(body, stretch=1)
 
-    def _autoload_processed(self) -> None:
-        from src.runtime_paths import processed_dir
+    # ----- paths -----
+    def _sync_path_fields_from_runtime(self) -> None:
+        emr = emr_dir()
+        proc = processed_dir()
+        # Prefer showing parent data root when standard layout
+        root = emr
+        if emr.name == "EMR" and emr.parent.name == "raw":
+            root = emr.parent.parent
+        self.edit_data_root.setText(str(root))
+        self.lbl_emr_path.setText(f"EMR: {emr}")
+        self.lbl_proc_path.setText(f"Processed: {proc}")
 
-        if not (processed_dir() / "cases.parquet").exists():
-            self.statusBar().showMessage(
-                "No processed data yet — click “Run / reload pipeline”."
+    def _update_status_paths(self, prefix: str = "") -> None:
+        msg = f"{prefix}  ·  EMR: {emr_dir()}  ·  Processed: {processed_dir()}"
+        self.statusBar().showMessage(msg)
+
+    def _browse_data_folder(self) -> None:
+        start = self.edit_data_root.text().strip() or str(emr_dir())
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Select SIS data or EMR folder",
+            start,
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not chosen:
+            return
+        self.edit_data_root.setText(chosen)
+        self._apply_data_folder(Path(chosen))
+
+    def _apply_data_folder_from_field(self) -> None:
+        text = self.edit_data_root.text().strip()
+        if not text:
+            QMessageBox.warning(self, "Data folder", "Enter or browse to a folder.")
+            return
+        self._apply_data_folder(Path(text))
+
+    def _apply_data_folder(self, path: Path) -> None:
+        try:
+            resolved = configure_from_user_directory(path, persist=True)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Invalid data folder",
+                str(e),
             )
+            return
+        self._sync_path_fields_from_runtime()
+        self._update_status_paths(
+            f"Data folder set · EMR {resolved['emr_dir'].name}"
+        )
+        self._autoload_processed()
+
+    # ----- workers -----
+    def _autoload_processed(self) -> None:
+        proc = processed_dir()
+        if not (proc / "cases.parquet").exists():
+            self._update_status_paths(
+                "No processed cache — run the pipeline or pick another folder"
+            )
+            self.metric_cases.setText("0")
+            self.metric_flags.setText("—")
+            self.metric_score.setText("—")
             return
         if self._worker and self._worker.isRunning():
             return
-        self.statusBar().showMessage("Loading data…")
-        self._worker = DataLoadWorker(parent=self)
+        self._update_status_paths("Loading data…")
+        self._worker = DataLoadWorker(processed=proc, parent=self)
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_load_fail)
         self._worker.start()
 
     def _on_load_fail(self, msg: str) -> None:
-        self.statusBar().showMessage("Could not auto-load processed data")
-        # Keep UI usable; only show dialog if not a simple missing-file case
+        self._update_status_paths("Could not load processed data")
         if "Missing processed files" not in msg:
             QMessageBox.warning(self, "Load error", msg[:2000])
 
@@ -290,12 +591,20 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        # Avoid Qt abort if a worker is still running when the window is destroyed
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.requestInterruption()
+            self._worker.wait(3000)
+        super().closeEvent(event)
+
     def _about(self) -> None:
         QMessageBox.about(
             self,
             "About",
             "MOVER SIS Ventilation & Anesthesia Monitor\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
+            "Choose any local EMR folder via File → Open data folder.\n"
             "Not for clinical care.",
         )
 
@@ -304,11 +613,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Busy", "A background job is already running.")
             return
         self.btn_run.setEnabled(False)
-        self.statusBar().showMessage("Running pipeline…")
+        self._update_status_paths("Running pipeline…")
         self._worker = PipelineWorker(
             n_cases=self.spin_cases.value(),
             preset=self.combo_preset.currentText(),
             force=True,
+            emr=emr_dir(),
+            processed=processed_dir(),
             parent=self,
         )
         self._worker.finished_ok.connect(self._on_pipeline_ok)
@@ -318,26 +629,23 @@ class MainWindow(QMainWindow):
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
-        self.statusBar().showMessage(
-            f"Loaded {len(self.cases)} cases · "
-            f"{len(self.ts)} minute rows · {len(self.flags)} flags"
+        self._update_status_paths(
+            f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
         )
         self._populate_filters()
-        # Tables + selectors first (fast); charts deferred one event-loop tick
         self._refresh_tables_and_selectors()
         self._charts_pending = True
         QTimer.singleShot(0, self._refresh_charts_if_needed)
-        # Rules text is cheap
         self._refresh_rule_reference()
 
     def _on_pipeline_fail(self, msg: str) -> None:
-        self.statusBar().showMessage("Pipeline failed")
+        self._update_status_paths("Pipeline failed")
         QMessageBox.critical(
             self,
             "Pipeline / guardrail error",
             msg[:4000]
             + (
-                "\n\nEnsure data/raw/EMR/ has patient_information, "
+                "\n\nEnsure the EMR folder has patient_information, "
                 "patient_ventilator, and patient_vitals CSVs."
             ),
         )
@@ -384,7 +692,10 @@ class MainWindow(QMainWindow):
             self.combo_pid.blockSignals(True)
             self.combo_pid.clear()
             self.combo_pid.blockSignals(False)
-            self.lbl_metrics.setText("No data")
+            self.metric_cases.setText("0")
+            self.metric_flags.setText("—")
+            self.metric_score.setText("—")
+            self.lbl_case_meta.setText("No cases match filters.")
             self.plot_summary_top.clear("No cases match filters.")
             self.plot_summary_rules.clear()
             return
@@ -408,7 +719,10 @@ class MainWindow(QMainWindow):
             ]
             if c in filtered.columns
         ]
+        # Sorting interferes with bulk fill; toggle around update
+        self.table_cases.setSortingEnabled(False)
         _df_to_table(self.table_cases, filtered[show_cols])
+        self.table_cases.setSortingEnabled(True)
 
         prev = self.combo_pid.currentData()
         self.combo_pid.blockSignals(True)
@@ -429,22 +743,14 @@ class MainWindow(QMainWindow):
         n_flagged = int(
             ((filtered.get("n_warn", 0) + filtered.get("n_critical", 0)) > 0).sum()
         )
-        med = (
-            f"{filtered['case_duration_min'].median():.0f}"
-            if "case_duration_min" in filtered
-            else "—"
-        )
-        self.lbl_metrics.setText(
-            f"<b>Cases:</b> {len(filtered)}<br>"
-            f"<b>With flags:</b> {n_flagged}<br>"
-            f"<b>Median duration:</b> {med} min<br>"
-            f"<b>Max score:</b> {int(filtered['anomaly_score'].max())}"
+        self.metric_cases.setText(str(len(filtered)))
+        self.metric_flags.setText(str(n_flagged))
+        self.metric_score.setText(str(int(filtered["anomaly_score"].max())))
+        self.lbl_case_meta.setText(
+            f"{len(filtered)} cases in view · double-click a table row for timeline"
         )
 
     def _refresh_charts_if_needed(self) -> None:
-        if not self._charts_pending and self.cases is not None:
-            # still refresh timeline if on that tab after pid change
-            pass
         filtered = self._filtered_cases()
         if filtered.empty:
             self._charts_pending = False
@@ -502,7 +808,14 @@ class MainWindow(QMainWindow):
         row = self.table_cases.currentRow()
         if row < 0:
             return
-        item = self.table_cases.item(row, 0)
+        # PID may not be column 0 if sorted — find header
+        pid_col = 0
+        for c in range(self.table_cases.columnCount()):
+            h = self.table_cases.horizontalHeaderItem(c)
+            if h and h.text() == "PID":
+                pid_col = c
+                break
+        item = self.table_cases.item(row, pid_col)
         if not item:
             return
         pid = item.text()
@@ -543,8 +856,9 @@ def main() -> int:
         "QT_QPA_PLATFORM"
     ):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
-    # WebEngine no longer required for charts; keep sandbox flags harmless if imported
     os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+
+    apply_persisted_settings()
 
     app = QApplication.instance()
     if app is None:
@@ -558,6 +872,7 @@ def main() -> int:
     app.setApplicationName("MOVER SIS Ventilation Monitor")
     app.setOrganizationName("MOVER-SIS")
     app.setDesktopFileName("mover-sis-monitor")
+    app.setStyle("Fusion")
 
     win = MainWindow()
     win.show()
