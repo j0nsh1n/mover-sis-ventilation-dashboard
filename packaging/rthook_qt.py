@@ -26,6 +26,10 @@ def _setup_qt_env() -> None:
         str(meipass / "numpy.libs"),
         str(meipass / "scipy.libs"),
         str(meipass / "pandas.libs"),
+        str(meipass / "pillow.libs"),
+        str(meipass / "PIL.libs"),
+        str(meipass / "matplotlib.libs"),
+        str(meipass / "kiwisolver.libs"),
     ]
     if qt_lib.is_dir():
         lib_dirs.insert(0, str(qt_lib))

@@ -25,6 +25,13 @@ try:
     mpl_datas, mpl_binaries, mpl_hidden = collect_all("matplotlib")
 except Exception:
     mpl_datas, mpl_binaries, mpl_hidden = [], [], []
+try:
+    pil_datas, pil_binaries, pil_hidden = collect_all("PIL")
+except Exception:
+    try:
+        pil_datas, pil_binaries, pil_hidden = collect_all("Pillow")
+    except Exception:
+        pil_datas, pil_binaries, pil_hidden = [], [], []
 
 # Optional but commonly pulled
 try:
@@ -39,6 +46,7 @@ except Exception:
 
 datas = [
     (str(root / "src" / "config" / "thresholds.yaml"), "src/config"),
+    (str(root / "VERSION"), "."),
     (str(root / "data" / "README.md"), "data"),
 ]
 datas += (
@@ -48,6 +56,7 @@ datas += (
     + numpy_datas
     + scipy_datas
     + mpl_datas
+    + pil_datas
     + pd_datas
     + pa_datas
 )
@@ -60,6 +69,7 @@ binaries = (
     + numpy_binaries
     + scipy_binaries
     + mpl_binaries
+    + pil_binaries
     + pd_binaries
     + pa_binaries
 )
@@ -88,6 +98,10 @@ for _pattern, _dest in (
     (str(_site / "numpy.libs" / "*"), "numpy.libs"),
     (str(_site / "scipy.libs" / "*"), "scipy.libs"),
     (str(_site / "pandas.libs" / "*"), "pandas.libs"),
+    (str(_site / "pillow.libs" / "*"), "pillow.libs"),
+    (str(_site / "PIL.libs" / "*"), "PIL.libs"),
+    (str(_site / "matplotlib.libs" / "*"), "matplotlib.libs"),
+    (str(_site / "kiwisolver.libs" / "*"), "kiwisolver.libs"),
     (str(_site / "pyarrow.libs" / "*"), "."),
 ):
     for _lib in _glob.glob(_pattern):
@@ -102,6 +116,7 @@ hiddenimports = sorted(
         + numpy_hidden
         + scipy_hidden
         + mpl_hidden
+        + pil_hidden
         + pd_hidden
         + pa_hidden
         + collect_submodules("src")
@@ -114,6 +129,8 @@ hiddenimports = sorted(
             "PySide6.QtNetwork",
             "matplotlib",
             "matplotlib.pyplot",
+            "PIL",
+            "PIL.Image",
             "yaml",
             "pyarrow",
             "pandas",

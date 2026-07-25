@@ -1,5 +1,7 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
+**Version 0.1.0**
+
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
 > De-identified public research data. **Not for clinical care.**
@@ -94,38 +96,38 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Build a Linux executable (Nobara / Fedora x86_64)
+## Versioning & releases (v0.1.0)
 
-Produces a standalone **folder** (recommended for QtWebEngine) plus a `.tar.gz`:
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.1.0`)
+- UI **About** and window title show the same version
+- **On merge to `main`** (or tag `v0.1.0` / manual run): GitHub Actions workflow  
+  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact
+
+### Build & install on this computer (Nobara)
 
 ```bash
 source .venv/bin/activate
-./scripts/build_executable.sh
+# Build + install frozen app to ~/.local/share/mover-sis-monitor
+./scripts/install_local.sh
+# Launch
+mover-sis-monitor
 ```
 
-Artifacts:
+Or build only:
+
+```bash
+./scripts/build_executable.sh
+# → dist/MOVER-SIS-Monitor-v0.1.0-linux-x86_64.tar.gz
+```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
-| `dist/MOVER-SIS-Monitor/data/raw/EMR/` | Drop SIS CSVs here |
-| `dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz` | Portable archive |
+| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.1.0` |
+| `dist/MOVER-SIS-Monitor-v0.1.0-linux-x86_64.tar.gz` | Portable archive |
+| `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
 
-```bash
-# After build
-cd dist/MOVER-SIS-Monitor
-# copy your EMR CSVs into data/raw/EMR/
-./MOVER-SIS-Monitor
-```
-
-Optional desktop menu entry from the built folder:
-
-```bash
-cp dist/MOVER-SIS-Monitor/mover-sis-monitor.desktop ~/.local/share/applications/
-# edit Exec=/Path= if you move the folder
-```
-
-If the binary fails to start on a minimal install, install common GUI deps:
+If the binary fails to start on a minimal install:
 
 ```bash
 sudo dnf install -y mesa-libGL libxkbcommon xcb-util-cursor \
