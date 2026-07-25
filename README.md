@@ -1,6 +1,6 @@
-# MOVER SIS — Intraoperative Ventilation & Anesthesia Dashboard
+# MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-Research dashboard for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
+Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
 > De-identified public research data. **Not for clinical care.**
 
@@ -8,7 +8,8 @@ Research dashboard for the [MOVER](https://mover.ics.uci.edu/) **SIS** periopera
 
 1. **Data pipeline** — load/clean SIS tables, time-align ventilator + vitals per surgery (`PID`), derive TV mL/kg & MAC, write parquet caches  
 2. **Anomaly flags** — rising PIP, ETCO₂ out of range, agent drift/high MAC, SpO₂, composite patterns (see `docs/DESIGN.md` and `src/config/thresholds.yaml`)  
-3. **Streamlit app** — multi-case summary + per-case multi-panel timeline  
+3. **Desktop app (primary)** — native PySide6 window: summary charts, case timeline, rule reference  
+4. **Streamlit UI (optional)** — same views in the browser if you prefer  
 
 ## Data location
 
@@ -59,13 +60,38 @@ Outputs under `data/processed/`:
 | `episodes.parquet` | Contiguous flag runs |
 | `run_meta.json` | Sample PID list and counts |
 
-## Run the dashboard
+## Launch the desktop app
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# From repo root
+./scripts/run_desktop.sh
+# or
+PYTHONPATH=. python -m src.desktop
+```
+
+Optional: install a Linux app-menu launcher for your user:
+
+```bash
+./scripts/install_desktop_entry.sh
+```
+
+Then open **MOVER SIS Ventilation Monitor** from your application menu.
+
+The desktop app:
+
+- Opens a **native window** (not a browser tab)
+- Loads existing `data/processed/` caches on startup when present
+- Runs the pipeline in a **background thread** when you click **Run / reload pipeline**
+- Shows Summary, Case timeline, and Rule reference tabs
+
+### Optional: Streamlit (browser)
 
 ```bash
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
-
-The app will run the pipeline automatically if processed files are missing.
 
 ## Project layout
 
@@ -73,7 +99,10 @@ The app will run the pipeline automatically if processed files are missing.
 docs/DESIGN.md              # Pipeline design, thresholds, UI plan
 src/config/thresholds.yaml  # Tunable clinical ranges
 src/pipeline/               # load → clean → merge → features → flags
-src/dashboard/app.py        # Streamlit UI
+src/services/               # UI-agnostic data loading
+src/desktop/                # PySide6 desktop application
+src/dashboard/app.py        # Optional Streamlit UI
+scripts/run_desktop.sh      # Desktop launcher
 ```
 
 ## Key SIS column quirks handled
