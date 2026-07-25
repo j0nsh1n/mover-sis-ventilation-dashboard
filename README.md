@@ -85,7 +85,8 @@ Then open **MOVER SIS Ventilation Monitor** from your application menu.
 The desktop app:
 
 - Opens a **native window** (not a browser tab)
-- Lets you **choose any SIS data/EMR folder** (Browse… / File → Open data folder); choice is remembered
+- Lets you **choose EMR and Wave folders separately** (they ship as different archives); choices are remembered  
+- **Keyword search** across procedure, PID, agent, flag rules (AND matching; quotes for phrases)
 - Loads existing processed caches on startup when present
 - Runs the pipeline in a **background thread** when you click **Run / reload pipeline**
 - Shows organized Summary, Case timeline, and Rule reference tabs with metric cards and path status
