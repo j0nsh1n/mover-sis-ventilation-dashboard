@@ -33,6 +33,17 @@ jobs:
 
       - name: Run tests
         run: PYTHONPATH=. pytest --cov=src --cov-report=term-missing
+        env:
+          QT_QPA_PLATFORM: offscreen
 
-      - name: Import dashboard modules
-        run: PYTHONPATH=. python -c "from src.dashboard.components import case_timeline_figure; from src.pipeline.run import run_pipeline; print('imports OK')"
+      - name: Import dashboard + desktop modules
+        run: |
+          PYTHONPATH=. python -c "from src.dashboard.components import case_timeline_figure; from src.pipeline.run import run_pipeline; print('pipeline OK')"
+          PYTHONPATH=. python -c "from src.desktop.charts import top_cases_figure; from src.desktop.app import MainWindow; print('desktop OK')"
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Packaging structure checks
+        run: PYTHONPATH=. pytest tests/test_packaging.py -q
+        env:
+          QT_QPA_PLATFORM: offscreen

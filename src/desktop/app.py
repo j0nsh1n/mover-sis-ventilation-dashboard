@@ -8,13 +8,14 @@ Launch:
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 from pathlib import Path
 
 import pandas as pd
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,17 +38,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# Repo root on path when launched as script
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.config import load_thresholds
-from src.dashboard.components import case_timeline_figure, flag_bar_by_rule, top_cases_bar
-from src.desktop.plotly_view import PlotlyView
+from src.desktop.charts import (
+    ChartView,
+    case_timeline_figure,
+    flag_rules_figure,
+    top_cases_figure,
+)
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
-from src.services.data import ensure_data, load_processed
+
+
+class DataLoadWorker(QThread):
+    """Load processed parquets off the UI thread."""
+
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            from src.services.data import load_processed
+
+            data = load_processed(validate=False)
+            self.finished_ok.emit(data)
+        except Exception as e:
+            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
 class PipelineWorker(QThread):
@@ -64,6 +82,8 @@ class PipelineWorker(QThread):
 
     def run(self) -> None:
         try:
+            from src.services.data import ensure_data
+
             data = ensure_data(
                 n_cases=self.n_cases,
                 preset=self.preset,
@@ -76,46 +96,48 @@ class PipelineWorker(QThread):
 
 def _df_to_table(table: QTableWidget, df: pd.DataFrame, max_rows: int = 500) -> None:
     view = df.head(max_rows)
-    table.clear()
-    table.setRowCount(len(view))
-    table.setColumnCount(len(view.columns))
-    table.setHorizontalHeaderLabels([str(c) for c in view.columns])
-    for r, (_, row) in enumerate(view.iterrows()):
-        for c, col in enumerate(view.columns):
-            val = row[col]
-            text = "" if pd.isna(val) else str(val)
-            if len(text) > 120:
-                text = text[:117] + "…"
-            table.setItem(r, c, QTableWidgetItem(text))
-    table.resizeColumnsToContents()
+    table.setUpdatesEnabled(False)
+    table.blockSignals(True)
+    try:
+        table.clear()
+        cols = [str(c) for c in view.columns]
+        table.setColumnCount(len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.setRowCount(len(view))
+        values = view.astype(object).where(pd.notna(view), "").values
+        for r in range(len(view)):
+            for c in range(len(cols)):
+                text = str(values[r, c])
+                if len(text) > 120:
+                    text = text[:117] + "…"
+                table.setItem(r, c, QTableWidgetItem(text))
+        table.resizeColumnsToContents()
+    finally:
+        table.blockSignals(False)
+        table.setUpdatesEnabled(True)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MOVER SIS — Ventilation & Anesthesia Monitor")
-        self.resize(1400, 900)
+        self.resize(1280, 800)
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
         self.flags: pd.DataFrame | None = None
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
-        self._worker: PipelineWorker | None = None
+        self._worker: QThread | None = None
+        self._charts_pending = False
 
         self._build_menu()
         self._build_ui()
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("Ready — load data or run the pipeline.")
+        self.statusBar().showMessage("Starting…")
 
-        # Auto-load if processed data already exists
-        try:
-            from src.runtime_paths import processed_dir
-
-            if (processed_dir() / "cases.parquet").exists():
-                self._on_pipeline_ok(load_processed())
-        except Exception as e:
-            self.statusBar().showMessage(f"Could not auto-load processed data: {e}")
+        # Show empty shell immediately; load data on a worker thread
+        QTimer.singleShot(0, self._autoload_processed)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -134,7 +156,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
 
-        # ---- Left control panel ----
         side = QWidget()
         side.setMaximumWidth(320)
         side.setMinimumWidth(260)
@@ -173,13 +194,13 @@ class MainWindow(QMainWindow):
         ff = QFormLayout(filt)
         self.combo_agent = QComboBox()
         self.combo_agent.addItem("(all)")
-        self.combo_agent.currentTextChanged.connect(self._refresh_views)
+        self.combo_agent.currentTextChanged.connect(self._on_filters_changed)
         ff.addRow("Primary agent", self.combo_agent)
 
         self.spin_min_score = QSpinBox()
         self.spin_min_score.setRange(0, 100_000)
         self.spin_min_score.setValue(0)
-        self.spin_min_score.valueChanged.connect(self._refresh_views)
+        self.spin_min_score.valueChanged.connect(self._on_filters_changed)
         ff.addRow("Min anomaly score", self.spin_min_score)
 
         self.chk_vitals = QCheckBox("Show vitals on timeline")
@@ -197,14 +218,16 @@ class MainWindow(QMainWindow):
 
         self.lbl_metrics = QLabel("—")
         self.lbl_metrics.setWordWrap(True)
-        self.lbl_metrics.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_metrics.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         form_wrap.addWidget(self.lbl_metrics)
         form_wrap.addStretch(1)
 
-        # ---- Tabs / charts ----
         self.tabs = QTabWidget()
-        self.plot_summary_top = PlotlyView()
-        self.plot_summary_rules = PlotlyView()
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.plot_summary_top = ChartView()
+        self.plot_summary_rules = ChartView()
         self.table_cases = QTableWidget()
         self.table_cases.setAlternatingRowColors(True)
         self.table_cases.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -221,7 +244,7 @@ class MainWindow(QMainWindow):
         summary_split.setStretchFactor(1, 2)
         self.tabs.addTab(summary_split, "Summary")
 
-        self.plot_timeline = PlotlyView()
+        self.plot_timeline = ChartView()
         self.table_episodes = QTableWidget()
         self.table_episodes.setAlternatingRowColors(True)
         self.table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -239,7 +262,34 @@ class MainWindow(QMainWindow):
         root.addWidget(side)
         root.addWidget(self.tabs, stretch=1)
 
-    # ----- actions -----
+    def _autoload_processed(self) -> None:
+        from src.runtime_paths import processed_dir
+
+        if not (processed_dir() / "cases.parquet").exists():
+            self.statusBar().showMessage(
+                "No processed data yet — click “Run / reload pipeline”."
+            )
+            return
+        if self._worker and self._worker.isRunning():
+            return
+        self.statusBar().showMessage("Loading data…")
+        self._worker = DataLoadWorker(parent=self)
+        self._worker.finished_ok.connect(self._on_pipeline_ok)
+        self._worker.failed.connect(self._on_load_fail)
+        self._worker.start()
+
+    def _on_load_fail(self, msg: str) -> None:
+        self.statusBar().showMessage("Could not auto-load processed data")
+        # Keep UI usable; only show dialog if not a simple missing-file case
+        if "Missing processed files" not in msg:
+            QMessageBox.warning(self, "Load error", msg[:2000])
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.raise_()
+        self.activateWindow()
+
     def _about(self) -> None:
         QMessageBox.about(
             self,
@@ -251,7 +301,7 @@ class MainWindow(QMainWindow):
 
     def _run_pipeline(self) -> None:
         if self._worker and self._worker.isRunning():
-            QMessageBox.information(self, "Busy", "Pipeline is already running.")
+            QMessageBox.information(self, "Busy", "A background job is already running.")
             return
         self.btn_run.setEnabled(False)
         self.statusBar().showMessage("Running pipeline…")
@@ -273,8 +323,12 @@ class MainWindow(QMainWindow):
             f"{len(self.ts)} minute rows · {len(self.flags)} flags"
         )
         self._populate_filters()
+        # Tables + selectors first (fast); charts deferred one event-loop tick
+        self._refresh_tables_and_selectors()
+        self._charts_pending = True
+        QTimer.singleShot(0, self._refresh_charts_if_needed)
+        # Rules text is cheap
         self._refresh_rule_reference()
-        self._refresh_views()
 
     def _on_pipeline_fail(self, msg: str) -> None:
         self.statusBar().showMessage("Pipeline failed")
@@ -307,7 +361,7 @@ class MainWindow(QMainWindow):
     def _filtered_cases(self) -> pd.DataFrame:
         if self.cases is None or self.cases.empty:
             return pd.DataFrame()
-        df = self.cases.copy()
+        df = self.cases
         agent = self.combo_agent.currentText()
         if agent != "(all)" and "primary_agent_name" in df.columns:
             df = df[df["primary_agent_name"] == agent]
@@ -315,28 +369,25 @@ class MainWindow(QMainWindow):
             df = df[df["anomaly_score"] >= self.spin_min_score.value()]
         return df
 
-    def _refresh_views(self) -> None:
+    def _on_filters_changed(self) -> None:
+        self._refresh_tables_and_selectors()
+        self._charts_pending = True
+        QTimer.singleShot(0, self._refresh_charts_if_needed)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        self._refresh_charts_if_needed()
+
+    def _refresh_tables_and_selectors(self) -> None:
         filtered = self._filtered_cases()
         if filtered.empty:
-            self.plot_summary_top.clear("No cases match filters.")
-            self.plot_summary_rules.clear()
             self.table_cases.setRowCount(0)
             self.combo_pid.blockSignals(True)
             self.combo_pid.clear()
             self.combo_pid.blockSignals(False)
             self.lbl_metrics.setText("No data")
+            self.plot_summary_top.clear("No cases match filters.")
+            self.plot_summary_rules.clear()
             return
-
-        self.plot_summary_top.set_figure(
-            top_cases_bar(filtered, n=min(15, len(filtered)))
-        )
-        pid_list = filtered["PID"].tolist()
-        fsub = (
-            self.flags[self.flags["PID"].isin(pid_list)]
-            if self.flags is not None
-            else pd.DataFrame()
-        )
-        self.plot_summary_rules.set_figure(flag_bar_by_rule(fsub))
 
         show_cols = [
             c
@@ -359,7 +410,6 @@ class MainWindow(QMainWindow):
         ]
         _df_to_table(self.table_cases, filtered[show_cols])
 
-        # PID selector
         prev = self.combo_pid.currentData()
         self.combo_pid.blockSignals(True)
         self.combo_pid.clear()
@@ -370,7 +420,6 @@ class MainWindow(QMainWindow):
             if "Procedure_short" in row and pd.notna(row["Procedure_short"]):
                 label += f" | {str(row['Procedure_short'])[:40]}"
             self.combo_pid.addItem(label, pid)
-        # restore selection if possible
         if prev is not None:
             idx = self.combo_pid.findData(prev)
             if idx >= 0:
@@ -391,7 +440,31 @@ class MainWindow(QMainWindow):
             f"<b>Median duration:</b> {med} min<br>"
             f"<b>Max score:</b> {int(filtered['anomaly_score'].max())}"
         )
-        self._refresh_case_timeline()
+
+    def _refresh_charts_if_needed(self) -> None:
+        if not self._charts_pending and self.cases is not None:
+            # still refresh timeline if on that tab after pid change
+            pass
+        filtered = self._filtered_cases()
+        if filtered.empty:
+            self._charts_pending = False
+            return
+
+        tab = self.tabs.currentIndex()
+        if tab == 0 or self._charts_pending:
+            self.plot_summary_top.set_figure(
+                top_cases_figure(filtered, n=min(15, len(filtered)))
+            )
+            pid_list = filtered["PID"].tolist()
+            fsub = (
+                self.flags[self.flags["PID"].isin(pid_list)]
+                if self.flags is not None
+                else pd.DataFrame()
+            )
+            self.plot_summary_rules.set_figure(flag_rules_figure(fsub))
+        if tab == 1 or self._charts_pending:
+            self._refresh_case_timeline()
+        self._charts_pending = False
 
     def _refresh_case_timeline(self) -> None:
         if self.ts is None or self.combo_pid.count() == 0:
@@ -407,25 +480,21 @@ class MainWindow(QMainWindow):
             if self.flags is not None
             else pd.DataFrame()
         )
-        cevents = (
-            self.events[self.events["PID"] == pid]
-            if self.events is not None and not self.events.empty
-            else None
-        )
         if cts.empty:
             self.plot_timeline.clear("No timeseries for this case.")
             return
-        fig = case_timeline_figure(
-            cts,
-            cflags,
-            cevents,
-            show_vitals=self.chk_vitals.isChecked(),
+        self.plot_timeline.set_figure(
+            case_timeline_figure(
+                cts,
+                cflags if not cflags.empty else None,
+                show_vitals=self.chk_vitals.isChecked(),
+            )
         )
-        self.plot_timeline.set_figure(fig)
-
         if self.episodes is not None and not self.episodes.empty:
             ep = self.episodes[self.episodes["PID"] == pid].sort_values("t_start_min")
-            _df_to_table(self.table_episodes, ep.drop(columns=["PID"], errors="ignore"))
+            _df_to_table(
+                self.table_episodes, ep.drop(columns=["PID"], errors="ignore")
+            )
         else:
             _df_to_table(self.table_episodes, cflags)
 
@@ -433,7 +502,6 @@ class MainWindow(QMainWindow):
         row = self.table_cases.currentRow()
         if row < 0:
             return
-        # PID is column 0 when present
         item = self.table_cases.item(row, 0)
         if not item:
             return
@@ -445,6 +513,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_rule_reference(self) -> None:
         try:
+            from src.config import load_thresholds
+
             preset = self.combo_preset.currentText()
             cfg = load_thresholds(preset, validate=True)
         except GuardrailError as e:
@@ -469,12 +539,13 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
-    """
-    Start the desktop UI.
+    if os.environ.get("XDG_SESSION_TYPE") == "wayland" and not os.environ.get(
+        "QT_QPA_PLATFORM"
+    ):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+    # WebEngine no longer required for charts; keep sandbox flags harmless if imported
+    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
-    Prefer ``python -m src.desktop`` so OpenGL/WebEngine attributes are set
-    before QtWebEngine is imported.
-    """
     app = QApplication.instance()
     if app is None:
         try:
@@ -486,12 +557,20 @@ def main() -> int:
         app = QApplication(sys.argv)
     app.setApplicationName("MOVER SIS Ventilation Monitor")
     app.setOrganizationName("MOVER-SIS")
+    app.setDesktopFileName("mover-sis-monitor")
+
     win = MainWindow()
     win.show()
+    win.raise_()
+    win.activateWindow()
+    screen = QGuiApplication.primaryScreen()
+    if screen is not None:
+        geo = screen.availableGeometry()
+        frame = win.frameGeometry()
+        if not geo.intersects(frame):
+            win.move(geo.center() - frame.center())
     return app.exec()
 
 
 if __name__ == "__main__":
-    # When executed as a file, ensure attribute before this module's top-level
-    # WebEngine import is not possible; use -m src.desktop instead.
     raise SystemExit(main())

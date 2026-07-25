@@ -117,3 +117,19 @@ echo "  Tarball    : $ROOT/dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz"
 echo
 echo "Launch:  $BIN"
 ls -lh "$BIN" "$ROOT/dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz" 2>/dev/null || true
+
+echo "==> Smoke-test frozen binary (offscreen, 5s)"
+if QT_QPA_PLATFORM=offscreen QTWEBENGINE_DISABLE_SANDBOX=1 \
+  timeout 5 "$BIN" >"$ROOT/build/frozen_smoke.log" 2>&1; then
+  echo "WARNING: binary exited before timeout — see build/frozen_smoke.log"
+  tail -30 "$ROOT/build/frozen_smoke.log" || true
+else
+  code=$?
+  # timeout returns 124 when the app was still running (success)
+  if [[ $code -eq 124 ]]; then
+    echo "Smoke OK: binary stayed running under offscreen Qt"
+  else
+    echo "WARNING: smoke exit code $code — see build/frozen_smoke.log"
+    tail -40 "$ROOT/build/frozen_smoke.log" || true
+  fi
+fi
