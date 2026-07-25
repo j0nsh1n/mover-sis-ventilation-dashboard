@@ -54,6 +54,7 @@ from src.desktop.charts import (
 )
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
+from src.__version__ import get_version
 from src.runtime_paths import (
     apply_persisted_settings,
     configure_from_user_directory,
@@ -269,7 +270,10 @@ def _metric_card(title: str, value_label: QLabel) -> QFrame:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MOVER SIS — Ventilation & Anesthesia Monitor")
+        self._version = get_version()
+        self.setWindowTitle(
+            f"MOVER SIS Monitor v{self._version} — Ventilation & Anesthesia"
+        )
         self.resize(1380, 860)
         self.setStyleSheet(APP_STYLESHEET)
 
@@ -324,7 +328,7 @@ class MainWindow(QMainWindow):
         # Header
         header = QHBoxLayout()
         hero = QVBoxLayout()
-        title = QLabel("MOVER SIS Monitor")
+        title = QLabel(f"MOVER SIS Monitor  ·  v{self._version}")
         title.setObjectName("heroTitle")
         sub = QLabel(
             "Research dashboard for intraoperative ventilation & anesthesia depth  ·  Not for clinical care"
@@ -602,7 +606,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About",
-            "MOVER SIS Ventilation & Anesthesia Monitor\n\n"
+            f"MOVER SIS Ventilation & Anesthesia Monitor\n"
+            f"Version {self._version}\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
             "Choose any local EMR folder via File → Open data folder.\n"
             "Not for clinical care.",
