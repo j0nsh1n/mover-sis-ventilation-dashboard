@@ -17,9 +17,14 @@ root = Path(SPECPATH).resolve().parent
 # Heavy GUI / plotting stacks (shiboken6 is required at runtime for PySide6)
 pyside_datas, pyside_binaries, pyside_hidden = collect_all("PySide6")
 shiboken_datas, shiboken_binaries, shiboken_hidden = collect_all("shiboken6")
-plotly_datas, plotly_binaries, plotly_hidden = collect_all("plotly")
+# Plotly intentionally omitted from desktop binary (matplotlib charts only)
+plotly_datas, plotly_binaries, plotly_hidden = [], [], []
 numpy_datas, numpy_binaries, numpy_hidden = collect_all("numpy")
 scipy_datas, scipy_binaries, scipy_hidden = collect_all("scipy")
+try:
+    mpl_datas, mpl_binaries, mpl_hidden = collect_all("matplotlib")
+except Exception:
+    mpl_datas, mpl_binaries, mpl_hidden = [], [], []
 
 # Optional but commonly pulled
 try:
@@ -42,6 +47,7 @@ datas += (
     + plotly_datas
     + numpy_datas
     + scipy_datas
+    + mpl_datas
     + pd_datas
     + pa_datas
 )
@@ -53,6 +59,7 @@ binaries = (
     + plotly_binaries
     + numpy_binaries
     + scipy_binaries
+    + mpl_binaries
     + pd_binaries
     + pa_binaries
 )
@@ -94,6 +101,7 @@ hiddenimports = sorted(
         + plotly_hidden
         + numpy_hidden
         + scipy_hidden
+        + mpl_hidden
         + pd_hidden
         + pa_hidden
         + collect_submodules("src")
@@ -103,15 +111,9 @@ hiddenimports = sorted(
             "PySide6.QtCore",
             "PySide6.QtGui",
             "PySide6.QtWidgets",
-            "PySide6.QtWebEngineWidgets",
-            "PySide6.QtWebEngineCore",
-            "PySide6.QtWebChannel",
             "PySide6.QtNetwork",
-            "PySide6.QtPrintSupport",
-            "plotly",
-            "plotly.graph_objects",
-            "plotly.io",
-            "plotly.subplots",
+            "matplotlib",
+            "matplotlib.pyplot",
             "yaml",
             "pyarrow",
             "pandas",
@@ -135,12 +137,12 @@ a = Analysis(
     ],
     excludes=[
         "tkinter",
-        "matplotlib",
         "IPython",
         "jupyter",
         "notebook",
         "streamlit",
         "tornado",
+        "plotly",
         "test",
         "tests",
     ],

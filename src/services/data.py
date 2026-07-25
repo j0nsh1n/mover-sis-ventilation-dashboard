@@ -17,13 +17,19 @@ REPO_ROOT = app_dir()
 PROCESSED_DIR = default_processed_dir()
 
 
-def load_processed(processed_dir: Path | str | None = None):
+def load_processed(
+    processed_dir: Path | str | None = None,
+    *,
+    validate: bool = True,
+):
     """
-    Load validated pipeline outputs.
+    Load pipeline outputs.
 
-    Returns
-    -------
-    cases, timeseries, flags, episodes, events : pd.DataFrame
+    Parameters
+    ----------
+    validate :
+        When True (default), run full output guardrails. UI auto-load may
+        pass False for speed after the pipeline has already validated on write.
     """
     p = Path(processed_dir) if processed_dir is not None else default_processed_dir()
     required = ["cases.parquet", "timeseries.parquet", "flags.parquet"]
@@ -45,12 +51,25 @@ def load_processed(processed_dir: Path | str | None = None):
         else pd.DataFrame()
     )
 
-    validate_pipeline_outputs(
-        timeseries=ts,
-        cases=cases,
-        flags=flags,
-        episodes=episodes if not episodes.empty else None,
-    )
+    if validate:
+        validate_pipeline_outputs(
+            timeseries=ts,
+            cases=cases,
+            flags=flags,
+            episodes=episodes if not episodes.empty else None,
+        )
+    else:
+        # Lightweight schema sanity only
+        for name, df, cols in (
+            ("cases", cases, ["PID", "anomaly_score"]),
+            ("timeseries", ts, ["PID", "Obs_time"]),
+            ("flags", flags, ["PID", "rule_id", "severity"]),
+        ):
+            missing_cols = [c for c in cols if c not in df.columns]
+            if missing_cols:
+                raise FileNotFoundError(
+                    f"{name} missing columns {missing_cols} under {p}"
+                )
     return cases, ts, flags, episodes, events
 
 

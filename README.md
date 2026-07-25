@@ -161,12 +161,18 @@ Safety is enforced in code, not only by convention.
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt
-PYTHONPATH=. pytest
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest
 # with coverage:
-PYTHONPATH=. pytest --cov=src --cov-report=term-missing
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest --cov=src --cov-report=term-missing
 ```
 
-CI runs the same suite on every push/PR (`.github/workflows/ci.yml`).
+CI runs the same suite on every push/PR (`.github/workflows/ci.yml`), including:
+
+- Pipeline / guardrail unit + integration tests  
+- **Desktop app** offscreen smoke (window construct, data load, chart render, startup budget)  
+- **Packaging** structure checks (spec, entrypoint, build script); frozen binary smoke runs when `dist/` exists  
+
+`./scripts/build_executable.sh` also smoke-tests the frozen binary under offscreen Qt after build.
 
 ### What is guarded
 

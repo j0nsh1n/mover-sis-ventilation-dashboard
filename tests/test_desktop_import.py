@@ -13,12 +13,11 @@ def test_desktop_package_exports_main():
     assert callable(desktop.main)
 
 
-def test_plotly_view_import():
-    # Import may require Qt libs; skip if unavailable in CI
+def test_chart_view_import():
     try:
-        from src.desktop.plotly_view import PlotlyView  # noqa: F401
+        from src.desktop.charts import ChartView, top_cases_figure  # noqa: F401
     except Exception as e:
-        pytest.skip(f"Qt/WebEngine unavailable: {e}")
+        pytest.skip(f"Qt/matplotlib unavailable: {e}")
 
 
 @pytest.mark.skipif(
