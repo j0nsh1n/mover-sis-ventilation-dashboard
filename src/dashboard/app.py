@@ -1,7 +1,10 @@
 """
-MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
+MOVER SIS — Streamlit UI (optional web frontend).
 
-Run from repo root:
+Prefer the desktop app:
+  python -m src.desktop
+
+Streamlit (browser):
   streamlit run src/dashboard/app.py
 """
 
@@ -13,7 +16,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# Ensure repo root is on path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,63 +24,21 @@ from src.config import load_thresholds
 from src.dashboard.components import case_timeline_figure, flag_bar_by_rule, top_cases_bar
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
-from src.guardrails.validate_data import validate_pipeline_outputs
-from src.pipeline.run import run_pipeline
-
-PROCESSED = ROOT / "data" / "processed"
+from src.services.data import PROCESSED_DIR, ensure_data, load_processed
 
 
 @st.cache_data(show_spinner=False)
-def load_processed(processed_dir: str):
-    p = Path(processed_dir)
-    required = ["cases.parquet", "timeseries.parquet", "flags.parquet"]
-    missing = [f for f in required if not (p / f).is_file()]
-    if missing:
-        raise FileNotFoundError(f"Missing processed files in {p}: {missing}")
-
-    cases = pd.read_parquet(p / "cases.parquet")
-    ts = pd.read_parquet(p / "timeseries.parquet")
-    flags = pd.read_parquet(p / "flags.parquet")
-    episodes = (
-        pd.read_parquet(p / "episodes.parquet")
-        if (p / "episodes.parquet").exists()
-        else pd.DataFrame()
-    )
-    events = (
-        pd.read_parquet(p / "events.parquet")
-        if (p / "events.parquet").exists()
-        else pd.DataFrame()
-    )
-
-    # Guardrail: never serve corrupt outputs
-    validate_pipeline_outputs(
-        timeseries=ts,
-        cases=cases,
-        flags=flags,
-        episodes=episodes if not episodes.empty else None,
-    )
-    return cases, ts, flags, episodes, events
+def _cached_load(processed_dir: str):
+    return load_processed(processed_dir)
 
 
-def ensure_data(n_cases: int, preset: str, force: bool = False):
-    if n_cases < MIN_N_CASES or n_cases > MAX_N_CASES:
-        raise GuardrailError(
-            f"n_cases={n_cases} outside [{MIN_N_CASES}, {MAX_N_CASES}]"
-        )
-    if preset not in ALLOWED_PRESETS:
-        raise GuardrailError(f"Invalid preset {preset!r}")
-
-    need = force or not (PROCESSED / "cases.parquet").exists()
+def ensure_data_ui(n_cases: int, preset: str, force: bool = False):
+    need = force or not (PROCESSED_DIR / "cases.parquet").exists()
     if need:
         with st.spinner(f"Running pipeline on {n_cases} cases (preset={preset})…"):
-            run_pipeline(
-                n_cases=n_cases,
-                preset=preset,
-                output_dir=PROCESSED,
-                validate=True,
-            )
-        load_processed.clear()
-    return load_processed(str(PROCESSED))
+            ensure_data(n_cases=n_cases, preset=preset, force=True)
+        _cached_load.clear()
+    return _cached_load(str(PROCESSED_DIR))
 
 
 def main():
@@ -92,10 +52,10 @@ def main():
     st.title("MOVER SIS — Intraoperative Ventilation & Anesthesia")
     st.caption(
         "Research dashboard on de-identified UC Irvine perioperative data (2015–2017). "
-        "Rule-based flags are screening aids, not clinical diagnoses."
+        "Rule-based flags are screening aids, not clinical diagnoses. "
+        "For a native window, run: `python -m src.desktop`"
     )
 
-    # ----- Sidebar -----
     st.sidebar.header("Data & filters")
     n_cases = st.sidebar.slider(
         "Sample size (cases)",
@@ -108,7 +68,7 @@ def main():
     force_rerun = st.sidebar.button("Re-run pipeline")
 
     try:
-        cases, ts, flags, episodes, events = ensure_data(
+        cases, ts, flags, episodes, events = ensure_data_ui(
             n_cases, preset, force=force_rerun
         )
     except GuardrailError as e:
@@ -126,7 +86,6 @@ def main():
         )
         return
 
-    # Filters
     agents = ["(all)"] + sorted(
         [
             a
@@ -155,7 +114,6 @@ def main():
 
     pid_list = filtered["PID"].tolist()
 
-    # ----- Summary -----
     if view == "Summary":
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Cases", len(filtered))
@@ -217,7 +175,6 @@ def main():
         )
         st.info("Switch to **Case timeline** in the sidebar and pick a PID to inspect.")
 
-    # ----- Case timeline -----
     elif view == "Case timeline":
         if not pid_list:
             st.warning("No cases match filters.")
@@ -286,7 +243,6 @@ def main():
         with st.expander("Raw minute flags"):
             st.dataframe(cflags, use_container_width=True, height=240)
 
-    # ----- Rule reference -----
     else:
         try:
             cfg = load_thresholds(preset, validate=True)
