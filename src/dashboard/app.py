@@ -24,7 +24,8 @@ from src.config import load_thresholds
 from src.dashboard.components import case_timeline_figure, flag_bar_by_rule, top_cases_bar
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
-from src.services.data import PROCESSED_DIR, ensure_data, load_processed
+from src.runtime_paths import processed_dir as default_processed_dir
+from src.services.data import ensure_data, load_processed
 
 
 @st.cache_data(show_spinner=False)
@@ -33,12 +34,13 @@ def _cached_load(processed_dir: str):
 
 
 def ensure_data_ui(n_cases: int, preset: str, force: bool = False):
-    need = force or not (PROCESSED_DIR / "cases.parquet").exists()
+    out = default_processed_dir()
+    need = force or not (out / "cases.parquet").exists()
     if need:
         with st.spinner(f"Running pipeline on {n_cases} cases (preset={preset})…"):
             ensure_data(n_cases=n_cases, preset=preset, force=True)
         _cached_load.clear()
-    return _cached_load(str(PROCESSED_DIR))
+    return _cached_load(str(out))
 
 
 def main():

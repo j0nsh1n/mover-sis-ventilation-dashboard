@@ -1,11 +1,20 @@
 from pathlib import Path
+import copy
 import yaml
 
 from src.guardrails.exceptions import ConfigValidationError
 from src.guardrails.limits import ALLOWED_PRESETS
 from src.guardrails.validate_config import validate_thresholds
+from src.runtime_paths import thresholds_path
 
 CONFIG_DIR = Path(__file__).resolve().parent
+
+
+def _thresholds_file() -> Path:
+    return thresholds_path()
+
+
+# Back-compat alias (resolved at import for non-frozen; prefer _thresholds_file())
 THRESHOLDS_PATH = CONFIG_DIR / "thresholds.yaml"
 
 
@@ -16,10 +25,11 @@ def load_thresholds(preset: str = "default", *, validate: bool = True) -> dict:
             f"Unknown preset {preset!r}; allowed: {sorted(ALLOWED_PRESETS)}"
         )
 
-    if not THRESHOLDS_PATH.is_file():
-        raise ConfigValidationError(f"thresholds file not found: {THRESHOLDS_PATH}")
+    path = _thresholds_file()
+    if not path.is_file():
+        raise ConfigValidationError(f"thresholds file not found: {path}")
 
-    with open(THRESHOLDS_PATH, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         try:
             cfg = yaml.safe_load(f)
         except yaml.YAMLError as e:
@@ -39,8 +49,6 @@ def load_thresholds(preset: str = "default", *, validate: bool = True) -> dict:
         raise ConfigValidationError(f"preset {preset!r} overlay must be a mapping")
 
     # Deep-copy rules before mutating so callers cannot corrupt cached YAML state
-    import copy
-
     cfg = copy.deepcopy(cfg)
     rules = cfg.setdefault("rules", {})
     if not isinstance(rules, dict):

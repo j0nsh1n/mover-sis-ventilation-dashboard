@@ -10,9 +10,11 @@ from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.guardrails.validate_data import validate_pipeline_outputs
 from src.pipeline.run import run_pipeline
+from src.runtime_paths import app_dir, emr_dir as default_emr_dir
+from src.runtime_paths import processed_dir as default_processed_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PROCESSED_DIR = REPO_ROOT / "data" / "processed"
+REPO_ROOT = app_dir()
+PROCESSED_DIR = default_processed_dir()
 
 
 def load_processed(processed_dir: Path | str | None = None):
@@ -23,7 +25,7 @@ def load_processed(processed_dir: Path | str | None = None):
     -------
     cases, timeseries, flags, episodes, events : pd.DataFrame
     """
-    p = Path(processed_dir) if processed_dir is not None else PROCESSED_DIR
+    p = Path(processed_dir) if processed_dir is not None else default_processed_dir()
     required = ["cases.parquet", "timeseries.parquet", "flags.parquet"]
     missing = [f for f in required if not (p / f).is_file()]
     if missing:
@@ -74,11 +76,12 @@ def ensure_data(
     if preset not in ALLOWED_PRESETS:
         raise GuardrailError(f"Invalid preset {preset!r}")
 
-    out = Path(processed_dir) if processed_dir is not None else PROCESSED_DIR
+    out = Path(processed_dir) if processed_dir is not None else default_processed_dir()
+    emr = Path(emr_dir) if emr_dir is not None else default_emr_dir()
     need = force or not (out / "cases.parquet").exists()
     if need:
         run_pipeline(
-            emr_dir=emr_dir,
+            emr_dir=emr,
             n_cases=n_cases,
             pids=pids,
             preset=preset,

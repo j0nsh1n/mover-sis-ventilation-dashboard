@@ -110,9 +110,9 @@ class MainWindow(QMainWindow):
 
         # Auto-load if processed data already exists
         try:
-            from src.services.data import PROCESSED_DIR
+            from src.runtime_paths import processed_dir
 
-            if (PROCESSED_DIR / "cases.parquet").exists():
+            if (processed_dir() / "cases.parquet").exists():
                 self._on_pipeline_ok(load_processed())
         except Exception as e:
             self.statusBar().showMessage(f"Could not auto-load processed data: {e}")

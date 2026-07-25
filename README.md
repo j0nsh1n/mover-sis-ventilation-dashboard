@@ -93,6 +93,45 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
+## Build a Linux executable (Nobara / Fedora x86_64)
+
+Produces a standalone **folder** (recommended for QtWebEngine) plus a `.tar.gz`:
+
+```bash
+source .venv/bin/activate
+./scripts/build_executable.sh
+```
+
+Artifacts:
+
+| Path | Description |
+|------|-------------|
+| `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
+| `dist/MOVER-SIS-Monitor/data/raw/EMR/` | Drop SIS CSVs here |
+| `dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz` | Portable archive |
+
+```bash
+# After build
+cd dist/MOVER-SIS-Monitor
+# copy your EMR CSVs into data/raw/EMR/
+./MOVER-SIS-Monitor
+```
+
+Optional desktop menu entry from the built folder:
+
+```bash
+cp dist/MOVER-SIS-Monitor/mover-sis-monitor.desktop ~/.local/share/applications/
+# edit Exec=/Path= if you move the folder
+```
+
+If the binary fails to start on a minimal install, install common GUI deps:
+
+```bash
+sudo dnf install -y mesa-libGL libxkbcommon xcb-util-cursor \
+  xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil \
+  libnsl libxcrypt-compat
+```
+
 ## Project layout
 
 ```
