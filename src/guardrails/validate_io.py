@@ -89,49 +89,91 @@ def validate_emr_dir(emr_dir: Path | str) -> Path:
     return path
 
 
+def _normalize_candidate(path: Path) -> Path:
+    """Resolve path for containment checks (works for not-yet-created dirs)."""
+    if path.exists():
+        return _resolve(path)
+    parent = path.parent
+    if parent.exists():
+        return _resolve(parent) / path.name
+    return path.expanduser().absolute()
+
+
+def _is_under(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        # Fallback string prefix for not-yet-created paths
+        c, p = str(child), str(parent)
+        return c == p or c.startswith(p.rstrip("/") + "/")
+
+
 def resolve_output_dir(
     output_dir: Path | str | None = None,
     *,
     create: bool = True,
 ) -> Path:
     """
-    Resolve output directory. By default must stay under the app/data root
-    unless MOVER_ALLOW_EXTERNAL_OUTPUT=1.
-    """
-    from src.runtime_paths import app_dir, processed_dir as default_processed
+    Resolve output directory for processed pipeline artifacts.
 
-    root = app_dir()
+    Allowed without MOVER_ALLOW_EXTERNAL_OUTPUT:
+      - under the app install / repo root
+      - the configured processed_dir()
+      - under the configured data_dir()
+      - under the parent of the configured EMR dir (e.g. /var/mnt/games/processed
+        when EMR is /var/mnt/games/EMR)
+
+    Set MOVER_ALLOW_EXTERNAL_OUTPUT=1 to allow any path.
+    """
+    from src.runtime_paths import app_dir, data_dir, emr_dir
+    from src.runtime_paths import processed_dir as default_processed
+
     if output_dir is None:
         out = default_processed()
     else:
         out = Path(output_dir)
 
-    out = _resolve(out) if out.exists() or out.parent.exists() else out.expanduser().absolute()
+    candidate = _normalize_candidate(out)
 
-    # Path containment check
     if not allow_external_output():
+        allowed_roots: list[Path] = [app_dir()]
         try:
-            out_resolved = out if out.exists() else out
-            # Compare against repo root after resolving parent
-            root_res = _resolve(root)
-            candidate = out_resolved
-            # If not yet created, resolve parent + name
-            if not candidate.exists():
-                parent = _resolve(candidate.parent) if candidate.parent.exists() else candidate.parent.absolute()
-                candidate = parent / candidate.name
-            else:
-                candidate = _resolve(candidate)
+            allowed_roots.append(data_dir())
+        except Exception:
+            pass
+        try:
+            allowed_roots.append(default_processed())
+        except Exception:
+            pass
+        try:
+            # Parent of EMR is a natural place for a sibling processed/ folder
+            allowed_roots.append(emr_dir().parent)
+            if emr_dir().name == "EMR":
+                allowed_roots.append(emr_dir().parent.parent)
+        except Exception:
+            pass
 
-            if not str(candidate).startswith(str(root_res)):
-                raise PathSafetyError(
-                    f"Refusing to write outside repository ({root_res}). "
-                    f"Requested: {candidate}. Set MOVER_ALLOW_EXTERNAL_OUTPUT=1 to override."
-                )
-            out = candidate
-        except PathSafetyError:
-            raise
-        except OSError as e:
-            raise PathSafetyError(f"Cannot resolve output path {out}: {e}") from e
+        # Deduplicate
+        roots: list[Path] = []
+        for r in allowed_roots:
+            try:
+                rr = _resolve(r) if r.exists() else Path(r).expanduser().absolute()
+            except OSError:
+                rr = Path(r).expanduser().absolute()
+            if rr not in roots:
+                roots.append(rr)
+
+        if not any(_is_under(candidate, root) or candidate == root for root in roots):
+            raise PathSafetyError(
+                f"Refusing to write processed output to {candidate}. "
+                f"Allowed roots include the app directory and your selected "
+                f"EMR/data folders ({', '.join(str(r) for r in roots[:4])}…). "
+                f"Set MOVER_ALLOW_EXTERNAL_OUTPUT=1 to allow any path."
+            )
+        out = candidate
+    else:
+        out = candidate
 
     if create:
         try:

@@ -129,6 +129,8 @@ APP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 export QTWEBENGINE_DISABLE_SANDBOX=1
 export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox}"
+# User-selected EMR/wave trees may live outside the install dir (e.g. /var/mnt/games)
+export MOVER_ALLOW_EXTERNAL_OUTPUT="${MOVER_ALLOW_EXTERNAL_OUTPUT:-1}"
 export LD_LIBRARY_PATH="$APP_DIR/_internal/PySide6/Qt/lib:$APP_DIR/_internal/numpy.libs:$APP_DIR/_internal/scipy.libs:$APP_DIR/_internal/pillow.libs:$APP_DIR/_internal/PIL.libs:$APP_DIR/_internal/matplotlib.libs:$APP_DIR/_internal/shiboken6:${LD_LIBRARY_PATH:-}"
 cd "$APP_DIR"
 exec "$APP_DIR/MOVER-SIS-Monitor" "$@"
