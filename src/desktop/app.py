@@ -236,6 +236,63 @@ class PipelineWorker(QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
+class LLMChatWorker(QThread):
+    """Call local Ollama with grounded case context."""
+
+    finished_ok = Signal(str)
+    failed = Signal(str)
+    chunk = Signal(str)
+
+    def __init__(
+        self,
+        model: str,
+        question: str,
+        case_context: str,
+        history: list[dict[str, str]] | None = None,
+        base_url: str = "http://127.0.0.1:11434",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.model = model
+        self.question = question
+        self.case_context = case_context
+        self.history = history or []
+        self.base_url = base_url
+
+    def run(self) -> None:
+        try:
+            from src.llm.ollama_client import OllamaClient
+            from src.llm.prompts import SYSTEM_PROMPT, user_message
+
+            client = OllamaClient(base_url=self.base_url)
+            messages: list[dict[str, str]] = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+            ]
+            # prior turns (already grounded; keep short)
+            for m in self.history[-6:]:
+                messages.append({"role": m["role"], "content": m["content"]})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": user_message(self.case_context, self.question),
+                }
+            )
+            parts: list[str] = []
+            for piece in client.chat_stream(
+                self.model,
+                messages,
+                temperature=0.2,
+            ):
+                parts.append(piece)
+                self.chunk.emit(piece)
+            text = "".join(parts).strip()
+            if not text:
+                raise RuntimeError("Model returned an empty answer.")
+            self.finished_ok.emit(text)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 def _df_to_table(table: QTableWidget, df: pd.DataFrame, max_rows: int = 500) -> None:
     view = df.head(max_rows)
     table.setUpdatesEnabled(False)
@@ -504,7 +561,7 @@ class MainWindow(QMainWindow):
         self.combo_pid.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self.combo_pid.currentIndexChanged.connect(self._refresh_case_timeline)
+        self.combo_pid.currentIndexChanged.connect(self._on_pid_changed)
         ff.addRow("Surgery (PID)", self.combo_pid)
         side_l.addWidget(filt)
 
@@ -559,9 +616,77 @@ class MainWindow(QMainWindow):
         self.rules_text.setReadOnly(True)
         self.tabs.addTab(self.rules_text, "3 · Rule reference")
 
+        # ---- Local LLM case Q&A ----
+        chat_tab = QWidget()
+        chat_l = QVBoxLayout(chat_tab)
+        chat_l.setContentsMargins(8, 8, 8, 8)
+        chat_intro = QLabel(
+            "Ask a <b>local LLM</b> (Ollama) about the selected surgery. "
+            "Answers are grounded in EMR-derived context for that case only — "
+            "not for clinical care."
+        )
+        chat_intro.setWordWrap(True)
+        chat_intro.setObjectName("pathHint")
+        chat_l.addWidget(chat_intro)
+
+        llm_row = QHBoxLayout()
+        self.combo_llm_model = QComboBox()
+        self.combo_llm_model.setMinimumWidth(220)
+        self.combo_llm_model.setEditable(True)
+        self.combo_llm_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        llm_row.addWidget(QLabel("Ollama model"))
+        llm_row.addWidget(self.combo_llm_model, stretch=1)
+        btn_refresh_models = QPushButton("Refresh models")
+        btn_refresh_models.setObjectName("secondaryBtn")
+        btn_refresh_models.clicked.connect(self._refresh_ollama_models)
+        llm_row.addWidget(btn_refresh_models)
+        btn_show_ctx = QPushButton("Show case context")
+        btn_show_ctx.setObjectName("secondaryBtn")
+        btn_show_ctx.clicked.connect(self._show_case_context)
+        llm_row.addWidget(btn_show_ctx)
+        chat_l.addLayout(llm_row)
+
+        self.lbl_llm_case = QLabel("Case: (select a surgery in Search & filters)")
+        self.lbl_llm_case.setStyleSheet("font-weight:600; color:#334e68;")
+        chat_l.addWidget(self.lbl_llm_case)
+
+        self.chat_history = QTextEdit()
+        self.chat_history.setReadOnly(True)
+        self.chat_history.setPlaceholderText(
+            "Conversation appears here.\n"
+            "Example questions:\n"
+            "• What procedure was performed and which anesthetic agent was used?\n"
+            "• Summarize ventilation (TV, PIP, PEEP, ETCO2) during the case.\n"
+            "• Which anomaly flags fired most, and what might they mean in research terms?\n"
+            "• What medications were documented?"
+        )
+        chat_l.addWidget(self.chat_history, stretch=1)
+
+        ask_row = QHBoxLayout()
+        self.edit_chat = QLineEdit()
+        self.edit_chat.setPlaceholderText("Ask about the selected case…")
+        self.edit_chat.returnPressed.connect(self._send_chat)
+        ask_row.addWidget(self.edit_chat, stretch=1)
+        self.btn_send_chat = QPushButton("Ask")
+        self.btn_send_chat.setObjectName("primaryBtn")
+        self.btn_send_chat.clicked.connect(self._send_chat)
+        ask_row.addWidget(self.btn_send_chat)
+        btn_clear_chat = QPushButton("Clear")
+        btn_clear_chat.setObjectName("secondaryBtn")
+        btn_clear_chat.clicked.connect(self._clear_chat)
+        ask_row.addWidget(btn_clear_chat)
+        chat_l.addLayout(ask_row)
+
+        self.tabs.addTab(chat_tab, "4 · Ask about case")
+        self._chat_messages: list[dict[str, str]] = []
+        self._llm_worker: QThread | None = None
+        self._streaming_answer = ""
+
         body.addWidget(side)
         body.addWidget(self.tabs, stretch=1)
         outer.addLayout(body, stretch=1)
+
+        QTimer.singleShot(200, self._refresh_ollama_models)
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -699,9 +824,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Avoid Qt abort if a worker is still running when the window is destroyed
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.requestInterruption()
-            self._worker.wait(3000)
+        for w in (self._worker, getattr(self, "_llm_worker", None)):
+            if w is not None and w.isRunning():
+                w.requestInterruption()
+                w.wait(3000)
         super().closeEvent(event)
 
     def _about(self) -> None:
@@ -898,6 +1024,190 @@ class MainWindow(QMainWindow):
         if tab == 1 or self._charts_pending:
             self._refresh_case_timeline()
         self._charts_pending = False
+
+    def _on_pid_changed(self) -> None:
+        self._refresh_case_timeline()
+        self._update_llm_case_label()
+
+    def _update_llm_case_label(self) -> None:
+        if not hasattr(self, "lbl_llm_case"):
+            return
+        pid = self.combo_pid.currentData() if self.combo_pid.count() else None
+        if not pid:
+            self.lbl_llm_case.setText("Case: (select a surgery in Search & filters)")
+            return
+        proc = ""
+        if self.cases is not None and not self.cases.empty:
+            row = self.cases[self.cases["PID"].astype(str) == str(pid)]
+            if not row.empty and "Procedure_short" in row.columns:
+                proc = str(row.iloc[0].get("Procedure_short", "") or "")
+        self.lbl_llm_case.setText(
+            f"Case: {pid}" + (f"  —  {proc[:80]}" if proc else "")
+        )
+
+    def _refresh_ollama_models(self) -> None:
+        if not hasattr(self, "combo_llm_model"):
+            return
+        try:
+            from src.llm.ollama_client import OllamaClient
+
+            client = OllamaClient()
+            models = client.list_models()
+        except Exception as e:
+            self.combo_llm_model.clear()
+            self.combo_llm_model.addItem("(Ollama unavailable)")
+            self.statusBar().showMessage(
+                f"Ollama not reachable — start with: ollama serve ({e})"
+            )
+            return
+        current = self.combo_llm_model.currentText()
+        self.combo_llm_model.blockSignals(True)
+        self.combo_llm_model.clear()
+        if not models:
+            self.combo_llm_model.addItem("(no models — ollama pull gemma4)")
+        else:
+            self.combo_llm_model.addItems(models)
+            # Prefer a mid-size local model if present
+            for preferred in (
+                "gemma4:latest",
+                "qwen2.5:14b",
+                "qwen3:14b",
+                "mistral-small3.1:24b",
+            ):
+                idx = self.combo_llm_model.findText(preferred)
+                if idx >= 0:
+                    self.combo_llm_model.setCurrentIndex(idx)
+                    break
+            if current and self.combo_llm_model.findText(current) >= 0:
+                self.combo_llm_model.setCurrentText(current)
+        self.combo_llm_model.blockSignals(False)
+        self.statusBar().showMessage(
+            f"Ollama OK · {len(models)} model(s) available"
+        )
+
+    def _current_case_context(self) -> str:
+        pid = self.combo_pid.currentData()
+        if not pid:
+            raise RuntimeError("Select a surgery (PID) first.")
+        if self.cases is None or self.ts is None:
+            raise RuntimeError("Load processed case data first.")
+        from src.llm.case_context import build_case_context
+
+        return build_case_context(
+            str(pid),
+            cases=self.cases,
+            timeseries=self.ts,
+            flags=self.flags,
+            episodes=self.episodes,
+            events=self.events,
+            include_emr_extras=True,
+        )
+
+    def _show_case_context(self) -> None:
+        try:
+            ctx = self._current_case_context()
+        except Exception as e:
+            QMessageBox.warning(self, "Case context", str(e))
+            return
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Case context sent to the LLM")
+        dlg.setText(
+            "This is the structured briefing the local model receives "
+            "(truncated if very long)."
+        )
+        dlg.setDetailedText(ctx[:20000])
+        dlg.setIcon(QMessageBox.Icon.Information)
+        dlg.exec()
+
+    def _clear_chat(self) -> None:
+        self._chat_messages = []
+        self.chat_history.clear()
+        self._streaming_answer = ""
+
+    def _append_chat(self, role: str, text: str) -> None:
+        who = "You" if role == "user" else "Assistant"
+        color = "#0f766e" if role == "user" else "#334e68"
+        self.chat_history.append(
+            f'<p style="margin:8px 0 2px 0;"><b style="color:{color};">{who}</b></p>'
+            f'<p style="margin:0 0 10px 0; white-space:pre-wrap;">{text}</p>'
+        )
+
+    def _send_chat(self) -> None:
+        if self._llm_worker is not None and self._llm_worker.isRunning():
+            QMessageBox.information(self, "Busy", "Still waiting on the local model.")
+            return
+        question = self.edit_chat.text().strip()
+        if not question:
+            return
+        model = self.combo_llm_model.currentText().strip()
+        if not model or model.startswith("("):
+            QMessageBox.warning(
+                self,
+                "Ollama model",
+                "No Ollama model selected.\n\n"
+                "1. Run: ollama serve\n"
+                "2. Pull a model, e.g. ollama pull gemma4\n"
+                "3. Click Refresh models",
+            )
+            return
+        try:
+            ctx = self._current_case_context()
+        except Exception as e:
+            QMessageBox.warning(self, "Case context", str(e))
+            return
+
+        self.edit_chat.clear()
+        self._append_chat("user", question)
+        self._chat_messages.append({"role": "user", "content": question})
+        self.btn_send_chat.setEnabled(False)
+        self.statusBar().showMessage(f"Asking {model}…")
+        self._streaming_answer = ""
+        self.chat_history.append(
+            '<p style="margin:8px 0 2px 0;"><b style="color:#334e68;">Assistant</b> '
+            "<i>(streaming…)</i></p>"
+            '<p style="margin:0 0 10px 0; white-space:pre-wrap;" id="stream"></p>'
+        )
+
+        self._llm_worker = LLMChatWorker(
+            model=model,
+            question=question,
+            case_context=ctx,
+            history=self._chat_messages[:-1],
+            parent=self,
+        )
+        self._llm_worker.chunk.connect(self._on_llm_chunk)
+        self._llm_worker.finished_ok.connect(self._on_llm_ok)
+        self._llm_worker.failed.connect(self._on_llm_fail)
+        self._llm_worker.finished.connect(lambda: self.btn_send_chat.setEnabled(True))
+        self._llm_worker.start()
+
+    def _on_llm_chunk(self, piece: str) -> None:
+        self._streaming_answer += piece
+        # Simple approach: rewrite last assistant block by re-appending is messy;
+        # update status with length while streaming.
+        self.statusBar().showMessage(
+            f"Streaming… {len(self._streaming_answer)} chars"
+        )
+
+    def _on_llm_ok(self, text: str) -> None:
+        # Replace the streaming placeholder by appending final clean answer
+        final = text.strip() or self._streaming_answer.strip()
+        self._chat_messages.append({"role": "assistant", "content": final})
+        # Rebuild transcript for clean formatting
+        self.chat_history.clear()
+        for m in self._chat_messages:
+            self._append_chat(m["role"], m["content"])
+        self.statusBar().showMessage("Local LLM answer ready")
+        self._streaming_answer = ""
+
+    def _on_llm_fail(self, msg: str) -> None:
+        self._append_chat(
+            "assistant",
+            f"[Error] {msg}\n\n"
+            "Check that Ollama is running (`ollama serve`) and a model is pulled.",
+        )
+        self.statusBar().showMessage("Local LLM request failed")
+        self._streaming_answer = ""
 
     def _refresh_case_timeline(self) -> None:
         if self.ts is None or self.combo_pid.count() == 0:

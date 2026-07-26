@@ -87,6 +87,7 @@ The desktop app:
 - Opens a **native window** (not a browser tab)
 - Lets you **choose EMR and Wave folders separately** (they ship as different archives); choices are remembered  
 - **Keyword search** across procedure, PID, agent, flag rules (AND matching; quotes for phrases)
+- **Local LLM case chat** (Ollama): ask questions about a selected surgery using grounded EMR context
 - Loads existing processed caches on startup when present
 - Runs the pipeline in a **background thread** when you click **Run / reload pipeline**
 - Shows organized Summary, Case timeline, and Rule reference tabs with metric cards and path status
@@ -103,6 +104,25 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag `v0.1.0` / manual run): GitHub Actions workflow  
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact
+
+### Local LLM (Ollama) — Ask about a case
+
+The desktop tab **4 · Ask about case** talks to a model on your machine via [Ollama](https://ollama.com/).
+
+```bash
+# Terminal 1 — if not already running
+ollama serve
+
+# Optional: ensure a model is available
+ollama pull gemma4
+```
+
+Then in the app:
+1. Load/process cases and select a **Surgery (PID)**
+2. Open **4 · Ask about case**
+3. Pick a model → ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
+
+Answers are built from a structured case briefing (demographics, procedure, vent/vitals summaries, flags, meds, events). The model is instructed **not** to invent missing data. Research use only.
 
 ### Build & install on this computer (Nobara)
 
