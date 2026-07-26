@@ -95,10 +95,15 @@ def test_output_dir_stays_in_repo(tmp_path, monkeypatch):
 
 
 def test_output_dir_external_blocked(tmp_path, monkeypatch):
+    from src.runtime_paths import clear_session_path_overrides
+
+    clear_session_path_overrides()
     monkeypatch.delenv("MOVER_ALLOW_EXTERNAL_OUTPUT", raising=False)
-    external = tmp_path / "outside_repo_out"
-    # tmp_path is outside the project repo
-    with pytest.raises(PathSafetyError, match="outside repository"):
+    monkeypatch.delenv("MOVER_EMR_DIR", raising=False)
+    monkeypatch.delenv("MOVER_DATA_DIR", raising=False)
+    monkeypatch.delenv("MOVER_PROCESSED_DIR", raising=False)
+    external = tmp_path / "random_unrelated_out"
+    with pytest.raises(PathSafetyError, match="Refusing to write"):
         resolve_output_dir(external, create=True)
 
 
@@ -107,6 +112,24 @@ def test_output_dir_external_allowed(tmp_path, monkeypatch):
     external = tmp_path / "outside_repo_out"
     out = resolve_output_dir(external, create=True)
     assert out.is_dir()
+
+
+def test_output_dir_sibling_of_user_emr_allowed(tmp_path, monkeypatch):
+    """User EMR at /data/EMR may write processed next to it at /data/processed."""
+    from src.runtime_paths import clear_session_path_overrides, set_session_paths
+
+    clear_session_path_overrides()
+    monkeypatch.delenv("MOVER_ALLOW_EXTERNAL_OUTPUT", raising=False)
+    emr = tmp_path / "games" / "EMR"
+    emr.mkdir(parents=True)
+    (emr / "patient_information.csv").write_text("PID\n")
+    set_session_paths(emr_dir=emr, data_dir=tmp_path / "games")
+    try:
+        out = resolve_output_dir(tmp_path / "games" / "processed", create=True)
+        assert out.is_dir()
+        assert out.name == "processed"
+    finally:
+        clear_session_path_overrides()
 
 
 def test_atomic_write_json(tmp_path):

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.runtime_paths import (
     app_dir,
     bundle_dir,
@@ -13,6 +15,15 @@ from src.runtime_paths import (
     processed_dir,
     thresholds_path,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_paths():
+    from src.runtime_paths import clear_session_path_overrides
+
+    clear_session_path_overrides()
+    yield
+    clear_session_path_overrides()
 
 
 def test_not_frozen_in_pytest():
