@@ -1,6 +1,6 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-**Version 0.1.0**
+**Version 0.2.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -98,31 +98,30 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Versioning & releases (v0.1.0)
+## Versioning & releases (v0.2.0)
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.1.0`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.2.0`, semver `x.y.z`)
+- Process rules for agents: [`CONTEXT.md`](CONTEXT.md) and [`AGENTS.md`](AGENTS.md)
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag `v0.1.0` / manual run): GitHub Actions workflow  
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact
 
 ### Local LLM (Ollama) — Ask about a case
 
-The desktop tab **4 · Ask about case** talks to a model on your machine via [Ollama](https://ollama.com/).
+The desktop tab **4 · Ask about case** uses **Ollama on this machine**. The app will **start `ollama serve` automatically** if Ollama is installed and the API is not up yet. Models stay on the host (not inside the .exe).
 
 ```bash
-# Terminal 1 — if not already running
-ollama serve
-
-# Optional: ensure a model is available
+# Install Ollama once: https://ollama.com
+# Pull at least one model (examples already on many machines):
 ollama pull gemma4
 ```
 
 Then in the app:
 1. Load/process cases and select a **Surgery (PID)**
-2. Open **4 · Ask about case**
-3. Pick a model → ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
+2. Open **4 · Ask about case** (Refresh models if needed)
+3. Ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
 
-Answers are built from a structured case briefing (demographics, procedure, vent/vitals summaries, flags, meds, events). The model is instructed **not** to invent missing data. Research use only.
+Answers are grounded in a structured case briefing. Research use only — not for clinical care.
 
 ### Build & install on this computer (Nobara)
 

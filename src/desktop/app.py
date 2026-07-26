@@ -621,7 +621,8 @@ class MainWindow(QMainWindow):
         chat_l = QVBoxLayout(chat_tab)
         chat_l.setContentsMargins(8, 8, 8, 8)
         chat_intro = QLabel(
-            "Ask a <b>local LLM</b> (Ollama) about the selected surgery. "
+            "Ask a <b>local LLM</b> about the selected surgery. "
+            "The app uses <b>Ollama on this machine</b> (starts the server automatically if installed). "
             "Answers are grounded in EMR-derived context for that case only — "
             "not for clinical care."
         )
@@ -1048,42 +1049,53 @@ class MainWindow(QMainWindow):
     def _refresh_ollama_models(self) -> None:
         if not hasattr(self, "combo_llm_model"):
             return
-        try:
-            from src.llm.ollama_client import OllamaClient
+        from src.llm.service import ensure_ollama, ollama_status_summary
+        from src.user_settings import load_settings, update_settings
 
-            client = OllamaClient()
-            models = client.list_models()
-        except Exception as e:
-            self.combo_llm_model.clear()
-            self.combo_llm_model.addItem("(Ollama unavailable)")
-            self.statusBar().showMessage(
-                f"Ollama not reachable — start with: ollama serve ({e})"
-            )
-            return
-        current = self.combo_llm_model.currentText()
+        # Ensure server is up (starts `ollama serve` if binary found)
+        status = ensure_ollama(start_if_needed=True, wait_s=20.0)
         self.combo_llm_model.blockSignals(True)
         self.combo_llm_model.clear()
+        if not status.available:
+            self.combo_llm_model.addItem("(Ollama unavailable)")
+            self.statusBar().showMessage(status.message)
+            self.combo_llm_model.blockSignals(False)
+            return
+
+        models = status.models
         if not models:
             self.combo_llm_model.addItem("(no models — ollama pull gemma4)")
         else:
             self.combo_llm_model.addItems(models)
-            # Prefer a mid-size local model if present
-            for preferred in (
-                "gemma4:latest",
-                "qwen2.5:14b",
-                "qwen3:14b",
-                "mistral-small3.1:24b",
-            ):
+            saved = load_settings().get("ollama_model")
+            preferred_list = []
+            if saved:
+                preferred_list.append(str(saved))
+            preferred_list.extend(
+                [
+                    "gemma4:latest",
+                    "qwen2.5:14b",
+                    "qwen3:14b",
+                    "mistral-small3.1:24b",
+                ]
+            )
+            for preferred in preferred_list:
                 idx = self.combo_llm_model.findText(preferred)
                 if idx >= 0:
                     self.combo_llm_model.setCurrentIndex(idx)
                     break
-            if current and self.combo_llm_model.findText(current) >= 0:
-                self.combo_llm_model.setCurrentText(current)
         self.combo_llm_model.blockSignals(False)
-        self.statusBar().showMessage(
-            f"Ollama OK · {len(models)} model(s) available"
-        )
+        if not getattr(self, "_ollama_model_hooked", False):
+            self.combo_llm_model.currentTextChanged.connect(self._on_ollama_model_changed)
+            self._ollama_model_hooked = True
+        self.statusBar().showMessage(ollama_status_summary(status))
+
+    def _on_ollama_model_changed(self, text: str) -> None:
+        text = (text or "").strip()
+        if text and not text.startswith("("):
+            from src.user_settings import update_settings
+
+            update_settings(ollama_model=text)
 
     def _current_case_context(self) -> str:
         pid = self.combo_pid.currentData()

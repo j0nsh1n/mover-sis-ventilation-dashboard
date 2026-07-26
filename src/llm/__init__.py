@@ -2,5 +2,12 @@
 
 from src.llm.case_context import build_case_context
 from src.llm.ollama_client import OllamaClient, OllamaError
+from src.llm.service import ensure_ollama, find_ollama_binary
 
-__all__ = ["OllamaClient", "OllamaError", "build_case_context"]
+__all__ = [
+    "OllamaClient",
+    "OllamaError",
+    "build_case_context",
+    "ensure_ollama",
+    "find_ollama_binary",
+]
