@@ -224,3 +224,23 @@ Disable stage validation only if you must: `python -m src.pipeline.run --no-vali
 4. Add export of flag reports for offline review  
 
 See **`docs/DESIGN.md`** for full design rationale and rule definitions.
+
+## License
+
+Copyright (C) 2026 Jonathan Shin
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the **GNU General Public License v3.0** as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but **WITHOUT ANY
+WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the [GNU General Public License](LICENSE) for more details.
+
+GPL-3.0 is compatible with the app's dependencies (PySide6 is available under the
+LGPL). Note the separate, stronger restriction that applies regardless of licence:
+
+> **Research and education only — not a medical device, and not for clinical care.**
+
+The MOVER SIS dataset itself is *not* covered by this licence; it remains subject to
+the [MOVER data use agreement](https://mover.ics.uci.edu/) from UC Irvine.

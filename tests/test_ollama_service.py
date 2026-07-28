@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.llm.ollama_client import OllamaError
@@ -174,9 +175,10 @@ def test_is_safe_signal_target_excludes_our_own_processes():
     assert not _is_safe_signal_target(os.getpid())
     assert not _is_safe_signal_target(os.getppid())
     # every ancestor (shell, terminal, `systemd --user`) must be off limits.
-    # In a PID-namespace sandbox we are PID 1 and have no ancestors to check.
+    # The parent chain is read from /proc, so this only holds on Linux; in a
+    # PID-namespace sandbox we are PID 1 and have no ancestors at all.
     ancestors = _own_ancestors()
-    if os.getppid() > 1:
+    if Path("/proc").is_dir() and os.getppid() > 1:
         assert os.getppid() in ancestors
     for pid in ancestors:
         assert not _is_safe_signal_target(pid)

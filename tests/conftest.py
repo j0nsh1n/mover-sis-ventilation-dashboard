@@ -34,7 +34,9 @@ def isolate_ollama_process_state(monkeypatch):
             "signalling process groups is not allowed under pytest"
         )
 
-    monkeypatch.setattr(svc.os, "killpg", _guarded_killpg)
+    # raising=False: os.killpg is POSIX-only and absent on Windows, where patching it
+    # unconditionally errors every test at setup.
+    monkeypatch.setattr(svc.os, "killpg", _guarded_killpg, raising=False)
     monkeypatch.setattr(svc, "_pgrep", lambda *a, **k: [])
     monkeypatch.setattr(svc, "_started_proc", None, raising=False)
     monkeypatch.setattr(svc, "_app_started_server", False, raising=False)

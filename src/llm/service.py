@@ -301,13 +301,19 @@ def _is_safe_signal_target(pid: int) -> bool:
 
     Never signal init, ourselves, an ancestor, or anything in our own process
     group: those are the app (or the test runner) that called us.
+
+    POSIX-only. Windows stops Ollama via ``taskkill`` and never reaches here, so
+    when process groups cannot be inspected we refuse rather than guess.
     """
     if pid <= 1 or pid == os.getpid() or pid == os.getppid():
         return False
     if pid in _own_ancestors():
         return False
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is None:
+        return False
     try:
-        if os.getpgid(pid) == os.getpgid(0):
+        if getpgid(pid) == getpgid(0):
             return False
     except (ProcessLookupError, PermissionError, OSError):
         return False
@@ -325,18 +331,24 @@ def _child_pgid(proc: subprocess.Popen | None) -> int | None:
     pid = getattr(proc, "pid", None)
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return None
+    getpgid = getattr(os, "getpgid", None)  # POSIX-only
+    if getpgid is None:
+        return None
     try:
-        pgid = os.getpgid(pid)
+        pgid = getpgid(pid)
     except (ProcessLookupError, PermissionError, OSError):
         return None
-    if pgid <= 1 or pgid == os.getpgid(0):
+    if pgid <= 1 or pgid == getpgid(0):
         return None
     return pgid
 
 
 def _pgrep(pattern: str, *, exact: bool = False) -> list[int]:
     """PIDs owned by the current user matching *pattern* (empty on any failure)."""
-    cmd = ["pgrep", "-u", str(os.getuid()), "-x" if exact else "-f", pattern]
+    getuid = getattr(os, "getuid", None)  # POSIX-only; Windows uses taskkill
+    if getuid is None:
+        return []
+    cmd = ["pgrep", "-u", str(getuid()), "-x" if exact else "-f", pattern]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
