@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 
 
 def get_version() -> str:

@@ -1,6 +1,6 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-**Version 0.1.0**
+**Version 0.6.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -85,12 +85,13 @@ Then open **MOVER SIS Ventilation Monitor** from your application menu.
 The desktop app:
 
 - Opens a **native window** (not a browser tab)
-- Lets you **choose EMR and Wave folders separately** (they ship as different archives); choices are remembered  
-- **Keyword search** across procedure, PID, agent, flag rules (AND matching; quotes for phrases)
-- **Local LLM case chat** (Ollama): ask questions about a selected surgery using grounded EMR context
-- Loads existing processed caches on startup when present
-- Runs the pipeline in a **background thread** when you click **Run / reload pipeline**
-- Shows organized Summary, Case timeline, and Rule reference tabs with metric cards and path status
+- **LLM-first co-pilot** (Ollama, [Local Schedule Assistant](https://github.com/j0nsh1n/Local-Schedule-Assistant)-style tool loop): find similar cases, `summarize_management`, verify, explain documented patterns (research only)  
+
+- **Setup wizard** / **⚙ Settings** (menu-bar corner, `Ctrl+,`) for EMR / Wave / Processed / Ollama models path / theme  
+- **Theme:** light, dark, or system  
+- Summary / Case timeline / Rule reference after the co-pilot focuses a case  
+- Loads processed caches on startup; **File → Run pipeline** for rebuilds  
+- Research-only (not clinical care)
 
 ### Optional: Streamlit (browser)
 
@@ -98,31 +99,32 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Versioning & releases (v0.1.0)
+## Versioning & releases (v0.6.0)
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.1.0`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.6.0`, semver `x.y.z`)
+- Process rules for agents: [`CONTEXT.md`](CONTEXT.md) and [`AGENTS.md`](AGENTS.md)
 - UI **About** and window title show the same version
-- **On merge to `main`** (or tag `v0.1.0` / manual run): GitHub Actions workflow  
+- **On merge to `main`** (or tag / manual run): GitHub Actions workflow  
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact
 
 ### Local LLM (Ollama) — Ask about a case
 
-The desktop tab **4 · Ask about case** talks to a model on your machine via [Ollama](https://ollama.com/).
+The desktop tab **4 · Ask about case** uses **Ollama on this machine**. The app will **start `ollama serve` automatically** if Ollama is installed and the API is not up yet. Models stay on the host (not inside the .exe).
+
+Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via the **⚙ Settings** icon (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 
 ```bash
-# Terminal 1 — if not already running
-ollama serve
-
-# Optional: ensure a model is available
+# Install Ollama once: https://ollama.com
+# Pull at least one model (examples already on many machines):
 ollama pull gemma4
 ```
 
 Then in the app:
 1. Load/process cases and select a **Surgery (PID)**
-2. Open **4 · Ask about case**
-3. Pick a model → ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
+2. Open **4 · Ask about case** (Refresh models if needed)
+3. Ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
 
-Answers are built from a structured case briefing (demographics, procedure, vent/vitals summaries, flags, meds, events). The model is instructed **not** to invent missing data. Research use only.
+Answers are grounded in a structured case briefing. Research use only — not for clinical care.
 
 ### Build & install on this computer (Nobara)
 

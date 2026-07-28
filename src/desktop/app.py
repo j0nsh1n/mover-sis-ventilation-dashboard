@@ -15,7 +15,15 @@ from pathlib import Path
 
 import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QGuiApplication
+from PySide6.QtGui import (
+    QAction,
+    QFont,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -38,6 +46,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -52,6 +61,7 @@ from src.desktop.charts import (
     flag_rules_figure,
     top_cases_figure,
 )
+from src.desktop.theme import apply_theme, chat_role_color
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.__version__ import get_version
@@ -63,123 +73,8 @@ from src.runtime_paths import (
     emr_dir,
     processed_dir,
     wave_dir,
-    waveform_case_dir,
 )
-from src.search import filter_cases_by_keywords
-
-# Shared light theme for clearer visual hierarchy
-APP_STYLESHEET = """
-QMainWindow, QWidget {
-    background: #f4f6f8;
-    color: #1f2933;
-    font-size: 13px;
-}
-QGroupBox {
-    background: #ffffff;
-    border: 1px solid #d9e2ec;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding: 12px 10px 10px 10px;
-    font-weight: 600;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    color: #334e68;
-}
-QLineEdit, QSpinBox, QComboBox {
-    background: #ffffff;
-    border: 1px solid #bcccdc;
-    border-radius: 6px;
-    padding: 5px 8px;
-    min-height: 24px;
-}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-    border: 1px solid #486581;
-}
-QPushButton {
-    background: #486581;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 7px 12px;
-    font-weight: 600;
-}
-QPushButton:hover { background: #334e68; }
-QPushButton:disabled { background: #9fb3c8; }
-QPushButton#secondaryBtn {
-    background: #e2e8f0;
-    color: #243b53;
-}
-QPushButton#secondaryBtn:hover { background: #cbd5e1; }
-QPushButton#primaryBtn {
-    background: #0f766e;
-}
-QPushButton#primaryBtn:hover { background: #0d9488; }
-QTabWidget::pane {
-    border: 1px solid #d9e2ec;
-    border-radius: 8px;
-    background: #ffffff;
-    top: -1px;
-}
-QTabBar::tab {
-    background: #e2e8f0;
-    border: 1px solid #d9e2ec;
-    border-bottom: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    padding: 8px 14px;
-    margin-right: 3px;
-    color: #486581;
-}
-QTabBar::tab:selected {
-    background: #ffffff;
-    color: #102a43;
-    font-weight: 600;
-}
-QTableWidget {
-    background: #ffffff;
-    gridline-color: #e2e8f0;
-    border: none;
-    alternate-background-color: #f8fafc;
-}
-QHeaderView::section {
-    background: #f0f4f8;
-    padding: 6px;
-    border: none;
-    border-right: 1px solid #d9e2ec;
-    border-bottom: 1px solid #d9e2ec;
-    font-weight: 600;
-}
-QStatusBar {
-    background: #e2e8f0;
-    color: #334e68;
-}
-QLabel#heroTitle {
-    font-size: 18px;
-    font-weight: 700;
-    color: #102a43;
-}
-QLabel#heroSub {
-    color: #627d98;
-}
-QLabel#pathHint {
-    color: #486581;
-    font-size: 11px;
-}
-QFrame#metricCard {
-    background: #ffffff;
-    border: 1px solid #d9e2ec;
-    border-radius: 8px;
-    padding: 8px;
-}
-QTextEdit {
-    background: #ffffff;
-    border: 1px solid #d9e2ec;
-    border-radius: 6px;
-}
-"""
+from src.user_settings import apply_ollama_env_from_settings, needs_first_run_setup
 
 
 class DataLoadWorker(QThread):
@@ -237,58 +132,49 @@ class PipelineWorker(QThread):
 
 
 class LLMChatWorker(QThread):
-    """Call local Ollama with grounded case context."""
+    """Tool-using Ollama agent (native tools + extract recovery + verification)."""
 
-    finished_ok = Signal(str)
+    finished_ok = Signal(object)  # AgentResult
     failed = Signal(str)
-    chunk = Signal(str)
+    status = Signal(str)
 
     def __init__(
         self,
         model: str,
         question: str,
-        case_context: str,
-        history: list[dict[str, str]] | None = None,
+        session_snapshot: object,
+        mode: str = "chat",
         base_url: str = "http://127.0.0.1:11434",
         parent=None,
     ):
         super().__init__(parent)
         self.model = model
         self.question = question
-        self.case_context = case_context
-        self.history = history or []
+        self.session_snapshot = session_snapshot
+        self.mode = mode
         self.base_url = base_url
 
     def run(self) -> None:
         try:
+            from src.llm.agent import run_agent
             from src.llm.ollama_client import OllamaClient
-            from src.llm.prompts import SYSTEM_PROMPT, user_message
 
-            client = OllamaClient(base_url=self.base_url)
-            messages: list[dict[str, str]] = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-            ]
-            # prior turns (already grounded; keep short)
-            for m in self.history[-6:]:
-                messages.append({"role": m["role"], "content": m["content"]})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_message(self.case_context, self.question),
-                }
+            client = OllamaClient(base_url=self.base_url, timeout_s=300.0)
+
+            def _status(msg: str) -> None:
+                self.status.emit(msg)
+
+            result = run_agent(
+                model=self.model,
+                question=self.question,
+                session=self.session_snapshot,  # type: ignore[arg-type]
+                client=client,
+                mode=self.mode,
+                on_status=_status,
             )
-            parts: list[str] = []
-            for piece in client.chat_stream(
-                self.model,
-                messages,
-                temperature=0.2,
-            ):
-                parts.append(piece)
-                self.chunk.emit(piece)
-            text = "".join(parts).strip()
-            if not text:
+            if not (result.answer or "").strip():
                 raise RuntimeError("Model returned an empty answer.")
-            self.finished_ok.emit(text)
+            self.finished_ok.emit(result)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -320,10 +206,11 @@ def _metric_card(title: str, value_label: QLabel) -> QFrame:
     frame = QFrame()
     frame.setObjectName("metricCard")
     lay = QVBoxLayout(frame)
-    lay.setContentsMargins(10, 8, 10, 8)
+    lay.setContentsMargins(14, 10, 14, 10)
+    lay.setSpacing(2)
     t = QLabel(title)
-    t.setStyleSheet("color:#627d98; font-size:11px; font-weight:600;")
-    value_label.setStyleSheet("font-size:16px; font-weight:700; color:#102a43;")
+    t.setObjectName("metricTitle")
+    value_label.setObjectName("metricValue")
     lay.addWidget(t)
     lay.addWidget(value_label)
     return frame
@@ -337,25 +224,29 @@ class MainWindow(QMainWindow):
             f"MOVER SIS Monitor v{self._version} — Ventilation & Anesthesia"
         )
         self.resize(1380, 860)
-        self.setStyleSheet(APP_STYLESHEET)
 
         apply_persisted_settings()
+        apply_ollama_env_from_settings()
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
         self.flags: pd.DataFrame | None = None
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
+        self._active_pid: str | None = None
+        self._focus_pids: list[str] = []
         self._worker: QThread | None = None
         self._charts_pending = False
+        self._show_vitals = True
+        self._llm_mode: str = "analyze"  # default: management-pattern analysis
 
         self._build_menu()
         self._build_ui()
-        self._sync_path_fields_from_runtime()
         self.setStatusBar(QStatusBar())
         self._update_status_paths("Ready")
 
         QTimer.singleShot(0, self._autoload_processed)
+        QTimer.singleShot(100, self._maybe_run_first_setup)
 
     # ----- menu -----
     def _build_menu(self) -> None:
@@ -372,28 +263,84 @@ class MainWindow(QMainWindow):
         reload_act.setShortcut("Ctrl+R")
         reload_act.triggered.connect(self._autoload_processed)
         file_menu.addAction(reload_act)
+        run_pipe = QAction("Run pipeline (50 cases)…", self)
+        run_pipe.triggered.connect(self._run_pipeline_menu)
+        file_menu.addAction(run_pipe)
+        file_menu.addSeparator()
+        setup_act = QAction("&Setup…", self)
+        setup_act.triggered.connect(self._open_setup_wizard)
+        file_menu.addAction(setup_act)
         file_menu.addSeparator()
         quit_act = QAction("E&xit", self)
         quit_act.setShortcut("Ctrl+Q")
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
+        view_menu = self.menuBar().addMenu("&View")
+        theme_light = QAction("Theme: &Light", self)
+        theme_light.triggered.connect(lambda: self._set_theme_quick("light"))
+        view_menu.addAction(theme_light)
+        theme_dark = QAction("Theme: &Dark", self)
+        theme_dark.triggered.connect(lambda: self._set_theme_quick("dark"))
+        view_menu.addAction(theme_dark)
+        theme_sys = QAction("Theme: &System", self)
+        theme_sys.triggered.connect(lambda: self._set_theme_quick("system"))
+        view_menu.addAction(theme_sys)
+
         help_menu = self.menuBar().addMenu("&Help")
         about = QAction("&About", self)
         about.triggered.connect(self._about)
         help_menu.addAction(about)
+
+        # Settings lives on a gear icon in the menu-bar corner, not under Edit
+        self.settings_act = QAction(self._gear_icon(), "Settings…", self)
+        self.settings_act.setShortcut("Ctrl+,")
+        self.settings_act.setToolTip("Settings (Ctrl+,) — data folders, Ollama models dir, theme")
+        self.settings_act.triggered.connect(self._open_settings)
+        self.addAction(self.settings_act)  # keep the shortcut alive app-wide
+
+        gear = QToolButton(self)
+        gear.setDefaultAction(self.settings_act)
+        gear.setAutoRaise(True)
+        gear.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        gear.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menuBar().setCornerWidget(gear, Qt.Corner.TopRightCorner)
+
+    @staticmethod
+    def _gear_icon() -> QIcon:
+        """Theme gear icon, with a drawn fallback for minimal icon themes."""
+        icon = QIcon.fromTheme("preferences-system")
+        if not icon.isNull():
+            return icon
+        pm = QPixmap(20, 20)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QApplication.palette().windowText().color(), 1.6)
+        p.setPen(pen)
+        p.drawEllipse(6, 6, 8, 8)
+        for angle in range(0, 360, 45):  # eight teeth
+            p.save()
+            p.translate(10, 10)
+            p.rotate(angle)
+            p.drawLine(0, -9, 0, -6)
+            p.restore()
+        p.end()
+        return QIcon(pm)
 
     # ----- layout -----
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(12, 10, 12, 8)
-        outer.setSpacing(10)
+        outer.setContentsMargins(16, 14, 16, 10)
+        outer.setSpacing(14)
 
         # Header
         header = QHBoxLayout()
+        header.setSpacing(16)
         hero = QVBoxLayout()
+        hero.setSpacing(4)
         title = QLabel(f"MOVER SIS Monitor  ·  v{self._version}")
         title.setObjectName("heroTitle")
         sub = QLabel(
@@ -409,7 +356,7 @@ class MainWindow(QMainWindow):
         self.metric_flags = QLabel("—")
         self.metric_score = QLabel("—")
         metrics = QHBoxLayout()
-        metrics.setSpacing(8)
+        metrics.setSpacing(10)
         metrics.addWidget(_metric_card("Cases loaded", self.metric_cases))
         metrics.addWidget(_metric_card("With flags", self.metric_flags))
         metrics.addWidget(_metric_card("Max score", self.metric_score))
@@ -417,254 +364,187 @@ class MainWindow(QMainWindow):
         outer.addLayout(header)
 
         body = QHBoxLayout()
-        body.setSpacing(12)
+        body.setSpacing(14)
 
-        # ---- Sidebar ----
+        # ---- Sidebar (LLM session — no pipeline/filters; tools handle those) ----
         side = QWidget()
+        side.setObjectName("sidePanel")
         side.setMinimumWidth(300)
         side.setMaximumWidth(360)
         side_l = QVBoxLayout(side)
         side_l.setContentsMargins(0, 0, 0, 0)
-        side_l.setSpacing(8)
+        side_l.setSpacing(10)
 
-        # Data locations — EMR and Wave are separate MOVER archives
-        data_box = QGroupBox("Data locations")
-        dl = QVBoxLayout(data_box)
-        hint = QLabel(
-            "EMR = tabular SIS tables (patient_*.csv). "
-            "Wave = waveform archives (sis_wave*.tar.gz or Waveforms/ folders). "
-            "They live in different places — set both."
+        paths_hint = QLabel(
+            "Data folders: <b>⚙ Settings</b> (top-right) · Pipeline: <b>File → Run pipeline</b>"
         )
-        hint.setObjectName("pathHint")
-        hint.setWordWrap(True)
-        dl.addWidget(hint)
+        paths_hint.setObjectName("pathHint")
+        paths_hint.setWordWrap(True)
+        paths_hint.setTextFormat(Qt.TextFormat.RichText)
+        side_l.addWidget(paths_hint)
 
-        # EMR
-        dl.addWidget(QLabel("EMR folder"))
-        self.edit_emr = QLineEdit()
-        self.edit_emr.setPlaceholderText("…/data/raw/EMR or folder with patient_information.csv")
-        self.edit_emr.setClearButtonEnabled(True)
-        row_emr = QHBoxLayout()
-        row_emr.addWidget(self.edit_emr, stretch=1)
-        btn_emr = QPushButton("Browse…")
-        btn_emr.setObjectName("secondaryBtn")
-        btn_emr.clicked.connect(self._browse_emr_folder)
-        row_emr.addWidget(btn_emr)
-        dl.addLayout(row_emr)
+        sess = QGroupBox("Research co-pilot")
+        sf = QFormLayout(sess)
+        sf.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        sf.setHorizontalSpacing(10)
+        sf.setVerticalSpacing(10)
+        sf.setContentsMargins(4, 10, 4, 6)
 
-        # Wave
-        dl.addWidget(QLabel("Wave folder (optional)"))
-        self.edit_wave = QLineEdit()
-        self.edit_wave.setPlaceholderText("…/MOVER DATA or extracted sis_wave_v2/")
-        self.edit_wave.setClearButtonEnabled(True)
-        row_wave = QHBoxLayout()
-        row_wave.addWidget(self.edit_wave, stretch=1)
-        btn_wave = QPushButton("Browse…")
-        btn_wave.setObjectName("secondaryBtn")
-        btn_wave.clicked.connect(self._browse_wave_folder)
-        row_wave.addWidget(btn_wave)
-        dl.addLayout(row_wave)
+        self.lbl_ollama_status = QLabel("Ollama: checking…")
+        self.lbl_ollama_status.setObjectName("pathHint")
+        self.lbl_ollama_status.setWordWrap(True)
+        sf.addRow(self.lbl_ollama_status)
 
-        self.lbl_emr_path = QLabel("EMR: —")
-        self.lbl_emr_path.setObjectName("pathHint")
-        self.lbl_emr_path.setWordWrap(True)
-        self.lbl_emr_path.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
+        self.combo_llm_model = QComboBox()
+        self.combo_llm_model.setMinimumWidth(180)
+        # Non-editable so the drop-down arrow / popup reliably work under Fusion.
+        self.combo_llm_model.setEditable(False)
+        self.combo_llm_model.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self.lbl_wave_path = QLabel("Wave: —")
-        self.lbl_wave_path.setObjectName("pathHint")
-        self.lbl_wave_path.setWordWrap(True)
-        self.lbl_wave_path.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
+        sf.addRow("Ollama model", self.combo_llm_model)
+
+        # Lifecycle (Daily Scheduler-style): Start / Stop / Unload / Refresh
+        life = QHBoxLayout()
+        self.btn_ollama_start = QPushButton("Start")
+        self.btn_ollama_start.setObjectName("primaryBtn")
+        self.btn_ollama_start.setToolTip(
+            "Start ollama serve (uses models dir from Settings). Frees nothing until Stop/Unload."
         )
-        self.lbl_proc_path = QLabel("Processed: —")
-        self.lbl_proc_path.setObjectName("pathHint")
-        self.lbl_proc_path.setWordWrap(True)
-        self.lbl_proc_path.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
+        self.btn_ollama_start.clicked.connect(self._ollama_start)
+        life.addWidget(self.btn_ollama_start)
+
+        self.btn_ollama_stop = QPushButton("Stop")
+        self.btn_ollama_stop.setObjectName("secondaryBtn")
+        self.btn_ollama_stop.setToolTip(
+            "Fully stop Ollama (server + runner) to release GPU/CPU memory."
         )
-        dl.addWidget(self.lbl_emr_path)
-        dl.addWidget(self.lbl_wave_path)
-        dl.addWidget(self.lbl_proc_path)
+        self.btn_ollama_stop.clicked.connect(self._ollama_stop)
+        life.addWidget(self.btn_ollama_stop)
 
-        btn_apply = QPushButton("Apply paths")
-        btn_apply.setObjectName("primaryBtn")
-        btn_apply.clicked.connect(self._apply_paths_from_fields)
-        btn_reload = QPushButton("Reload cache")
-        btn_reload.setObjectName("secondaryBtn")
-        btn_reload.clicked.connect(self._autoload_processed)
-        row_actions = QHBoxLayout()
-        row_actions.addWidget(btn_apply)
-        row_actions.addWidget(btn_reload)
-        dl.addLayout(row_actions)
-        side_l.addWidget(data_box)
-
-        # Pipeline
-        ctrl = QGroupBox("Pipeline")
-        fl = QFormLayout(ctrl)
-        fl.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.spin_cases = QSpinBox()
-        self.spin_cases.setRange(max(1, MIN_N_CASES), min(200, MAX_N_CASES))
-        self.spin_cases.setSingleStep(10)
-        self.spin_cases.setValue(50)
-        fl.addRow("Sample size", self.spin_cases)
-
-        self.combo_preset = QComboBox()
-        self.combo_preset.addItems(sorted(ALLOWED_PRESETS))
-        self.combo_preset.setCurrentText("default")
-        fl.addRow("Threshold preset", self.combo_preset)
-
-        self.btn_run = QPushButton("Run / reload pipeline")
-        self.btn_run.setObjectName("primaryBtn")
-        self.btn_run.clicked.connect(self._run_pipeline)
-        fl.addRow(self.btn_run)
-        side_l.addWidget(ctrl)
-
-        # Filters
-        filt = QGroupBox("Search & filters")
-        ff = QFormLayout(filt)
-        self.edit_search = QLineEdit()
-        self.edit_search.setPlaceholderText('Keywords: "chole" pip_high sevo…')
-        self.edit_search.setClearButtonEnabled(True)
-        self.edit_search.setToolTip(
-            "Case-insensitive search across procedure, PID, agent, top_rules, "
-            "and flag rule IDs. Use quotes for phrases. Multiple words = AND."
+        self.btn_ollama_unload = QPushButton("Unload")
+        self.btn_ollama_unload.setObjectName("secondaryBtn")
+        self.btn_ollama_unload.setToolTip(
+            "Unload the selected model from VRAM/RAM but keep the server running."
         )
-        self.edit_search.textChanged.connect(self._on_filters_changed)
-        ff.addRow("Keywords", self.edit_search)
+        self.btn_ollama_unload.clicked.connect(self._ollama_unload)
+        life.addWidget(self.btn_ollama_unload)
 
-        self.combo_agent = QComboBox()
-        self.combo_agent.addItem("(all)")
-        self.combo_agent.currentTextChanged.connect(self._on_filters_changed)
-        ff.addRow("Primary agent", self.combo_agent)
+        btn_refresh_models = QPushButton("Refresh")
+        btn_refresh_models.setObjectName("secondaryBtn")
+        btn_refresh_models.setToolTip("Re-check server status and model list (does not start).")
+        btn_refresh_models.clicked.connect(
+            lambda: self._refresh_ollama_models(start_if_needed=False)
+        )
+        life.addWidget(btn_refresh_models)
+        sf.addRow(life)
 
-        self.spin_min_score = QSpinBox()
-        self.spin_min_score.setRange(0, 100_000)
-        self.spin_min_score.setValue(0)
-        self.spin_min_score.valueChanged.connect(self._on_filters_changed)
-        ff.addRow("Min anomaly score", self.spin_min_score)
+        self.lbl_corpus = QLabel("Corpus: (loading…)")
+        self.lbl_corpus.setObjectName("pathHint")
+        self.lbl_corpus.setWordWrap(True)
+        sf.addRow(self.lbl_corpus)
+
+        self.lbl_llm_case = QLabel("Active case: (none — ask the co-pilot to find cases)")
+        self.lbl_llm_case.setObjectName("sectionLabel")
+        self.lbl_llm_case.setWordWrap(True)
+        sf.addRow(self.lbl_llm_case)
+
+        self.lbl_focus = QLabel("Focus list: (none)")
+        self.lbl_focus.setObjectName("pathHint")
+        self.lbl_focus.setWordWrap(True)
+        sf.addRow(self.lbl_focus)
+
+        btn_open_tl = QPushButton("Open active case timeline")
+        btn_open_tl.setObjectName("primaryBtn")
+        btn_open_tl.clicked.connect(self._open_active_timeline)
+        sf.addRow(btn_open_tl)
+
+        btn_show_ctx = QPushButton("Show grounded context")
+        btn_show_ctx.setObjectName("secondaryBtn")
+        btn_show_ctx.clicked.connect(self._show_case_context)
+        sf.addRow(btn_show_ctx)
 
         self.chk_vitals = QCheckBox("Show vitals on timeline")
         self.chk_vitals.setChecked(True)
-        self.chk_vitals.toggled.connect(self._refresh_case_timeline)
-        ff.addRow(self.chk_vitals)
+        self.chk_vitals.toggled.connect(self._on_vitals_toggled)
+        sf.addRow(self.chk_vitals)
 
-        self.chk_wave_only = QCheckBox("Only cases with wave folder")
-        self.chk_wave_only.setToolTip(
-            "When a wave directory is set, keep only cases that have a matching "
-            "Waveforms/<prefix>/<PID>/ folder."
+        side_l.addWidget(sess)
+
+        help_box = QGroupBox("How to use")
+        hl = QVBoxLayout(help_box)
+        how = QLabel(
+            "1. Chat first — find cases by procedure, agent, flags, or score.<br>"
+            "2. The co-pilot <b>selects</b> a PID and loads grounded data.<br>"
+            "3. Then open Summary / Timeline for charts.<br><br>"
+            "<i>Research concept only — not clinical care.</i>"
         )
-        self.chk_wave_only.toggled.connect(self._on_filters_changed)
-        ff.addRow(self.chk_wave_only)
-
-        self.combo_pid = QComboBox()
-        self.combo_pid.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self.combo_pid.currentIndexChanged.connect(self._on_pid_changed)
-        ff.addRow("Surgery (PID)", self.combo_pid)
-        side_l.addWidget(filt)
-
-        self.lbl_case_meta = QLabel("Select a case to inspect the timeline.")
-        self.lbl_case_meta.setWordWrap(True)
-        self.lbl_case_meta.setObjectName("pathHint")
-        side_l.addWidget(self.lbl_case_meta)
+        how.setObjectName("pathHint")
+        how.setWordWrap(True)
+        how.setTextFormat(Qt.TextFormat.RichText)
+        hl.addWidget(how)
+        side_l.addWidget(help_box)
         side_l.addStretch(1)
 
-        # ---- Tabs ----
+        # Hidden PID selector kept for internal compatibility with chart helpers
+        self.combo_pid = QComboBox()
+        self.combo_pid.hide()
+
+        # ---- Tabs (Ask first) ----
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        self.plot_summary_top = ChartView()
-        self.plot_summary_rules = ChartView()
-        self.table_cases = QTableWidget()
-        self.table_cases.setAlternatingRowColors(True)
-        self.table_cases.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table_cases.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table_cases.doubleClicked.connect(self._case_table_activated)
-        self.table_cases.setSortingEnabled(True)
-
-        summary = QWidget()
-        sum_l = QVBoxLayout(summary)
-        sum_l.setContentsMargins(8, 8, 8, 8)
-        charts = QSplitter(Qt.Orientation.Horizontal)
-        charts.addWidget(self.plot_summary_top)
-        charts.addWidget(self.plot_summary_rules)
-        charts.setSizes([500, 500])
-        sum_l.addWidget(charts, stretch=3)
-        table_label = QLabel("Cases (double-click a row to open timeline)")
-        table_label.setStyleSheet("font-weight:600; color:#334e68; margin-top:4px;")
-        sum_l.addWidget(table_label)
-        sum_l.addWidget(self.table_cases, stretch=2)
-        self.tabs.addTab(summary, "1 · Summary")
-
-        case_tab = QWidget()
-        case_l = QVBoxLayout(case_tab)
-        case_l.setContentsMargins(8, 8, 8, 8)
-        self.plot_timeline = ChartView()
-        self.table_episodes = QTableWidget()
-        self.table_episodes.setAlternatingRowColors(True)
-        self.table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        case_l.addWidget(self.plot_timeline, stretch=4)
-        ep_label = QLabel("Flag episodes / minute flags")
-        ep_label.setStyleSheet("font-weight:600; color:#334e68;")
-        case_l.addWidget(ep_label)
-        case_l.addWidget(self.table_episodes, stretch=1)
-        self.tabs.addTab(case_tab, "2 · Case timeline")
-
-        self.rules_text = QTextEdit()
-        self.rules_text.setReadOnly(True)
-        self.tabs.addTab(self.rules_text, "3 · Rule reference")
-
-        # ---- Local LLM case Q&A ----
+        # ---- 1 · Ask (primary) ----
         chat_tab = QWidget()
         chat_l = QVBoxLayout(chat_tab)
-        chat_l.setContentsMargins(8, 8, 8, 8)
+        chat_l.setContentsMargins(10, 10, 10, 10)
+        chat_l.setSpacing(10)
         chat_intro = QLabel(
-            "Ask a <b>local LLM</b> (Ollama) about the selected surgery. "
-            "Answers are grounded in EMR-derived context for that case only — "
-            "not for clinical care."
+            "<b>Local research co-pilot</b> (Ollama, tool-calling like Local Schedule Assistant). "
+            "It finds similar SIS cases, reads documented management (agent, vent, meds, flags), "
+            "and explains <i>patterns in the extract</i> — not live clinical orders. "
+            "<b>Not for clinical care.</b>"
         )
         chat_intro.setWordWrap(True)
         chat_intro.setObjectName("pathHint")
+        chat_intro.setTextFormat(Qt.TextFormat.RichText)
         chat_l.addWidget(chat_intro)
 
-        llm_row = QHBoxLayout()
-        self.combo_llm_model = QComboBox()
-        self.combo_llm_model.setMinimumWidth(220)
-        self.combo_llm_model.setEditable(True)
-        self.combo_llm_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        llm_row.addWidget(QLabel("Ollama model"))
-        llm_row.addWidget(self.combo_llm_model, stretch=1)
-        btn_refresh_models = QPushButton("Refresh models")
-        btn_refresh_models.setObjectName("secondaryBtn")
-        btn_refresh_models.clicked.connect(self._refresh_ollama_models)
-        llm_row.addWidget(btn_refresh_models)
-        btn_show_ctx = QPushButton("Show case context")
-        btn_show_ctx.setObjectName("secondaryBtn")
-        btn_show_ctx.clicked.connect(self._show_case_context)
-        llm_row.addWidget(btn_show_ctx)
-        chat_l.addLayout(llm_row)
-
-        self.lbl_llm_case = QLabel("Case: (select a surgery in Search & filters)")
-        self.lbl_llm_case.setStyleSheet("font-weight:600; color:#334e68;")
-        chat_l.addWidget(self.lbl_llm_case)
+        # Modes: Chat / Analyze / Compare (scheduler-style)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode"))
+        self._mode_buttons: dict[str, QPushButton] = {}
+        for mid, label in [
+            ("chat", "Chat"),
+            ("analyze", "Case analysis"),
+            ("compare", "Compare"),
+        ]:
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setChecked(mid == self._llm_mode)
+            b.setObjectName("secondaryBtn" if mid != self._llm_mode else "primaryBtn")
+            b.clicked.connect(lambda checked=False, m=mid: self._set_llm_mode(m))
+            self._mode_buttons[mid] = b
+            mode_row.addWidget(b)
+        mode_row.addStretch(1)
+        chat_l.addLayout(mode_row)
 
         self.chat_history = QTextEdit()
         self.chat_history.setReadOnly(True)
         self.chat_history.setPlaceholderText(
-            "Conversation appears here.\n"
-            "Example questions:\n"
-            "• What procedure was performed and which anesthetic agent was used?\n"
-            "• Summarize ventilation (TV, PIP, PEEP, ETCO2) during the case.\n"
-            "• Which anomaly flags fired most, and what might they mean in research terms?\n"
-            "• What medications were documented?"
+            "Just describe the patient / case — the co-pilot runs the full workflow.\n\n"
+            "Examples:\n"
+            "• 55y woman, hysterectomy under sevoflurane, high PIP\n"
+            "• Laparoscopic chole, desflurane, ETCO2 issues\n"
+            "• Elderly man, total knee, high anomaly score\n"
         )
         chat_l.addWidget(self.chat_history, stretch=1)
 
         ask_row = QHBoxLayout()
         self.edit_chat = QLineEdit()
-        self.edit_chat.setPlaceholderText("Ask about the selected case…")
+        self.edit_chat.setPlaceholderText(
+            "Describe the patient only (e.g. age, surgery, agent, vent issues)…"
+        )
         self.edit_chat.returnPressed.connect(self._send_chat)
         ask_row.addWidget(self.edit_chat, stretch=1)
         self.btn_send_chat = QPushButton("Ask")
@@ -677,27 +557,70 @@ class MainWindow(QMainWindow):
         ask_row.addWidget(btn_clear_chat)
         chat_l.addLayout(ask_row)
 
-        self.tabs.addTab(chat_tab, "4 · Ask about case")
+        self.tabs.addTab(chat_tab, "1 · Ask")
         self._chat_messages: list[dict[str, str]] = []
         self._llm_worker: QThread | None = None
         self._streaming_answer = ""
+
+        # ---- 2 · Summary ----
+        self.plot_summary_top = ChartView()
+        self.plot_summary_rules = ChartView()
+        self.table_cases = QTableWidget()
+        self.table_cases.setAlternatingRowColors(True)
+        self.table_cases.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_cases.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_cases.doubleClicked.connect(self._case_table_activated)
+        self.table_cases.setSortingEnabled(True)
+
+        summary = QWidget()
+        sum_l = QVBoxLayout(summary)
+        sum_l.setContentsMargins(10, 10, 10, 10)
+        sum_l.setSpacing(10)
+        charts = QSplitter(Qt.Orientation.Horizontal)
+        charts.setHandleWidth(6)
+        charts.addWidget(self.plot_summary_top)
+        charts.addWidget(self.plot_summary_rules)
+        charts.setSizes([500, 500])
+        sum_l.addWidget(charts, stretch=3)
+        table_label = QLabel(
+            "Cases in focus (double-click a row to set active case + open timeline)"
+        )
+        table_label.setObjectName("sectionLabel")
+        sum_l.addWidget(table_label)
+        sum_l.addWidget(self.table_cases, stretch=2)
+        self.tabs.addTab(summary, "2 · Summary")
+
+        # ---- 3 · Case timeline ----
+        case_tab = QWidget()
+        case_l = QVBoxLayout(case_tab)
+        case_l.setContentsMargins(10, 10, 10, 10)
+        case_l.setSpacing(10)
+        self.plot_timeline = ChartView()
+        self.table_episodes = QTableWidget()
+        self.table_episodes.setAlternatingRowColors(True)
+        self.table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        case_l.addWidget(self.plot_timeline, stretch=4)
+        ep_label = QLabel("Flag episodes / minute flags")
+        ep_label.setObjectName("sectionLabel")
+        case_l.addWidget(ep_label)
+        case_l.addWidget(self.table_episodes, stretch=1)
+        self.tabs.addTab(case_tab, "3 · Case timeline")
+
+        self.rules_text = QTextEdit()
+        self.rules_text.setReadOnly(True)
+        self.tabs.addTab(self.rules_text, "4 · Rule reference")
 
         body.addWidget(side)
         body.addWidget(self.tabs, stretch=1)
         outer.addLayout(body, stretch=1)
 
-        QTimer.singleShot(200, self._refresh_ollama_models)
+        # Probe only on launch — user starts the server via Start (or we start on first Ask).
+        QTimer.singleShot(200, lambda: self._refresh_ollama_models(start_if_needed=False))
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
-        emr = emr_dir()
-        proc = processed_dir()
-        wave = wave_dir()
-        self.edit_emr.setText(str(emr))
-        self.edit_wave.setText(str(wave) if wave else "")
-        self.lbl_emr_path.setText(f"EMR: {emr}")
-        self.lbl_wave_path.setText(f"Wave: {wave if wave else '(not set)'}")
-        self.lbl_proc_path.setText(f"Processed: {proc}")
+        """Refresh status bar after path changes (sidebar no longer holds path fields)."""
+        self._update_status_paths()
 
     def _update_status_paths(self, prefix: str = "") -> None:
         wave = wave_dir()
@@ -709,7 +632,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg)
 
     def _browse_emr_folder(self) -> None:
-        start = self.edit_emr.text().strip() or str(emr_dir())
+        start = str(emr_dir())
         chosen = QFileDialog.getExistingDirectory(
             self,
             "Select SIS EMR folder (patient_information.csv)",
@@ -718,18 +641,17 @@ class MainWindow(QMainWindow):
         )
         if not chosen:
             return
-        self.edit_emr.setText(chosen)
         try:
             configure_emr_directory(chosen, persist=True)
         except Exception as e:
             QMessageBox.critical(self, "Invalid EMR folder", str(e))
             return
-        self._sync_path_fields_from_runtime()
         self._update_status_paths("EMR folder set")
         self._autoload_processed()
 
     def _browse_wave_folder(self) -> None:
-        start = self.edit_wave.text().strip() or str(Path.home())
+        wave = wave_dir()
+        start = str(wave) if wave else str(Path.home())
         chosen = QFileDialog.getExistingDirectory(
             self,
             "Select SIS wave folder (Waveforms/ or sis_wave*.tar.gz)",
@@ -738,13 +660,11 @@ class MainWindow(QMainWindow):
         )
         if not chosen:
             return
-        self.edit_wave.setText(chosen)
         try:
             configure_wave_directory(chosen, persist=True)
         except Exception as e:
             QMessageBox.critical(self, "Invalid wave folder", str(e))
             return
-        self._sync_path_fields_from_runtime()
         self._update_status_paths("Wave folder set")
         self._on_filters_changed()
 
@@ -752,43 +672,13 @@ class MainWindow(QMainWindow):
         """Menu shortcut: same as EMR browse (legacy)."""
         self._browse_emr_folder()
 
-    def _apply_paths_from_fields(self) -> None:
-        """Apply both EMR and wave paths typed into the fields."""
-        emr_text = self.edit_emr.text().strip()
-        wave_text = self.edit_wave.text().strip()
-        errors = []
-        if emr_text:
-            try:
-                configure_emr_directory(emr_text, persist=True)
-            except Exception as e:
-                errors.append(f"EMR: {e}")
-        if wave_text:
-            try:
-                configure_wave_directory(wave_text, persist=True)
-            except Exception as e:
-                errors.append(f"Wave: {e}")
-        if not emr_text and not wave_text:
-            QMessageBox.warning(
-                self,
-                "Paths",
-                "Enter an EMR folder and/or a Wave folder.",
-            )
-            return
-        self._sync_path_fields_from_runtime()
-        if errors:
-            QMessageBox.critical(self, "Path errors", "\n\n".join(errors))
-            return
-        self._update_status_paths("Paths applied")
-        self._autoload_processed()
-
     def _apply_data_folder(self, path: Path) -> None:
-        """Compatibility helper used by older tests / menu."""
+        """Compatibility helper used by tests / menu."""
         try:
             configure_from_user_directory(path, persist=True)
         except Exception as e:
             QMessageBox.critical(self, "Invalid data folder", str(e))
             return
-        self._sync_path_fields_from_runtime()
         self._update_status_paths("EMR folder set")
         self._autoload_processed()
 
@@ -837,19 +727,86 @@ class MainWindow(QMainWindow):
             f"MOVER SIS Ventilation & Anesthesia Monitor\n"
             f"Version {self._version}\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
-            "Choose any local EMR folder via File → Open data folder.\n"
+            "Configure paths via the ⚙ Settings icon (top-right) or File → Setup…\n"
             "Not for clinical care.",
         )
 
-    def _run_pipeline(self) -> None:
+    def _maybe_run_first_setup(self) -> None:
+        # Skip modal wizard under automated / offscreen runs
+        if os.environ.get("MOVER_SKIP_SETUP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return
+        if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
+            return
+        if needs_first_run_setup():
+            self._open_setup_wizard(first_run=True)
+
+    def _open_setup_wizard(self, first_run: bool = False) -> None:
+        from src.desktop.settings_ui import SetupWizard
+
+        wiz = SetupWizard(self)
+        wiz.setup_finished.connect(self._on_settings_applied)
+        if first_run:
+            wiz.setWindowTitle("MOVER SIS Monitor — First-time setup")
+        wiz.exec()
+        self._sync_path_fields_from_runtime()
+        self._update_status_paths("Setup finished" if wiz.result() else "Setup cancelled")
+        if wiz.result():
+            self._autoload_processed()
+            self._refresh_ollama_models()
+
+    def _open_settings(self) -> None:
+        from src.desktop.settings_ui import SettingsDialog
+
+        dlg = SettingsDialog(self)
+        dlg.settings_applied.connect(self._on_settings_applied)
+        if dlg.exec():
+            self._sync_path_fields_from_runtime()
+            self._update_status_paths("Settings saved")
+            self._autoload_processed()
+            self._refresh_ollama_models()
+
+    def _on_settings_applied(self, vals: dict) -> None:
+        apply_persisted_settings()
+        apply_ollama_env_from_settings()
+        theme = vals.get("theme")
+        if theme:
+            from src.user_settings import update_settings
+
+            update_settings(theme=theme)
+            apply_theme(QApplication.instance(), theme)
+            self._charts_pending = True
+            QTimer.singleShot(0, self._refresh_charts_if_needed)
+        self._sync_path_fields_from_runtime()
+
+    def _set_theme_quick(self, mode: str) -> None:
+        from src.user_settings import update_settings
+
+        update_settings(theme=mode)
+        concrete = apply_theme(QApplication.instance(), mode)
+        # Re-render matplotlib charts so figure colors match the new theme
+        self._charts_pending = True
+        QTimer.singleShot(0, self._refresh_charts_if_needed)
+        self.statusBar().showMessage(f"Theme: {mode} ({concrete})", 4000)
+
+    def _run_pipeline_menu(self) -> None:
+        """File-menu pipeline run (sidebar pipeline controls removed)."""
+        self._run_pipeline(n_cases=50, preset="default")
+
+    def _run_pipeline(self, n_cases: int = 50, preset: str = "default") -> None:
         if self._worker and self._worker.isRunning():
             QMessageBox.information(self, "Busy", "A background job is already running.")
             return
-        self.btn_run.setEnabled(False)
+        n_cases = max(MIN_N_CASES, min(int(n_cases), min(200, MAX_N_CASES)))
+        if preset not in ALLOWED_PRESETS:
+            preset = "default"
         self._update_status_paths("Running pipeline…")
         self._worker = PipelineWorker(
-            n_cases=self.spin_cases.value(),
-            preset=self.combo_preset.currentText(),
+            n_cases=n_cases,
+            preset=preset,
             force=True,
             emr=emr_dir(),
             processed=processed_dir(),
@@ -857,7 +814,6 @@ class MainWindow(QMainWindow):
         )
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_pipeline_fail)
-        self._worker.finished.connect(lambda: self.btn_run.setEnabled(True))
         self._worker.start()
 
     def _on_pipeline_ok(self, data) -> None:
@@ -865,7 +821,7 @@ class MainWindow(QMainWindow):
         self._update_status_paths(
             f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
         )
-        self._populate_filters()
+        self._focus_pids = []
         self._refresh_tables_and_selectors()
         self._charts_pending = True
         QTimer.singleShot(0, self._refresh_charts_if_needed)
@@ -883,72 +839,76 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _populate_filters(self) -> None:
-        agents = ["(all)"]
-        if self.cases is not None and "primary_agent_name" in self.cases.columns:
-            agents += sorted(
-                a
-                for a in self.cases["primary_agent_name"].dropna().unique().tolist()
-                if a
-            )
-        cur = self.combo_agent.currentText()
-        self.combo_agent.blockSignals(True)
-        self.combo_agent.clear()
-        self.combo_agent.addItems(agents)
-        if cur in agents:
-            self.combo_agent.setCurrentText(cur)
-        self.combo_agent.blockSignals(False)
-
     def _filtered_cases(self) -> pd.DataFrame:
+        """Cases for Summary table/charts: focus list from LLM tools, else all."""
         if self.cases is None or self.cases.empty:
             return pd.DataFrame()
-        df = self.cases
-        agent = self.combo_agent.currentText()
-        if agent != "(all)" and "primary_agent_name" in df.columns:
-            df = df[df["primary_agent_name"] == agent]
-        if "anomaly_score" in df.columns:
-            df = df[df["anomaly_score"] >= self.spin_min_score.value()]
+        if self._focus_pids:
+            return self.cases[
+                self.cases["PID"].astype(str).isin([str(p) for p in self._focus_pids])
+            ].copy()
+        return self.cases.copy()
 
-        # Keyword search (procedure, PID, agent, top_rules, flag rule_ids)
-        q = self.edit_search.text().strip() if hasattr(self, "edit_search") else ""
-        if q:
-            df = filter_cases_by_keywords(df, q, flags=self.flags, match_all=True)
-
-        # Optional: only cases with on-disk waveform folders
-        if (
-            hasattr(self, "chk_wave_only")
-            and self.chk_wave_only.isChecked()
-            and wave_dir() is not None
-            and "PID" in df.columns
-        ):
-            mask = df["PID"].astype(str).map(
-                lambda pid: waveform_case_dir(pid) is not None
-            )
-            df = df.loc[mask]
-
-        return df
-
-    def _on_filters_changed(self) -> None:
-        self._refresh_tables_and_selectors()
-        self._charts_pending = True
-        QTimer.singleShot(0, self._refresh_charts_if_needed)
+    def _on_vitals_toggled(self, checked: bool) -> None:
+        self._show_vitals = bool(checked)
+        self._refresh_case_timeline()
 
     def _on_tab_changed(self, _index: int) -> None:
         self._refresh_charts_if_needed()
 
+    def _set_active_pid(self, pid: str | None) -> None:
+        self._active_pid = str(pid) if pid else None
+        # Keep hidden combo in sync for any legacy paths
+        self.combo_pid.blockSignals(True)
+        self.combo_pid.clear()
+        if self._active_pid and self.cases is not None:
+            self.combo_pid.addItem(self._active_pid, self._active_pid)
+            self.combo_pid.setCurrentIndex(0)
+        self.combo_pid.blockSignals(False)
+        self._update_llm_case_label()
+        self._refresh_case_timeline()
+
+    def _open_active_timeline(self) -> None:
+        if not self._active_pid:
+            QMessageBox.information(
+                self,
+                "No active case",
+                "Ask the co-pilot to find and select a case first "
+                "(or double-click a row on Summary).",
+            )
+            return
+        self.tabs.setCurrentIndex(2)  # Case timeline
+        self._refresh_case_timeline()
+
     def _refresh_tables_and_selectors(self) -> None:
         filtered = self._filtered_cases()
+        n_all = 0 if self.cases is None else len(self.cases)
+        if hasattr(self, "lbl_corpus"):
+            self.lbl_corpus.setText(
+                f"Corpus: {n_all} cases loaded"
+                + (
+                    f" · focus {len(self._focus_pids)}"
+                    if self._focus_pids
+                    else ""
+                )
+            )
+        if hasattr(self, "lbl_focus"):
+            if self._focus_pids:
+                preview = ", ".join(str(p)[:10] for p in self._focus_pids[:6])
+                if len(self._focus_pids) > 6:
+                    preview += f" +{len(self._focus_pids) - 6}"
+                self.lbl_focus.setText(f"Focus list: {preview}")
+            else:
+                self.lbl_focus.setText("Focus list: (all corpus / none yet)")
+
         if filtered.empty:
             self.table_cases.setRowCount(0)
-            self.combo_pid.blockSignals(True)
-            self.combo_pid.clear()
-            self.combo_pid.blockSignals(False)
             self.metric_cases.setText("0")
             self.metric_flags.setText("—")
             self.metric_score.setText("—")
-            self.lbl_case_meta.setText("No cases match filters.")
-            self.plot_summary_top.clear("No cases match filters.")
+            self.plot_summary_top.clear("No cases loaded.")
             self.plot_summary_rules.clear()
+            self._update_llm_case_label()
             return
 
         show_cols = [
@@ -970,23 +930,22 @@ class MainWindow(QMainWindow):
             ]
             if c in filtered.columns
         ]
-        # Sorting interferes with bulk fill; toggle around update
         self.table_cases.setSortingEnabled(False)
         _df_to_table(self.table_cases, filtered[show_cols])
         self.table_cases.setSortingEnabled(True)
 
-        prev = self.combo_pid.currentData()
+        # Hidden combo holds focus PIDs for convenience
         self.combo_pid.blockSignals(True)
         self.combo_pid.clear()
-        ranked = filtered.sort_values("anomaly_score", ascending=False)
+        ranked = filtered
+        if "anomaly_score" in filtered.columns:
+            ranked = filtered.sort_values("anomaly_score", ascending=False)
         for _, row in ranked.iterrows():
             pid = row["PID"]
             label = f"{str(pid)[:10]}… | score={int(row.get('anomaly_score', 0))}"
-            if "Procedure_short" in row and pd.notna(row["Procedure_short"]):
-                label += f" | {str(row['Procedure_short'])[:40]}"
             self.combo_pid.addItem(label, pid)
-        if prev is not None:
-            idx = self.combo_pid.findData(prev)
+        if self._active_pid:
+            idx = self.combo_pid.findData(self._active_pid)
             if idx >= 0:
                 self.combo_pid.setCurrentIndex(idx)
         self.combo_pid.blockSignals(False)
@@ -996,12 +955,11 @@ class MainWindow(QMainWindow):
         )
         self.metric_cases.setText(str(len(filtered)))
         self.metric_flags.setText(str(n_flagged))
-        self.metric_score.setText(str(int(filtered["anomaly_score"].max())))
-        q = self.edit_search.text().strip() if hasattr(self, "edit_search") else ""
-        qbit = f" · search “{q}”" if q else ""
-        self.lbl_case_meta.setText(
-            f"{len(filtered)} cases in view{qbit} · double-click a row for timeline"
-        )
+        if "anomaly_score" in filtered.columns:
+            self.metric_score.setText(str(int(filtered["anomaly_score"].max())))
+        else:
+            self.metric_score.setText("—")
+        self._update_llm_case_label()
 
     def _refresh_charts_if_needed(self) -> None:
         filtered = self._filtered_cases()
@@ -1010,7 +968,8 @@ class MainWindow(QMainWindow):
             return
 
         tab = self.tabs.currentIndex()
-        if tab == 0 or self._charts_pending:
+        # Tabs: 0 Ask, 1 Summary, 2 Timeline, 3 Rules
+        if tab == 1 or self._charts_pending:
             self.plot_summary_top.set_figure(
                 top_cases_figure(filtered, n=min(15, len(filtered)))
             )
@@ -1021,20 +980,18 @@ class MainWindow(QMainWindow):
                 else pd.DataFrame()
             )
             self.plot_summary_rules.set_figure(flag_rules_figure(fsub))
-        if tab == 1 or self._charts_pending:
+        if tab == 2 or self._charts_pending:
             self._refresh_case_timeline()
         self._charts_pending = False
-
-    def _on_pid_changed(self) -> None:
-        self._refresh_case_timeline()
-        self._update_llm_case_label()
 
     def _update_llm_case_label(self) -> None:
         if not hasattr(self, "lbl_llm_case"):
             return
-        pid = self.combo_pid.currentData() if self.combo_pid.count() else None
+        pid = self._active_pid
         if not pid:
-            self.lbl_llm_case.setText("Case: (select a surgery in Search & filters)")
+            self.lbl_llm_case.setText(
+                "Active case: (none — ask the co-pilot to find cases)"
+            )
             return
         proc = ""
         if self.cases is not None and not self.cases.empty:
@@ -1042,55 +999,196 @@ class MainWindow(QMainWindow):
             if not row.empty and "Procedure_short" in row.columns:
                 proc = str(row.iloc[0].get("Procedure_short", "") or "")
         self.lbl_llm_case.setText(
-            f"Case: {pid}" + (f"  —  {proc[:80]}" if proc else "")
+            f"Active case: {pid}" + (f"  —  {proc[:80]}" if proc else "")
         )
 
-    def _refresh_ollama_models(self) -> None:
+    def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         if not hasattr(self, "combo_llm_model"):
             return
-        try:
-            from src.llm.ollama_client import OllamaClient
+        from src.llm.service import ensure_ollama, ollama_status_summary, probe_ollama
+        from src.user_settings import load_settings
 
-            client = OllamaClient()
-            models = client.list_models()
-        except Exception as e:
-            self.combo_llm_model.clear()
-            self.combo_llm_model.addItem("(Ollama unavailable)")
-            self.statusBar().showMessage(
-                f"Ollama not reachable — start with: ollama serve ({e})"
-            )
-            return
-        current = self.combo_llm_model.currentText()
+        if start_if_needed:
+            status = ensure_ollama(start_if_needed=True, wait_s=20.0)
+        else:
+            status = probe_ollama()
+
+        prev = self.combo_llm_model.currentText().strip()
         self.combo_llm_model.blockSignals(True)
         self.combo_llm_model.clear()
+        if not status.available:
+            self.combo_llm_model.addItem("(Ollama stopped — click Start)")
+            self.combo_llm_model.blockSignals(False)
+            self._set_ollama_status_ui(status)
+            self.statusBar().showMessage(status.message)
+            return
+
+        models = status.models
         if not models:
             self.combo_llm_model.addItem("(no models — ollama pull gemma4)")
         else:
             self.combo_llm_model.addItems(models)
-            # Prefer a mid-size local model if present
-            for preferred in (
-                "gemma4:latest",
-                "qwen2.5:14b",
-                "qwen3:14b",
-                "mistral-small3.1:24b",
-            ):
+            saved = load_settings().get("ollama_model")
+            preferred_list = []
+            if prev and not prev.startswith("("):
+                preferred_list.append(prev)
+            if saved:
+                preferred_list.append(str(saved))
+            preferred_list.extend(
+                [
+                    "qwen3:14b",
+                    "qwen2.5:14b",
+                    "gemma4:latest",
+                    "mistral-small3.1:24b",
+                ]
+            )
+            for preferred in preferred_list:
                 idx = self.combo_llm_model.findText(preferred)
                 if idx >= 0:
                     self.combo_llm_model.setCurrentIndex(idx)
                     break
-            if current and self.combo_llm_model.findText(current) >= 0:
-                self.combo_llm_model.setCurrentText(current)
         self.combo_llm_model.blockSignals(False)
-        self.statusBar().showMessage(
-            f"Ollama OK · {len(models)} model(s) available"
+        if not getattr(self, "_ollama_model_hooked", False):
+            self.combo_llm_model.currentTextChanged.connect(self._on_ollama_model_changed)
+            self._ollama_model_hooked = True
+        self._set_ollama_status_ui(status)
+        self.statusBar().showMessage(ollama_status_summary(status))
+
+    def _set_ollama_status_ui(self, status) -> None:
+        if not hasattr(self, "lbl_ollama_status"):
+            return
+        if status.available:
+            n = len(status.models)
+            extra = " · started by app" if status.started_by_app else ""
+            self.lbl_ollama_status.setText(
+                f"Ollama: <b style='color:#14b8a6'>running</b> · {n} model(s){extra}"
+            )
+            self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
+            if hasattr(self, "btn_ollama_start"):
+                self.btn_ollama_start.setEnabled(False)
+                self.btn_ollama_stop.setEnabled(True)
+                self.btn_ollama_unload.setEnabled(True)
+        else:
+            self.lbl_ollama_status.setText(
+                "Ollama: <b style='color:#f87171'>stopped</b> — click Start to activate"
+            )
+            self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
+            if hasattr(self, "btn_ollama_start"):
+                self.btn_ollama_start.setEnabled(True)
+                self.btn_ollama_stop.setEnabled(False)
+                self.btn_ollama_unload.setEnabled(False)
+
+    def _ollama_start(self) -> None:
+        from src.llm.service import start_ollama
+
+        self.statusBar().showMessage("Starting Ollama…")
+        for b in (
+            getattr(self, "btn_ollama_start", None),
+            getattr(self, "btn_ollama_stop", None),
+            getattr(self, "btn_ollama_unload", None),
+        ):
+            if b is not None:
+                b.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            status = start_ollama(wait_s=35.0)
+            # Refresh list without a second start attempt
+            self._refresh_ollama_models(start_if_needed=False)
+            if not status.available:
+                # Force UI back to startable state even if probe raced
+                self.btn_ollama_start.setEnabled(True)
+                self.btn_ollama_stop.setEnabled(False)
+                self.btn_ollama_unload.setEnabled(False)
+                self.lbl_ollama_status.setText(
+                    "Ollama: <b style='color:#f87171'>failed to start</b> — try again"
+                )
+                self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
+                QMessageBox.warning(
+                    self,
+                    "Ollama start",
+                    status.message
+                    + "\n\nIf you just clicked Stop, wait 2 seconds and try Start again.",
+                )
+            else:
+                self.statusBar().showMessage(status.message)
+        except Exception as e:
+            self.btn_ollama_start.setEnabled(True)
+            self.btn_ollama_stop.setEnabled(False)
+            self.btn_ollama_unload.setEnabled(False)
+            QMessageBox.critical(self, "Ollama start", str(e))
+            self._refresh_ollama_models(start_if_needed=False)
+
+    def _ollama_stop(self) -> None:
+        from src.llm.service import stop_ollama
+
+        w = getattr(self, "_llm_worker", None)
+        if w is not None and w.isRunning():
+            w.requestInterruption()
+            w.wait(1500)
+
+        self.statusBar().showMessage("Stopping Ollama…")
+        for b in (
+            getattr(self, "btn_ollama_start", None),
+            getattr(self, "btn_ollama_stop", None),
+            getattr(self, "btn_ollama_unload", None),
+        ):
+            if b is not None:
+                b.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            ok, msg = stop_ollama()
+        except Exception as e:
+            ok, msg = False, str(e)
+        # Always refresh + re-enable Start so user can restart without relaunching the app
+        self._refresh_ollama_models(start_if_needed=False)
+        self.btn_ollama_start.setEnabled(True)
+        self.btn_ollama_stop.setEnabled(False)
+        self.btn_ollama_unload.setEnabled(False)
+        self.statusBar().showMessage(msg)
+        if ok:
+            QMessageBox.information(self, "Ollama stopped", msg)
+        else:
+            QMessageBox.warning(self, "Ollama stop", msg)
+
+    def _ollama_unload(self) -> None:
+        from src.llm.service import unload_ollama_model
+
+        model = self.combo_llm_model.currentText().strip()
+        ok, msg = unload_ollama_model(model)
+        self.statusBar().showMessage(msg)
+        if ok:
+            QMessageBox.information(self, "Model unloaded", msg)
+        else:
+            QMessageBox.warning(self, "Unload model", msg)
+
+    def _on_ollama_model_changed(self, text: str) -> None:
+        text = (text or "").strip()
+        if text and not text.startswith("("):
+            from src.user_settings import update_settings
+
+            update_settings(ollama_model=text)
+
+    def _make_session_snapshot(self):
+        from src.llm.tools import SessionState
+
+        return SessionState(
+            cases=self.cases,
+            timeseries=self.ts,
+            flags=self.flags,
+            episodes=self.episodes,
+            events=self.events,
+            active_pid=self._active_pid,
+            focus_pids=list(self._focus_pids),
         )
 
     def _current_case_context(self) -> str:
-        pid = self.combo_pid.currentData()
+        pid = self._active_pid
         if not pid:
-            raise RuntimeError("Select a surgery (PID) first.")
+            raise RuntimeError(
+                "No active case yet. Ask the co-pilot to search and select a PID first."
+            )
         if self.cases is None or self.ts is None:
-            raise RuntimeError("Load processed case data first.")
+            raise RuntimeError("Load processed case data first (File → Reload).")
         from src.llm.case_context import build_case_context
 
         return build_case_context(
@@ -1110,14 +1208,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Case context", str(e))
             return
         dlg = QMessageBox(self)
-        dlg.setWindowTitle("Case context sent to the LLM")
+        dlg.setWindowTitle("Grounded case context")
         dlg.setText(
-            "This is the structured briefing the local model receives "
+            "Structured briefing available to the co-pilot for the active case "
             "(truncated if very long)."
         )
         dlg.setDetailedText(ctx[:20000])
         dlg.setIcon(QMessageBox.Icon.Information)
         dlg.exec()
+
+    def _set_llm_mode(self, mode: str) -> None:
+        self._llm_mode = mode if mode in {"chat", "analyze", "compare"} else "analyze"
+        for mid, btn in getattr(self, "_mode_buttons", {}).items():
+            on = mid == self._llm_mode
+            btn.setChecked(on)
+            btn.setObjectName("primaryBtn" if on else "secondaryBtn")
+            # Force style refresh
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self.statusBar().showMessage(f"Co-pilot mode: {self._llm_mode}", 3000)
 
     def _clear_chat(self) -> None:
         self._chat_messages = []
@@ -1126,10 +1235,16 @@ class MainWindow(QMainWindow):
 
     def _append_chat(self, role: str, text: str) -> None:
         who = "You" if role == "user" else "Assistant"
-        color = "#0f766e" if role == "user" else "#334e68"
+        color = chat_role_color(role)
+        # Escape HTML-ish but keep simple newlines via pre-wrap
+        safe = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
         self.chat_history.append(
             f'<p style="margin:8px 0 2px 0;"><b style="color:{color};">{who}</b></p>'
-            f'<p style="margin:0 0 10px 0; white-space:pre-wrap;">{text}</p>'
+            f'<p style="margin:0 0 10px 0; white-space:pre-wrap;">{safe}</p>'
         )
 
     def _send_chat(self) -> None:
@@ -1141,63 +1256,70 @@ class MainWindow(QMainWindow):
             return
         model = self.combo_llm_model.currentText().strip()
         if not model or model.startswith("("):
+            # Try auto-start once (user may not have clicked Start)
+            self._refresh_ollama_models(start_if_needed=True)
+            model = self.combo_llm_model.currentText().strip()
+        if not model or model.startswith("("):
             QMessageBox.warning(
                 self,
                 "Ollama model",
-                "No Ollama model selected.\n\n"
-                "1. Run: ollama serve\n"
-                "2. Pull a model, e.g. ollama pull gemma4\n"
-                "3. Click Refresh models",
+                "Ollama is not ready.\n\n"
+                "1. Click Start in the Research co-pilot panel\n"
+                "2. Pull a model if needed: ollama pull qwen3:14b\n"
+                "3. Click Refresh and pick a model",
             )
             return
-        try:
-            ctx = self._current_case_context()
-        except Exception as e:
-            QMessageBox.warning(self, "Case context", str(e))
+        if self.cases is None or self.cases.empty:
+            QMessageBox.warning(
+                self,
+                "No data",
+                "No processed cases loaded.\n\n"
+                "Use File → Reload processed data, or File → Run pipeline.",
+            )
             return
 
         self.edit_chat.clear()
         self._append_chat("user", question)
         self._chat_messages.append({"role": "user", "content": question})
         self.btn_send_chat.setEnabled(False)
-        self.statusBar().showMessage(f"Asking {model}…")
-        self._streaming_answer = ""
-        self.chat_history.append(
-            '<p style="margin:8px 0 2px 0;"><b style="color:#334e68;">Assistant</b> '
-            "<i>(streaming…)</i></p>"
-            '<p style="margin:0 0 10px 0; white-space:pre-wrap;" id="stream"></p>'
-        )
+        self.statusBar().showMessage(f"Co-pilot ({model}) working…")
 
+        session = self._make_session_snapshot()
         self._llm_worker = LLMChatWorker(
             model=model,
             question=question,
-            case_context=ctx,
-            history=self._chat_messages[:-1],
+            session_snapshot=session,
+            mode=self._llm_mode,
             parent=self,
         )
-        self._llm_worker.chunk.connect(self._on_llm_chunk)
+        self._llm_worker.status.connect(
+            lambda m: self.statusBar().showMessage(m)
+        )
         self._llm_worker.finished_ok.connect(self._on_llm_ok)
         self._llm_worker.failed.connect(self._on_llm_fail)
         self._llm_worker.finished.connect(lambda: self.btn_send_chat.setEnabled(True))
         self._llm_worker.start()
 
-    def _on_llm_chunk(self, piece: str) -> None:
-        self._streaming_answer += piece
-        # Simple approach: rewrite last assistant block by re-appending is messy;
-        # update status with length while streaming.
-        self.statusBar().showMessage(
-            f"Streaming… {len(self._streaming_answer)} chars"
-        )
-
-    def _on_llm_ok(self, text: str) -> None:
-        # Replace the streaming placeholder by appending final clean answer
-        final = text.strip() or self._streaming_answer.strip()
+    def _on_llm_ok(self, result) -> None:
+        # AgentResult from worker
+        final = getattr(result, "answer", None) or str(result)
+        final = str(final).strip()
         self._chat_messages.append({"role": "assistant", "content": final})
-        # Rebuild transcript for clean formatting
+        # Sync tool-selected case / focus back to UI
+        if getattr(result, "active_pid", None):
+            self._set_active_pid(result.active_pid)
+        if getattr(result, "focus_pids", None) is not None:
+            self._focus_pids = list(result.focus_pids or [])
+        self._refresh_tables_and_selectors()
+        self._charts_pending = True
+        QTimer.singleShot(0, self._refresh_charts_if_needed)
+
         self.chat_history.clear()
         for m in self._chat_messages:
             self._append_chat(m["role"], m["content"])
-        self.statusBar().showMessage("Local LLM answer ready")
+        tools = getattr(result, "tool_trace", None) or []
+        extra = f" · tools: {len(tools)}" if tools else ""
+        self.statusBar().showMessage(f"Co-pilot answer ready{extra}")
         self._streaming_answer = ""
 
     def _on_llm_fail(self, msg: str) -> None:
@@ -1210,31 +1332,43 @@ class MainWindow(QMainWindow):
         self._streaming_answer = ""
 
     def _refresh_case_timeline(self) -> None:
-        if self.ts is None or self.combo_pid.count() == 0:
-            self.plot_timeline.clear("Select a case.")
+        if self.ts is None:
+            self.plot_timeline.clear("Load processed data first.")
             self.table_episodes.setRowCount(0)
             return
-        pid = self.combo_pid.currentData()
-        if pid is None:
+        pid = self._active_pid
+        if not pid:
+            self.plot_timeline.clear(
+                "No active case — ask the co-pilot to select a PID, "
+                "or double-click a Summary row."
+            )
+            self.table_episodes.setRowCount(0)
             return
-        cts = self.ts[self.ts["PID"] == pid].sort_values("t_min")
+        cts = self.ts[self.ts["PID"].astype(str) == str(pid)].sort_values("t_min")
         cflags = (
-            self.flags[self.flags["PID"] == pid]
+            self.flags[self.flags["PID"].astype(str) == str(pid)]
             if self.flags is not None
             else pd.DataFrame()
         )
         if cts.empty:
             self.plot_timeline.clear("No timeseries for this case.")
             return
+        show_vitals = (
+            self.chk_vitals.isChecked()
+            if hasattr(self, "chk_vitals")
+            else self._show_vitals
+        )
         self.plot_timeline.set_figure(
             case_timeline_figure(
                 cts,
                 cflags if not cflags.empty else None,
-                show_vitals=self.chk_vitals.isChecked(),
+                show_vitals=show_vitals,
             )
         )
         if self.episodes is not None and not self.episodes.empty:
-            ep = self.episodes[self.episodes["PID"] == pid].sort_values("t_start_min")
+            ep = self.episodes[
+                self.episodes["PID"].astype(str) == str(pid)
+            ].sort_values("t_start_min")
             _df_to_table(
                 self.table_episodes, ep.drop(columns=["PID"], errors="ignore")
             )
@@ -1245,7 +1379,6 @@ class MainWindow(QMainWindow):
         row = self.table_cases.currentRow()
         if row < 0:
             return
-        # PID may not be column 0 if sorted — find header
         pid_col = 0
         for c in range(self.table_cases.columnCount()):
             h = self.table_cases.horizontalHeaderItem(c)
@@ -1256,16 +1389,16 @@ class MainWindow(QMainWindow):
         if not item:
             return
         pid = item.text()
-        idx = self.combo_pid.findData(pid)
-        if idx >= 0:
-            self.combo_pid.setCurrentIndex(idx)
-            self.tabs.setCurrentIndex(1)
+        self._set_active_pid(pid)
+        if pid not in self._focus_pids:
+            self._focus_pids = [pid] + self._focus_pids
+        self.tabs.setCurrentIndex(2)  # timeline
 
     def _refresh_rule_reference(self) -> None:
         try:
             from src.config import load_thresholds
 
-            preset = self.combo_preset.currentText()
+            preset = "default"
             cfg = load_thresholds(preset, validate=True)
         except GuardrailError as e:
             self.rules_text.setPlainText(f"Threshold config invalid: {e}")
@@ -1296,6 +1429,7 @@ def main() -> int:
     os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
     apply_persisted_settings()
+    apply_ollama_env_from_settings()
 
     app = QApplication.instance()
     if app is None:
@@ -1309,7 +1443,7 @@ def main() -> int:
     app.setApplicationName("MOVER SIS Ventilation Monitor")
     app.setOrganizationName("MOVER-SIS")
     app.setDesktopFileName("mover-sis-monitor")
-    app.setStyle("Fusion")
+    apply_theme(app)
 
     win = MainWindow()
     win.show()

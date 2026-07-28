@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -59,7 +58,7 @@ def _isolate_paths(tmp_path, monkeypatch):
     clear_session_path_overrides()
 
 
-def test_apply_data_folder_updates_labels(qapp, tmp_path):
+def test_apply_data_folder_updates_runtime_and_status(qapp, tmp_path):
     from src.desktop.app import MainWindow
     from src.runtime_paths import emr_dir, processed_dir
 
@@ -76,15 +75,17 @@ def test_apply_data_folder_updates_labels(qapp, tmp_path):
     qapp.processEvents()
 
     assert emr_dir() == emr.resolve()
-    assert "EMR" in win.lbl_emr_path.text()
-    assert str(emr.resolve()) in win.lbl_emr_path.text()
     assert processed_dir().name == "processed"
+    status = win.statusBar().currentMessage()
+    assert str(emr.resolve()) in status
+    assert "EMR" in status
     win.close()
     qapp.processEvents()
 
 
-def test_apply_invalid_folder_shows_error_path(qapp, tmp_path, monkeypatch):
+def test_apply_invalid_folder_keeps_status_paths(qapp, tmp_path, monkeypatch):
     from src.desktop.app import MainWindow
+    from src.runtime_paths import emr_dir
 
     # Avoid modal dialogs blocking tests
     monkeypatch.setattr(
@@ -105,18 +106,18 @@ def test_apply_invalid_folder_shows_error_path(qapp, tmp_path, monkeypatch):
     win = MainWindow()
     win.show()
     qapp.processEvents()
-    before = win.lbl_emr_path.text()
+    before = emr_dir()
     win._apply_data_folder(empty)
     qapp.processEvents()
-    # Path labels unchanged on failure
-    assert win.lbl_emr_path.text() == before
+    # Runtime EMR unchanged on failure
+    assert emr_dir() == before
     win.close()
 
 
 def test_pipeline_uses_selected_emr(qapp, synthetic_emr, tmp_path, monkeypatch):
     """Selecting synthetic EMR and running ensure_data via worker path."""
     from src.desktop.app import MainWindow
-    from src.runtime_paths import configure_from_user_directory, processed_dir
+    from src.runtime_paths import configure_from_user_directory
     from src.services.data import ensure_data
 
     monkeypatch.setenv("MOVER_ALLOW_EXTERNAL_OUTPUT", "1")
@@ -131,12 +132,10 @@ def test_pipeline_uses_selected_emr(qapp, synthetic_emr, tmp_path, monkeypatch):
 
     win = MainWindow()
     win.show()
-    # Point at synthetic EMR
     configure_from_user_directory(synthetic_emr, persist=True)
     win._sync_path_fields_from_runtime()
 
     out = tmp_path / "out_proc"
-    # Direct ensure_data with selected dirs (same as worker)
     cases, ts, flags, episodes, events = ensure_data(
         pids=["caseA", "caseB"],
         force=True,
@@ -146,4 +145,17 @@ def test_pipeline_uses_selected_emr(qapp, synthetic_emr, tmp_path, monkeypatch):
     )
     assert len(cases) == 2
     assert (out / "cases.parquet").is_file()
+    win.close()
+
+
+def test_main_window_has_no_data_locations_sidebar(qapp):
+    """Path pickers live in Settings/Setup, not the main sidebar."""
+    from src.desktop.app import MainWindow
+
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+    assert not hasattr(win, "edit_emr")
+    assert not hasattr(win, "edit_wave")
+    assert not hasattr(win, "lbl_emr_path")
     win.close()

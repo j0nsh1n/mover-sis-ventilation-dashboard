@@ -73,6 +73,125 @@ jobs:
             dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz
           if-no-files-found: error
 
+  # PyInstaller cannot cross-compile, so the Windows binary must be built on a
+  # Windows runner. The spec is portable: its .so glob patterns simply match
+  # nothing here, and collect_all() supplies the Windows DLLs.
+  build-windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$version"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building Windows release for v$version"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.3" pytest
+
+      - name: Run non-GUI tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: pytest -q --ignore=tests/test_desktop_app.py --ignore=tests/test_desktop_paths_ui.py
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --distpath dist --workpath build/pyinstaller `
+            packaging/mover_sis_monitor.spec
+          if (-not (Test-Path "dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe")) {
+            throw "expected dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe"
+          }
+
+      - name: Stamp version and add launcher
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          Set-Content -Path "dist/MOVER-SIS-Monitor/VERSION" -Value $v -NoNewline
+          @"
+          version=$v
+          built_at=$(Get-Date -Format o)
+          platform=windows-x86_64
+          "@ | Set-Content -Path "dist/MOVER-SIS-Monitor/BUILD_INFO.txt"
+          @"
+          MOVER SIS Monitor $v (Windows)
+
+          Run MOVER-SIS-Monitor.exe. On first launch use Setup to point the app at
+          your SIS EMR folder (the one containing patient_information.csv).
+
+          Research / education use only - not for clinical care.
+          "@ | Set-Content -Path "dist/MOVER-SIS-Monitor/README-RUN.txt"
+
+      - name: Smoke test the frozen binary
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe" `
+                             -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "binary exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "Windows binary started and stayed up"
+
+      - name: Create zip
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          Compress-Archive -Path "dist/MOVER-SIS-Monitor" `
+            -DestinationPath "dist/MOVER-SIS-Monitor-v$v-windows-x86_64.zip" -Force
+          Copy-Item "dist/MOVER-SIS-Monitor-v$v-windows-x86_64.zip" `
+            "dist/MOVER-SIS-Monitor-windows-x86_64.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64
+          path: |
+            dist/MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip
+            dist/MOVER-SIS-Monitor-windows-x86_64.zip
+          if-no-files-found: error
+
+  # Single publish step so the two builders cannot race each other creating the release.
+  publish:
+    needs: [release-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: |
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp -f {} dist/ \;
+          ls -la dist/
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -81,24 +200,34 @@ jobs:
           body: |
             ## MOVER SIS Monitor ${{ steps.ver.outputs.tag }}
 
-            Linux x86_64 desktop build (Nobara / Fedora / Ubuntu-compatible).
+            Desktop builds for **Linux x86_64** (Nobara / Fedora / Ubuntu-compatible)
+            and **Windows x86_64**.
 
-            ### Install
-            1. Download `MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz`
-            2. Extract and run:
+            ### Linux
             ```bash
             tar -xzf MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
             cd MOVER-SIS-Monitor
             ./launch.sh
             ```
-            3. In the app, **Browse…** to your SIS EMR folder (`patient_information.csv`).
+
+            ### Windows
+            1. Download `MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip`
+            2. Extract, then run `MOVER-SIS-Monitor.exe`
+            3. SmartScreen may warn on first run — the binary is unsigned
+
+            On either platform, use **Setup** (or the ⚙ Settings icon) to point the app at
+            your SIS EMR folder — the one containing `patient_information.csv`.
 
             ### Notes
-            - Research / education use only — not for clinical care
-            - Prefer X11/XWayland (`QT_QPA_PLATFORM=xcb`) on KDE Wayland if needed
+            - Research / education use only — **not for clinical care**
+            - The local co-pilot needs [Ollama](https://ollama.com) installed separately;
+              models stay on your machine and are never bundled
+            - On KDE Wayland, prefer X11/XWayland (`QT_QPA_PLATFORM=xcb`) if rendering misbehaves
           files: |
             dist/MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
             dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz
+            dist/MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip
+            dist/MOVER-SIS-Monitor-windows-x86_64.zip
           fail_on_unmatched_files: true
           generate_release_notes: true
           make_latest: true

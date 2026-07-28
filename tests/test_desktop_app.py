@@ -96,6 +96,40 @@ def test_charts_pure_matplotlib_no_plotly():
 
 
 @requires_qt
+def test_chart_view_tall_figure_is_scrollable(qapp):
+    """Case timelines are multi-panel; the PNG host must enable vertical scroll."""
+    import pandas as pd
+
+    from src.desktop.charts import ChartView, case_timeline_figure
+
+    ts = pd.DataFrame(
+        {
+            "t_min": list(range(80)),
+            "TV": [500] * 80,
+            "PIP": list(range(15, 95)),
+            "PEEP": [5] * 80,
+            "ETCO2": [38] * 80,
+            "Agent_Et": [1.5] * 80,
+            "HR": [80] * 80,
+            "SPO2": [99] * 80,
+            "nMAP": [70] * 80,
+        }
+    )
+    view = ChartView()
+    view.resize(640, 280)  # short viewport → tall figure must scroll
+    view.show()
+    qapp.processEvents()
+    view.set_figure(case_timeline_figure(ts, show_vitals=True))
+    qapp.processEvents()
+
+    assert not view._label.pixmap().isNull()
+    # Content taller than the constrained viewport → vertical scrollbar range
+    assert view._label.height() > view._scroll.viewport().height()
+    assert view._scroll.verticalScrollBar().maximum() > 0
+    view.close()
+
+
+@requires_qt
 def test_mainwindow_constructs_fast(qapp, monkeypatch, tmp_path):
     """Window shell should appear quickly even with no data."""
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "empty_processed"))
