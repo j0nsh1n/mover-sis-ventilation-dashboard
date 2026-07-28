@@ -14,9 +14,15 @@ def test_system_prompt_has_safety_rules():
 
 
 def test_user_message_embeds_context():
-    msg = user_message("CASE PID: abc\n- Age: 50", "What agent was used?")
+    msg = user_message(
+        "What agent was used?",
+        session_header="Loaded cases: 1",
+        active_briefing="CASE PID: abc\n- Age: 50",
+        mode="chat",
+    )
     assert "CASE PID: abc" in msg
     assert "What agent was used?" in msg
+    assert "Patient / scenario" in msg or "description" in msg.lower()
 
 
 def test_build_case_context_from_frames():

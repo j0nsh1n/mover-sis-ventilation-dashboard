@@ -15,8 +15,8 @@ def test_version_file_semver_xyz():
     assert len(parts) == 3 and all(p.isdigit() for p in parts), f"bad VERSION {text!r}"
     assert __version__ == text
     assert get_version() == text
-    # This release line after Ollama integration
-    assert text == "0.2.0"
+    # Current feature line (gear-icon settings + on-demand EMR fetch + wave decode)
+    assert text == "0.6.0"
 
 
 def test_get_version_reads_file(tmp_path, monkeypatch):

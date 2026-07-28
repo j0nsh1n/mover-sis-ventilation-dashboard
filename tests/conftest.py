@@ -15,6 +15,34 @@ def thresholds():
     return load_thresholds("default", validate=True)
 
 
+@pytest.fixture(autouse=True)
+def isolate_ollama_process_state(monkeypatch):
+    """
+    Keep Ollama lifecycle tests from touching real processes.
+
+    ``src.llm.service`` keeps the spawned server in a module global. Tests that
+    patch ``Popen`` leave a mock there, and a later ``stop_ollama()`` used to feed
+    that mock's pid to ``os.killpg`` — where a non-int pid coerces to 1 and
+    ``killpg(1, …)`` is ``kill(-1, …)``: SIGTERM to every process the user owns.
+    Reset the state per test, block real matches, and fail loudly on a broadcast.
+    """
+    import src.llm.service as svc
+
+    def _guarded_killpg(pgid, sig):
+        raise AssertionError(
+            f"test attempted a real os.killpg({pgid}, {sig}) — "
+            "signalling process groups is not allowed under pytest"
+        )
+
+    monkeypatch.setattr(svc.os, "killpg", _guarded_killpg)
+    monkeypatch.setattr(svc, "_pgrep", lambda *a, **k: [])
+    monkeypatch.setattr(svc, "_started_proc", None, raising=False)
+    monkeypatch.setattr(svc, "_app_started_server", False, raising=False)
+    yield
+    svc._started_proc = None
+    svc._app_started_server = False
+
+
 @pytest.fixture
 def synthetic_emr(tmp_path: Path) -> Path:
     """
