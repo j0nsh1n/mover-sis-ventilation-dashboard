@@ -390,17 +390,30 @@ are Excel-mangled like `5.37E+15` and can never be joined to anything.)
 **Consequence: Phase 2 as originally scoped is dead.** Extracting the 27.5 GB would
 not attach outcomes to a single SIS surgery. Do not extract on that premise.
 
-Three ways forward, in order of preference:
+**Why: they are two cohorts from two eras, not one cohort with a broken key.**
 
-1. **Ask UCI / MOVER whether a SIS ↔ EPIC crosswalk exists at all.** Cheapest, and
-   decides everything else. The shipped README does not mention one.
-2. **Pivot outcome work to the EPIC arm**, which is self-contained: 65,728 anaesthesia
-   logs with their own labs, flowsheets and waveforms. That is a *larger* cohort than
-   SIS and it does have outcomes — but it needs a new ingest for EPIC schemas, and
-   **the EPIC waveforms then become required** (they are that arm's exposure data,
-   the analogue of `sis_wave_v2`, 2019–2020, ward/bed-coded `CB`/`IP` files).
-3. **Accept SIS as process-only.** Still legitimate: quality-measure adherence,
-   practice variation, waveform-derived intraoperative physiology — just no outcomes.
+| Arm | Era | Size |
+|-----|-----|------|
+| SIS | 2015–2018 | 19,114 surgeries |
+| EPIC | 2019–2020 (wave filenames sampled 2019-02 → 2020-08) | 65,728 anaesthesia logs |
+
+Temporally adjacent and non-overlapping — UCI migrated from Surgical Information
+Systems to Epic. `EPIC_MRN_PAT_ID.csv` is an *internal* EPIC crosswalk (log → patient
+→ MRN), never a bridge between arms. So this is permanent, not merely unsolved:
+**SIS cases will never have outcomes.** Worth one confirming email to UCI; expect
+"correct, by design".
+
+**Decision: stay on SIS, keep the measures dataset-agnostic.**
+
+Phase 0/1 is unaffected — quality-measure adherence, practice variation, hypotension
+exposure and waveform physiology are all legitimate process-of-care research without
+outcomes. Porting to EPIC now would mean a new ingest for EPIC schemas plus 571 GB of
+waveforms, before any measure exists to run on it.
+
+So the design constraint for Phase 1 is: **write measures against a neutral internal
+schema, not against SIS column names** (`ETC02`, `SP02`, agent codes `S`/`D`/`I`/`N`
+are SIS spellings). If EPIC is adopted later it should be an ingest adapter, not a
+rewrite — and it would then also require the EPIC waveforms as exposure data.
 
 **Do not guess a join.** A fuzzy match on time and demographics would silently
 attribute one patient's AKI to another patient's anaesthetic.
