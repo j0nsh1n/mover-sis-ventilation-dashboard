@@ -76,6 +76,7 @@ def merge_vent_vitals(
     if cases is not None and not cases.empty:
         meta_cols = [
             "PID", "Age", "Ht", "Wt", "Gender", "BMI", "IBW_kg",
+            "dq_anthropometrics_ok", "dq_reasons",
             "Procedure", "Procedure_short",
             "OR_start", "OR_end", "Surgery_start", "Surgery_end",
             "case_start", "case_end", "OR_duration_min", "Surgery_duration_min",

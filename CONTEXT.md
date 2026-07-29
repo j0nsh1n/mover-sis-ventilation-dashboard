@@ -231,6 +231,35 @@ re-derive them by guessing:
    idle, 2 saturated. Reference case with a clean trace: `02004a742e0d1bc4` (on `INVP1`,
    median 76 mmHg, range 45–132).
 
+## Data-quality gating (`pipeline/clean.py`) — Phase 0.1, done
+
+`IBW_kg` feeds `TV_mlkg`, which drives `tv_high_mlkg` — the most-fired rule in the
+corpus. Garbage anthropometrics therefore produce confident **critical** flags.
+
+- `PLAUSIBLE_HT_CM = (140, 215)`, `PLAUSIBLE_WT_KG = (20, 400)`.
+- Outside those, `ideal_body_weight_kg` returns NaN → `TV_mlkg` NaN → weight-normalised
+  rules cannot fire. A wrong denominator is worse than none.
+- `dq_anthropometrics_ok` (bool) and `dq_reasons` (text) are carried on every case and
+  through the timeseries merge, so the UI and co-pilot can *say why* rather than
+  silently omitting.
+
+**Why 140 and not 120:** Devine is constructed from 152.4 cm and decays below it,
+reaching 0 kg near 132 cm. A 120 cm floor still admitted a 130 cm case as a ~25 kg
+"adult" — positive, plausible-looking, and wrong. Heights 140–152 remain extrapolation.
+
+Affects **321 of 19,114 cases (1.7 %)**: 126 missing/zero height, **169 positive but
+implausible** (the silent, dangerous ones), 16 over 220 cm, 18 zero weight, 5 over
+400 kg. Separately, 436 cases are under 18 — Devine is not validated for paediatrics,
+which is not yet handled.
+
+## Local-only LLM guard (`llm/ollama_client.py`) — Phase 0.2, done
+
+`OllamaClient` refuses a non-loopback `base_url` at construction. Prompts carry case
+text derived from DUA-governed data, and a remote host would ship it off-machine
+silently. Override is deliberate and affirmative: `MOVER_ALLOW_REMOTE_OLLAMA=1`
+(`0`/unset/anything else still refuses). Loopback covers `127.0.0.0/8`, `::1`,
+`localhost`.
+
 ## Regulatory & clinical standards
 
 Not legal advice — confirm scope with the IRB / privacy office. These are the frames
@@ -329,9 +358,9 @@ Ordered by value and dependency. Phase 0 first — later phases inherit its corr
 
 | # | Item | Why it is first |
 |---|------|-----------------|
-| 0.1 | **Data-quality gating** | `Ht` spans 0.0–254.0 cm and `Wt` 0–839 kg. `tv_high_mlkg` is the most-fired rule and divides by predicted body weight, so `Ht=0` produces a confident critical flag from nonsense. Suppress weight-normalised rules when anthropometrics are implausible and label the case. Everything downstream inherits this. |
-| 0.2 | **Localhost guard for Ollama** | `OllamaClient(base_url=…)` accepts any URL. A remote host silently ships DUA-covered case text off-machine. Refuse non-loopback unless an explicit override env var is set; show the destination in the UI. |
-| 0.3 | **Denominator honesty + wire `case_fetch`** | `corpus_overview` reports the cache size (50) as if it were the corpus (5,574 analysable of 19,114). Every aggregate must carry its denominator. |
+| 0.1 | ~~Data-quality gating~~ **DONE** | See below. |
+| 0.2 | ~~Localhost guard for Ollama~~ **DONE** | See below. |
+| 0.3 | **Denominator honesty + wire `case_fetch`** (next) | `corpus_overview` reports the cache size (50) as if it were the corpus (5,574 analysable of 19,114). Every aggregate must carry its denominator. |
 | 0.4 | **Facts from code, prose from model** | The model retypes numbers and has altered them (100 mcg → 50 mcg). App renders demographics / vent ranges / flag counts / drug table as a block the model cannot edit; the LLM writes only narrative. Collapses a whole error class instead of patching it. |
 
 ### Phase 1 — make the output usable as research
@@ -347,33 +376,13 @@ Ordered by value and dependency. Phase 0 first — later phases inherit its corr
 | 1.7 | **Guideline comparison layer** | Factual comparison, never advice: "documented TV 10.9 mL/kg PBW; lung-protective practice is 6–8". Descriptive-only framing otherwise risks normalising non-guideline care for trainees. |
 | 1.8 | **Surface the tool trace + de-bloat** | `tool_trace` exists but is not shown; showing which tools ran and what they returned is the cheapest trust win. Trim PyInstaller includes (465 MB / 408 MB artifacts). |
 
-### Phase 2 — EPIC outcome linkage (blocked on NAS extraction)
+### Phase 2 — EPIC outcome linkage: NOT POSSIBLE (closed 2026-07-28)
 
-The single biggest scientific unlock: SIS holds **no outcomes**, so today the tool can
-only describe process. EPIC adds postoperative creatinine (AKI), troponin, LOS.
+**Do not extract the EPIC archives for this purpose.** SIS holds no outcomes and
+cannot borrow EPIC's: the two are separate cohorts from separate eras. This is
+settled, not pending.
 
-**Extract only these — 27.5 GB, not 600:**
-
-| Archive | Size | Purpose |
-|---------|------|---------|
-| `EPIC_EMR.tar.gz` | 1.0 GB | encounters / diagnoses |
-| `Epic_flowsheets_cleaned.tar.gz` | 9.9 GB | nursing + ward observations |
-| `EPIC_patient_measurments.tar.gz` | 16.6 GB | labs — creatinine, troponin |
-| `EPIC_MRN_PAT_ID.csv` | 3.4 MB | **the crosswalk** |
-
-The six `epic_wave_*.tar.gz` are ~571 GB and contribute **nothing** to outcomes. Skip
-them.
-
-**HDD-aware ingest (the NAS is spinning disk over the network):**
-
-1. Read each archive **exactly once**, streaming; never re-scan the NAS.
-2. Convert to parquet on fast local storage (next to `processed_dir`), partitioned by
-   patient/encounter, with only the columns needed.
-3. Verify against the shipped `md5sum_*.txt` before ingest; record a manifest
-   (file, checksum, row counts, ingest timestamp) so a partial run is resumable.
-4. All later queries hit parquet. Budget the NAS pass once, in the background.
-
-**The join was tested on 2026-07-28. It does not exist.**
+**The join was tested. It does not exist.**
 
 `EPIC_MRN_PAT_ID.csv` is `LOG_ID, PAT_ID, MRN` (65,728 rows). Against 19,114 SIS PIDs:
 
@@ -417,6 +426,15 @@ rewrite — and it would then also require the EPIC waveforms as exposure data.
 
 **Do not guess a join.** A fuzzy match on time and demographics would silently
 attribute one patient's AKI to another patient's anaesthetic.
+
+**If the EPIC arm is ever adopted as its own cohort** (65,728 logs, has outcomes), it
+needs `EPIC_EMR` (1.0 GB) + `Epic_flowsheets_cleaned` (9.9 GB) +
+`EPIC_patient_measurments` (16.6 GB) + `EPIC_MRN_PAT_ID.csv`, **and** the
+`epic_wave_*` archives (~571 GB) as that arm's exposure data. The NAS is spinning
+disk over the network, so: read each archive exactly once, streaming; verify against
+the shipped `md5sum_*.txt`; convert to column-pruned parquet on fast local storage;
+write a manifest (file, checksum, row counts, timestamp) so a partial run resumes.
+Budget one NAS pass, in the background.
 
 ### Phase 3 — depth
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -29,12 +30,50 @@ class ChatResult:
     raw: dict[str, Any] | None = None
 
 
+ALLOW_REMOTE_ENV = "MOVER_ALLOW_REMOTE_OLLAMA"
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "ip6-localhost", "0.0.0.0"}
+
+
+def is_loopback(base_url: str) -> bool:
+    """True when *base_url* points at this machine."""
+    from urllib.parse import urlparse
+
+    raw = (base_url or "").strip()
+    parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+    host = (parsed.hostname or "").strip().lower().strip("[]")
+    if host in _LOOPBACK_HOSTS:
+        return True
+    return host.startswith("127.")
+
+
+def check_local_only(base_url: str) -> None:
+    """
+    Refuse a non-loopback Ollama host.
+
+    Prompts carry case text derived from data under the MOVER DUA. A remote host
+    would send it off this machine silently, so the default is local-only and the
+    override has to be deliberate.
+    """
+    if is_loopback(base_url):
+        return
+    if os.environ.get(ALLOW_REMOTE_ENV, "").strip().lower() in {"1", "true", "yes"}:
+        return
+    raise OllamaError(
+        f"Refusing to send case text to a non-local Ollama host ({base_url}). "
+        "This data is governed by the MOVER data use agreement. "
+        f"Set {ALLOW_REMOTE_ENV}=1 only if you are certain the destination is "
+        "permitted."
+    )
+
+
 class OllamaClient:
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:11434",
         timeout_s: float = 300.0,
     ):
+        check_local_only(base_url)
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
 

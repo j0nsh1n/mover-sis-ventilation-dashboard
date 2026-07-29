@@ -40,9 +40,45 @@ def apply_clean_ranges(df: pd.DataFrame, ranges: dict, colmap: dict[str, str] | 
     return out
 
 
+# Anthropometric plausibility. Real values in the corpus include Ht 0-254 cm and
+# Wt 0-839 kg, and IBW feeds TV_mlkg — the most-fired rule. A height of 0 is caught
+# by the <=0 guard, but 130 cm yields a positive-looking ~16 kg IBW that inflates
+# mL/kg and fires spurious *critical* flags. Devine/ARDSNet PBW is only defined
+# near or above 152 cm, so anything well below it is not merely odd, it is invalid.
+# The lower bound is deliberately near Devine's domain: the formula is constructed
+# from 152.4 cm (60 in) and degrades below it, reaching 0 kg around 132 cm. 140 cm is
+# already generous — heights between 140 and 152 are extrapolation and should be read
+# with care — while 120 would still have admitted a 130 cm case as a ~25 kg "adult".
+PLAUSIBLE_HT_CM = (140.0, 215.0)
+PLAUSIBLE_WT_KG = (20.0, 400.0)
+
+
+def anthropometric_problems(height_cm: float, weight_kg: float) -> list[str]:
+    """Reasons the anthropometrics cannot support weight-normalised measures."""
+    problems: list[str] = []
+    lo, hi = PLAUSIBLE_HT_CM
+    if pd.isna(height_cm) or float(height_cm) <= 0:
+        problems.append("height missing")
+    elif not (lo <= float(height_cm) <= hi):
+        problems.append(f"height {float(height_cm):.0f} cm outside {lo:.0f}-{hi:.0f}")
+    lo, hi = PLAUSIBLE_WT_KG
+    if pd.isna(weight_kg) or float(weight_kg) <= 0:
+        problems.append("weight missing")
+    elif not (lo <= float(weight_kg) <= hi):
+        problems.append(f"weight {float(weight_kg):.0f} kg outside {lo:.0f}-{hi:.0f}")
+    return problems
+
+
 def ideal_body_weight_kg(height_cm: float, gender: str) -> float | np.floating:
-    """Devine IBW formula. Height in cm → kg."""
+    """
+    Devine IBW formula. Height in cm → kg.
+
+    Returns NaN outside :data:`PLAUSIBLE_HT_CM`: the formula extrapolates to absurd
+    (or negative) weights there, and a wrong denominator is worse than none.
+    """
     if pd.isna(height_cm) or height_cm <= 0:
+        return np.nan
+    if not (PLAUSIBLE_HT_CM[0] <= float(height_cm) <= PLAUSIBLE_HT_CM[1]):
         return np.nan
     height_in = float(height_cm) / 2.54
     g = (gender or "").strip().upper()
@@ -84,6 +120,15 @@ def clean_case_info(df: pd.DataFrame, max_or_hours: float = 24.0) -> pd.DataFram
     ]
     out["IBW_kg"] = pd.to_numeric(out["IBW_kg"], errors="coerce")
     out.loc[out["IBW_kg"] <= 0, "IBW_kg"] = np.nan
+
+    # Record *why* a case cannot carry weight-normalised measures, so the UI and the
+    # co-pilot can say so rather than silently omitting (or worse, flagging) it.
+    problems = [
+        anthropometric_problems(h, w) for h, w in zip(out["Ht"], out["Wt"])
+    ]
+    out["dq_anthropometrics_ok"] = [not p for p in problems]
+    out["dq_reasons"] = ["; ".join(p) for p in problems]
+    out.loc[~out["dq_anthropometrics_ok"], "IBW_kg"] = np.nan
 
     out["OR_duration_min"] = (out["OR_end"] - out["OR_start"]).dt.total_seconds() / 60.0
     out["Surgery_duration_min"] = (
