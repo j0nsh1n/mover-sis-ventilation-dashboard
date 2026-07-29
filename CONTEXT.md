@@ -44,8 +44,12 @@ FDA non-device CDS criteria in particular constrain what waveform analysis may c
 
 ## What the product is
 
-Research **desktop app** for **MOVER SIS** perioperative data (UCI, 2015–2017).  
+Research **desktop app** for **MOVER SIS** perioperative data (UCI).  
 De-identified; **not for clinical care**.
+
+Observed `OR_start` distribution — **2015–2018**, not 2015–2017 as previously
+documented: 2015 (109), 2016 (6,658), 2017 (10,277), **2018 (2,066 — 11 % of the
+corpus)**, plus 4 stray records in 2012/2020/2021 that are data errors.
 
 - **EMR** = tabular SIS CSVs (`patient_*.csv`)
 - **Wave** = waveform archives (`sis_wave*.tar.gz` or `Waveforms/<prefix>/<PID>/`)
@@ -369,10 +373,37 @@ them.
    (file, checksum, row counts, ingest timestamp) so a partial run is resumable.
 4. All later queries hit parquet. Budget the NAS pass once, in the background.
 
-**First investigation, before any code:** confirm that SIS `PID` can actually reach
-EPIC identifiers via `EPIC_MRN_PAT_ID.csv`. SIS `PID` is surgery-level and
-de-identified; if no defensible join exists, Phase 2 stops there and we say so rather
-than inventing a fuzzy match on time and demographics. **Do not guess a join.**
+**The join was tested on 2026-07-28. It does not exist.**
+
+`EPIC_MRN_PAT_ID.csv` is `LOG_ID, PAT_ID, MRN` (65,728 rows). Against 19,114 SIS PIDs:
+
+| Check | Result |
+|-------|--------|
+| SIS `PID` ∩ EPIC `LOG_ID` | **1 of 19,114 (0.0 %)** |
+| that one match | `7.19E+15` — an Excel scientific-notation corruption present in *both* files, not a real ID |
+| real overlap | **zero** |
+
+Both are 16-hex hashes of the same shape, so they *look* joinable; they are separate
+de-identification spaces. (Aside, a data-quality note: 16 SIS PIDs and 39 EPIC LOG_IDs
+are Excel-mangled like `5.37E+15` and can never be joined to anything.)
+
+**Consequence: Phase 2 as originally scoped is dead.** Extracting the 27.5 GB would
+not attach outcomes to a single SIS surgery. Do not extract on that premise.
+
+Three ways forward, in order of preference:
+
+1. **Ask UCI / MOVER whether a SIS ↔ EPIC crosswalk exists at all.** Cheapest, and
+   decides everything else. The shipped README does not mention one.
+2. **Pivot outcome work to the EPIC arm**, which is self-contained: 65,728 anaesthesia
+   logs with their own labs, flowsheets and waveforms. That is a *larger* cohort than
+   SIS and it does have outcomes — but it needs a new ingest for EPIC schemas, and
+   **the EPIC waveforms then become required** (they are that arm's exposure data,
+   the analogue of `sis_wave_v2`, 2019–2020, ward/bed-coded `CB`/`IP` files).
+3. **Accept SIS as process-only.** Still legitimate: quality-measure adherence,
+   practice variation, waveform-derived intraoperative physiology — just no outcomes.
+
+**Do not guess a join.** A fuzzy match on time and demographics would silently
+attribute one patient's AKI to another patient's anaesthetic.
 
 ### Phase 3 — depth
 
