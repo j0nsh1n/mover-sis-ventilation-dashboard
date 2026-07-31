@@ -71,8 +71,11 @@ Wave root (optional) ──► wave_decode  │
 ## Session Handoff
 
 - **Date:** 2026-07-31
-- **Branch:** main (ahead of origin; not pushed unless asked)
-- **Done:** Historical `docs/DESIGN.md` banner; removed incomplete root
-  `waveform_decode.py` (keep `src/wave_decode.py`); removed unused
-  `plotly_view.py`; only `agents.md` for agent policy.
-- **Next:** Push when ready; Phase 3 corpus-tool scoping / package size.
+- **Branch:** main (ahead of origin by 5 commits; not pushed)
+- **Verified:** Full `pytest -q` green; Ollama Stop→Start×2 + Unload OK; patient
+  vignette prefetch hits real corpus (active PID set); mocked `run_agent` OK;
+  Python 3.14 builds exist for GitHub Actions; `./scripts/install_local.sh`
+  installed v0.6.0 + frozen smoke OK.
+- **Next:** Push when human asks; Phase 3 corpus-tool scoping / package size.
+  Live full LLM answer with a real model not re-run this session (prefetch +
+  mocked agent covered the unfinished paths).
