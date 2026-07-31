@@ -7,6 +7,12 @@ htmlcov/
 .streamlit/secrets.toml
 .ipynb_checkpoints/
 
+# Local env / secrets (no real credentials in git)
+.env
+.env.*
+!.env.example
+
+
 # Packaging outputs
 build/
 dist/

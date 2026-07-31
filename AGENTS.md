@@ -1,11 +1,12 @@
 # Agent instructions (MOVER SIS Monitor)
 
-Read and follow **`CONTEXT.md`** for durable project structure and process rules.
+Follow these files in order:
 
-## Hard rules
+1. **`agents.md`** — global coding rules (communication, VCS, safety, Definition of Done).
+2. **`spec.md`** — project contract (behavior, Python 3.14, validation, research-only).
+3. **`context.md`** — current state and session handoff only (no policy).
+4. **`roadmap.md`** — phases; **`CHANGELOG.md`** — user-visible history.
 
-1. **Version:** Always bump and keep **`x.y.z`** in sync (`VERSION`, `src/__version__.py`, release tags).
-2. **Executable:** When shipping app changes, **rebuild and reinstall** with `./scripts/install_local.sh` (and rely on release workflow after merge to `main`).
-3. **Context hygiene:** Update `CONTEXT.md` when architecture/behavior changes; **remove outdated non-structural narrative**. Keep structural and functional facts.
-4. Prefer **PRs** for non-trivial work unless the user asks otherwise.
-5. Research data only — never present outputs as clinical decision support.
+Do **not** treat this file as a second policy source. Legacy “prefer PRs always” and
+process rules that lived here were removed because they conflicted with `agents.md`
+(push/PR only with explicit human permission in the current conversation).
