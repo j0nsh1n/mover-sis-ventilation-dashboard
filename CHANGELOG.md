@@ -14,6 +14,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - CI and release workflows target **Python 3.14**.
 - CodeQL workflow under `.github/workflows/codeql.yml` (Python).
 
+### Removed
+
+- Legacy root `waveform_decode.py` incomplete snippet (production: `src/wave_decode.py`).
+- Unused `src/desktop/plotly_view.py` re-export shim.
+
 ### Changed
 
 - Single agent policy file **`agents.md`** (removed dual `AGENTS.md` pointer).

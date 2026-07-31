@@ -63,13 +63,16 @@ Wave root (optional) ──► wave_decode  │
   without relaunching the app.
 - **PyInstaller onedir** (not onefile) for faster cold start; Qt system deps on CI.
 - **Streamlit optional**; desktop is primary.
+- **Wave decode:** production code is `src/wave_decode.py` (provider gain overrides
+  + NaN sentinels); algorithm cross-checked in tests, not a root script snippet.
+- **docs/DESIGN.md** is historical (Streamlit-era plan); keep for quirks/rules rationale.
 - **`.streamlit/secrets.toml` gitignored** — fine for this project; no product SMTP.
 
 ## Session Handoff
 
 - **Date:** 2026-07-31
 - **Branch:** main (ahead of origin; not pushed unless asked)
-- **Done:** Single `agents.md` (removed `AGENTS.md`); state only in `context.md`.
-  Governance + CodeQL local; Dependabot absent on remote.
-- **Next:** Human review of optional legacy files (see change summary);
-  push when ready; Phase 3 corpus-tool scoping / package size.
+- **Done:** Historical `docs/DESIGN.md` banner; removed incomplete root
+  `waveform_decode.py` (keep `src/wave_decode.py`); removed unused
+  `plotly_view.py`; only `agents.md` for agent policy.
+- **Next:** Push when ready; Phase 3 corpus-tool scoping / package size.
