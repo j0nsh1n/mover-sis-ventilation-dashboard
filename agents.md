@@ -1,5 +1,9 @@
 # agents.md — Global Coding Rules
 
+This repo’s single agent policy file. Project contract and product rules live in
+**`spec.md`**. Current state: **`context.md`**. History: **`CHANGELOG.md`**. Plan:
+**`roadmap.md`**. There is no separate `AGENTS.md`.
+
 ## Communication
 - No flattery, filler, greetings, or ceremonial openings. No emojis in messages
   to the user, in code, or in comments. User-facing product copy and UI icons

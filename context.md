@@ -30,7 +30,7 @@
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
 | `packaging/` | PyInstaller entry + rthooks |
 | `.github/workflows/` | `ci.yml`, `release.yml` |
-| `agents.md` / `spec.md` | Policy (global / project) |
+| `agents.md` / `spec.md` | Policy (global / project; one agents file) |
 | `context.md` / `CHANGELOG.md` / `roadmap.md` | State / history / plan |
 
 ## Domain Model
@@ -69,7 +69,7 @@ Wave root (optional) ──► wave_decode  │
 
 - **Date:** 2026-07-31
 - **Branch:** main (ahead of origin; not pushed unless asked)
-- **Done:** Removed legacy `CONTEXT.md` stub; state lives only in `context.md`.
-  Governance + CodeQL commits local; Dependabot absent on remote.
+- **Done:** Single `agents.md` (removed `AGENTS.md`); state only in `context.md`.
+  Governance + CodeQL local; Dependabot absent on remote.
 - **Next:** Human review of optional legacy files (see change summary);
   push when ready; Phase 3 corpus-tool scoping / package size.
