@@ -12,10 +12,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Project governance set: filled `spec.md`, `roadmap.md`, `context.md`, `CHANGELOG.md`;
   global rules in `agents.md`; `AGENTS.md` is a pointer only.
 - CI and release workflows target **Python 3.14**.
+- CodeQL workflow under `.github/workflows/codeql.yml` (Python).
 
 ### Changed
 
-- `CONTEXT.md` redirects to state-only `context.md` (policy removed from state docs).
+- State document is **`context.md` only** (legacy `CONTEXT.md` redirect removed).
+- Removed unused `Github Templates/` (Dependabot template discarded; real CI stays project-specific).
 
 ## [0.6.0] — 2026-07
 

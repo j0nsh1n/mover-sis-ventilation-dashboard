@@ -67,10 +67,9 @@ Wave root (optional) ──► wave_decode  │
 
 ## Session Handoff
 
-- **Date:** 2026-07-30
-- **Branch:** main
-- **Done:** Governance adoption — filled `spec.md`/`roadmap.md`; `context.md` (state-only);
-  `CHANGELOG.md`; `AGENTS.md` → pointer to `agents.md`+`spec.md`; CI/release Python 3.14;
-  removed policy blocks from legacy `CONTEXT.md` (redirect).
-- **Next:** Human commit/track governance files when ready; confirm GH Actions has
-  Python 3.14 available on ubuntu-latest; Phase 3 corpus-tool scoping / package size.
+- **Date:** 2026-07-31
+- **Branch:** main (ahead of origin; not pushed unless asked)
+- **Done:** Removed legacy `CONTEXT.md` stub; state lives only in `context.md`.
+  Governance + CodeQL commits local; Dependabot absent on remote.
+- **Next:** Human review of optional legacy files (see change summary);
+  push when ready; Phase 3 corpus-tool scoping / package size.
