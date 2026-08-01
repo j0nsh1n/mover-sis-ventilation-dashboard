@@ -2,7 +2,7 @@
 
 **Version 0.6.0**
 
-Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine, 2015–2017). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
+Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine; OR dates largely **2015–2018**). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
 > De-identified public research data. **Not for clinical care.**
 
@@ -40,7 +40,8 @@ tar -xzf /path/to/sis_emr.tar.gz -C data/raw
 
 ```bash
 cd "Monitoring Dashboard (MOVER SIS)"
-python3 -m venv .venv
+# Python 3.14 (see .python-version / spec.md)
+python3.14 -m venv .venv   # or: python3 -m venv .venv if 3.14 is default
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -102,14 +103,14 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 ## Versioning & releases (v0.6.0)
 
 - Source of truth: top-level [`VERSION`](VERSION) file (`0.6.0`, semver `x.y.z`)
-- Process rules for agents: [`CONTEXT.md`](CONTEXT.md) and [`AGENTS.md`](AGENTS.md)
+- Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag / manual run): GitHub Actions workflow  
-  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact
+  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact (Python **3.14**)
 
-### Local LLM (Ollama) — Ask about a case
+### Local LLM (Ollama) — Ask tab
 
-The desktop tab **4 · Ask about case** uses **Ollama on this machine**. The app will **start `ollama serve` automatically** if Ollama is installed and the API is not up yet. Models stay on the host (not inside the .exe).
+The desktop tab **1 · Ask** uses **Ollama on this machine**. Use sidebar **Start / Stop / Unload** (or let the app start serve when you Ask). Models stay on the host (not inside the .exe).
 
 Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via the **⚙ Settings** icon (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 

@@ -1,5 +1,12 @@
 # MOVER SIS Ventilation & Anesthesia Depth Dashboard — Design
 
+> **Historical design document** (kept for pipeline/flag rationale and data quirks).  
+> It describes the original Streamlit + Plotly plan. **Primary UI is now the PySide6
+> desktop app** with an optional Streamlit view; charts are matplotlib.  
+> Dataset years: EMR `OR_start` mass is largely **2015–2018** (not only 2015–2017).  
+> Product contract: `spec.md`. Current state: `context.md`. Thresholds of record:
+> `src/config/thresholds.yaml`.
+
 ## Goals
 
 Build a Python dashboard that:
@@ -10,13 +17,13 @@ Build a Python dashboard that:
 4. Flags simple rule-based anomalies (compliance, ETCO₂, agent drift, etc.).
 5. Aggregates flags across cases for a multi-case summary view.
 
-Stack: **pandas** (processing) + **Streamlit** (dashboard) + **Plotly** (interactive charts).
+Original stack in this doc: **pandas** + **Streamlit** + **Plotly** (see banner above).
 
 ---
 
 ## 1. Data cleaning / merging pipeline
 
-### Source tables (SIS EMR, 2015–2017)
+### Source tables (SIS EMR)
 
 | File | Role | Key columns |
 |------|------|-------------|

@@ -14,13 +14,14 @@ measurement group per signal::
 ``Wave`` is little-endian signed integers, ``PointsBytes`` wide, scaled to physical
 units by ``value = sample * gain + offset``.
 
-**Gain provenance.** The reference decoder (``waveform_decode.py``, Feb 2023) hard-codes
-``GE_ART`` → 0.25 and ``INVP1`` → 0.01 because the *v1* XML gains were wrong for the
-pressure channels. The dataset README then shipped a v2 release (2024-05) whose stated
-reason was "some of the wave gains were off" — and in ``sis_wave_v2`` the XML now carries
-exactly those values. Preferring :data:`GAIN_OVERRIDES` over the XML is therefore correct
-for v1 *and* a no-op for v2, so it stays override-first; ``test_v2_xml_gains_match_overrides``
-fails loudly if a future release diverges.
+**Gain provenance.** The algorithm validated against the monitors (dataset provider
+snippet, Feb 2023) hard-codes ``GE_ART`` → 0.25 and ``INVP1`` → 0.01 because the *v1*
+XML gains were wrong for the pressure channels. The dataset README then shipped a v2
+release (2024-05) whose stated reason was "some of the wave gains were off" — and in
+``sis_wave_v2`` the XML now carries exactly those values. Preferring
+:data:`GAIN_OVERRIDES` over the XML is therefore correct for v1 *and* a no-op for v2;
+``test_v2_xml_gains_match_overrides`` fails loudly if a future release diverges.
+The byte-pair signed decode is also checked in tests against that provider algorithm.
 
 Signals seen in ``sis_wave_v2``: ``GE_ART``, ``INVP1`` (pressures), ``GE_ECG``/``ECG1``,
 ``AWP`` (airway pressure), ``FLOW``, ``CO2``, ``PLETH``, ``RESP``.

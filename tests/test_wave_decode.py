@@ -13,10 +13,12 @@ from src import wave_decode
 
 def _reference_decode(raw: bytes, gain: float, offset: float) -> list[float]:
     """
-    The project's reference algorithm (``waveform_decode.py``), byte-pair form.
+    Dataset-provider reference algorithm (Feb 2023), byte-pair form.
 
-    Kept verbatim in spirit so the vectorised implementation is checked against the
-    decoder the data owners actually validated against the monitors.
+    Kept here so the vectorised implementation in ``src.wave_decode`` is checked
+    against the decoder the data owners validated against the monitors. The old
+    root ``waveform_decode.py`` snippet was incomplete (not importable) and was
+    removed; this is the algorithmic substance that mattered.
     """
 
     def set_bit(v, index, x):

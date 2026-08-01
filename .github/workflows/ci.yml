@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        # Pinned to Python 3.14 per agents.md / spec.md language baseline
+        python-version: ["3.14"]
 
     steps:
       - uses: actions/checkout@v4
