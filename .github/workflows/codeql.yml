@@ -1,4 +1,13 @@
-# CodeQL security analysis (Python only — this repo has no package.json).
+# CodeQL analysis (Python only).
+#
+# GitHub Code Scanning must be enabled (Settings → Security → Code security)
+# for SARIF upload. Until then, upload is disabled so the workflow still runs
+# analysis without failing the PR. After enabling code scanning, set:
+#   upload: true
+# (or omit the input; default is true).
+#
+# Node 20 deprecation notices come from the Action runtime; codeql-action@v3
+# already prefers newer Node on current runners when available.
 name: CodeQL
 on:
   push:
@@ -25,3 +34,6 @@ jobs:
       - uses: github/codeql-action/autobuild@v3
 
       - uses: github/codeql-action/analyze@v3
+        with:
+          # Do not fail when Code Scanning is disabled for this repository.
+          upload: false
