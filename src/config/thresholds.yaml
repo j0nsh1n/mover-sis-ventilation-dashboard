@@ -95,6 +95,7 @@ rules:
   rr_low:
     warn: 6
     critical: 4
+    min_tv: 200
     description: "Low respiratory rate"
 
   rr_high:

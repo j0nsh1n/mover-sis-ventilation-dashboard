@@ -137,7 +137,10 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["RR"].map(
             lambda v: _sev_threshold(v, r.get("warn", 6), r.get("critical", 4), False)
         )
-        mask = sevs.notna() & df.get("likely_mech_vent", True)
+        # Gate on delivered tidal volume only: likely_mech_vent also needs
+        # RR >= 6, which would make RR <= 4 (critical) unreachable.
+        on_vent = df["TV"] >= r.get("min_tv", 200) if "TV" in df.columns else True
+        mask = sevs.notna() & on_vent
         _append_flags(rows, df, mask, "rr_low", sevs, r.get("description", "Low RR"), "RR")
 
     r = rules.get("rr_high", {})
