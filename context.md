@@ -3,7 +3,7 @@
 ## Current State
 
 - **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
-- **Branch:** `fix/time-aware-flags` (not pushed).
+- **Branch:** `fix/time-aware-flags` (pushed to origin).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-24),
   desktop tests included. Skips: frozen binary, real wave tree.
@@ -15,11 +15,9 @@
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
   - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
   - `requirements.txt` uses minimum versions (`>=`), not full lockfile pins.
-  - `clean_ranges.Agent_Et` [0, 12] blanks desflurane above 12 vol%, but 2.0 MAC
-    desflurane is 13.2% at age 40: `agent_high` critical is unreachable for younger
-    desflurane cases. Undecided (clinical config choice).
-  - `filter_to_case_window` anchors on `Surgery_start` ± 5 min, so induction
-    (OR entry → incision) is mostly dropped from the timeseries.
+  - Induction is now in the timeseries; rules have no induction/emergence context
+    yet, so expect extra flags around intubation (procedure-event context planned).
+  - `clean_ranges.RR` [4, 40] blanks RR < 4, so `rr_low` critical (≤ 4) fires only at 4.
   - `agent_drift` (info) fires in most cases around induction/emergence ramps;
     procedure-event context would separate those.
   - Thresholds not yet calibrated against real distributions (`src.pipeline.profile`
@@ -82,19 +80,24 @@ Wave root (optional) ──► wave_decode  │
   Cases spanning > 28 h are left ungridded. `n_minutes` counts observed minutes only.
 - **Score:** each flagged minute scores once at its worst severity; composites weight
   per episode. `n_warn`/`n_critical` still count minutes with any flag of that severity.
-- **Synthetic overdoses** stay under 11.5 vol% so the Agent_Et clamp does not blank them.
+- **Agent caps per agent:** `clean_ranges.Agent_Et/Fi` is the widest bound (18%);
+  `agent_clean_max` caps each agent (desflurane 18, others 12).
+- **Data window vs anchor:** rows are kept for the OR stay (`window_start/end`, falling
+  back to the surgery window when OR times do not enclose it); `t_min` is anchored at
+  incision (`case_start`), so induction minutes are negative.
 - **`.streamlit/secrets.toml` gitignored** — fine for this project; no product SMTP.
 
 ## Session Handoff
 
 - **Date:** 2026-09-24
-- **Branch:** `fix/time-aware-flags` (3 commits on `main`; not pushed)
+- **Branch:** `fix/time-aware-flags` (pushed to origin; no PR yet)
 - **Done:** minute-grid flag windows; worst-severity / per-episode scoring and
   `anomaly_score_per_hour`; whole-file PID sampling; total MAC with N₂O; `rr_low`
-  reachable; synthetic generator; aggregate profile command.
+  reachable; per-agent concentration caps; OR-stay window (induction kept);
+  synthetic generator; aggregate profile command; spec.md updated (human-approved).
 - **Verified:** full `pytest -q` green incl. desktop; synthetic runs (seeds 0–3, 7):
   every injected anomaly flagged, no warn/critical on clean cases. Not run on real
   MOVER data (not available in that session).
-- **Next:** run pipeline + profile on real data and review thresholds; decide the
-  desflurane Agent_Et clamp; then Parquet conversion of raw CSVs, procedure-event
-  context, lung-protective ventilation metrics, Phase 3 corpus-tool scoping.
+- **Next:** run pipeline + profile on real data and review thresholds; then Parquet
+  conversion of raw CSVs, procedure-event context (label induction/emergence flags),
+  lung-protective ventilation metrics, Phase 3 corpus-tool scoping.

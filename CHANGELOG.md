@@ -41,6 +41,13 @@ change, and `cases.parquet` gains a column.
   on low-RR hypoventilation.
 - Case summary no longer puts row counts into columns missing from the timeseries;
   `n_minutes` counts observed minutes.
+- High desflurane readings were discarded: a single 12 vol% cap applied to every agent,
+  but 2 MAC of desflurane is ~13%, so critical `agent_high` could not fire for younger
+  desflurane cases. Caps are now per agent (`agent_clean_max`: desflurane 18%,
+  sevoflurane / isoflurane 12%).
+- Induction was cut off: the data window started 5 minutes before incision. It now
+  covers the whole OR stay (`OR_start`..`OR_end`); `t_min` is still minutes from
+  incision, so induction minutes are negative.
 
 ### Changed
 

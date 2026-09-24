@@ -88,6 +88,8 @@ class _Case:
     agent: str
     uses_n2o: bool
     ventilated: bool
+    intubation: pd.Timestamp
+    extubation: pd.Timestamp
     anomalies: list[dict] = field(default_factory=list)
 
 
@@ -137,6 +139,9 @@ def _make_case(i: int, rng: np.random.Generator, day0: pd.Timestamp) -> _Case:
     or_end = surgery_end + pd.Timedelta(minutes=int(rng.integers(10, 21)))
     agent = str(rng.choice(["S", "D", "I", "N"], p=[0.65, 0.2, 0.05, 0.1]))
     ventilated = rng.random() >= 0.05
+    # Induction after OR entry, before incision; emergence before OR exit
+    intubation = or_start + pd.Timedelta(minutes=int(rng.integers(4, 10)))
+    extubation = surgery_end + pd.Timedelta(minutes=int(rng.integers(3, 9)))
     return _Case(
         pid=f"SYN{i:04d}{rng.integers(0, 16**6):06x}",
         age=age,
@@ -151,6 +156,8 @@ def _make_case(i: int, rng: np.random.Generator, day0: pd.Timestamp) -> _Case:
         agent=agent if ventilated else "N",
         uses_n2o=bool(ventilated and agent != "N" and rng.random() < 0.15),
         ventilated=ventilated,
+        intubation=intubation,
+        extubation=extubation,
     )
 
 
@@ -204,8 +211,8 @@ def _case_rows(case: _Case, rng: np.random.Generator) -> tuple[list[dict], list[
     n2o_et = float(rng.uniform(48, 60)) if case.uses_n2o else 0.0
 
     # Ventilator: intubation shortly after OR entry until shortly before exit
-    intub = case.surgery_start - pd.Timedelta(minutes=5)
-    extub = case.surgery_end + pd.Timedelta(minutes=5)
+    intub = case.intubation
+    extub = case.extubation
     dropouts: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     if rng.random() < 0.35:
         for _ in range(int(rng.integers(1, 3))):
@@ -242,9 +249,7 @@ def _case_rows(case: _Case, rng: np.random.Generator) -> tuple[list[dict], list[
             etco2 = 0.0
         on, _ = _active(case, "agent_overdose", t)
         if on and mac:
-            # Stay under clean_ranges.Agent_Et (12 vol%): 2 MAC of desflurane
-            # exceeds it and would be blanked as an artifact before flagging.
-            et = min(mac * 2.2, 11.5)
+            et = mac * 2.2
 
         row = {
             "PID": case.pid,
@@ -332,9 +337,9 @@ def generate_synthetic_emr(
         cases.append(case)
         if case.ventilated:
             for name, when in (
-                ("Intubation", case.surgery_start - pd.Timedelta(minutes=5)),
+                ("Intubation", case.intubation),
                 ("Incision", case.surgery_start),
-                ("Extubation", case.surgery_end + pd.Timedelta(minutes=5)),
+                ("Extubation", case.extubation),
             ):
                 events.append({
                     "PID": case.pid,
