@@ -57,11 +57,34 @@ Outputs under `data/processed/`:
 
 | File | Content |
 |------|---------|
-| `timeseries.parquet` | Minute-aligned vent + vitals + features |
-| `cases.parquet` | Per-surgery summary + anomaly scores |
+| `timeseries.parquet` | One row per minute (gap minutes empty): vent + vitals + features |
+| `cases.parquet` | Per-surgery summary + anomaly scores (total and per observed hour) |
 | `flags.parquet` | Long-form minute flags |
 | `episodes.parquet` | Contiguous flag runs |
 | `run_meta.json` | Sample PID list and counts |
+
+### Profile the output (threshold calibration)
+
+```bash
+PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md
+```
+
+Writes aggregates only: ventilator/vitals gap statistics, signal percentiles, and for
+each rule how often it fired and what share of observed minutes lie past its warn and
+critical thresholds. No PIDs or timestamps; case counts under 11 print as `<11`.
+Check your MOVER DUA before sharing even aggregate output.
+
+### No MOVER data yet?
+
+Generate fictional cases with the same file layout and quirks (`\N` nulls, `ETC02`
+column names, mixed timestamps, ventilator gaps). `synthetic_truth.json` lists the
+anomalies injected into each case.
+
+```bash
+PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30
+PYTHONPATH=. python -m src.pipeline.run --emr-dir data/synthetic/EMR \
+    --output-dir data/synthetic/processed --n-cases 30
+```
 
 ## Launch the desktop app
 

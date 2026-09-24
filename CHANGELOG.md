@@ -7,8 +7,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Re-run the pipeline to rebuild existing processed caches: flags and scores
+change, and `cases.parquet` gains a column.
+
 ### Added
 
+- Synthetic SIS generator: `python -m src.pipeline.synthetic --out data/synthetic/EMR`
+  writes fictional cases (`SYN*` PIDs) with the real dump's quirks and a
+  `synthetic_truth.json` of injected anomalies, for development without MOVER data.
+- Aggregate-only profile: `python -m src.pipeline.profile` reports coverage and
+  ventilator/vitals gaps, signal percentiles, and where each rule threshold falls in
+  the observed data. No PIDs or timestamps; small case counts are suppressed.
+- `cases.parquet` column `anomaly_score_per_hour` (score per observed hour).
+- Timeseries column `MAC_total_Et`: volatile MAC plus N₂O (`n2o_mac_age40: 104`).
 - Project governance set: filled `spec.md`, `roadmap.md`, `context.md`, `CHANGELOG.md`;
   global rules in single file `agents.md` (no separate `AGENTS.md`).
 - CI and release workflows target **Python 3.14**.
@@ -19,8 +30,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Legacy root `waveform_decode.py` incomplete snippet (production: `src/wave_decode.py`).
 - Unused `src/desktop/plotly_view.py` re-export shim.
 
+### Fixed
+
+- Duration and slope rules counted rows, not minutes. Each case's timeseries now has one
+  row per minute (gap minutes are empty), so windows like "PIP rising over 10 minutes"
+  and "zero PEEP for 15 minutes" no longer stretch across gaps in the ventilator export.
+  Rolling windows use `window_min` from `thresholds.yaml`.
+- `rr_low` could never reach critical (RR ≤ 4) and warned only at exactly RR 6; it now
+  requires delivered TV ≥ `min_tv` (200 mL) instead. `hypoventilation_pattern` now fires
+  on low-RR hypoventilation.
+- Case summary no longer puts row counts into columns missing from the timeseries;
+  `n_minutes` counts observed minutes.
+
 ### Changed
 
+- Anomaly score counts each flagged minute once at its worst severity, and weights
+  composite patterns per episode rather than per minute. `n_composite` counts episodes.
+- `agent_high` uses total MAC (volatile + N₂O).
+- Co-pilot case briefing reports "N of M minutes with data" instead of a row count.
+- PID sampling scans the `PID` column of the whole ventilator file, not its first 400,000
+  rows; `--vent-scan-rows` defaults to the full file.
 - Single agent policy file **`agents.md`** (removed dual `AGENTS.md` pointer).
 - State document is **`context.md` only** (legacy `CONTEXT.md` redirect removed).
 - Removed unused `Github Templates/` (Dependabot template discarded; real CI stays project-specific).

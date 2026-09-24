@@ -114,10 +114,15 @@ def build_case_context(
     if not ts.empty:
         lines.append("\n## Intraoperative signals (minute-level summary)")
         if "t_min" in ts.columns:
+            from src.pipeline.features import OBSERVED_SIGNAL_COLS
+
+            # The timeseries has a row for every minute; gap minutes have no signals
+            signal_cols = [c for c in OBSERVED_SIGNAL_COLS if c in ts.columns]
+            n_obs = int(ts[signal_cols].notna().any(axis=1).sum()) if signal_cols else len(ts)
             lines.append(
                 f"- Monitoring window: t={_fmt_num(ts['t_min'].min(), 0)} to "
                 f"{_fmt_num(ts['t_min'].max(), 0)} minutes from case start "
-                f"({len(ts)} rows)"
+                f"({n_obs} of {len(ts)} minutes with data)"
             )
         for col, name, unit in [
             ("TV", "Tidal volume", "mL"),
