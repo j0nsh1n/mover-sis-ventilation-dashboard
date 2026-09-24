@@ -199,12 +199,14 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         _append_flags(rows, df, mask, "map_low", sevs, r.get("description", "Low MAP"), "nMAP")
 
     r = rules.get("agent_high", {})
-    if "MAC_Et" in df.columns and r:
-        sevs = df["MAC_Et"].map(
+    # Total MAC (volatile + N2O) when available; volatile-only otherwise
+    mac_col = "MAC_total_Et" if "MAC_total_Et" in df.columns else "MAC_Et"
+    if mac_col in df.columns and r:
+        sevs = df[mac_col].map(
             lambda v: _sev_threshold(v, r.get("warn_mac", 1.5), r.get("critical_mac", 2.0), True)
         )
         mask = sevs.notna()
-        _append_flags(rows, df, mask, "agent_high", sevs, r.get("description", "High MAC"), "MAC_Et")
+        _append_flags(rows, df, mask, "agent_high", sevs, r.get("description", "High MAC"), mac_col)
 
     # ---- Duration / slope rules (per PID) ----
     for pid, g in df.groupby("PID", sort=False):
@@ -432,7 +434,13 @@ def _add_composites(df: pd.DataFrame, flags: pd.DataFrame, rules: dict) -> pd.Da
 
 
 def score_cases(flags: pd.DataFrame, thresholds: dict | None = None) -> pd.DataFrame:
-    """Per-PID anomaly score and rule tallies."""
+    """Per-PID anomaly score and rule tallies.
+
+    n_info / n_warn / n_critical count distinct minutes with at least one flag
+    of that severity. The score counts each flagged minute once, at its worst
+    severity (a minute with a warn and a critical flag scores as critical
+    only), and weights composites per episode (contiguous run), not per minute.
+    """
     if thresholds is None:
         thresholds = load_thresholds()
     sc = thresholds.get("scoring", {})
@@ -461,11 +469,18 @@ def score_cases(flags: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
     n_warn = _count_sev("warn").rename("n_warn")
     n_crit = _count_sev("critical").rename("n_critical")
 
+    # Worst severity per minute, for the score
+    rank = f["severity"].map({"info": 0, "warn": 1, "critical": 2}).fillna(0)
+    worst = f.assign(_rank=rank).groupby(["PID", "minute_key"])["_rank"].max()
+    worst_warn = (worst == 1).groupby(level="PID").sum().rename("worst_warn")
+    worst_crit = (worst == 2).groupby(level="PID").sum().rename("worst_crit")
+
     comp = f[f["rule_id"].isin(COMPOSITE_RULES)]
     if comp.empty:
         n_comp = pd.Series(dtype="int64", name="n_composite")
     else:
-        n_comp = comp.groupby("PID")["minute_key"].nunique().rename("n_composite")
+        comp_eps = collapse_episodes(comp)
+        n_comp = comp_eps.groupby(comp_eps["PID"].astype(str)).size().rename("n_composite")
 
     # Top rules string (avoid groupby.apply version pitfalls)
     top = (
@@ -485,15 +500,18 @@ def score_cases(flags: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
     out = out.merge(n_crit.rename("n_critical"), left_on="PID", right_index=True, how="left")
     out = out.merge(n_comp.rename("n_composite"), left_on="PID", right_index=True, how="left")
     out = out.merge(top_rules.rename("top_rules"), left_on="PID", right_index=True, how="left")
+    worst_counts = pd.concat([worst_warn, worst_crit], axis=1)
+    out = out.merge(worst_counts, left_on="PID", right_index=True, how="left")
 
-    for c in ["n_info", "n_warn", "n_critical", "n_composite"]:
+    for c in ["n_info", "n_warn", "n_critical", "n_composite", "worst_warn", "worst_crit"]:
         out[c] = out[c].fillna(0).astype(int)
     out["top_rules"] = out["top_rules"].fillna("")
     out["anomaly_score"] = (
-        w_warn * out["n_warn"]
-        + w_crit * out["n_critical"]
+        w_warn * out["worst_warn"]
+        + w_crit * out["worst_crit"]
         + w_comp * out["n_composite"]
     ).astype(int)
+    out = out.drop(columns=["worst_warn", "worst_crit"])
     return out.sort_values("anomaly_score", ascending=False).reset_index(drop=True)
 
 

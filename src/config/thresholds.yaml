@@ -42,6 +42,10 @@ mac_age40:
 # Age adjustment: MAC_age = MAC_40 * 10 ** (-0.00269 * (age - 40))
 mac_age_coef: -0.00269
 
+# Age-40 MAC of nitrous oxide (vol %). Added to the volatile MAC fraction
+# to give total end-tidal MAC (MAC_total_Et), which agent_high uses.
+n2o_mac_age40: 104
+
 rules:
   pip_high:
     warn: 30

@@ -163,15 +163,28 @@ def sample_pids_with_ventilator(
     n: int = 50,
     min_vent_rows: int = 30,
     seed: int = 42,
-    vent_nrows_scan: int | None = 400_000,
+    vent_nrows_scan: int | None = None,
 ) -> list[str]:
     """
     Pick PIDs that have substantial ventilator data.
 
-    Scans a prefix of the ventilator file (which may be export-truncated)
-    and returns up to n PIDs with at least min_vent_rows samples.
+    Reads only the PID column, so the whole ventilator file (which may be
+    export-truncated) is scanned by default; a prefix scan would sample only
+    whatever order the file is in. ``vent_nrows_scan`` caps the rows read.
+    Returns up to n PIDs with at least min_vent_rows samples.
     """
-    vent = load_ventilator(emr_dir, nrows=vent_nrows_scan)
+    path = _default_emr_dir(emr_dir) / "patient_ventilator.csv"
+    vent = read_csv(
+        path,
+        nrows=vent_nrows_scan,
+        usecols=lambda c: c.strip().strip('"') == "PID",
+        dtype=str,
+    )
+    vent.columns = [c.strip().strip('"') for c in vent.columns]
+    if "PID" not in vent.columns:
+        from src.guardrails.exceptions import DataValidationError
+
+        raise DataValidationError(f"ventilator missing PID column: {path}")
     counts = vent.groupby("PID").size()
     eligible = counts[counts >= min_vent_rows].index.astype(str).tolist()
     if not eligible:

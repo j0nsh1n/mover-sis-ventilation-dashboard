@@ -6,6 +6,13 @@ import numpy as np
 import pandas as pd
 
 from src.config import load_thresholds
+from src.pipeline.merge import fill_minute_grid
+
+# Signals that mark a grid minute as observed (see build_case_summary n_minutes).
+OBSERVED_SIGNAL_COLS = [
+    "TV", "RR", "PEEP", "PIP", "ETCO2", "FIO2", "Agent_Et", "Agent_Fi",
+    "HR", "HRe", "HRp", "SPO2", "nMAP", "nSBP", "nDBP",
+]
 
 
 def age_adjusted_mac(agent: str, age: float, thresholds: dict | None = None) -> float:
@@ -22,11 +29,16 @@ def age_adjusted_mac(agent: str, age: float, thresholds: dict | None = None) -> 
 
 
 def add_features(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataFrame:
-    """Add TV mL/kg, MAC fraction, PIP rolling slope, mechanical-vent hint."""
+    """Add TV mL/kg, MAC fraction, PIP rolling slope, mechanical-vent hint.
+
+    The frame is first put on a one-row-per-minute grid (fill_minute_grid), so
+    every row-based window below spans real minutes.
+    """
     if thresholds is None:
         thresholds = load_thresholds()
+    rules = thresholds.get("rules", {})
 
-    out = ts.copy()
+    out = fill_minute_grid(ts).copy()
 
     # TV per IBW
     if "TV" in out.columns and "IBW_kg" in out.columns:
@@ -58,25 +70,39 @@ def add_features(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataFra
         out["MAC_Fi"] = np.nan
         out["Agent_Fi_Et_gap"] = np.nan
 
+    # Total end-tidal MAC: volatile fraction plus N2O fraction (MACs are additive)
+    n2o_mac40 = thresholds.get("n2o_mac_age40")
+    if n2o_mac40 and "ETN2O" in out.columns:
+        coef = thresholds.get("mac_age_coef", -0.00269)
+        age_filled = pd.to_numeric(ages, errors="coerce").fillna(40.0)
+        n2o_mac1 = float(n2o_mac40) * np.power(10.0, coef * (age_filled - 40.0))
+        n2o_frac = out["ETN2O"] / n2o_mac1
+    else:
+        n2o_frac = pd.Series(np.nan, index=out.index)
+    both_missing = out["MAC_Et"].isna() & n2o_frac.isna()
+    out["MAC_total_Et"] = (out["MAC_Et"].fillna(0) + n2o_frac.fillna(0)).where(~both_missing)
+
     # Mechanical ventilation heuristic
     tv = out["TV"] if "TV" in out.columns else pd.Series(np.nan, index=out.index)
     rr = out["RR"] if "RR" in out.columns else pd.Series(np.nan, index=out.index)
     out["likely_mech_vent"] = (tv >= 200) & (rr >= 6)
 
-    # PIP rolling slope (cmH2O per minute) over 10-min window
+    # PIP rolling slope (cmH2O per minute); one row per minute after gridding
+    pip_window = int(rules.get("pip_rising", {}).get("window_min", 10))
     if "PIP" in out.columns:
         out["PIP_slope"] = (
             out.groupby("PID", group_keys=False)["PIP"]
-            .apply(lambda s: s.rolling(window=10, min_periods=5).apply(_linreg_slope, raw=True))
+            .apply(lambda s: s.rolling(window=pip_window, min_periods=5).apply(_linreg_slope, raw=True))
         )
     else:
         out["PIP_slope"] = np.nan
 
     # Agent Et rolling median for drift detection
+    drift_window = int(rules.get("agent_drift", {}).get("window_min", 15))
     if "Agent_Et" in out.columns:
         out["Agent_Et_rollmed"] = (
             out.groupby("PID", group_keys=False)["Agent_Et"]
-            .apply(lambda s: s.rolling(window=15, min_periods=5).median())
+            .apply(lambda s: s.rolling(window=drift_window, min_periods=5).median())
         )
         out["Agent_Et_drift"] = (out["Agent_Et"] - out["Agent_Et_rollmed"]).abs()
     else:
@@ -122,26 +148,33 @@ def build_case_summary(ts: pd.DataFrame, flags: pd.DataFrame | None = None) -> p
     if ts.empty:
         return pd.DataFrame()
 
-    g = ts.groupby("PID")
-    summary = g.agg(
-        n_minutes=("Obs_time", "count"),
-        t_start=("Obs_time", "min"),
-        t_end=("Obs_time", "max"),
-        Age=("Age", "first") if "Age" in ts.columns else ("Obs_time", "count"),
-        Gender=("Gender", "first") if "Gender" in ts.columns else ("Obs_time", "count"),
-        Procedure_short=("Procedure_short", "first") if "Procedure_short" in ts.columns else ("Obs_time", "count"),
-        primary_agent=("primary_agent", "first") if "primary_agent" in ts.columns else ("Obs_time", "count"),
-        primary_agent_name=("primary_agent_name", "first") if "primary_agent_name" in ts.columns else ("Obs_time", "count"),
-        median_TV=("TV", "median") if "TV" in ts.columns else ("Obs_time", "count"),
-        median_PIP=("PIP", "median") if "PIP" in ts.columns else ("Obs_time", "count"),
-        median_PEEP=("PEEP", "median") if "PEEP" in ts.columns else ("Obs_time", "count"),
-        median_ETCO2=("ETCO2", "median") if "ETCO2" in ts.columns else ("Obs_time", "count"),
-        median_Agent_Et=("Agent_Et", "median") if "Agent_Et" in ts.columns else ("Obs_time", "count"),
-        case_duration_min=("case_duration_min", "first") if "case_duration_min" in ts.columns else ("Obs_time", "count"),
-    ).reset_index()
+    # Grid rows with no signal are gaps, not observed minutes
+    signals = [c for c in OBSERVED_SIGNAL_COLS if c in ts.columns]
+    observed = ts[signals].notna().any(axis=1) if signals else pd.Series(True, index=ts.index)
+    work = ts.assign(_observed=observed)
 
-    # Clean up accidental agg when columns missing
-    keep = [c for c in summary.columns if c == "PID" or not str(summary[c].dtype).startswith]
+    optional = {
+        "Age": ("Age", "first"),
+        "Gender": ("Gender", "first"),
+        "Procedure_short": ("Procedure_short", "first"),
+        "primary_agent": ("primary_agent", "first"),
+        "primary_agent_name": ("primary_agent_name", "first"),
+        "median_TV": ("TV", "median"),
+        "median_PIP": ("PIP", "median"),
+        "median_PEEP": ("PEEP", "median"),
+        "median_ETCO2": ("ETCO2", "median"),
+        "median_Agent_Et": ("Agent_Et", "median"),
+        "case_duration_min": ("case_duration_min", "first"),
+    }
+    aggs = {
+        "n_minutes": ("_observed", "sum"),
+        "t_start": ("Obs_time", "min"),
+        "t_end": ("Obs_time", "max"),
+    }
+    aggs.update({name: spec for name, spec in optional.items() if spec[0] in ts.columns})
+    summary = work.groupby("PID").agg(**aggs).reset_index()
+    summary["n_minutes"] = summary["n_minutes"].astype(int)
+
     # Recompute duration from span if needed
     if "t_start" in summary.columns and "t_end" in summary.columns:
         span = (summary["t_end"] - summary["t_start"]).dt.total_seconds() / 60.0

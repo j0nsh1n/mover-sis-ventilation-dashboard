@@ -164,6 +164,13 @@ def validate_thresholds(cfg: dict, preset: str | None = None) -> dict:
     coef = cfg.get("mac_age_coef")
     _require_number(coef, "mac_age_coef")
 
+    if cfg.get("n2o_mac_age40") is not None:
+        n2o = _require_number(cfg["n2o_mac_age40"], "n2o_mac_age40")
+        if not (50 <= n2o <= 200):
+            raise ConfigValidationError(
+                f"n2o_mac_age40={n2o} outside plausible range [50, 200]"
+            )
+
     rules = _require_dict(cfg.get("rules"), "rules")
     validate_rules(rules)
 
