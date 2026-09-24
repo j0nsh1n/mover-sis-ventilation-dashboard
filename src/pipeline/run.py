@@ -10,6 +10,7 @@ import pandas as pd
 
 from src.config import load_thresholds
 from src.guardrails.exceptions import GuardrailError, PipelineError
+from src.guardrails.limits import MAX_VENT_SCAN_ROWS
 from src.guardrails.validate_data import (
     assert_cleaned_cases,
     assert_raw_cases,
@@ -59,7 +60,7 @@ def run_pipeline(
     pids: list[str] | None = None,
     preset: str = "default",
     seed: int = 42,
-    vent_scan_rows: int = 400_000,
+    vent_scan_rows: int = MAX_VENT_SCAN_ROWS,
     min_vent_rows: int = 30,
     write_sample_csv: bool = True,
     pad_minutes: float = 5.0,
@@ -180,6 +181,7 @@ def run_pipeline(
     print("[pipeline] flagging anomalies…")
     flags = flag_anomalies(ts, thresholds)
     episodes = collapse_episodes(flags)
+
     scores = score_cases(flags, thresholds)
 
     case_summary = build_case_summary(ts, flags)
@@ -198,6 +200,12 @@ def run_pipeline(
         if c not in case_summary.columns:
             case_summary[c] = 0
         case_summary[c] = case_summary[c].fillna(0).astype(int)
+    # Score per observed hour, so long cases do not outrank short ones on
+    # duration alone; cases with no observed minutes stay NaN
+    hours = case_summary["n_minutes"].astype(float) / 60.0
+    case_summary["anomaly_score_per_hour"] = (
+        case_summary["anomaly_score"] / hours.where(hours > 0)
+    ).round(2)
     if "top_rules" not in case_summary.columns:
         case_summary["top_rules"] = ""
     else:
@@ -282,7 +290,12 @@ def main(argv: list[str] | None = None) -> None:
         choices=sorted(["default", "strict", "lenient"]),
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--vent-scan-rows", type=int, default=400_000)
+    parser.add_argument(
+        "--vent-scan-rows",
+        type=int,
+        default=MAX_VENT_SCAN_ROWS,
+        help="Max ventilator rows scanned when sampling PIDs (default: whole file)",
+    )
     parser.add_argument(
         "--no-validate",
         action="store_true",

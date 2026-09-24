@@ -22,8 +22,8 @@ clean_ranges:
   FICO2: [0, 10]
   FIO2: [21, 100]
   ETO2: [5, 100]
-  Agent_Et: [0, 12]
-  Agent_Fi: [0, 12]
+  Agent_Et: [0, 18]   # widest agent (desflurane); per-agent caps below
+  Agent_Fi: [0, 18]
   FIN2O: [0, 80]
   ETN2O: [0, 80]
   HR: [30, 200]
@@ -31,6 +31,16 @@ clean_ranges:
   nSBP: [50, 250]
   nMAP: [30, 180]
   nDBP: [20, 150]
+
+# Per-agent ceiling (vol %) for Agent_Et / Agent_Fi; higher values → NaN.
+# Desflurane is dosed several times higher than the others (vaporizer max
+# 18%), so one shared 12% cap blanked real high desflurane readings: 2 MAC
+# desflurane is ~13% at age 40, making agent_high critical unreachable.
+agent_clean_max:
+  S: 12
+  I: 12
+  D: 18
+  N: 12
 
 # Age-40 MAC (vol %) for volatile agents
 mac_age40:
@@ -41,6 +51,10 @@ mac_age40:
 
 # Age adjustment: MAC_age = MAC_40 * 10 ** (-0.00269 * (age - 40))
 mac_age_coef: -0.00269
+
+# Age-40 MAC of nitrous oxide (vol %). Added to the volatile MAC fraction
+# to give total end-tidal MAC (MAC_total_Et), which agent_high uses.
+n2o_mac_age40: 104
 
 rules:
   pip_high:
@@ -91,6 +105,7 @@ rules:
   rr_low:
     warn: 6
     critical: 4
+    min_tv: 200
     description: "Low respiratory rate"
 
   rr_high:

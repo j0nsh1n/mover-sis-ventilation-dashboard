@@ -26,6 +26,16 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Answer gate rejects prescriptive clinical directives and unstated case facts where
   implemented in `src/llm/agent.py` / `prompts.py`.
 - Pipeline and guardrails validate config/IO; empty or missing processed data fails clearly.
+- Each case's data window is the whole OR stay (`OR_start`..`OR_end` ± pad), so induction
+  and emergence are included; `t_min` is minutes from incision (negative before it).
+- The timeseries has one row per minute per case; minutes without data are empty rows.
+  Duration, slope and rolling-window rules are measured in real minutes, never rows.
+- Anomaly score counts each flagged minute once at its worst severity and composites per
+  episode; cases also carry a score per observed hour.
+- Synthetic data generator writes fictional cases (`SYN*` PIDs) in the SIS layout, with
+  a truth file of injected anomalies; it never reads real data.
+- Profile report is **aggregate only**: no PIDs, timestamps or row-level values, and case
+  counts below the small-cell threshold (default 11) are suppressed.
 - Optional Streamlit dashboard remains available for browser exploration of the same pipeline.
 
 ## User Experience
@@ -35,6 +45,11 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Example: Ask tab (Case analysis) → type `55y woman, hysterectomy, sevoflurane, elevated PIP`
   → co-pilot finds similar PIDs, shows documented management/flags, research disclaimer.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
+- **Profile (threshold calibration):**
+  `PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md`
+- **Synthetic data (no MOVER access needed):**
+  `PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30`,
+  then run the pipeline with `--emr-dir data/synthetic/EMR --output-dir data/synthetic/processed`
 - **Streamlit (optional):** `PYTHONPATH=. streamlit run src/dashboard/app.py`
 - Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, theme). First-run Setup wizard.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
@@ -51,6 +66,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `~/.config/mover-sis-monitor/settings.json` (override with `MOVER_CONFIG_DIR`).
 - Major components:
   - `src/pipeline/` — load → clean → merge → features → flags → run
+  - `src/pipeline/synthetic.py` — fictional SIS EMR generator; `profile.py` — aggregate report
   - `src/services/` — `ensure_data` / `load_processed`; `case_fetch.py` on-demand shortlist+flags
   - `src/desktop/` — PySide6 app, theme, charts, settings UI
   - `src/llm/` — Ollama client, tools, agent loop, prompts, service lifecycle
@@ -103,6 +119,9 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 - [ ] Desktop launches and shows Ask / Summary / Timeline / Rules for configured data paths.
 - [ ] Pipeline produces parquet under processed dir for a small `--n-cases` sample.
+- [ ] On synthetic data every injected anomaly raises its expected rules and clean cases
+      raise no warn/critical flags (`tests/test_synthetic.py`).
+- [ ] Profile output contains no PIDs or timestamps (`tests/test_profile.py`).
 - [ ] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`).
 - [ ] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0.
 - [ ] `VERSION` matches `src/__version__.py`.

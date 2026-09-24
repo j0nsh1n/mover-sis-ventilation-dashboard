@@ -146,9 +146,17 @@ def clean_case_info(df: pd.DataFrame, max_or_hours: float = 24.0) -> pd.DataFram
         out["Procedure"] = out["Procedure"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
         out["Procedure_short"] = out["Procedure"].str.slice(0, 80)
 
-    # Preferred case anchor time
+    # Preferred case anchor time (t_min = 0 at incision)
     out["case_start"] = out["Surgery_start"].fillna(out["OR_start"])
     out["case_end"] = out["Surgery_end"].fillna(out["OR_end"])
+
+    # Data window: the whole OR stay, so induction and emergence are kept
+    out["window_start"] = out["OR_start"].fillna(out["case_start"])
+    out["window_end"] = out["OR_end"].fillna(out["case_end"])
+    # OR times that do not enclose the surgery (timestamp shifts) fall back to it
+    bad = (out["window_start"] > out["case_start"]) | (out["window_end"] < out["case_end"])
+    out.loc[bad, "window_start"] = out.loc[bad, "case_start"]
+    out.loc[bad, "window_end"] = out.loc[bad, "case_end"]
 
     return out
 
@@ -177,6 +185,16 @@ def clean_ventilator(df: pd.DataFrame, thresholds: dict | None = None) -> pd.Dat
     # Soft clamps (zeros often = not connected; leave 0 ETCO2 before clamp for flag logic)
     out["_ETCO2_raw"] = out["ETCO2"] if "ETCO2" in out.columns else np.nan
     out = apply_clean_ranges(out, ranges)
+
+    # Per-agent ceiling on agent concentrations: desflurane runs several times
+    # higher than sevoflurane or isoflurane, so one shared cap does not fit all
+    agent_max = thresholds.get("agent_clean_max") or {}
+    if agent_max and "Agent" in out.columns:
+        for code, cap in agent_max.items():
+            is_agent = out["Agent"] == code
+            for col in ("Agent_Et", "Agent_Fi"):
+                if col in out.columns:
+                    out.loc[is_agent & (out[col] > float(cap)), col] = np.nan
 
     # Restore true zeros for ETCO2 flag detection (clamp removed 0–5)
     if "_ETCO2_raw" in out.columns:
@@ -244,12 +262,22 @@ def filter_to_case_window(
     pad_minutes: float = 5.0,
     time_col: str = "Obs_time",
 ) -> pd.DataFrame:
-    """Keep rows within [case_start - pad, case_end + pad]."""
-    meta = cases[["PID", "case_start", "case_end"]].drop_duplicates("PID")
+    """Keep rows within [window_start - pad, window_end + pad].
+
+    The window is the OR stay (OR_start..OR_end) when clean_case_info provides
+    it, so induction and emergence are kept; otherwise case_start..case_end.
+    """
+    lo_col, hi_col = (
+        ("window_start", "window_end")
+        if {"window_start", "window_end"} <= set(cases.columns)
+        else ("case_start", "case_end")
+    )
+    meta = cases[["PID", lo_col, hi_col]].drop_duplicates("PID")
+    meta = meta.rename(columns={lo_col: "_win_lo", hi_col: "_win_hi"})
     out = ts.merge(meta, on="PID", how="left")
-    start = out["case_start"] - pd.Timedelta(minutes=pad_minutes)
-    end = out["case_end"] + pd.Timedelta(minutes=pad_minutes)
-    mask = out["case_start"].isna() | (
+    start = out["_win_lo"] - pd.Timedelta(minutes=pad_minutes)
+    end = out["_win_hi"] + pd.Timedelta(minutes=pad_minutes)
+    mask = out["_win_lo"].isna() | (
         (out[time_col] >= start) & (out[time_col] <= end)
     )
-    return out.loc[mask].drop(columns=["case_start", "case_end"], errors="ignore").reset_index(drop=True)
+    return out.loc[mask].drop(columns=["_win_lo", "_win_hi"]).reset_index(drop=True)
