@@ -16,6 +16,9 @@
   drills into A for detailed case inspection, and offers E for optional cohort
   discovery. C and B remain comparison drafts. The article search design draws
   from sibling `HealthDatabaseAccess` (LitSieve). No product code changed.
+- **Further exploration:** `docs/prototypes/monitoring-radical-concepts.html`
+  compares F's signal studio, G's evidence canvas, and H's review deck. All use
+  the same three fictional records, with explicit scripted AI and source tables.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -97,11 +100,14 @@ Wave root (optional) ──► wave_decode  │
 
 - **Date:** 2026-09-27
 - **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Linked the user's preferred D and A drafts into a question → brief →
-  case evidence → brief loop; connected E as an optional discovery route. The
-  prototype still uses fictional cases and simulated retrieval only.
-- **Verified:** D-to-A-to-D and D-to-E-to-A-to-E-to-D flows worked in T3 preview.
-  The 375 px workbench header fits without horizontal overflow; no browser
-  console errors were observed. Full pytest passed on 2026-09-27.
-- **Next:** review the linked D/A/E flow and identify an article source before
-  implementing product navigation or retrieval.
+- **Done:** Added three distinct interactive studies. F supports time scrubbing,
+  signal comparison, and scripted AI jumps. G traces observations to source
+  records. H supports review decisions and a saved shortlist. The older drafts
+  link to the new studies; production behavior did not change.
+- **Verified:** Desktop and 375 px checks exercised peak and missing-sample
+  queries, source rows, comparison expansion, and shortlist persistence when
+  changing a query. No horizontal overflow or browser console errors observed.
+  Full pytest, packaging, JavaScript syntax, threshold smoke, and diff checks
+  passed on 2026-09-27. No lint or type toolchain is configured.
+- **Next:** compare F with A for signal inspection and H with D for case review;
+  assess G for evidence tracing before choosing a product layout.

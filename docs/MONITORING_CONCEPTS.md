@@ -2,6 +2,8 @@
 
 These are design proposals for the desktop research app. The [interactive drafts](prototypes/monitoring-concepts.html) use fictional `SYN` cases and do not connect to MOVER data, Ollama, or the filesystem. No layout or retrieval change has been implemented in the product.
 
+The [new radical studies, F–H](prototypes/monitoring-radical-concepts.html), explore a timeline studio, an evidence canvas, and a case review deck. Each has working interactions with the same small fictional dataset. Their AI responses are scripted.
+
 ## What the current app does
 
 The desktop creates its full tab layout, schedules processed-data autoload immediately, and schedules the first-run `SetupWizard` 100 ms later. The wizard is already modal, but the main window and its loading state appear first. `needs_first_run_setup()` also skips the wizard for an older install with a saved EMR path.
@@ -29,6 +31,24 @@ These are different ways to organize the work, not color variations. A keeps que
 The connected prototype now starts in D. A question builds an illustrative brief; its case card opens A's source context and a back button restores the brief and question. D can also open E with that question in context. E highlights a fictional group and opens its selected case in A, with a route back to the atlas. These actions use simple keyword selection and fictional cases. They do not run embeddings, case analysis, or the chat model.
 
 E's implementation should group or aggregate results rather than draw 19,114 case markers. The map must state what position means and provide a list of the same results for keyboard and screen-reader users. The prototype places three fictional procedure groups by hand; distance means nothing.
+
+### Further exploration: F, G, and H
+
+The user's preference remains D and A, with E also of interest. The next round broadens the interaction choices before settling on a connected product. These experiments are separate candidates, not three more navigation destinations to add to the app.
+
+| Study | What organizes the screen | What the AI does | Try it | Tradeoff |
+| --- | --- | --- | --- | --- |
+| F. Signal studio | One wide timeline with synchronized signal tracks, a time scrubber, and a compact assistant below. | Moves the selected time to a peak or missing sample, then explains the source values. | Jump to peak pressure, inspect its source row, move through time with arrow keys, and overlay the knee case. | Strong for examining a case; a long literature answer would need a separate reading view. |
+| G. Evidence canvas | A question, observation, source record, comparison, and uncertainty appear as connected objects. | Builds an inspectable evidence trail and adds a second case when asked. | Change the question to missing data, add a comparison, and open either source table. | Makes provenance visible; large investigations would need grouping to prevent clutter. |
+| H. Review deck | One retrieved case fills a card, with an AI brief and source action. Save and leave-out actions advance the queue. | Organizes a small queue by a research question. | Save one case, leave out another, open the shortlist, then rebuild the queue around missing data. | Reduces simultaneous decisions; cross-case comparison is less immediate than A or F. |
+
+F develops A's signal inspection into a full timeline workspace. G develops D's inspectable answer into an evidence board. H tests a different route through retrieved cases, with a single review decision at a time. The diagrams in G show provenance rather than causation or semantic distance.
+
+These studies contain three fictional records with 13 sample times each, spaced ten minutes apart. Peaks, missingness, chart cursors, comparisons, and source tables come from the same in-page records. The samples are manually authored for the interface draft and are not outputs of the MOVER pipeline. The AI controls recognize only peak-pressure and missing-data examples; unsupported questions receive an explicit message. H keeps its saved cases when the queue changes, and its reset button clears the review decisions. Nothing persists after a reload.
+
+The setup preview opens before the new studies and identifies the fictional records and simulated AI connection. It links to the earlier folder-setup draft. It does not read folders or start a model.
+
+For the next comparison, try F alongside A for locating and checking a signal interval, and try H alongside D for reviewing several AI-retrieved cases. G is the strongest alternative when the research question is about tracing which evidence supports an answer. Keep the choice open until those tasks have been tried.
 
 ### Shared setup flow
 

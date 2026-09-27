@@ -12,6 +12,9 @@ change, and `cases.parquet` gains a column.
 
 ### Added
 
+- Radical interface studies F, G, and H: a signal studio, an evidence canvas,
+  and a case review deck. Each uses the same fictional measurements with working
+  source inspection and scripted AI interactions (2026-09-27).
 - Two more interactive layout drafts: D assembles an AI research notebook with
   inline sources, and E uses an AI-directed visual cohort atlas (2026-09-27).
 - Three interactive desktop-layout drafts and a setup, retrieval, and anesthesia
