@@ -11,10 +11,11 @@
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Design draft:** `docs/MONITORING_CONCEPTS.md` and its interactive HTML prototype
-  compare three layouts, a pre-workspace setup modal, and an AI-first, bounded
-  retrieval plan. C is proposed as a guided question entry into A's evidence
-  workbench; B remains an optional browse view. The article search design draws
-  from sibling `HealthDatabaseAccess` (LitSieve), but no product code changed.
+  compare five layouts, a pre-workspace setup modal, and an AI-first, bounded
+  retrieval plan. D is a single-document AI brief; E is a visual cohort atlas.
+  C-to-A remains an alternative, and B is an optional browse view. The article
+  search design draws from sibling `HealthDatabaseAccess` (LitSieve). No product
+  code changed.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -96,14 +97,12 @@ Wave root (optional) ──► wave_decode  │
 
 - **Date:** 2026-09-27
 - **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Revised the drafts so an AI question leads C or A; reviewed LitSieve's
-  article embeddings and search as a reference for local retrieval. Expanded the
-  clinical guidance explanation, including the signal-pattern criterion. The
-  prototype simulates search and generation; product behavior did not change.
-- **Verified:** Drafts opened in the T3 preview at desktop and 375 px widths;
-  question submission from C opened the selected case in A with explicit source
-  scope and simulation copy. No browser console errors were observed. Full pytest
-  passed. Local data read timings are recorded in the proposal.
-- **Next:** review the C-to-A direction and identify a usable article source;
-  update `spec.md` with approval before implementing startup, navigation, or
-  retrieval changes.
+- **Done:** Added D and E as structurally different interactive drafts. D builds
+  an AI research brief with inline source inspection; E highlights a procedure
+  region from a question and opens the selected case's evidence. Both use
+  fictional cases and simulated retrieval; product behavior did not change.
+- **Verified:** D and E were inspected at desktop and 375 px widths. Question
+  submission, inline evidence, atlas highlighting, and case handoff worked in
+  the T3 preview without console errors. Full pytest passed on 2026-09-27.
+- **Next:** compare C-to-A and D with the same research questions; assess E as
+  a separate discovery view. Identify an article source before implementation.

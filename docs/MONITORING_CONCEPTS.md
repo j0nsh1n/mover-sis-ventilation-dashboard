@@ -12,15 +12,21 @@ The local data snapshot used for this draft has 19,114 rows in `patient_informat
 
 There is no article or publication database in the current repository. The existing `case_fetch.py` already indexes EMR metadata and can run the pipeline for selected PIDs. The current assistant tools mostly search the loaded processed sample. An article library would be a new, optional data source.
 
-## Three layout directions
+## Five layout directions
 
 | Draft | Structure | Best use | Tradeoff |
 | --- | --- | --- | --- |
 | A. AI workbench | A prominent question box, case shortlist, timeline, and source evidence on one screen. | Repeated questions about cases while keeping measurements and citations visible. | Dense on small screens. The evidence panel must stack below the timeline. |
 | B. Cohort board | Wide searchable table, direct row selection, persistent case detail panel. | Manual filtering, comparison, and audit of the AI shortlist. | Adds a second, more complex navigation view. |
 | C. Guided AI start | A large question box, then three stages: retrieve, inspect, and verify. | First-time use and teaching through a focused question. | Slower for researchers who already know which case they want. |
+| D. Research notebook | A single flowing document: question, short AI brief, and expandable source cards beside each claim. No fixed case rail or timeline panel. | Reading and checking an AI synthesis with minimal navigation. | Cross-case comparisons and detailed signals need an explicit drill-in view. |
+| E. Cohort atlas | A full-screen visual field of procedure groups. The AI question highlights a region, then a detail drawer opens the chosen case. | Discovering which part of a cohort an AI search selected. | Spatial placement can imply a clinical relationship that the data does not support; groups and legend must be explicit. |
 
-I recommend **C as the welcome screen** and **A as the main workspace after the first question**. The same question and evidence stay visible during that transition. B can remain an optional **Browse all cases** action for people who want direct cohort control. The AI is the first action in A and C. The three drafts remain separate presentations so reviewers can compare them before the product adopts one navigation model.
+These are different ways to organize the work, not color variations. A keeps question, case, timeline, and evidence visible at once. C starts with a guided task. D treats the answer as a research document whose citations open in place. E treats a cohort as a visual field and lets AI direct attention within it. B gives direct table control. The question is the first action in A, C, D, and E.
+
+**Current recommendation for review:** put D beside the existing C-to-A proposal and try the same research questions in both. D is the strongest new candidate for an AI-centered proof of concept because it makes the answer and its sources the entire page. A remains stronger when a researcher repeatedly inspects time-aligned signals. E is a distinct discovery mode rather than an automatic replacement for case analysis. Its implementation should group or aggregate results rather than draw 19,114 case markers, and any map must state what position means. The prototype places three fictional procedure groups by hand; distance means nothing.
+
+In the prototype, submitting a question in D builds an illustrative brief with an expandable source preview. Submitting one in E highlights a fictional group and opens a case evidence view from its drawer. Both actions are simulations with simple keyword selection. They do not run embeddings, case analysis, or the chat model.
 
 ### Shared setup flow
 
@@ -76,7 +82,7 @@ LitSieve's AI explanation then reads one selected abstract, with that abstract n
 1. **Fix startup state.** Validate data paths before autoload, then show the AI question box. Show chat and embedding model readiness beside it. Check fresh install, saved valid settings, stale paths, cancel, and offline model cases.
 2. **Prepare case embeddings.** Build one vector for each indexed surgery's short text in a background job. Keep exact demographic and data-availability filters. Rebuild only changed text or changed model versions. Measure preparation time and disk use on the 19,114-surgery corpus.
 3. **Wire one question through retrieval.** Embed the question, show a case shortlist, analyze only a bounded number of cases, and send the resulting extracts to Ollama. Label each source and show retrieval and generation progress separately. Measure first answer time and whether the retrieved cases answer reviewed questions.
-4. **Make A and C direct.** Put the question in focus, preserve it when C opens A, allow one-click source inspection, and keep B as an optional browse view. Test keyboard use, narrow windows, empty results, and model-unavailable behavior.
+4. **Choose and implement one primary presentation.** Compare C-to-A with D using the same reviewed questions and source-inspection tasks. Keep a direct case view available from a notebook answer. Evaluate E separately as an optional cohort discovery surface, with an accessible list for the same results. Test keyboard use, narrow windows, empty results, and model-unavailable behavior.
 5. **Add article retrieval when a source collection exists.** Import a small, licensed local collection and embed its titles and abstracts in the background. Compare semantic, exact-word, and hybrid results against reviewed questions. Check citation completeness, duplicate handling, and empty results.
 6. **Ground the answer.** Make each answer name the active case, analyzed scope, rule version, and cited records. Test that missing case data and missing article matches lead to an explicit “no evidence found” response rather than a confident synthesis.
 
@@ -102,7 +108,7 @@ A later move toward clinical use would need a separate assessment of intended us
 
 ## Decisions needed before implementation
 
-- Choose whether C should lead into A, as proposed here, or whether A should open directly for experienced researchers.
+- Compare a C-to-A flow with D's single-document flow as the primary AI experience. E can be considered separately for cohort discovery.
 - Identify the article source, rights, and approximate record count. The repo has no article database today.
 - Decide whether the synthetic demo is part of the shipped desktop experience or only used in research demonstrations.
 

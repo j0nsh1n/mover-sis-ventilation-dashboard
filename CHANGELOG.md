@@ -12,6 +12,8 @@ change, and `cases.parquet` gains a column.
 
 ### Added
 
+- Two more interactive layout drafts: D assembles an AI research notebook with
+  inline sources, and E uses an AI-directed visual cohort atlas (2026-09-27).
 - Three interactive desktop-layout drafts and a setup, retrieval, and anesthesia
   research proof-of-concept proposal in `docs/` (2026-09-26).
 - Synthetic SIS generator: `python -m src.pipeline.synthetic --out data/synthetic/EMR`
