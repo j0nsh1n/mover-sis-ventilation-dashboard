@@ -3,13 +3,15 @@
 ## Current State
 
 - **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
-- **Branch:** `fix/time-aware-flags` (pushed to origin).
+- **Branch:** `docs/monitoring-concepts` (local draft branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-24),
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-26),
   desktop tests included. Skips: frozen binary, real wave tree.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
+- **Design draft:** `docs/MONITORING_CONCEPTS.md` and its interactive HTML prototype
+  compare three layouts, a pre-workspace setup modal, and bounded retrieval.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -89,15 +91,13 @@ Wave root (optional) ──► wave_decode  │
 
 ## Session Handoff
 
-- **Date:** 2026-09-24
-- **Branch:** `fix/time-aware-flags` (pushed to origin; no PR yet)
-- **Done:** minute-grid flag windows; worst-severity / per-episode scoring and
-  `anomaly_score_per_hour`; whole-file PID sampling; total MAC with N₂O; `rr_low`
-  reachable; per-agent concentration caps; OR-stay window (induction kept);
-  synthetic generator; aggregate profile command; spec.md updated (human-approved).
-- **Verified:** full `pytest -q` green incl. desktop; synthetic runs (seeds 0–3, 7):
-  every injected anomaly flagged, no warn/critical on clean cases. Not run on real
-  MOVER data (not available in that session).
-- **Next:** run pipeline + profile on real data and review thresholds; then Parquet
-  conversion of raw CSVs, procedure-event context (label induction/emergence flags),
-  lung-protective ventilation metrics, Phase 3 corpus-tool scoping.
+- **Date:** 2026-09-26
+- **Branch:** `docs/monitoring-concepts` (local, not pushed)
+- **Done:** Three interactive layout drafts, a pre-workspace setup concept, and
+  a case and optional article retrieval proposal. No product behavior changed.
+- **Verified:** Drafts opened in the T3 preview at desktop and 375 px widths;
+  modal, layout switcher, filters, case selection, and timeline navigation were
+  exercised. Full pytest suite, threshold smoke, and packaging checks passed.
+  Local data read timings are recorded in the proposal.
+- **Next:** review a layout direction and article source; update `spec.md` with
+  approval before implementing startup, navigation, or retrieval changes.

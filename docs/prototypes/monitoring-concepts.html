@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOVER SIS Monitor · Interface drafts</title>
+  <style>
+    :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e9f1f2; background: #111923; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #f2bd63; outline-offset: 3px; }
+    .switcher { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: #101720; border-bottom: 1px solid #33424a; }
+    .switcher strong { margin-right: 18px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: #9bb4bb; }
+    .switcher button { min-height: 40px; padding: 8px 14px; border: 1px solid #3a515b; border-radius: 9px; color: #d9e6e9; background: #192833; }
+    .switcher button[aria-pressed="true"] { color: #0d2830; background: #9ce4de; border-color: #9ce4de; font-weight: 700; }
+    .switcher .setup-link { margin-left: auto; }
+    .concept { display: none; min-height: calc(100vh - 61px); }
+    .concept.active { display: block; }
+    .eyebrow { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+    .muted { opacity: .72; }
+    .label { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .chip { display: inline-flex; align-items: center; min-height: 27px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .research-note { font-size: 12px; }
+    .primary, .secondary, .quiet { min-height: 44px; padding: 10px 16px; border-radius: 10px; font-weight: 700; }
+    .primary { border: 1px solid transparent; background: #a5ebe2; color: #0b343b; }
+    .secondary { border: 1px solid currentColor; color: inherit; background: transparent; }
+    .quiet { border: 0; color: inherit; background: transparent; }
+    .case-button { width: 100%; text-align: left; border: 1px solid transparent; }
+    .case-button:hover { border-color: currentColor; }
+    .case-button[aria-pressed="true"] { border-color: #6ad6cb; box-shadow: inset 4px 0 #6ad6cb; }
+    .status-message { min-height: 28px; margin-top: 12px; font-size: 13px; }
+
+    /* A: a case-first research workbench. */
+    .workbench { background: #101b22; color: #e3f1f0; }
+    .workbench header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 21px 28px; border-bottom: 1px solid #2b4348; }
+    .workbench h1 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
+    .workbench .eyebrow { color: #74cfc3; }
+    .workbench .top-actions { display: flex; align-items: center; gap: 10px; }
+    .workbench .scope { color: #aee9d6; background: #254437; }
+    .workbench .grid { display: grid; grid-template-columns: 268px minmax(340px, 1fr) 310px; gap: 0; min-height: calc(100vh - 143px); }
+    .workbench .rail, .workbench .evidence { padding: 24px 18px; background: #15242b; }
+    .workbench .rail { border-right: 1px solid #315057; }
+    .workbench .evidence { border-left: 1px solid #315057; }
+    .workbench .rail h2, .workbench .evidence h2 { margin: 0 0 18px; font-size: 17px; }
+    .workbench input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #4b6871; border-radius: 9px; color: #f4fbfa; background: #102027; }
+    .workbench .case-list { display: grid; gap: 10px; margin-top: 18px; }
+    .workbench .case-button { display: grid; gap: 6px; padding: 14px; border-radius: 12px; background: #20333a; color: #f1f7f5; }
+    .workbench .case-button small { color: #b2c5c8; }
+    .workbench main { padding: 25px 28px 50px; }
+    .workbench .case-heading { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+    .workbench h2 { margin: 0; font-size: clamp(24px, 2.2vw, 34px); letter-spacing: -.04em; }
+    .workbench .flag-chip { color: #ffdbac; background: #5e3928; }
+    .workbench .subnav { display: flex; flex-wrap: wrap; gap: 7px; margin: 23px 0; }
+    .workbench .subnav button { min-height: 44px; border: 1px solid #496168; border-radius: 8px; padding: 8px 12px; background: #182a31; color: #deedeb; }
+    .workbench .subnav button[aria-pressed="true"] { background: #2d5f5a; border-color: #7ecfc6; }
+    .workbench .chart { position: relative; height: 270px; margin-top: 12px; border: 1px solid #35515a; border-radius: 14px; overflow: hidden; background: repeating-linear-gradient(to bottom, #172931 0, #172931 53px, #34505a 54px); }
+    .workbench .chart svg { width: 100%; height: 100%; }
+    .workbench .chart-label { position: absolute; left: 18px; top: 15px; font-size: 12px; color: #b8d0d0; }
+    .workbench .event { display: flex; gap: 14px; align-items: start; margin: 18px 0; padding: 16px; border: 1px solid #476067; border-radius: 11px; background: #1a3037; }
+    .workbench .event b { color: #ffcd8f; }
+    .workbench .evidence .card { padding: 15px; margin-bottom: 12px; background: #21363d; border-radius: 11px; }
+    .workbench .evidence p { line-height: 1.45; }
+    .workbench .evidence button { width: 100%; margin-top: 8px; }
+
+    /* B: a cohort-first investigation board. */
+    .board { background: #f0eee7; color: #1e2b36; }
+    .board header { padding: 24px 32px 18px; background: #fffdf7; border-bottom: 1px solid #d5d8d3; }
+    .board .eyebrow { color: #a34b32; }
+    .board h1 { margin: 0; font-family: Georgia, serif; font-size: 36px; font-weight: 500; letter-spacing: -.04em; }
+    .board .header-row, .board .filters { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .board .filters { justify-content: flex-start; margin-top: 20px; }
+    .board input { min-width: 275px; min-height: 44px; padding: 10px 14px; border: 1px solid #aeb8b9; border-radius: 6px; background: #fff; }
+    .board .filters button { min-height: 44px; padding: 9px 15px; border: 1px solid #9da8aa; border-radius: 6px; color: #283d44; background: #f5f7f3; }
+    .board .filters button[aria-pressed="true"] { color: #fff; background: #225e66; border-color: #225e66; }
+    .board .scope { background: #dce9e5; color: #24534b; }
+    .board .body { display: grid; grid-template-columns: minmax(500px, 1fr) 370px; gap: 22px; padding: 24px 32px; }
+    .board .table-panel, .board .detail { background: #fffdf7; border: 1px solid #d7d9d3; border-radius: 12px; box-shadow: 0 7px 25px #1c31330d; }
+    .board .table-title { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; }
+    .board h2 { margin: 0; font-size: 18px; }
+    .board table { width: 100%; border-collapse: collapse; }
+    .board th { padding: 13px 18px; color: #60717a; background: #f2f4ef; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .board td { padding: 15px 18px; height: 70px; border-top: 1px solid #e4e7e2; }
+    .board tr[data-select] { cursor: pointer; }
+    .board tr[data-select]:focus-visible { outline: 3px solid #a34b32; outline-offset: -3px; }
+    .board tr:hover, .board tr.selected { background: #e5f0ee; }
+    .board .detail { padding: 24px; }
+    .board .detail h2 { margin: 8px 0 15px; font-family: Georgia, serif; font-size: 30px; font-weight: 500; }
+    .board .detail .stat { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #dde3df; }
+    .board .detail .primary { width: 100%; margin: 23px 0 8px; background: #225e66; color: white; }
+    .board .detail .secondary { width: 100%; }
+    .board .detail p { line-height: 1.5; }
+
+    /* C: a guided research story. */
+    .story { background: #e8eff1; color: #1a2c42; }
+    .story header { padding: 22px clamp(22px, 7vw, 100px); background: #19304b; color: #f3f5f1; }
+    .story .brand { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .story .eyebrow { color: #8fdae2; }
+    .story .hero { max-width: 790px; padding: 65px 0 45px; }
+    .story h1 { margin: 0 0 15px; font-family: Georgia, serif; font-size: clamp(36px, 4vw, 62px); line-height: 1.08; font-weight: 500; }
+    .story .hero p { max-width: 580px; font-size: 17px; line-height: 1.55; color: #c9d6df; }
+    .story .hero .primary { margin-top: 20px; background: #f7d6a5; color: #3d312d; }
+    .story .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 17px; max-width: 1130px; margin: -29px auto 0; padding: 0 22px 40px; }
+    .story .step { min-height: 250px; padding: 25px; border: 1px solid #cedadd; border-radius: 16px; background: #fff; box-shadow: 0 14px 34px #203e4e13; }
+    .story .step strong { display: block; margin: 20px 0 10px; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
+    .story .step p { line-height: 1.5; color: #526476; }
+    .story .step button { color: #245e73; border-color: #245e73; }
+    .story .example { max-width: 1086px; margin: 0 auto; padding: 0 0 55px; }
+    .story .example-box { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; padding: 26px; border-radius: 14px; background: #d5e5e8; }
+    .story .example h2 { margin: 0 0 12px; font-size: 22px; }
+    .story .example p { line-height: 1.5; }
+    .story .example .secondary { color: #17465e; }
+
+    dialog { width: min(640px, calc(100vw - 28px)); max-height: calc(100vh - 25px); overflow: auto; padding: 0; border: 1px solid #c3d0d4; border-radius: 18px; color: #1a2d3a; background: #fffefa; box-shadow: 0 22px 65px #07131a70; }
+    dialog::backdrop { background: #07131bc2; }
+    .modal-head { padding: 27px 30px 20px; color: #fff; background: #183446; }
+    .modal-head .eyebrow { color: #a3ddd8; }
+    .modal-head h2 { margin: 0 0 7px; font-family: Georgia, serif; font-size: 32px; font-weight: 500; }
+    .modal-head p { margin: 0; color: #d5e0e2; line-height: 1.45; }
+    .modal-body { padding: 24px 30px 30px; }
+    .modal-body label { display: block; margin: 14px 0 6px; font-weight: 700; }
+    .modal-body input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #9baeb4; border-radius: 8px; }
+    .modal-body small { display: block; margin-top: 5px; color: #596c73; }
+    .modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 25px; }
+    .modal-actions .primary { background: #1c6970; color: #fff; }
+    .modal-actions .secondary { color: #1b5665; }
+    .modal-body .demo-note { margin-bottom: 0; padding: 12px; border-radius: 8px; background: #edf4f2; font-size: 13px; line-height: 1.5; }
+    @media (max-width: 1080px) { .workbench .grid { grid-template-columns: 240px 1fr; } .workbench .evidence { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #315057; } .board .body { grid-template-columns: 1fr; } }
+    @media (max-width: 700px) { .switcher { flex-wrap: wrap; padding: 10px; } .switcher strong { width: 100%; } .switcher .setup-link { margin-left: 0; } .workbench header { flex-wrap: wrap; padding: 18px; } .workbench .grid { display: block; } .workbench .rail, .workbench main, .workbench .evidence { padding: 20px; } .board header, .board .body { padding: 20px; } .board .table-panel { overflow-x: auto; } .board table { min-width: 570px; } .story .steps, .story .example-box { grid-template-columns: 1fr; } .story .hero { padding: 45px 0; } .story .example { padding: 0 22px 40px; } }
+  </style>
+</head>
+<body>
+  <nav class="switcher" aria-label="Draft layouts">
+    <strong>Interface drafts</strong>
+    <button type="button" data-concept="workbench" aria-pressed="true">A · Case workbench</button>
+    <button type="button" data-concept="board" aria-pressed="false">B · Cohort board</button>
+    <button type="button" data-concept="story" aria-pressed="false">C · Guided story</button>
+    <button type="button" class="setup-link" data-open-setup>Preview setup</button>
+  </nav>
+
+  <section id="workbench" class="concept workbench active" aria-label="Case workbench concept">
+    <header>
+      <div><p class="eyebrow">MOVER SIS / Research workspace</p><h1>Explore a surgery, follow the evidence.</h1></div>
+      <div class="top-actions"><span class="chip scope">50 cached · 19,114 indexed</span><button class="secondary" data-open-setup>Data sources</button></div>
+    </header>
+    <div class="grid">
+      <aside class="rail"><h2>Find a case</h2><label class="label" for="workbench-search">Search procedures or case IDs</label><input id="workbench-search" type="search" placeholder="Try laparoscopic"><div class="case-list" id="workbench-cases"></div><p class="research-note muted">Illustrative synthetic case labels. Select once to open the timeline.</p></aside>
+      <main><div class="case-heading"><div><p class="eyebrow">Selected case / <span data-case-id>SYN-041</span></p><h2 data-case-title>Laparoscopic surgery</h2><p class="muted" data-case-meta>62 years · 143 minutes · sevoflurane</p></div><span class="chip flag-chip">Rule flags · research only</span></div>
+        <div class="subnav" role="group" aria-label="Case views"><button data-view="timeline" aria-pressed="true">Timeline</button><button data-view="events" aria-pressed="false">Events</button><button data-view="context" aria-pressed="false">Source context</button></div>
+        <div id="workbench-content"></div><p class="status-message" id="workbench-status" role="status"></p>
+      </main>
+      <aside class="evidence"><p class="eyebrow">Keep the answer grounded</p><h2>Evidence desk</h2><div class="card"><span class="label">Case extract</span><p>Inspect the selected case and the rule inputs before asking the model for a summary.</p><button class="secondary" data-workbench-action="extract">Open source rows</button></div><div class="card"><span class="label">Literature</span><p>No article library is connected in this draft. Search would use local article metadata.</p><button class="secondary" data-workbench-action="literature">Preview literature result</button></div><div class="card"><span class="label">Research assistant</span><p>Ask about documented patterns after choosing a case. Every answer would link back to extracts.</p><button class="primary" data-workbench-action="ask">Ask about this case</button></div><p class="research-note muted">For retrospective research and teaching. Not for clinical care.</p></aside>
+    </div>
+  </section>
+
+  <section id="board" class="concept board" aria-label="Cohort board concept">
+    <header><div class="header-row"><div><p class="eyebrow">MOVER SIS / Explore the cohort</p><h1>Find the pattern. Open the case.</h1></div><span class="chip scope">Indexed universe 19,114 · analyzed sample 50</span></div><div class="filters"><input id="board-search" type="search" aria-label="Search cohort" placeholder="Search procedure or case ID"><button type="button" data-filter="all" aria-pressed="true">All cases</button><button type="button" data-filter="flagged" aria-pressed="false">With flags</button><button type="button" data-filter="clean" aria-pressed="false">No flags</button></div></header>
+    <div class="body"><section class="table-panel"><div class="table-title"><h2>Cases in focus</h2><span class="muted" id="board-count">3 illustrative cases</span></div><table><thead><tr><th>Case</th><th>Procedure</th><th>Agent</th><th>Flag status</th></tr></thead><tbody id="board-rows"></tbody></table></section><aside class="detail"><p class="eyebrow">Selected case</p><h2 data-case-title>Laparoscopic surgery</h2><p data-case-meta>62 years · 143 minutes · sevoflurane</p><div class="stat"><span>Case ID</span><strong data-case-id>SYN-041</strong></div><div class="stat"><span>Data state</span><strong>Analyzed sample</strong></div><div class="stat"><span>Flags</span><strong data-case-flags>2 rule episodes</strong></div><p class="muted">Open the timeline for the measured values and rule boundaries. This panel keeps cohort exploration on one screen.</p><button class="primary" data-board-action="timeline">Open case timeline</button><button class="secondary" data-board-action="compare">Add to comparison</button><p class="status-message" id="board-status" role="status"></p><p class="research-note muted">Retrospective research only. No treatment directions.</p></aside></div>
+  </section>
+
+  <section id="story" class="concept story" aria-label="Guided story concept">
+    <header><div class="brand"><span class="label">MOVER SIS · Study mode</span><button class="secondary" data-open-setup>Data sources</button></div><div class="hero"><p class="eyebrow">A guided research journey</p><h1>What happened in this case?</h1><p>Start with a question. Review measured signals, inspect the source rows, then ask the local model to summarize the documented sequence.</p><button class="primary" data-story-action="start">Start with an example case</button><p class="research-note">Synthetic examples in this draft. Retrospective research and teaching only.</p></div></header>
+    <div class="steps"><div class="step"><span class="chip" style="background:#deecee;color:#235d67">01 · Choose</span><strong>Choose a case</strong><p>Browse cases or search the indexed EMR. The source and analyzed scope remain visible.</p><button class="secondary" data-story-action="choose">Browse examples</button></div><div class="step"><span class="chip" style="background:#f5e4cb;color:#7c4b27">02 · Inspect</span><strong>Follow the timeline</strong><p>Use event markers, rule episodes, and raw values to see why an episode was flagged.</p><button class="secondary" data-story-action="inspect">Preview timeline</button></div><div class="step"><span class="chip" style="background:#e8e3f3;color:#51447a">03 · Explain</span><strong>Review an answer</strong><p>Compare the model's summary with the cited case extract. An answer cannot replace the source.</p><button class="secondary" data-story-action="explain">Preview evidence</button></div></div>
+    <div class="example" id="story-example"><div class="example-box"><div><p class="eyebrow">Example case / <span data-case-id>SYN-041</span></p><h2 data-case-title>Laparoscopic surgery</h2><p id="story-copy">Choose a step above to see how a researcher moves through this case.</p><button class="secondary" data-story-action="next">Next step</button></div><div><p class="label">What you can verify</p><p id="story-proof">Case source, signal coverage, rule name, threshold version, and article citations when a local library is connected.</p><p class="status-message" id="story-status" role="status"></p></div></div></div>
+  </section>
+
+  <dialog id="setup" aria-labelledby="setup-title"><div class="modal-head"><p class="eyebrow">Before the workspace opens</p><h2 id="setup-title">Connect your research data</h2><p>Choose a data source. The app checks the folder and shows what is ready before opening the workspace.</p></div><div class="modal-body"><label for="emr-path">SIS EMR folder · required for a real session</label><input id="emr-path" type="text" placeholder="/path/to/EMR"><small>The folder must contain patient_information.csv. Real validation belongs in the desktop app.</small><label for="cache-path">Processed cache · optional</label><input id="cache-path" type="text" placeholder="/path/to/processed"><small>Existing analyzed cases can appear first. Other cases remain searchable by index.</small><label for="model-path">Local Ollama models · optional</label><input id="model-path" type="text" placeholder="/path/to/models"><small>Case browsing works without a model.</small><div class="modal-actions"><button class="primary" id="demo-open">Explore these drafts</button><button class="secondary" id="setup-validate">Preview path check</button></div><p class="demo-note" id="setup-result" role="status">This is a visual prototype. It never reads a folder or starts Ollama.</p></div></dialog>
+  <script>
+    const cases = [
+      { id: 'SYN-041', title: 'Laparoscopic surgery', meta: '62 years · 143 minutes · sevoflurane', agent: 'Sevoflurane', flags: 2 },
+      { id: 'SYN-108', title: 'Total knee arthroplasty', meta: '71 years · 118 minutes · desflurane', agent: 'Desflurane', flags: 1 },
+      { id: 'SYN-223', title: 'Thyroid procedure', meta: '48 years · 96 minutes · sevoflurane', agent: 'Sevoflurane', flags: 0 }
+    ];
+    let selected = cases[0];
+    let boardFilter = 'all';
+    let workbenchView = 'timeline';
+    let storyStep = 0;
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    const status = (selector, message) => { $(selector).textContent = message; };
+    function showConcept(name) {
+      $$('.concept').forEach(el => el.classList.toggle('active', el.id === name));
+      $$('[data-concept]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.concept === name)));
+      window.scrollTo(0, 0);
+    }
+    function renderCaseText() {
+      $$('[data-case-id]').forEach(el => el.textContent = selected.id);
+      $$('[data-case-title]').forEach(el => el.textContent = selected.title);
+      $$('[data-case-meta]').forEach(el => el.textContent = selected.meta);
+      $('[data-case-flags]').textContent = `${selected.flags} rule episode${selected.flags === 1 ? '' : 's'}`;
+    }
+    function caseMatches(item, query) { return `${item.id} ${item.title} ${item.agent}`.toLowerCase().includes(query.toLowerCase()); }
+    function renderWorkbenchList() {
+      const query = $('#workbench-search').value.trim();
+      const found = cases.filter(item => caseMatches(item, query));
+      $('#workbench-cases').innerHTML = found.length ? found.map(item => `<button class="case-button" data-select="${item.id}" aria-pressed="${selected.id === item.id}"><strong>${item.id}</strong><span>${item.title}</span><small>${item.flags} rule episode${item.flags === 1 ? '' : 's'} · ${item.agent}</small></button>`).join('') : '<p>No example cases match this search.</p>';
+    }
+    function renderBoard() {
+      const query = $('#board-search').value.trim();
+      const found = cases.filter(item => caseMatches(item, query) && (boardFilter === 'all' || (boardFilter === 'flagged' ? item.flags > 0 : item.flags === 0)));
+      $('#board-count').textContent = `${found.length} illustrative case${found.length === 1 ? '' : 's'}`;
+      $('#board-rows').innerHTML = found.length ? found.map(item => `<tr class="${item.id === selected.id ? 'selected' : ''}" data-select="${item.id}" tabindex="0" role="button" aria-label="Select ${item.id}, ${item.title}"><td><strong>${item.id}</strong></td><td>${item.title}</td><td>${item.agent}</td><td>${item.flags ? `${item.flags} episodes` : 'No flags'}</td></tr>`).join('') : '<tr><td colspan="4" style="padding:20px">No example cases match these filters.</td></tr>';
+    }
+    function renderWorkbenchContent() {
+      const content = $('#workbench-content');
+      if (workbenchView === 'timeline') {
+        content.innerHTML = `<p class="label">Signal timeline · illustrative values</p><div class="chart" role="img" aria-label="Illustrative ventilation signal timeline with one highlighted interval"><span class="chart-label">PIP / ETCO₂ · minutes from incision</span><svg viewBox="0 0 800 260" preserveAspectRatio="none" aria-hidden="true"><rect x="390" y="0" width="120" height="260" fill="#a86b373f"/><polyline points="0,180 70,178 130,168 200,174 270,158 335,166 395,111 450,95 510,127 565,158 630,146 700,160 800,145" fill="none" stroke="#f7bb80" stroke-width="4"/><polyline points="0,205 70,197 130,189 200,194 270,201 335,204 395,183 450,178 510,187 565,196 630,199 700,193 800,198" fill="none" stroke="#8dded0" stroke-width="4"/></svg></div><div class="event"><b>Inspectable flag</b><span>Open the episode to see the measured values, missing data, and threshold version.</span></div>`;
+      } else if (workbenchView === 'events') {
+        content.innerHTML = '<p class="label">Documented sequence</p><div class="event"><b>Start of OR stay</b><span>Event and measurement coverage shown together.</span></div><div class="event"><b>Rule episode</b><span>Clicking a real episode would reveal the source values and rule inputs.</span></div><div class="event"><b>End of OR stay</b><span>Induction and emergence remain in view.</span></div>';
+      } else {
+        content.innerHTML = '<p class="label">Source context</p><div class="event"><b>Extract status</b><span>This draft uses synthetic labels only. The product view would list source table, field, timestamp, units, and missingness for the selected interval.</span></div>';
+      }
+    }
+    function selectCase(id) { selected = cases.find(item => item.id === id) || selected; renderCaseText(); renderWorkbenchList(); renderBoard(); renderWorkbenchContent(); status('#workbench-status', `${selected.id} selected.`); status('#board-status', `${selected.id} selected.`); }
+    function renderStory() {
+      const copy = ['Choose a step above to see how a researcher moves through this case.', 'A case list opens with indexed and analyzed scope labels. Select a surgery directly.', 'The timeline opens at the selected rule episode with source values and missing data visible.', 'The local answer cites the case extract. Literature appears only if a separate library has been added.'];
+      const proof = ['Case source, signal coverage, rule name, threshold version, and article citations when a local library is connected.', 'The selected case ID and dataset scope remain visible.', 'The episode connects to its measured values and rule version.', 'The answer separates case observations from literature and shows its citations.'];
+      $('#story-copy').textContent = copy[storyStep];
+      $('#story-proof').textContent = proof[storyStep];
+      status('#story-status', storyStep ? `Step ${storyStep} of 3` : 'Choose a step.');
+      $('#story-example').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    document.addEventListener('click', event => {
+      const concept = event.target.closest('[data-concept]'); if (concept) showConcept(concept.dataset.concept);
+      const caseButton = event.target.closest('[data-select]'); if (caseButton) selectCase(caseButton.dataset.select);
+      const view = event.target.closest('[data-view]'); if (view) { workbenchView = view.dataset.view; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el === view))); renderWorkbenchContent(); }
+      const filter = event.target.closest('[data-filter]'); if (filter) { boardFilter = filter.dataset.filter; $$('[data-filter]').forEach(el => el.setAttribute('aria-pressed', String(el === filter))); renderBoard(); }
+      if (event.target.closest('[data-open-setup]')) $('#setup').showModal();
+      const wb = event.target.closest('[data-workbench-action]'); if (wb) { if (wb.dataset.workbenchAction === 'extract') { workbenchView = 'context'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context'))); renderWorkbenchContent(); } status('#workbench-status', { extract: 'Source context opened.', literature: 'No local article library is connected in this draft.', ask: 'The local model would open after source data is selected.' }[wb.dataset.workbenchAction]); }
+      const board = event.target.closest('[data-board-action]'); if (board) { if (board.dataset.boardAction === 'timeline') { workbenchView = 'timeline'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'timeline'))); renderWorkbenchContent(); showConcept('workbench'); status('#workbench-status', `${selected.id} timeline opened from the cohort board.`); } else status('#board-status', `${selected.id} added to a draft comparison.`); }
+      const story = event.target.closest('[data-story-action]'); if (story) { storyStep = ({ start: 1, choose: 1, inspect: 2, explain: 3, next: storyStep === 3 ? 1 : storyStep + 1 })[story.dataset.storyAction]; renderStory(); }
+    });
+    document.addEventListener('keydown', event => { const row = event.target.closest('tr[data-select]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selectCase(row.dataset.select); } });
+    $('#workbench-search').addEventListener('input', renderWorkbenchList);
+    $('#board-search').addEventListener('input', renderBoard);
+    $('#demo-open').addEventListener('click', () => $('#setup').close());
+    $('#setup-validate').addEventListener('click', () => { $('#setup-result').textContent = $('#emr-path').value.trim() ? 'A real app would check the selected EMR folder now. This visual draft cannot read your files.' : 'Enter an EMR folder for a real session, or explore these synthetic drafts.'; });
+    renderCaseText(); renderWorkbenchList(); renderBoard(); renderWorkbenchContent();
+    $('#setup').showModal();
+  </script>
+</body>
+</html>

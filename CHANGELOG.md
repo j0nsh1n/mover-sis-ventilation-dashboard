@@ -12,6 +12,8 @@ change, and `cases.parquet` gains a column.
 
 ### Added
 
+- Three interactive desktop-layout drafts and a setup, retrieval, and anesthesia
+  research proof-of-concept proposal in `docs/` (2026-09-26).
 - Synthetic SIS generator: `python -m src.pipeline.synthetic --out data/synthetic/EMR`
   writes fictional cases (`SYN*` PIDs) with the real dump's quirks and a
   `synthetic_truth.json` of injected anomalies, for development without MOVER data.
