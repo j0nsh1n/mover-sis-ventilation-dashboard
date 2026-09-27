@@ -53,6 +53,10 @@ change, and `cases.parquet` gains a column.
 
 ### Changed
 
+- Revised the interface drafts around an AI question flow: a guided start opens
+  an evidence workbench, with the cohort board retained as an optional browse view.
+  Expanded the retrieval proposal using the neighboring LitSieve project's article
+  search pattern and clarified the FDA CDS boundary for signal patterns (2026-09-27).
 - Anomaly score counts each flagged minute once at its worst severity, and weights
   composite patterns per episode rather than per minute. `n_composite` counts episodes.
 - `agent_high` uses total MAC (volatile + N₂O).

@@ -5,13 +5,16 @@
 - **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
 - **Branch:** `docs/monitoring-concepts` (local draft branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-26),
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-27),
   desktop tests included. Skips: frozen binary, real wave tree.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Design draft:** `docs/MONITORING_CONCEPTS.md` and its interactive HTML prototype
-  compare three layouts, a pre-workspace setup modal, and bounded retrieval.
+  compare three layouts, a pre-workspace setup modal, and an AI-first, bounded
+  retrieval plan. C is proposed as a guided question entry into A's evidence
+  workbench; B remains an optional browse view. The article search design draws
+  from sibling `HealthDatabaseAccess` (LitSieve), but no product code changed.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -91,13 +94,16 @@ Wave root (optional) ──► wave_decode  │
 
 ## Session Handoff
 
-- **Date:** 2026-09-26
+- **Date:** 2026-09-27
 - **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Three interactive layout drafts, a pre-workspace setup concept, and
-  a case and optional article retrieval proposal. No product behavior changed.
+- **Done:** Revised the drafts so an AI question leads C or A; reviewed LitSieve's
+  article embeddings and search as a reference for local retrieval. Expanded the
+  clinical guidance explanation, including the signal-pattern criterion. The
+  prototype simulates search and generation; product behavior did not change.
 - **Verified:** Drafts opened in the T3 preview at desktop and 375 px widths;
-  modal, layout switcher, filters, case selection, and timeline navigation were
-  exercised. Full pytest suite, threshold smoke, and packaging checks passed.
-  Local data read timings are recorded in the proposal.
-- **Next:** review a layout direction and article source; update `spec.md` with
-  approval before implementing startup, navigation, or retrieval changes.
+  question submission from C opened the selected case in A with explicit source
+  scope and simulation copy. No browser console errors were observed. Full pytest
+  passed. Local data read timings are recorded in the proposal.
+- **Next:** review the C-to-A direction and identify a usable article source;
+  update `spec.md` with approval before implementing startup, navigation, or
+  retrieval changes.
