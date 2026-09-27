@@ -24,9 +24,11 @@ There is no article or publication database in the current repository. The exist
 
 These are different ways to organize the work, not color variations. A keeps question, case, timeline, and evidence visible at once. C starts with a guided task. D treats the answer as a research document whose citations open in place. E treats a cohort as a visual field and lets AI direct attention within it. B gives direct table control. The question is the first action in A, C, D, and E.
 
-**Current recommendation for review:** put D beside the existing C-to-A proposal and try the same research questions in both. D is the strongest new candidate for an AI-centered proof of concept because it makes the answer and its sources the entire page. A remains stronger when a researcher repeatedly inspects time-aligned signals. E is a distinct discovery mode rather than an automatic replacement for case analysis. Its implementation should group or aggregate results rather than draw 19,114 case markers, and any map must state what position means. The prototype places three fictional procedure groups by hand; distance means nothing.
+**Current preference and working direction (2026-09-27):** D and A lead; E is also promising. Use D as the starting AI research brief, open A for detailed case and signal inspection, and return to the same brief. Offer E as an optional route from D to discover a procedure group, then open the selected case in A. This preserves an AI-centered start without making a dense case workbench the only screen. C and B remain available as alternative drafts for comparison.
 
-In the prototype, submitting a question in D builds an illustrative brief with an expandable source preview. Submitting one in E highlights a fictional group and opens a case evidence view from its drawer. Both actions are simulations with simple keyword selection. They do not run embeddings, case analysis, or the chat model.
+The connected prototype now starts in D. A question builds an illustrative brief; its case card opens A's source context and a back button restores the brief and question. D can also open E with that question in context. E highlights a fictional group and opens its selected case in A, with a route back to the atlas. These actions use simple keyword selection and fictional cases. They do not run embeddings, case analysis, or the chat model.
+
+E's implementation should group or aggregate results rather than draw 19,114 case markers. The map must state what position means and provide a list of the same results for keyboard and screen-reader users. The prototype places three fictional procedure groups by hand; distance means nothing.
 
 ### Shared setup flow
 
@@ -82,7 +84,7 @@ LitSieve's AI explanation then reads one selected abstract, with that abstract n
 1. **Fix startup state.** Validate data paths before autoload, then show the AI question box. Show chat and embedding model readiness beside it. Check fresh install, saved valid settings, stale paths, cancel, and offline model cases.
 2. **Prepare case embeddings.** Build one vector for each indexed surgery's short text in a background job. Keep exact demographic and data-availability filters. Rebuild only changed text or changed model versions. Measure preparation time and disk use on the 19,114-surgery corpus.
 3. **Wire one question through retrieval.** Embed the question, show a case shortlist, analyze only a bounded number of cases, and send the resulting extracts to Ollama. Label each source and show retrieval and generation progress separately. Measure first answer time and whether the retrieved cases answer reviewed questions.
-4. **Choose and implement one primary presentation.** Compare C-to-A with D using the same reviewed questions and source-inspection tasks. Keep a direct case view available from a notebook answer. Evaluate E separately as an optional cohort discovery surface, with an accessible list for the same results. Test keyboard use, narrow windows, empty results, and model-unavailable behavior.
+4. **Test the D-to-A research flow.** Ask in D, inspect a cited case in A, and return with the question and brief intact. Compare this with opening A directly for experienced researchers. Evaluate E as an optional cohort discovery surface, with an accessible list for the same results. Test keyboard use, narrow windows, empty results, and model-unavailable behavior.
 5. **Add article retrieval when a source collection exists.** Import a small, licensed local collection and embed its titles and abstracts in the background. Compare semantic, exact-word, and hybrid results against reviewed questions. Check citation completeness, duplicate handling, and empty results.
 6. **Ground the answer.** Make each answer name the active case, analyzed scope, rule version, and cited records. Test that missing case data and missing article matches lead to an explicit “no evidence found” response rather than a confident synthesis.
 
@@ -108,7 +110,7 @@ A later move toward clinical use would need a separate assessment of intended us
 
 ## Decisions needed before implementation
 
-- Compare a C-to-A flow with D's single-document flow as the primary AI experience. E can be considered separately for cohort discovery.
+- Confirm whether D should open by default, with A for case inspection and E for optional cohort discovery, as the linked draft now shows.
 - Identify the article source, rights, and approximate record count. The repo has no article database today.
 - Decide whether the synthetic demo is part of the shipped desktop experience or only used in research demonstrations.
 

@@ -55,6 +55,9 @@ change, and `cases.parquet` gains a column.
 
 ### Changed
 
+- Connected the preferred D research notebook and A case workbench into a
+  question-preserving inspection flow, with E available for cohort discovery
+  in the interactive draft (2026-09-27).
 - Revised the interface drafts around an AI question flow: a guided start opens
   an evidence workbench, with the cohort board retained as an optional browse view.
   Expanded the retrieval proposal using the neighboring LitSieve project's article

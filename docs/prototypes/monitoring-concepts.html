@@ -151,6 +151,8 @@
     .notebook .source-block h3 { margin: 0 0 8px; font-size: 19px; }
     .notebook .source-block p { margin: 0 0 13px; color: #53675e; line-height: 1.5; }
     .notebook .source-block button { color: #285a51; }
+    .notebook .source-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+    .notebook .source-actions .primary { color: #fff; }
     .notebook .source-detail { margin-top: 14px; padding: 14px; border-left: 4px solid #438276; background: #e9eee4; line-height: 1.5; }
     .notebook .footnote { margin-top: 30px; padding-top: 20px; border-top: 1px solid #cbd5c8; color: #64766c; font-size: 13px; line-height: 1.5; }
 
@@ -203,24 +205,24 @@
     .modal-actions .secondary { color: #1b5665; }
     .modal-body .demo-note { margin-bottom: 0; padding: 12px; border-radius: 8px; background: #edf4f2; font-size: 13px; line-height: 1.5; }
     @media (max-width: 1080px) { .workbench .grid { grid-template-columns: 240px 1fr; } .workbench .evidence { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #315057; } .board .body { grid-template-columns: 1fr; } .atlas .shell { grid-template-columns: minmax(0, 1fr) 290px; } .atlas .region { width: 170px; min-height: 170px; } }
-    @media (max-width: 700px) { .switcher { position: static; padding: 10px; } .switcher strong { width: 100%; } .switcher .setup-link { margin-left: 0; } .workbench header { flex-wrap: wrap; padding: 18px; } .workbench .grid { display: block; } .workbench .rail, .workbench main, .workbench .evidence { padding: 20px; } .board header, .board .body { padding: 20px; } .board .table-panel { overflow-x: auto; } .board table { min-width: 570px; } .story .steps, .story .example-box { grid-template-columns: 1fr; } .story .hero { padding: 45px 0; } .story .composer { flex-direction: column; } .story .example { padding: 0 22px 40px; } .notebook .masthead { padding: 15px 21px; } .notebook .page { padding-top: 38px; } .notebook .source-block { grid-template-columns: 42px 1fr; gap: 10px; } .atlas .head { padding: 20px; } .atlas .shell { display: block; } .atlas .field { min-height: 850px; } .atlas .field-label { left: 20px; right: 20px; } .atlas .region { width: 150px; min-height: 150px; } .atlas .region:nth-of-type(1) { left: 7%; top: 31%; } .atlas .region:nth-of-type(2) { left: 48%; top: 49%; } .atlas .region:nth-of-type(3) { left: 11%; top: 70%; width: 138px; min-height: 138px; } .atlas .query-dock { left: 12px; right: 12px; top: 125px; bottom: auto; } .atlas .query-dock button { padding: 8px; } .atlas .drawer { border-left: 0; border-top: 1px solid #37556a; } }
+    @media (max-width: 700px) { .switcher { position: static; padding: 10px; } .switcher strong { width: 100%; } .switcher .setup-link { margin-left: 0; } .workbench header { flex-wrap: wrap; padding: 18px; } .workbench .top-actions { width: 100%; min-width: 0; flex-wrap: wrap; } .workbench .grid { display: block; } .workbench .rail, .workbench main, .workbench .evidence { padding: 20px; } .board header, .board .body { padding: 20px; } .board .table-panel { overflow-x: auto; } .board table { min-width: 570px; } .story .steps, .story .example-box { grid-template-columns: 1fr; } .story .hero { padding: 45px 0; } .story .composer { flex-direction: column; } .story .example { padding: 0 22px 40px; } .notebook .masthead { padding: 15px 21px; } .notebook .page { padding-top: 38px; } .notebook .source-block { grid-template-columns: 42px 1fr; gap: 10px; } .atlas .head { padding: 20px; } .atlas .shell { display: block; } .atlas .field { min-height: 850px; } .atlas .field-label { left: 20px; right: 20px; } .atlas .region { width: 150px; min-height: 150px; } .atlas .region:nth-of-type(1) { left: 7%; top: 31%; } .atlas .region:nth-of-type(2) { left: 48%; top: 49%; } .atlas .region:nth-of-type(3) { left: 11%; top: 70%; width: 138px; min-height: 138px; } .atlas .query-dock { left: 12px; right: 12px; top: 125px; bottom: auto; } .atlas .query-dock button { padding: 8px; } .atlas .drawer { border-left: 0; border-top: 1px solid #37556a; } }
   </style>
 </head>
 <body>
   <nav class="switcher" aria-label="Draft layouts">
     <strong>Interface drafts</strong>
-    <button type="button" data-concept="workbench" aria-pressed="true">A · AI workbench</button>
+    <button type="button" data-concept="workbench" aria-pressed="false">A · AI workbench</button>
     <button type="button" data-concept="story" aria-pressed="false">C · Guided AI start</button>
     <button type="button" data-concept="board" aria-pressed="false">B · Cohort board</button>
-    <button type="button" data-concept="notebook" aria-pressed="false">D · Research notebook</button>
+    <button type="button" data-concept="notebook" aria-pressed="true">D · Research notebook</button>
     <button type="button" data-concept="atlas" aria-pressed="false">E · Cohort atlas</button>
     <button type="button" class="setup-link" data-open-setup>Preview setup</button>
   </nav>
 
-  <section id="workbench" class="concept workbench active" aria-label="Case workbench concept">
+  <section id="workbench" class="concept workbench" aria-label="Case workbench concept">
     <header>
       <div><p class="eyebrow">MOVER SIS / Research workspace</p><h1>Ask first. Inspect every answer.</h1></div>
-      <div class="top-actions"><span class="chip scope">50 cached · 19,114 indexed</span><button class="secondary" data-open-setup>Data sources</button></div>
+      <div class="top-actions"><span class="chip scope">50 cached · 19,114 indexed</span><button class="secondary" type="button" id="workbench-back" hidden>Back to research brief</button><button class="secondary" data-open-setup>Data sources</button></div>
     </header>
     <div class="grid">
       <aside class="rail"><h2>Ask the local assistant</h2><form id="workbench-ask-form" class="ask-form"><label class="label" for="workbench-question">Research question</label><input id="workbench-question" type="search" placeholder="Find cases with high PIP" required><button class="primary" type="submit">Find evidence with AI</button></form><p class="label">Try a question</p><button class="suggestion" data-suggest="Find laparoscopic cases with high PIP">Cases with high PIP</button><button class="suggestion" data-suggest="Compare knee cases with documented flags">Compare knee cases</button><hr class="rail-divider"><h2>Browse directly</h2><label class="label" for="workbench-search">Procedure or case ID</label><input id="workbench-search" type="search" placeholder="Try laparoscopic"><div class="case-list" id="workbench-cases"></div><p class="research-note muted">Illustrative synthetic cases. The question flow is a UI simulation.</p></aside>
@@ -243,7 +245,7 @@
     <div class="example" id="story-example"><div class="example-box"><div><p class="eyebrow">Example case / <span data-case-id>SYN-041</span></p><h2 data-case-title>Laparoscopic surgery</h2><p id="story-copy">Choose a step above to see how a researcher moves through this case.</p><button class="secondary" data-story-action="next">Next step</button></div><div><p class="label">What you can verify</p><p id="story-proof">Case source, signal coverage, rule name, threshold version, and article citations when a local library is connected.</p><p class="status-message" id="story-status" role="status"></p></div></div></div>
   </section>
 
-  <section id="notebook" class="concept notebook" aria-label="AI research notebook concept">
+  <section id="notebook" class="concept notebook active" aria-label="AI research notebook concept">
     <div class="masthead"><span>MOVER SIS / Research notebook</span><button class="secondary" data-open-setup>Data sources</button></div>
     <div class="page">
       <p class="eyebrow">D · A document built from a question</p>
@@ -254,12 +256,12 @@
         <textarea id="notebook-question" placeholder="Which documented cases look similar to high PIP episodes?" required></textarea>
         <div class="question-actions"><p>Local AI · 19,114 indexed surgeries · 50 analyzed in the sample</p><button class="primary" type="submit">Build research brief</button></div>
       </form>
-      <div class="example-row"><span>Try a question</span><button type="button" data-notebook-question="Find laparoscopic cases with high PIP">High PIP cases</button><button type="button" data-notebook-question="Compare knee cases with documented flags">Knee cases</button></div>
+      <div class="example-row"><span>Try a question</span><button type="button" data-notebook-question="Find laparoscopic cases with high PIP">High PIP cases</button><button type="button" data-notebook-question="Compare knee cases with documented flags">Knee cases</button><button type="button" id="notebook-atlas">Explore cohort atlas</button></div>
       <article class="answer" id="notebook-answer" aria-live="polite" hidden>
         <div class="answer-top"><span class="label">Illustrative AI brief</span><span>Evidence scope · synthetic example only</span></div>
         <h2 id="notebook-answer-title">Research brief</h2>
         <p class="answer-lead" id="notebook-answer-lead"></p>
-        <div class="source-block"><span class="source-num">01</span><div><h3>Matched case · <span data-case-id>SYN-041</span></h3><p><span data-case-title>Laparoscopic surgery</span> · <span data-case-meta>62 years · 143 minutes · sevoflurane</span>. A real brief would show the exact source fields and time interval used.</p><button class="secondary" type="button" data-notebook-evidence aria-expanded="false">Show source preview</button><div class="source-detail" id="notebook-source" hidden>Prototype source preview: fictional case label and an illustrative rule episode. A real view would include the EMR table, timestamp, units, missing data, and threshold version.</div></div></div>
+        <div class="source-block"><span class="source-num">01</span><div><h3>Matched case · <span data-notebook-case-id>SYN-041</span></h3><p><span data-notebook-case-title>Laparoscopic surgery</span> · <span data-notebook-case-meta>62 years · 143 minutes · sevoflurane</span>. A real brief would show the exact source fields and time interval used.</p><div class="source-actions"><button class="secondary" type="button" data-notebook-evidence aria-expanded="false">Show source preview</button><button class="primary" type="button" id="notebook-open-case">Inspect full case in A</button></div><div class="source-detail" id="notebook-source" hidden>Prototype source preview: fictional case label and an illustrative rule episode. A real view would include the EMR table, timestamp, units, missing data, and threshold version.</div></div></div>
         <div class="source-block"><span class="source-num">02</span><div><h3>Literature check</h3><p>No article collection is connected to this draft. A real brief would distinguish case observations from retrieved papers and cite the inspected abstract.</p></div></div>
         <p class="footnote">This is a layout simulation. No embedding search, case analysis, or chat model ran. Retrospective research and teaching only.</p>
       </article>
@@ -283,6 +285,7 @@
         <p class="scope-line">Indexed: 19,114 surgeries · Analyzed sample: 50</p>
         <div class="insight"><strong>Evidence path</strong><p id="atlas-evidence">Question → shortlist → selected case extract → local model answer with source links.</p></div>
         <button class="secondary" type="button" id="atlas-open" hidden>Open selected case evidence</button>
+        <button class="secondary" type="button" id="atlas-return" hidden>Back to research brief</button>
         <p class="status-message" id="atlas-status" role="status">This map uses only three fictional examples.</p>
         <p class="research-note muted">The map and AI results are simulated. Retrospective research only.</p>
       </aside>
@@ -299,8 +302,12 @@
     let selected = cases[0];
     let boardFilter = 'all';
     let workbenchView = 'timeline';
+    let workbenchOrigin = null;
     let storyStep = 0;
     let atlasSelected = null;
+    let atlasActiveQuestion = '';
+    let notebookCase = null;
+    let notebookQuestionText = '';
     const $ = selector => document.querySelector(selector);
     const $$ = selector => [...document.querySelectorAll(selector)];
     const status = (selector, message) => { $(selector).textContent = message; };
@@ -351,23 +358,47 @@
       $('#story-question').value = text;
       $('#ai-result').textContent = `Question: “${text}” · This prototype selects ${match.id} to illustrate the flow. The product would embed the question, rank short case descriptions, load source extracts, then ask the local chat model for an answer with source links. No embedding search or model call ran here.`;
       status('#workbench-status', `AI path preview opened for ${match.id}.`);
+      setWorkbenchOrigin(null);
       showConcept('workbench');
+    }
+    function setWorkbenchOrigin(origin) {
+      workbenchOrigin = origin;
+      $('#workbench-back').hidden = !origin;
+      if (origin) $('#workbench-back').textContent = origin === 'notebook' ? 'Back to research brief' : 'Back to cohort atlas';
+    }
+    function openWorkbenchFrom(origin, item, question) {
+      selectCase(item.id);
+      $('#workbench-question').value = question;
+      $('#ai-result').textContent = `Opened ${item.id} from ${origin === 'notebook' ? 'the research brief' : 'the cohort atlas'}${question ? ` for “${question}”` : ''}. Inspect this illustrative case and its source context. No embedding search or model call ran here.`;
+      workbenchView = 'context';
+      $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context')));
+      renderWorkbenchContent();
+      setWorkbenchOrigin(origin);
+      showConcept('workbench');
+      status('#workbench-status', `${item.id} source context opened.`);
     }
     function renderNotebook(question) {
       const text = question.trim();
       if (!text) return;
       const match = exampleMatch(text);
+      notebookCase = match;
+      notebookQuestionText = text;
       selectCase(match.id);
       $('#notebook-question').value = text;
       $('#notebook-answer-title').textContent = text;
       $('#notebook-answer-lead').textContent = `This draft selects ${match.id} as a fictional match to demonstrate a document-style answer. A real assistant would search indexed case descriptions, load the relevant source extracts, and explain only what those extracts support.`;
+      $('[data-notebook-case-id]').textContent = match.id;
+      $('[data-notebook-case-title]').textContent = match.title;
+      $('[data-notebook-case-meta]').textContent = match.meta;
       $('#notebook-answer').hidden = false;
       $('#notebook-source').hidden = true;
       $('[data-notebook-evidence]').setAttribute('aria-expanded', 'false');
+      $('[data-notebook-evidence]').textContent = 'Show source preview';
       $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    function focusAtlas(item, question = '') {
+    function focusAtlas(item, question = '', scrollResult = true) {
       atlasSelected = item;
+      atlasActiveQuestion = question;
       selectCase(item.id);
       $$('[data-atlas-case]').forEach(el => { el.setAttribute('aria-pressed', String(el.dataset.atlasCase === item.id)); el.classList.toggle('dim', el.dataset.atlasCase !== item.id); });
       $('#atlas-title').textContent = item.title;
@@ -375,7 +406,7 @@
       $('#atlas-evidence').textContent = `${item.id} · ${item.meta} · ${item.flags} rule episode${item.flags === 1 ? '' : 's'}. The real result would link to measurements, rule inputs, and any article abstract used.`;
       $('#atlas-open').hidden = false;
       status('#atlas-status', question ? 'Illustrative AI highlight. No embedding search or model call ran.' : 'Illustrative region selected.');
-      if (window.innerWidth <= 700) $('#atlas-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (scrollResult && window.innerWidth <= 700) $('#atlas-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     function renderStory() {
       const copy = ['Ask a question above or choose a stage to preview the research path.', 'The app would embed the question and return a short list of relevant cases. Exact filters and analyzed scope stay visible.', 'The timeline opens for a selected case with source values and missing data visible.', 'The local model would answer from retrieved extracts and name the source of each claim.'];
@@ -386,15 +417,19 @@
       $('#story-example').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     document.addEventListener('click', event => {
-      const concept = event.target.closest('[data-concept]'); if (concept) showConcept(concept.dataset.concept);
+      const concept = event.target.closest('[data-concept]'); if (concept) { if (concept.dataset.concept === 'workbench') setWorkbenchOrigin(null); showConcept(concept.dataset.concept); }
       const caseButton = event.target.closest('[data-select]'); if (caseButton) selectCase(caseButton.dataset.select);
       const view = event.target.closest('[data-view]'); if (view) { workbenchView = view.dataset.view; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el === view))); renderWorkbenchContent(); }
       const filter = event.target.closest('[data-filter]'); if (filter) { boardFilter = filter.dataset.filter; $$('[data-filter]').forEach(el => el.setAttribute('aria-pressed', String(el === filter))); renderBoard(); }
       const suggestion = event.target.closest('[data-suggest]'); if (suggestion) previewQuestion(suggestion.dataset.suggest);
       const notebookQuestion = event.target.closest('[data-notebook-question]'); if (notebookQuestion) renderNotebook(notebookQuestion.dataset.notebookQuestion);
       const notebookEvidence = event.target.closest('[data-notebook-evidence]'); if (notebookEvidence) { const detail = $('#notebook-source'); detail.hidden = !detail.hidden; notebookEvidence.setAttribute('aria-expanded', String(!detail.hidden)); notebookEvidence.textContent = detail.hidden ? 'Show source preview' : 'Hide source preview'; }
+      if (event.target.closest('#notebook-open-case') && notebookCase) openWorkbenchFrom('notebook', notebookCase, notebookQuestionText);
+      if (event.target.closest('#notebook-atlas')) { const hasBrief = Boolean(notebookCase); $('#atlas-return').hidden = !hasBrief; showConcept('atlas'); if (hasBrief) { $('#atlas-question').value = notebookQuestionText; focusAtlas(notebookCase, notebookQuestionText, false); } }
       const atlasRegion = event.target.closest('[data-atlas-case]'); if (atlasRegion) focusAtlas(cases.find(item => item.id === atlasRegion.dataset.atlasCase));
-      if (event.target.closest('#atlas-open') && atlasSelected) { selectCase(atlasSelected.id); workbenchView = 'context'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context'))); renderWorkbenchContent(); showConcept('workbench'); status('#workbench-status', `${atlasSelected.id} evidence opened from the cohort atlas.`); }
+      if (event.target.closest('#atlas-open') && atlasSelected) openWorkbenchFrom('atlas', atlasSelected, atlasActiveQuestion);
+      if (event.target.closest('#atlas-return') && notebookCase) { showConcept('notebook'); $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      if (event.target.closest('#workbench-back') && workbenchOrigin) { const origin = workbenchOrigin; showConcept(origin); if (origin === 'notebook') $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
       if (event.target.closest('[data-open-setup]')) $('#setup').showModal();
       const wb = event.target.closest('[data-workbench-action]'); if (wb) { if (wb.dataset.workbenchAction === 'extract') { workbenchView = 'context'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context'))); renderWorkbenchContent(); } status('#workbench-status', { extract: 'Source context opened.', literature: 'No local article library is connected in this draft.' }[wb.dataset.workbenchAction]); }
       const board = event.target.closest('[data-board-action]'); if (board) { if (board.dataset.boardAction === 'timeline') { workbenchView = 'timeline'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'timeline'))); renderWorkbenchContent(); showConcept('workbench'); status('#workbench-status', `${selected.id} timeline opened from the cohort board.`); } else status('#board-status', `${selected.id} added to a draft comparison.`); }

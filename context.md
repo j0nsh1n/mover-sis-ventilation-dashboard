@@ -12,10 +12,10 @@
   local Ollama co-pilot (not clinical CDS).
 - **Design draft:** `docs/MONITORING_CONCEPTS.md` and its interactive HTML prototype
   compare five layouts, a pre-workspace setup modal, and an AI-first, bounded
-  retrieval plan. D is a single-document AI brief; E is a visual cohort atlas.
-  C-to-A remains an alternative, and B is an optional browse view. The article
-  search design draws from sibling `HealthDatabaseAccess` (LitSieve). No product
-  code changed.
+  retrieval plan. The current preferred draft opens in D for an AI brief,
+  drills into A for detailed case inspection, and offers E for optional cohort
+  discovery. C and B remain comparison drafts. The article search design draws
+  from sibling `HealthDatabaseAccess` (LitSieve). No product code changed.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -97,12 +97,11 @@ Wave root (optional) ──► wave_decode  │
 
 - **Date:** 2026-09-27
 - **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Added D and E as structurally different interactive drafts. D builds
-  an AI research brief with inline source inspection; E highlights a procedure
-  region from a question and opens the selected case's evidence. Both use
-  fictional cases and simulated retrieval; product behavior did not change.
-- **Verified:** D and E were inspected at desktop and 375 px widths. Question
-  submission, inline evidence, atlas highlighting, and case handoff worked in
-  the T3 preview without console errors. Full pytest passed on 2026-09-27.
-- **Next:** compare C-to-A and D with the same research questions; assess E as
-  a separate discovery view. Identify an article source before implementation.
+- **Done:** Linked the user's preferred D and A drafts into a question → brief →
+  case evidence → brief loop; connected E as an optional discovery route. The
+  prototype still uses fictional cases and simulated retrieval only.
+- **Verified:** D-to-A-to-D and D-to-E-to-A-to-E-to-D flows worked in T3 preview.
+  The 375 px workbench header fits without horizontal overflow; no browser
+  console errors were observed. Full pytest passed on 2026-09-27.
+- **Next:** review the linked D/A/E flow and identify an article source before
+  implementing product navigation or retrieval.
