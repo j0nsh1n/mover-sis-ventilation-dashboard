@@ -4,10 +4,10 @@
 
 - **Version:** 0.7.0 (`VERSION` / `src/__version__.py`); local Linux build
   installed, with the 0.6.0 bundle retained for rollback.
-- **Branch:** `feat/case-retrieval-index` (local implementation branch).
+- **Branch:** `main` includes the G/F desktop release from merged PR #13.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` and CI's
-  coverage run — green (245 passed, 2026-09-28). Frozen-binary smoke passed.
+  coverage run — green (2026-09-28). Frozen-binary smoke passed.
   Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
@@ -110,17 +110,18 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-28
-- **Branch:** `feat/case-retrieval-index` (local, not pushed)
+- **Branch:** `main` (PR #13 merged)
 - **Done:** Version 0.7.0 now renders G as the selected evidence map and F as
   the signal studio while retaining the live metadata search and local AI.
   G's AI input is limited to three retrieved extracts and cannot call legacy
   corpus tools or inherit an active case from Ask.
+  PR #13 is merged on GitHub. The release workflow now uploads builds
+  directly to a draft GitHub Release because Actions artifact storage is full.
   The 0.6.0 bundle remains archived for rollback.
 - **Verified:** Focused G/F interaction and startup tests passed; desktop
   screenshots at 1440×900 show the revised composition and all three signal
   tracks. Full pytest, CI coverage, thresholds, packaging, frozen-binary smoke,
   and installed desktop launch passed on 2026-09-28. Lint and type tools are
   not configured.
-- **Next:** Rebuild and verify PR #13 after the research isolation fix, merge
-  the authorized PR, then
-  review with real de-identified data and a running local model.
+- **Next:** Confirm the v0.7.0 Linux and Windows release assets, then review
+  with real de-identified data and a running local model.
