@@ -7,11 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-28
+
 Re-run the pipeline to rebuild existing processed caches: flags and scores
 change, and `cases.parquet` gains a column.
 
 ### Added
 
+- Desktop research workspace G opens first after setup, searches indexed surgery
+  metadata with cached local embeddings or keyword fallback, and gives a local
+  model bounded source extracts for a research answer (2026-09-27).
+- Focused signal view F opens a retrieved case at its observed minute, shows
+  PIP, ETCO₂, and heart rate with source rows, and returns to the same question
+  and comparison (2026-09-27).
+- First-run setup now opens before data loading; the setup form checks the EMR
+  folder and shows embedding model readiness (2026-09-27).
+- Radical interface studies F, G, and H: a signal studio, an evidence canvas,
+  and a case review deck. Each uses the same fictional measurements with working
+  source inspection and scripted AI interactions (2026-09-27).
+- Two more interactive layout drafts: D assembles an AI research notebook with
+  inline sources, and E uses an AI-directed visual cohort atlas (2026-09-27).
+- Three interactive desktop-layout drafts and a setup, retrieval, and anesthesia
+  research proof-of-concept proposal in `docs/` (2026-09-26).
 - Synthetic SIS generator: `python -m src.pipeline.synthetic --out data/synthetic/EMR`
   writes fictional cases (`SYN*` PIDs) with the real dump's quirks and a
   `synthetic_truth.json` of injected anomalies, for development without MOVER data.
@@ -32,6 +49,9 @@ change, and `cases.parquet` gains a column.
 
 ### Fixed
 
+- Research answers can no longer run legacy case tools or inherit a prior Ask-tab
+  active case; the local model receives only the retrieved source extracts for
+  the current question, capped at three (2026-09-28).
 - Duration and slope rules counted rows, not minutes. Each case's timeseries now has one
   row per minute (gap minutes are empty), so windows like "PIP rising over 10 minutes"
   and "zero PEEP for 15 minutes" no longer stretch across gaps in the ventilator export.
@@ -51,6 +71,22 @@ change, and `cases.parquet` gains a column.
 
 ### Changed
 
+- The installed desktop now presents G as the warm evidence map and F as a
+  dedicated dark signal studio. The research tab keeps the AI question,
+  observation, source, comparison, and limits visible as distinct regions;
+  F shows all three signal tracks together (2026-09-28).
+- Selected G as the starting evidence workspace in the interactive prototype.
+  Its observation and comparison cards now open F's signal detail at the cited
+  sample, with a return path that preserves the question and comparison
+  (2026-09-27).
+
+- Connected the preferred D research notebook and A case workbench into a
+  question-preserving inspection flow, with E available for cohort discovery
+  in the interactive draft (2026-09-27).
+- Revised the interface drafts around an AI question flow: a guided start opens
+  an evidence workbench, with the cohort board retained as an optional browse view.
+  Expanded the retrieval proposal using the neighboring LitSieve project's article
+  search pattern and clarified the FDA CDS boundary for signal patterns (2026-09-27).
 - Anomaly score counts each flagged minute once at its worst severity, and weights
   composite patterns per episode rather than per minute. `n_composite` counts episodes.
 - `agent_high` uses total MAC (volatile + N₂O).

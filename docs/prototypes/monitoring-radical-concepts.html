@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOVER / Radical interface studies</title>
+  <link rel="stylesheet" href="radical-concepts.css">
+  <script defer src="radical-concepts.js"></script>
+</head>
+<body>
+  <nav class="draft-nav" aria-label="Interface studies">
+    <a class="wordmark" href="monitoring-concepts.html">MOVER<span>DESIGN LAB</span></a>
+    <div class="draft-tabs">
+      <button data-study="canvas" aria-pressed="true"><b>G</b> Evidence workspace</button>
+      <button data-study="studio" aria-pressed="false"><b>F</b> Signal detail</button>
+      <button data-study="deck" aria-pressed="false"><b>H</b> Alternate study</button>
+    </div>
+    <a class="archive-link" href="monitoring-concepts.html">Compare A–E ↗</a>
+  </nav>
+  <div class="demo-strip"><span><i></i> Interactive design study</span><span>Fictional measurements · Scripted AI · Nothing is connected</span><button type="button" id="setup-open">Preview setup</button></div>
+
+  <main>
+    <section id="studio" class="study studio" aria-labelledby="studio-heading" hidden>
+      <div class="studio-return" id="studio-return-wrap" hidden><button id="studio-return" type="button">← Back to evidence workspace</button><span id="studio-context"></span></div>
+      <header class="studio-header">
+        <div><p class="kicker">F / SIGNAL DETAIL</p><h1 id="studio-heading">Go straight to the moment.</h1><p class="subcopy">Inspect the observation from G. Scrub the case and check its exact sample.</p></div>
+        <div class="time-stamp"><span>SELECTED MOMENT</span><strong><output id="studio-minute">60</output><small>min</small></strong><span>relative to incision</span></div>
+      </header>
+      <div class="studio-toolbar"><div class="case-tabs" id="studio-cases" aria-label="Select a fictional case"></div><button class="outline" id="studio-compare" aria-pressed="false">+ Compare knee case</button></div>
+      <div class="timeline-shell">
+        <div class="timeline-topline"><span id="studio-case-label"></span><span class="mono">10 MIN / SAMPLE <span class="separator">·</span> <span id="compare-key">ONE CASE</span></span></div>
+        <div id="studio-tracks" class="tracks"></div>
+        <div class="scrubber"><label for="studio-scrub">Move through case <span>Use ← → to move one sample</span></label><input id="studio-scrub" type="range" min="0" max="12" value="7" step="1"><div class="ruler"><span>−10</span><span>Incision</span><span>30 min</span><span>60 min</span><span>90 min</span><span>110</span></div></div>
+      </div>
+      <div class="studio-assistant">
+        <div class="assistant-mark" aria-hidden="true">✳</div>
+        <div class="studio-answer"><span class="kicker">AI FOCUS / SCRIPTED DEMO</span><p id="studio-answer" role="status"></p><div class="quick-actions"><button data-studio-action="peak">Find peak pressure ↗</button><button data-studio-action="missing">Check missing samples ↗</button><button id="studio-source">Inspect selected sample ↗</button></div></div>
+        <form id="studio-form" class="compact-form"><label for="studio-question">Ask about this timeline</label><div><input id="studio-question" placeholder="Try: peak pressure" required><button type="submit" aria-label="Ask about the timeline">↗</button></div></form>
+      </div>
+      <footer class="study-caption"><b>Part of G</b><span>The evidence workspace opens this full timeline at the cited sample. Return to the same question and comparison when finished.</span></footer>
+    </section>
+
+    <section id="canvas" class="study canvas" aria-labelledby="canvas-heading">
+      <header class="canvas-header"><div><p class="kicker">G / PRIMARY RESEARCH WORKSPACE</p><h1 id="canvas-heading">An answer you can take apart.</h1></div><div class="canvas-controls"><button class="outline" id="canvas-expand" aria-pressed="false">+ Add a comparison</button><button class="outline" id="canvas-reset">Reset canvas</button></div></header>
+      <div class="canvas-workspace">
+        <div class="canvas-meta"><span><i></i> EVIDENCE CONNECTIONS</span><span>Links show source relationships. They do not imply causation.</span></div>
+        <div class="evidence-map">
+          <svg class="connectors" viewBox="0 0 1100 500" preserveAspectRatio="none" aria-hidden="true"><path d="M275 232 C340 232 315 126 380 126 M680 126 L770 126 M536 218 L536 300 M680 374 L770 374"/></svg>
+          <article class="node question-node"><span class="node-id">01 / YOUR QUESTION</span><h2>Start with what you want to know.</h2><form id="canvas-form"><label for="canvas-question">Research question</label><textarea id="canvas-question" required>Where does pressure peak?</textarea><button class="solid" type="submit">Trace the evidence ↗</button></form><small>Try “peak pressure” or “missing data”.</small></article>
+          <article class="node finding-node"><span class="node-id">02 / OBSERVATION</span><div class="node-title"><h2 id="canvas-finding-title"></h2><span class="node-dot" aria-hidden="true"></span></div><p id="canvas-finding-copy"></p><div class="mini-chart" id="canvas-spark"></div><button class="text-action" id="canvas-open-finding">Explore this signal in F ↗</button></article>
+          <article class="node source-node"><span class="node-id">03 / ORIGINAL SAMPLES</span><h2>SYN-041</h2><p>Laparoscopic case<br>13 fictional time samples</p><div class="source-lines"><span>Recorded signal</span><b id="canvas-source-signal">PIP · cmH₂O</b><span>Evidence coverage</span><b id="canvas-source-coverage">13 of 13 samples</b></div><button class="text-action" id="canvas-source">Open source table ↗</button></article>
+          <article class="node compare-node" id="canvas-comparison" hidden><span class="node-id">04 / COMPARE ANOTHER CASE</span><h2 id="canvas-compare-title"></h2><p id="canvas-compare-copy"></p><button class="text-action" id="canvas-compare-studio">Explore this signal in F ↗</button><button class="text-action" id="canvas-compare-source">Check comparison source ↗</button></article>
+          <div class="add-node" id="canvas-add-hint"><span aria-hidden="true">+</span><p>Ask AI to add a second case<br>to the evidence trail.</p><button id="canvas-add">Add a comparison</button></div>
+          <article class="node limit-node"><span class="node-id">WHAT THIS DOESN'T ESTABLISH</span><h2>An observation has limits.</h2><p id="canvas-limit">These samples describe a pressure pattern. They do not explain its cause or establish what a clinician should do.</p><span class="limit-tag">Keep the uncertainty attached</span></article>
+        </div>
+        <p id="canvas-status" class="canvas-status" role="status">Scripted example: follow the observation to its source, or add a comparison.</p>
+      </div>
+      <footer class="study-caption"><b>The shift from D and E</b><span>The answer becomes a board of inspectable claims and sources. Position describes the evidence trail, rather than a cluster of similar cases.</span></footer>
+    </section>
+
+    <section id="deck" class="study deck" aria-labelledby="deck-heading" hidden>
+      <header class="deck-header"><div><p class="kicker">H / ONE CASE AT A TIME</p><h1 id="deck-heading">A quieter way to review.</h1></div><button class="outline" id="deck-saved">Review shortlist <span id="saved-count">0</span></button></header>
+      <form class="deck-query" id="deck-form"><span class="ai-token" aria-hidden="true">✳</span><div><label for="deck-question">Let AI organize the review</label><input id="deck-question" value="Find the highest pressure peaks" required></div><button class="solid" type="submit">Build review queue ↗</button></form>
+      <div class="review-meta"><span id="deck-progress">CASE 01 / 03</span><span id="deck-order">Sorted by peak PIP · synthetic examples</span><button id="deck-reset">Reset review</button></div>
+      <article class="review-card">
+        <div class="case-poster"><div class="poster-top"><span id="deck-case-id"></span><span>FICTIONAL RECORD</span></div><span class="poster-number" id="deck-number" aria-hidden="true">01</span><div class="poster-title"><p class="kicker">IN FOCUS</p><h2 id="deck-title"></h2></div><div id="deck-spark" class="poster-spark"></div><span class="poster-axis">PIP / −10 to 110 minutes from incision</span></div>
+        <div class="case-reading"><span class="kicker">AI BRIEF / SCRIPTED DEMO</span><h2 id="deck-observation"></h2><p id="deck-copy"></p><div class="deck-metrics"><div><span>PEAK PIP</span><strong id="deck-peak"></strong><small>cmH₂O</small></div><div><span>PEAK TIME</span><strong id="deck-time"></strong><small>min from incision</small></div></div><button class="source-link" id="deck-source">Inspect the 13 source samples <span>↗</span></button><p class="reading-note">Keep the cases worth a closer look. Your shortlist stays separate from the AI's ranking.</p></div>
+      </article>
+      <div class="review-actions"><button class="round-button" id="deck-prev" aria-label="Previous case">←</button><button class="skip-button" id="deck-skip">Leave out</button><button class="save-button" id="deck-save">Save for closer review <span>+</span></button><button class="round-button" id="deck-next" aria-label="Next case">→</button></div>
+      <p class="deck-status" id="deck-status" role="status">Three fictional cases are ready. No model has run.</p>
+      <footer class="study-caption"><b>The shift from the workbench</b><span>AI creates a small review queue. You make one decision at a time, with every source one click away.</span></footer>
+    </section>
+  </main>
+
+  <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-title"><div class="dialog-top"><div><p class="kicker">FICTIONAL SOURCE RECORD</p><h2 id="source-title"></h2></div><button class="close-button" data-close="source-dialog" aria-label="Close source table">×</button></div><p id="source-description"></p><div class="table-scroll"><table><thead><tr><th scope="col">Minute</th><th scope="col">PIP<br>cmH₂O</th><th scope="col">ETCO₂<br>mmHg</th><th scope="col">Heart rate<br>bpm</th></tr></thead><tbody id="source-rows"></tbody></table></div><p class="source-footnote">Manually authored demo values at 10-minute intervals. A dash means a missing sample. No patient data or clinical rule is represented.</p></dialog>
+  <dialog id="shortlist-dialog" aria-labelledby="shortlist-title"><div class="dialog-top"><div><p class="kicker">YOUR REVIEW</p><h2 id="shortlist-title">Saved cases</h2></div><button class="close-button" data-close="shortlist-dialog" aria-label="Close shortlist">×</button></div><div id="shortlist-items"></div></dialog>
+  <dialog id="setup-dialog" aria-labelledby="setup-heading"><div class="dialog-top"><div><p class="kicker">BEFORE YOU BEGIN</p><h2 id="setup-heading">Choose your workspace.</h2></div><button class="close-button" data-close="setup-dialog" aria-label="Close setup preview">×</button></div><p>These studies share the same setup-first idea. This preview opens fictional records, with scripted AI responses.</p><div class="setup-ready"><span>Demo records</span><b>3 ready</b><span>Measurements</span><b>39 sample times</b><span>AI connection</span><b>Simulated</b></div><button class="solid" data-close="setup-dialog">Open design studies ↗</button><a class="setup-original" href="monitoring-concepts.html">See the original data-folder setup draft</a></dialog>
+</body>
+</html>

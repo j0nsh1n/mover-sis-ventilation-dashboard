@@ -16,10 +16,26 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 ## Required Behavior
 
 - Load SIS EMR tables from a user-chosen folder; optional wave root; write/read processed
-  parquet (`cases`, `timeseries`, `flags`, `episodes`).
-- Desktop UI is primary: LLM-first **Ask** tab, plus Summary, Case timeline, Rule reference.
-- Case analysis mode: user describes a patient/scenario; app pre-fetches tools then local
-  model answers from **grounded** extracts only.
+  parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
+- Desktop UI is primary. On first run or with an invalid EMR folder, a modal Setup
+  wizard validates the folder before data loading. Canceling first-run setup leaves
+  the data tabs disabled until setup is completed.
+- The first desktop tab is the **Research** evidence workspace (G). The existing Ask,
+  Summary, Case timeline, and Rule reference tabs remain available.
+- A research question searches one short metadata record per indexed surgery. A local
+  embedding model ranks records when available; SQLite caches vectors by source-text
+  hash and embedding-model ID. Search falls back to keywords when embeddings are
+  unavailable. The cache stores vectors derived from surgery metadata, not
+  article text. Search remains available without a processed parquet cache.
+- The selected local chat model receives source extracts for at most three retrieved
+  cases. Embedding vectors and ranking scores are not passed to the model. Without a
+  chat model, users can still search and inspect cases.
+- The Research workspace opens a retrieved case in the focused signal view (F).
+  F shows PIP, ETCO₂, and heart rate at a selected minute, plus source rows.
+  Returning to G preserves the question and comparison. Missing samples remain
+  marked as missing.
+- Ask tab case analysis: user describes a patient or scenario; the app pre-fetches
+  tools, then a local model answers from **grounded** extracts only.
 - Ollama lifecycle: Start / Stop / Unload / Refresh; models dir via settings → `OLLAMA_MODELS`.
 - Ollama HTTP must default to **loopback only** (case text stays local unless an explicit
   env override is set for remote).
@@ -42,8 +58,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 - **Desktop (primary):** `PYTHONPATH=. python -m src.desktop` or `./scripts/run_desktop.sh`
   or installed `mover-sis-monitor` after `./scripts/install_local.sh`.
-- Example: Ask tab (Case analysis) → type `55y woman, hysterectomy, sevoflurane, elevated PIP`
-  → co-pilot finds similar PIDs, shows documented management/flags, research disclaimer.
+- Example: complete Setup → ask about pressure in laparoscopic cases in Research
+  → inspect a retrieved case in F → return to the same question and comparison.
+  With a selected local chat model, the answer uses bounded source extracts.
+- The Ask tab remains available for case analysis. For example, type
+  `55y woman, hysterectomy, sevoflurane, elevated PIP` to request a grounded
+  research answer about similar cases and documented management patterns.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
 - **Profile (threshold calibration):**
   `PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md`
@@ -51,7 +71,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30`,
   then run the pipeline with `--emr-dir data/synthetic/EMR --output-dir data/synthetic/processed`
 - **Streamlit (optional):** `PYTHONPATH=. streamlit run src/dashboard/app.py`
-- Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, theme). First-run Setup wizard.
+- Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
+  theme). Setup opens before the app loads data on first run or for an invalid EMR path.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
 
 ## Architecture
@@ -64,12 +85,16 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - pytest / pyinstaller (dev & packaging)
 - Storage: local filesystem — EMR CSVs, optional waves, parquet cache; prefs in
   `~/.config/mover-sis-monitor/settings.json` (override with `MOVER_CONFIG_DIR`).
+  The embedding cache is `case_embeddings.sqlite3` beside the settings file.
 - Major components:
   - `src/pipeline/` — load → clean → merge → features → flags → run
   - `src/pipeline/synthetic.py` — fictional SIS EMR generator; `profile.py` — aggregate report
-  - `src/services/` — `ensure_data` / `load_processed`; `case_fetch.py` on-demand shortlist+flags
-  - `src/desktop/` — PySide6 app, theme, charts, settings UI
-  - `src/llm/` — Ollama client, tools, agent loop, prompts, service lifecycle
+  - `src/services/` — `ensure_data` / `load_processed`; `case_fetch.py` on-demand
+    case data; `retrieval.py` metadata search and embedding cache
+  - `src/desktop/` — PySide6 app, G research workspace, F signal view, charts,
+    theme, settings UI
+  - `src/llm/` — Ollama client, retrieved-source handoff, tools, agent loop,
+    prompts, service lifecycle
   - `src/guardrails/` — limits, config/data/IO validation
   - `src/wave_decode.py` — Bernoulli/GE S5 cpcArchive decode (research waveforms)
   - `src/runtime_paths.py`, `search.py`, `user_settings.py`
@@ -117,7 +142,15 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 ## Acceptance Criteria
 
-- [ ] Desktop launches and shows Ask / Summary / Timeline / Rules for configured data paths.
+- [ ] Desktop opens Setup before data loading when the EMR folder is unconfigured or
+      invalid, then opens Research (G) with Ask, Summary, Case timeline, and Rule
+      reference available.
+- [ ] A research question searches indexed surgery metadata with cached embeddings
+      when available and keyword fallback otherwise, including when processed
+      parquet is absent. It loads at most three case extracts for a selected local
+      chat model; vectors and ranking scores do not enter the answer context.
+- [ ] A retrieved case opens in F with source signal rows and missing values visible;
+      returning to G preserves the question and comparison.
 - [ ] Pipeline produces parquet under processed dir for a small `--n-cases` sample.
 - [ ] On synthetic data every injected anomaly raises its expected rules and clean cases
       raise no warn/critical flags (`tests/test_synthetic.py`).

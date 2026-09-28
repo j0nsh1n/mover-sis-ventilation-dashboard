@@ -61,6 +61,8 @@ from src.desktop.charts import (
     flag_rules_figure,
     top_cases_figure,
 )
+from src.desktop.research_workspace import ResearchWorkspace
+from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.desktop.theme import apply_theme, chat_role_color
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
@@ -74,7 +76,7 @@ from src.runtime_paths import (
     processed_dir,
     wave_dir,
 )
-from src.user_settings import apply_ollama_env_from_settings, needs_first_run_setup
+from src.user_settings import apply_ollama_env_from_settings, load_settings, needs_first_run_setup, settings_path
 
 
 class DataLoadWorker(QThread):
@@ -236,6 +238,11 @@ class MainWindow(QMainWindow):
         self._active_pid: str | None = None
         self._focus_pids: list[str] = []
         self._worker: QThread | None = None
+        self._research_worker: ResearchWorker | None = None
+        self._case_worker: CaseFetchWorker | None = None
+        self._research_engine = None
+        self._pending_case: tuple[str, bool, bool] | None = None
+        self._queued_case: tuple[str, bool, bool] | None = None
         self._charts_pending = False
         self._show_vitals = True
         self._llm_mode: str = "analyze"  # default: management-pattern analysis
@@ -245,8 +252,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._update_status_paths("Ready")
 
-        QTimer.singleShot(0, self._autoload_processed)
-        QTimer.singleShot(100, self._maybe_run_first_setup)
+        QTimer.singleShot(0, self._startup)
 
     # ----- menu -----
     def _build_menu(self) -> None:
@@ -331,8 +337,11 @@ class MainWindow(QMainWindow):
     # ----- layout -----
     def _build_ui(self) -> None:
         central = QWidget()
+        central.setObjectName("mainCentral")
+        self.main_central = central
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
+        self.outer_layout = outer
         outer.setContentsMargins(16, 14, 16, 10)
         outer.setSpacing(14)
 
@@ -361,7 +370,9 @@ class MainWindow(QMainWindow):
         metrics.addWidget(_metric_card("With flags", self.metric_flags))
         metrics.addWidget(_metric_card("Max score", self.metric_score))
         header.addLayout(metrics)
-        outer.addLayout(header)
+        self.header_widget = QWidget()
+        self.header_widget.setLayout(header)
+        outer.addWidget(self.header_widget)
 
         body = QHBoxLayout()
         body.setSpacing(14)
@@ -490,9 +501,18 @@ class MainWindow(QMainWindow):
         self.combo_pid = QComboBox()
         self.combo_pid.hide()
 
-        # ---- Tabs (Ask first) ----
+        # ---- Research workspace and existing views ----
         self.tabs = QTabWidget()
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.research = ResearchWorkspace()
+        self.research.question_submitted.connect(self._start_research_search)
+        self.research.case_requested.connect(self._load_research_case)
+        self.research.setup_requested.connect(self._open_setup_wizard)
+        self.research.model_start_requested.connect(self._ollama_start)
+        self.research.model_refresh_requested.connect(
+            lambda: self._refresh_ollama_models(start_if_needed=False)
+        )
+        self.research.model_changed.connect(self._research_model_changed)
+        self.tabs.addTab(self.research, "1 · Research")
 
         # ---- 1 · Ask (primary) ----
         chat_tab = QWidget()
@@ -557,7 +577,7 @@ class MainWindow(QMainWindow):
         ask_row.addWidget(btn_clear_chat)
         chat_l.addLayout(ask_row)
 
-        self.tabs.addTab(chat_tab, "1 · Ask")
+        self.tabs.addTab(chat_tab, "2 · Ask")
         self._chat_messages: list[dict[str, str]] = []
         self._llm_worker: QThread | None = None
         self._streaming_answer = ""
@@ -588,7 +608,8 @@ class MainWindow(QMainWindow):
         table_label.setObjectName("sectionLabel")
         sum_l.addWidget(table_label)
         sum_l.addWidget(self.table_cases, stretch=2)
-        self.tabs.addTab(summary, "2 · Summary")
+        self.summary_tab = summary
+        self.tabs.addTab(summary, "3 · Summary")
 
         # ---- 3 · Case timeline ----
         case_tab = QWidget()
@@ -604,18 +625,20 @@ class MainWindow(QMainWindow):
         ep_label.setObjectName("sectionLabel")
         case_l.addWidget(ep_label)
         case_l.addWidget(self.table_episodes, stretch=1)
-        self.tabs.addTab(case_tab, "3 · Case timeline")
+        self.case_tab = case_tab
+        self.tabs.addTab(case_tab, "4 · Case timeline")
 
         self.rules_text = QTextEdit()
         self.rules_text.setReadOnly(True)
-        self.tabs.addTab(self.rules_text, "4 · Rule reference")
+        self.tabs.addTab(self.rules_text, "5 · Rule reference")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
+        self.side_panel = side
         body.addWidget(side)
         body.addWidget(self.tabs, stretch=1)
         outer.addLayout(body, stretch=1)
-
-        # Probe only on launch — user starts the server via Start (or we start on first Ask).
-        QTimer.singleShot(200, lambda: self._refresh_ollama_models(start_if_needed=False))
+        self.side_panel.hide()
+        self._on_tab_changed(0)
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -692,6 +715,7 @@ class MainWindow(QMainWindow):
             self.metric_cases.setText("0")
             self.metric_flags.setText("—")
             self.metric_score.setText("—")
+            self.research.set_status("No analyzed case cache. Indexed surgery search is available after setup.")
             return
         if self._worker and self._worker.isRunning():
             return
@@ -703,6 +727,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_fail(self, msg: str) -> None:
         self._update_status_paths("Could not load processed data")
+        self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
         if "Missing processed files" not in msg:
             QMessageBox.warning(self, "Load error", msg[:2000])
 
@@ -714,7 +739,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Avoid Qt abort if a worker is still running when the window is destroyed
-        for w in (self._worker, getattr(self, "_llm_worker", None)):
+        for w in (self._worker, getattr(self, "_llm_worker", None), self._research_worker, self._case_worker):
             if w is not None and w.isRunning():
                 w.requestInterruption()
                 w.wait(3000)
@@ -731,18 +756,32 @@ class MainWindow(QMainWindow):
             "Not for clinical care.",
         )
 
-    def _maybe_run_first_setup(self) -> None:
-        # Skip modal wizard under automated / offscreen runs
-        if os.environ.get("MOVER_SKIP_SETUP", "").strip().lower() in {
+    def _setup_bypassed(self) -> bool:
+        return os.environ.get("MOVER_SKIP_SETUP", "").strip().lower() in {
             "1",
             "true",
             "yes",
-        }:
+        } or os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen"
+
+    def _startup(self) -> None:
+        from src.guardrails.validate_io import validate_emr_dir
+
+        if self._setup_bypassed():
+            self.research.set_setup_required(False)
+            self._autoload_processed()
+            self._refresh_ollama_models(start_if_needed=False)
             return
-        if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
-            return
-        if needs_first_run_setup():
+        try:
+            validate_emr_dir(emr_dir())
+            path_ready = True
+        except Exception:
+            path_ready = False
+        if needs_first_run_setup() or not path_ready:
             self._open_setup_wizard(first_run=True)
+            return
+        self.research.set_setup_required(False)
+        self._autoload_processed()
+        self._refresh_ollama_models(start_if_needed=False)
 
     def _open_setup_wizard(self, first_run: bool = False) -> None:
         from src.desktop.settings_ui import SetupWizard
@@ -753,7 +792,13 @@ class MainWindow(QMainWindow):
             wiz.setWindowTitle("MOVER SIS Monitor — First-time setup")
         wiz.exec()
         self._sync_path_fields_from_runtime()
-        self._update_status_paths("Setup finished" if wiz.result() else "Setup cancelled")
+        if wiz.result():
+            self.tabs.setEnabled(True)
+            self.research.set_setup_required(False)
+        elif first_run:
+            self.tabs.setEnabled(False)
+            self.research.set_setup_required(True)
+        self._update_status_paths("Setup finished" if wiz.result() else ("Setup required" if first_run else "Setup cancelled"))
         if wiz.result():
             self._autoload_processed()
             self._refresh_ollama_models()
@@ -764,12 +809,24 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         dlg.settings_applied.connect(self._on_settings_applied)
         if dlg.exec():
+            from src.guardrails.validate_io import validate_emr_dir
+
+            self._research_engine = None
+            try:
+                validate_emr_dir(emr_dir())
+                ready = True
+            except Exception:
+                ready = False
+            self.tabs.setEnabled(ready)
+            self.research.set_setup_required(not ready)
             self._sync_path_fields_from_runtime()
-            self._update_status_paths("Settings saved")
-            self._autoload_processed()
-            self._refresh_ollama_models()
+            self._update_status_paths("Settings saved" if ready else "EMR setup required")
+            if ready:
+                self._autoload_processed()
+                self._refresh_ollama_models()
 
     def _on_settings_applied(self, vals: dict) -> None:
+        self._research_engine = None
         apply_persisted_settings()
         apply_ollama_env_from_settings()
         theme = vals.get("theme")
@@ -818,6 +875,7 @@ class MainWindow(QMainWindow):
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
+        self._research_engine = None
         self._update_status_paths(
             f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
         )
@@ -854,6 +912,22 @@ class MainWindow(QMainWindow):
         self._refresh_case_timeline()
 
     def _on_tab_changed(self, _index: int) -> None:
+        self.side_panel.setVisible(_index != 0)
+        self.header_widget.setVisible(_index != 0)
+        if _index == 0:
+            self.outer_layout.setContentsMargins(0, 0, 0, 0)
+            self.outer_layout.setSpacing(0)
+            self.main_central.setStyleSheet("""
+                QWidget#mainCentral { background: #ebe9e3; }
+                QTabWidget::pane { border: 0; }
+                QTabBar::tab { background: #f8f7f3; color: #645b65; border: 0;
+                    border-right: 1px solid #d5d0d4; padding: 11px 20px; min-height: 22px; }
+                QTabBar::tab:selected { background: #332941; color: #fff9f4; }
+            """)
+        else:
+            self.outer_layout.setContentsMargins(16, 14, 16, 10)
+            self.outer_layout.setSpacing(14)
+            self.main_central.setStyleSheet("")
         self._refresh_charts_if_needed()
 
     def _set_active_pid(self, pid: str | None) -> None:
@@ -877,7 +951,7 @@ class MainWindow(QMainWindow):
                 "(or double-click a row on Summary).",
             )
             return
-        self.tabs.setCurrentIndex(2)  # Case timeline
+        self.tabs.setCurrentWidget(self.case_tab)
         self._refresh_case_timeline()
 
     def _refresh_tables_and_selectors(self) -> None:
@@ -968,8 +1042,7 @@ class MainWindow(QMainWindow):
             return
 
         tab = self.tabs.currentIndex()
-        # Tabs: 0 Ask, 1 Summary, 2 Timeline, 3 Rules
-        if tab == 1 or self._charts_pending:
+        if tab == self.tabs.indexOf(self.summary_tab) or self._charts_pending:
             self.plot_summary_top.set_figure(
                 top_cases_figure(filtered, n=min(15, len(filtered)))
             )
@@ -980,7 +1053,7 @@ class MainWindow(QMainWindow):
                 else pd.DataFrame()
             )
             self.plot_summary_rules.set_figure(flag_rules_figure(fsub))
-        if tab == 2 or self._charts_pending:
+        if tab == self.tabs.indexOf(self.case_tab) or self._charts_pending:
             self._refresh_case_timeline()
         self._charts_pending = False
 
@@ -1077,6 +1150,11 @@ class MainWindow(QMainWindow):
                 self.btn_ollama_start.setEnabled(True)
                 self.btn_ollama_stop.setEnabled(False)
                 self.btn_ollama_unload.setEnabled(False)
+        if hasattr(self, "research"):
+            self.research.set_models(
+                list(status.models) if status.available else [],
+                self.combo_llm_model.currentText().strip(),
+            )
 
     def _ollama_start(self) -> None:
         from src.llm.service import start_ollama
@@ -1167,6 +1245,17 @@ class MainWindow(QMainWindow):
             from src.user_settings import update_settings
 
             update_settings(ollama_model=text)
+            if hasattr(self, "research"):
+                index = self.research.model_combo.findText(text)
+                if index >= 0:
+                    self.research.model_combo.blockSignals(True)
+                    self.research.model_combo.setCurrentIndex(index)
+                    self.research.model_combo.blockSignals(False)
+
+    def _research_model_changed(self, text: str) -> None:
+        index = self.combo_llm_model.findText(text)
+        if index >= 0:
+            self.combo_llm_model.setCurrentIndex(index)
 
     def _make_session_snapshot(self):
         from src.llm.tools import SessionState
@@ -1180,6 +1269,109 @@ class MainWindow(QMainWindow):
             active_pid=self._active_pid,
             focus_pids=list(self._focus_pids),
         )
+
+    def _start_research_search(self, question: str) -> None:
+        from src.guardrails.validate_io import validate_emr_dir
+        from src.llm.ollama_client import OllamaEmbedder
+        from src.services.retrieval import RetrievalEngine
+
+        if self._research_worker is not None and self._research_worker.isRunning():
+            return
+        try:
+            source = validate_emr_dir(emr_dir())
+        except Exception as exc:
+            self.research.set_status(f"EMR setup required: {exc}")
+            return
+        if self._research_engine is None or self._research_engine.emr != source:
+            embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
+            self._research_engine = RetrievalEngine(
+                emr=source,
+                cache_path=settings_path().parent / "case_embeddings.sqlite3",
+                embedder=OllamaEmbedder(embed_model),
+                analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
+            )
+        self.research.set_searching(True)
+        self.research.set_answer("")
+        self.research.set_status("Preparing indexed surgery search…")
+        self._research_worker = ResearchWorker(
+            self._research_engine,
+            question,
+            self.research.selected_model(),
+            self._make_session_snapshot(),
+            parent=self,
+        )
+        self._research_worker.progress.connect(lambda progress: self.research.set_status(progress.message))
+        self._research_worker.shortlist.connect(self._on_research_shortlist)
+        self._research_worker.answer.connect(self._on_research_answer)
+        self._research_worker.failed.connect(self._on_research_fail)
+        self._research_worker.finished.connect(self._on_research_done)
+        self._research_worker.start()
+
+    def _on_research_shortlist(self, result) -> None:
+        self.research.set_results(result)
+        if not result.candidates:
+            self.research.set_answer("No matching indexed surgery records were found for this question.")
+        elif self.research.selected_model() is None:
+            self.research.set_answer("Case search is available. Start and select a local chat model to generate a source-grounded answer.")
+        if result.candidates:
+            self._load_research_case(result.candidates[0].pid, False, False)
+
+    def _on_research_answer(self, response) -> None:
+        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."))
+
+    def _on_research_fail(self, message: str) -> None:
+        self.research.set_status(f"Research request failed: {message}")
+        self.research.set_answer("The local model could not complete this answer. Retrieved cases remain available for manual inspection.")
+
+    def _on_research_done(self) -> None:
+        self.research.set_searching(False)
+
+    def _load_research_case(self, pid: str, comparison: bool, open_detail: bool) -> None:
+        if self._case_worker is not None and self._case_worker.isRunning():
+            self._queued_case = (pid, comparison, open_detail)
+            self.research.set_status(f"Loading {pid} after the current case…")
+            return
+        self._pending_case = (pid, comparison, open_detail)
+        if self.cases is not None and self.ts is not None and "PID" in self.cases and "PID" in self.ts:
+            cases = self.cases[self.cases["PID"].astype(str) == pid]
+            if not cases.empty:
+                ts = self.ts[self.ts["PID"].astype(str) == pid].copy()
+                flags = self.flags[self.flags["PID"].astype(str) == pid].copy() if self.flags is not None and "PID" in self.flags else pd.DataFrame()
+                if not ts.empty:
+                    self._on_research_case_data(ts, flags)
+                    return
+        self.research.set_status(f"Loading this case: {pid}…")
+        self._case_worker = CaseFetchWorker(pid, emr_dir(), parent=self)
+        self._case_worker.loaded.connect(self._on_research_case_loaded)
+        self._case_worker.failed.connect(lambda message: self.research.set_status(f"Source unavailable for {pid}: {message}"))
+        self._case_worker.finished.connect(self._on_research_case_fetch_done)
+        self._case_worker.start()
+
+    def _on_research_case_fetch_done(self) -> None:
+        if self._queued_case is not None:
+            request = self._queued_case
+            self._queued_case = None
+            self._load_research_case(*request)
+
+    def _on_research_case_loaded(self, fetched) -> None:
+        self._on_research_case_data(fetched.timeseries, fetched.flags)
+
+    def _on_research_case_data(self, timeseries: pd.DataFrame, flags: pd.DataFrame) -> None:
+        if self._pending_case is None:
+            return
+        pid, comparison, open_detail = self._pending_case
+        self._pending_case = None
+        if timeseries is None or timeseries.empty or "t_min" not in timeseries:
+            self.research.set_status(f"Source unavailable for {pid}: no signal samples were found.")
+            return
+        self.research.set_case_data(
+            pid,
+            timeseries,
+            flags if flags is not None else pd.DataFrame(),
+            comparison=comparison,
+            open_detail=open_detail,
+        )
+        self.research.set_status(f"Loaded source values for {pid}.")
 
     def _current_case_context(self) -> str:
         pid = self._active_pid
@@ -1392,7 +1584,7 @@ class MainWindow(QMainWindow):
         self._set_active_pid(pid)
         if pid not in self._focus_pids:
             self._focus_pids = [pid] + self._focus_pids
-        self.tabs.setCurrentIndex(2)  # timeline
+        self.tabs.setCurrentWidget(self.case_tab)
 
     def _refresh_rule_reference(self) -> None:
         try:

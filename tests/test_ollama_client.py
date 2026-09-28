@@ -8,7 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.llm.ollama_client import ChatMessage, OllamaClient, OllamaError
+from src.llm.ollama_client import (
+    ChatMessage,
+    OllamaClient,
+    OllamaEmbedder,
+    OllamaError,
+    parse_embed_response,
+)
 
 
 def test_list_models_parses_tags():
@@ -72,3 +78,42 @@ def test_chat_stream_concatenates():
             stream=True,
         )
     assert text == "Hello world"
+
+
+def test_parse_embed_response_reads_batch_and_legacy_single():
+    batch = parse_embed_response({"embeddings": [[0.1, 0.2], [0.3, 0.4]]})
+    assert batch == [[0.1, 0.2], [0.3, 0.4]]
+    single = parse_embed_response({"embedding": [1.0, 0.0]})
+    assert single == [[1.0, 0.0]]
+    with pytest.raises(OllamaError, match="no embeddings"):
+        parse_embed_response({"model": "x"})
+
+
+def test_embed_posts_to_embed_endpoint():
+    payload = {"embeddings": [[0.5, 0.25]]}
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(payload).encode()
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.__exit__.return_value = False
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as opener:
+        vectors = OllamaClient().embed("nomic-embed-text", ["hello"])
+    assert vectors == [[0.5, 0.25]]
+    req = opener.call_args[0][0]
+    assert req.full_url.endswith("/api/embed")
+
+
+def test_embedder_unavailable_when_model_missing():
+    payload = {"models": [{"name": "gemma4:latest"}]}
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(payload).encode()
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.__exit__.return_value = False
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        assert OllamaEmbedder("nomic-embed-text").is_available() is False
+
+
+def test_embedder_construction_refuses_remote(monkeypatch):
+    monkeypatch.delenv("MOVER_ALLOW_REMOTE_OLLAMA", raising=False)
+    with pytest.raises(OllamaError):
+        OllamaEmbedder("nomic-embed-text", client=OllamaClient(base_url="http://10.0.0.2:11434"))

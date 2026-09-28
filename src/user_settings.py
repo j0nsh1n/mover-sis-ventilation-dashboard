@@ -16,6 +16,7 @@ KNOWN_KEYS = frozenset(
         "wave_dir",
         "ollama_models_dir",
         "ollama_model",
+        "ollama_embed_model",
         "ollama_base_url",
         "theme",  # light | dark | system
         "setup_complete",

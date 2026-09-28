@@ -1,6 +1,6 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-**Version 0.6.0**
+**Version 0.7.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine; OR dates largely **2015–2018**). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -10,8 +10,8 @@ Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics
 
 1. **Data pipeline** — load/clean SIS tables, time-align ventilator + vitals per surgery (`PID`), derive TV mL/kg & MAC, write parquet caches  
 2. **Anomaly flags** — rising PIP, ETCO₂ out of range, agent drift/high MAC, SpO₂, composite patterns (see `docs/DESIGN.md` and `src/config/thresholds.yaml`)  
-3. **Desktop app (primary)** — native PySide6 window: summary charts, case timeline, rule reference  
-4. **Streamlit UI (optional)** — same views in the browser if you prefer  
+3. **Desktop app (primary)** — native PySide6 window with setup-first entry, AI research search, focused signal inspection, summary charts, case timeline, and rule reference
+4. **Streamlit UI (optional)** — browser views for the existing pipeline
 
 ## Data location
 
@@ -61,6 +61,7 @@ Outputs under `data/processed/`:
 | `cases.parquet` | Per-surgery summary + anomaly scores (total and per observed hour) |
 | `flags.parquet` | Long-form minute flags |
 | `episodes.parquet` | Contiguous flag runs |
+| `events.parquet` | Optional procedure events aligned to a surgery |
 | `run_meta.json` | Sample PID list and counts |
 
 ### Profile the output (threshold calibration)
@@ -109,12 +110,13 @@ Then open **MOVER SIS Ventilation Monitor** from your application menu.
 The desktop app:
 
 - Opens a **native window** (not a browser tab)
-- **LLM-first co-pilot** (Ollama, [Local Schedule Assistant](https://github.com/j0nsh1n/Local-Schedule-Assistant)-style tool loop): find similar cases, `summarize_management`, verify, explain documented patterns (research only)  
-
-- **Setup wizard** / **⚙ Settings** (menu-bar corner, `Ctrl+,`) for EMR / Wave / Processed / Ollama models path / theme  
+- Opens **Setup** before loading data if the EMR folder is missing or invalid
+- Starts in **Research**, where a question retrieves indexed surgeries using local embeddings or keyword fallback. A selected local chat model can answer from bounded case extracts.
+- Lets you select a retrieved case and open **F signal detail** with PIP, ETCO₂, heart rate, and source rows. Returning preserves the question and comparison.
+- Keeps the **Ask** co-pilot for case analysis, plus Summary, Case timeline, and Rule reference
+- Provides **Settings** (`Ctrl+,`) for EMR, Wave, Processed, chat and embedding models, and theme
 - **Theme:** light, dark, or system  
-- Summary / Case timeline / Rule reference after the co-pilot focuses a case  
-- Loads processed caches on startup; **File → Run pipeline** for rebuilds  
+- Loads processed caches after setup; **File → Run pipeline** for rebuilds
 - Research-only (not clinical care)
 
 ### Optional: Streamlit (browser)
@@ -123,17 +125,17 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Versioning & releases (v0.6.0)
+## Versioning & releases (v0.7.0)
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.6.0`, semver `x.y.z`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.7.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag / manual run): GitHub Actions workflow  
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact (Python **3.14**)
 
-### Local LLM (Ollama) — Ask tab
+### Local LLM (Ollama)
 
-The desktop tab **1 · Ask** uses **Ollama on this machine**. Use sidebar **Start / Stop / Unload** (or let the app start serve when you Ask). Models stay on the host (not inside the .exe).
+The **Research** and **Ask** tabs use Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. Select a local chat model to generate an answer from retrieved case extracts. The Ask tab keeps the existing case-analysis tools. Models stay on the host, outside the executable.
 
 Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via the **⚙ Settings** icon (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 
@@ -144,9 +146,9 @@ ollama pull gemma4
 ```
 
 Then in the app:
-1. Load/process cases and select a **Surgery (PID)**
-2. Open **4 · Ask about case** (Refresh models if needed)
-3. Ask e.g. *“What procedure and anesthetic agent were used?”* or *“Summarize ventilation and the top flags.”*
+1. Complete Setup with a valid EMR folder.
+2. In **Research**, ask a question and inspect a retrieved case. Start and select a local chat model for an answer.
+3. For the older case-analysis flow, open **2 · Ask** and ask about a selected surgery.
 
 Answers are grounded in a structured case briefing. Research use only — not for clinical care.
 
@@ -164,14 +166,14 @@ Or build only:
 
 ```bash
 ./scripts/build_executable.sh
-# → dist/MOVER-SIS-Monitor-v0.1.0-linux-x86_64.tar.gz
+# → dist/MOVER-SIS-Monitor-v0.7.0-linux-x86_64.tar.gz
 ```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
-| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.1.0` |
-| `dist/MOVER-SIS-Monitor-v0.1.0-linux-x86_64.tar.gz` | Portable archive |
+| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.7.0` |
+| `dist/MOVER-SIS-Monitor-v0.7.0-linux-x86_64.tar.gz` | Portable archive |
 | `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
 
 If the binary fails to start on a minimal install:

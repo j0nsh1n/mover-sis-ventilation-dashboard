@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOVER SIS Monitor · Interface drafts</title>
+  <style>
+    :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e9f1f2; background: #111923; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid #f2bd63; outline-offset: 3px; }
+    .switcher { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 20px; background: #101720; border-bottom: 1px solid #33424a; }
+    .switcher strong { margin-right: 18px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: #9bb4bb; }
+    .switcher button { min-height: 40px; padding: 8px 14px; border: 1px solid #3a515b; border-radius: 9px; color: #d9e6e9; background: #192833; }
+    .switcher button[aria-pressed="true"] { color: #0d2830; background: #9ce4de; border-color: #9ce4de; font-weight: 700; }
+    .switcher .setup-link { margin-left: auto; }
+    .switcher .new-studies { padding: 12px 14px; border: 1px solid #a5b886; border-radius: 9px; color: #e2f1c9; text-decoration: none; font-size: 13px; }
+    .concept { display: none; min-height: calc(100vh - 61px); }
+    .concept.active { display: block; }
+    .eyebrow { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+    .muted { opacity: .72; }
+    .label { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .chip { display: inline-flex; align-items: center; min-height: 27px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .research-note { font-size: 12px; }
+    .primary, .secondary, .quiet { min-height: 44px; padding: 10px 16px; border-radius: 10px; font-weight: 700; }
+    .primary { border: 1px solid transparent; background: #a5ebe2; color: #0b343b; }
+    .secondary { border: 1px solid currentColor; color: inherit; background: transparent; }
+    .quiet { border: 0; color: inherit; background: transparent; }
+    .case-button { width: 100%; text-align: left; border: 1px solid transparent; }
+    .case-button:hover { border-color: currentColor; }
+    .case-button[aria-pressed="true"] { border-color: #6ad6cb; box-shadow: inset 4px 0 #6ad6cb; }
+    .status-message { min-height: 28px; margin-top: 12px; font-size: 13px; }
+
+    /* A: an AI-first research workbench. */
+    .workbench { background: #101b22; color: #e3f1f0; }
+    .workbench header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 21px 28px; border-bottom: 1px solid #2b4348; }
+    .workbench h1 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
+    .workbench .eyebrow { color: #74cfc3; }
+    .workbench .top-actions { display: flex; align-items: center; gap: 10px; }
+    .workbench .scope { color: #aee9d6; background: #254437; }
+    .workbench .grid { display: grid; grid-template-columns: 268px minmax(340px, 1fr) 310px; gap: 0; min-height: calc(100vh - 143px); }
+    .workbench .rail, .workbench .evidence { padding: 24px 18px; background: #15242b; }
+    .workbench .rail { border-right: 1px solid #315057; }
+    .workbench .evidence { border-left: 1px solid #315057; }
+    .workbench .rail h2, .workbench .evidence h2 { margin: 0 0 18px; font-size: 17px; }
+    .workbench input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #4b6871; border-radius: 9px; color: #f4fbfa; background: #102027; }
+    .workbench .ask-form { display: grid; gap: 10px; padding: 14px; margin-bottom: 18px; border: 1px solid #4b7779; border-radius: 12px; background: #1c353a; }
+    .workbench .ask-form button { width: 100%; }
+    .workbench .suggestion { display: block; width: 100%; min-height: 40px; margin: 6px 0; padding: 8px 10px; border: 1px solid #526d74; border-radius: 8px; color: #cde8e8; background: transparent; text-align: left; }
+    .workbench .rail-divider { height: 1px; margin: 20px 0; border: 0; background: #36535a; }
+    .workbench .case-list { display: grid; gap: 10px; margin-top: 18px; }
+    .workbench .case-button { display: grid; gap: 6px; padding: 14px; border-radius: 12px; background: #20333a; color: #f1f7f5; }
+    .workbench .case-button small { color: #b2c5c8; }
+    .workbench main { padding: 25px 28px 50px; }
+    .workbench .case-heading { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+    .workbench h2 { margin: 0; font-size: clamp(24px, 2.2vw, 34px); letter-spacing: -.04em; }
+    .workbench .flag-chip { color: #ffdbac; background: #5e3928; }
+    .workbench .ai-answer { margin-top: 20px; padding: 18px; border: 1px solid #4e7977; border-radius: 12px; background: #1d383b; }
+    .workbench .ai-answer p { line-height: 1.5; }
+    .workbench .subnav { display: flex; flex-wrap: wrap; gap: 7px; margin: 23px 0; }
+    .workbench .subnav button { min-height: 44px; border: 1px solid #496168; border-radius: 8px; padding: 8px 12px; background: #182a31; color: #deedeb; }
+    .workbench .subnav button[aria-pressed="true"] { background: #2d5f5a; border-color: #7ecfc6; }
+    .workbench .chart { position: relative; height: 270px; margin-top: 12px; border: 1px solid #35515a; border-radius: 14px; overflow: hidden; background: repeating-linear-gradient(to bottom, #172931 0, #172931 53px, #34505a 54px); }
+    .workbench .chart svg { width: 100%; height: 100%; }
+    .workbench .chart-label { position: absolute; left: 18px; top: 15px; font-size: 12px; color: #b8d0d0; }
+    .workbench .event { display: flex; gap: 14px; align-items: start; margin: 18px 0; padding: 16px; border: 1px solid #476067; border-radius: 11px; background: #1a3037; }
+    .workbench .event b { color: #ffcd8f; }
+    .workbench .evidence .card { padding: 15px; margin-bottom: 12px; background: #21363d; border-radius: 11px; }
+    .workbench .evidence p { line-height: 1.45; }
+    .workbench .evidence button { width: 100%; margin-top: 8px; }
+
+    /* B: a cohort-first investigation board. */
+    .board { background: #f0eee7; color: #1e2b36; }
+    .board header { padding: 24px 32px 18px; background: #fffdf7; border-bottom: 1px solid #d5d8d3; }
+    .board .eyebrow { color: #a34b32; }
+    .board h1 { margin: 0; font-family: Georgia, serif; font-size: 36px; font-weight: 500; letter-spacing: -.04em; }
+    .board .header-row, .board .filters { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .board .filters { justify-content: flex-start; margin-top: 20px; }
+    .board input { min-width: 275px; min-height: 44px; padding: 10px 14px; border: 1px solid #aeb8b9; border-radius: 6px; background: #fff; }
+    .board .filters button { min-height: 44px; padding: 9px 15px; border: 1px solid #9da8aa; border-radius: 6px; color: #283d44; background: #f5f7f3; }
+    .board .filters button[aria-pressed="true"] { color: #fff; background: #225e66; border-color: #225e66; }
+    .board .scope { background: #dce9e5; color: #24534b; }
+    .board .body { display: grid; grid-template-columns: minmax(500px, 1fr) 370px; gap: 22px; padding: 24px 32px; }
+    .board .table-panel, .board .detail { background: #fffdf7; border: 1px solid #d7d9d3; border-radius: 12px; box-shadow: 0 7px 25px #1c31330d; }
+    .board .table-title { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; }
+    .board h2 { margin: 0; font-size: 18px; }
+    .board table { width: 100%; border-collapse: collapse; }
+    .board th { padding: 13px 18px; color: #60717a; background: #f2f4ef; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .board td { padding: 15px 18px; height: 70px; border-top: 1px solid #e4e7e2; }
+    .board tr[data-select] { cursor: pointer; }
+    .board tr[data-select]:focus-visible { outline: 3px solid #a34b32; outline-offset: -3px; }
+    .board tr:hover, .board tr.selected { background: #e5f0ee; }
+    .board .detail { padding: 24px; }
+    .board .detail h2 { margin: 8px 0 15px; font-family: Georgia, serif; font-size: 30px; font-weight: 500; }
+    .board .detail .stat { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #dde3df; }
+    .board .detail .primary { width: 100%; margin: 23px 0 8px; background: #225e66; color: white; }
+    .board .detail .secondary { width: 100%; }
+    .board .detail p { line-height: 1.5; }
+
+    /* C: a guided research story. */
+    .story { background: #e8eff1; color: #1a2c42; }
+    .story header { padding: 22px clamp(22px, 7vw, 100px); background: #19304b; color: #f3f5f1; }
+    .story .brand { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .story .eyebrow { color: #8fdae2; }
+    .story .hero { max-width: 790px; padding: 54px 0 45px; }
+    .story h1 { margin: 0 0 15px; font-family: Georgia, serif; font-size: clamp(36px, 4vw, 62px); line-height: 1.08; font-weight: 500; }
+    .story .hero p { max-width: 580px; font-size: 17px; line-height: 1.55; color: #c9d6df; }
+    .story .hero .primary { margin-top: 20px; background: #f7d6a5; color: #3d312d; }
+    .story .hero form { margin-top: 26px; }
+    .story .hero label { display: block; margin-bottom: 9px; font-size: 13px; font-weight: 700; }
+    .story .composer { display: flex; gap: 10px; align-items: stretch; max-width: 720px; }
+    .story .composer input { flex: 1; min-width: 0; min-height: 54px; padding: 13px 16px; border: 2px solid #b8d3db; border-radius: 10px; color: #172a3a; background: #fff; }
+    .story .composer .primary { margin: 0; white-space: nowrap; }
+    .story .example-button { display: block; margin-top: 12px; padding-left: 0; color: #b3ecf0; }
+    .story .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 17px; max-width: 1130px; margin: -29px auto 0; padding: 0 22px 40px; }
+    .story .step { min-height: 250px; padding: 25px; border: 1px solid #cedadd; border-radius: 16px; background: #fff; box-shadow: 0 14px 34px #203e4e13; }
+    .story .step strong { display: block; margin: 20px 0 10px; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
+    .story .step p { line-height: 1.5; color: #526476; }
+    .story .step button { color: #245e73; border-color: #245e73; }
+    .story .example { max-width: 1086px; margin: 0 auto; padding: 0 0 55px; }
+    .story .example-box { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; padding: 26px; border-radius: 14px; background: #d5e5e8; }
+    .story .example h2 { margin: 0 0 12px; font-size: 22px; }
+    .story .example p { line-height: 1.5; }
+    .story .example .secondary { color: #17465e; }
+
+    /* D: one research document assembled around an AI question. */
+    .notebook { background: #f5f2e9; color: #1c3430; }
+    .notebook .masthead { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 18px 30px; border-bottom: 1px solid #d5d8cb; }
+    .notebook .masthead span { font-size: 12px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+    .notebook .masthead button { color: #285a57; }
+    .notebook .page { width: min(940px, calc(100% - 42px)); margin: 0 auto; padding: 58px 0 90px; }
+    .notebook .eyebrow { color: #537e70; }
+    .notebook h1 { max-width: 830px; margin: 0; font-family: Georgia, serif; font-size: clamp(42px, 6vw, 76px); font-weight: 400; line-height: 1.05; letter-spacing: -.055em; }
+    .notebook .intro { max-width: 670px; margin: 23px 0 35px; font-size: 18px; line-height: 1.55; color: #526965; }
+    .notebook .question-card { padding: 20px; border: 1px solid #9eaf9f; border-radius: 16px; background: #fffcf5; box-shadow: 0 18px 42px #1d3c3012; }
+    .notebook .question-card label { display: block; margin-bottom: 10px; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .notebook textarea { width: 100%; min-height: 105px; resize: vertical; padding: 16px; border: 1px solid #9bac9d; border-radius: 11px; color: #17352e; background: #fff; font-size: 20px; }
+    .notebook .question-actions { display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap; margin-top: 12px; }
+    .notebook .question-actions p { margin: 0; font-size: 13px; color: #5f7067; }
+    .notebook .primary { background: #204d44; color: #fff; }
+    .notebook .example-row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: 17px 0 0; }
+    .notebook .example-row span { margin-right: 4px; font-size: 12px; font-weight: 700; color: #657a70; }
+    .notebook .example-row button { min-height: 40px; padding: 7px 12px; border: 1px solid #adbeb0; border-radius: 999px; color: #244c43; background: transparent; }
+    .notebook .answer { margin-top: 38px; border-top: 2px solid #284c43; }
+    .notebook .answer-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 22px 0; color: #456d5b; }
+    .notebook .answer h2 { margin: 0 0 18px; font-family: Georgia, serif; font-size: clamp(30px, 4vw, 44px); font-weight: 400; }
+    .notebook .answer-lead { max-width: 750px; font-size: 18px; line-height: 1.65; }
+    .notebook .source-block { display: grid; grid-template-columns: 72px 1fr; gap: 18px; padding: 22px 0; border-top: 1px solid #cbd5c8; }
+    .notebook .source-num { font-family: Georgia, serif; font-size: 28px; color: #829787; }
+    .notebook .source-block h3 { margin: 0 0 8px; font-size: 19px; }
+    .notebook .source-block p { margin: 0 0 13px; color: #53675e; line-height: 1.5; }
+    .notebook .source-block button { color: #285a51; }
+    .notebook .source-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+    .notebook .source-actions .primary { color: #fff; }
+    .notebook .source-detail { margin-top: 14px; padding: 14px; border-left: 4px solid #438276; background: #e9eee4; line-height: 1.5; }
+    .notebook .footnote { margin-top: 30px; padding-top: 20px; border-top: 1px solid #cbd5c8; color: #64766c; font-size: 13px; line-height: 1.5; }
+
+    /* E: an AI-controlled visual cohort atlas, with case detail in a drawer. */
+    .atlas { background: #0b1725; color: #edf3f5; }
+    .atlas .head { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 24px 30px; border-bottom: 1px solid #294357; }
+    .atlas .head h1 { margin: 4px 0 0; font-size: clamp(24px, 3vw, 38px); letter-spacing: -.04em; }
+    .atlas .head .eyebrow { color: #83c7d7; }
+    .atlas .head button { color: #d8eff0; }
+    .atlas .shell { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: calc(100vh - 175px); }
+    .atlas .field { position: relative; min-height: 630px; overflow: hidden; background: radial-gradient(circle at 46% 42%, #1b4050 0, #102b3c 32%, #0b1725 74%); }
+    .atlas .field::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(#5980921c 1px, transparent 1px), linear-gradient(90deg, #5980921c 1px, transparent 1px); background-size: 55px 55px; }
+    .atlas .field-label { position: absolute; top: 30px; left: 34px; max-width: 410px; z-index: 1; }
+    .atlas .field-label strong { display: block; margin-bottom: 5px; font-size: 17px; }
+    .atlas .field-label small { display: block; line-height: 1.45; color: #aac4cf; }
+    .atlas .region { position: absolute; display: grid; place-items: center; width: 205px; min-height: 205px; padding: 20px; border: 1px solid #91c5d3; border-radius: 50%; text-align: center; color: #e5f8f7; background: #285c6eb8; box-shadow: 0 0 0 15px #5fa8aa15, 0 0 55px #67bfc449; transition: transform .2s, opacity .2s, box-shadow .2s; }
+    .atlas .region:hover, .atlas .region[aria-pressed="true"] { transform: scale(1.05); box-shadow: 0 0 0 18px #85dbd62c, 0 0 72px #93eddf75; }
+    .atlas .region.dim { opacity: .37; }
+    .atlas .region strong { display: block; font-family: Georgia, serif; font-size: 23px; font-weight: 400; }
+    .atlas .region small { display: block; margin-top: 6px; color: #c5e3e8; }
+    .atlas .region:nth-of-type(1) { left: 11%; top: 34%; }
+    .atlas .region:nth-of-type(2) { left: 48%; top: 19%; background: #654c6fb8; }
+    .atlas .region:nth-of-type(3) { left: 56%; top: 62%; width: 160px; min-height: 160px; background: #6c6243bd; }
+    .atlas .query-dock { position: absolute; z-index: 2; left: 30px; right: 30px; bottom: 24px; display: flex; gap: 9px; padding: 11px; border: 1px solid #87b9c2; border-radius: 14px; background: #102a39ed; box-shadow: 0 12px 35px #04101899; }
+    .atlas .query-dock label { position: absolute; left: -10000px; }
+    .atlas .query-dock input { flex: 1; min-width: 0; min-height: 49px; padding: 9px 13px; border: 0; border-radius: 8px; background: #eaf4f1; color: #15303a; }
+    .atlas .query-dock button { color: #0d2d38; background: #a9eadb; white-space: nowrap; }
+    .atlas .drawer { padding: 28px 25px 35px; border-left: 1px solid #37556a; background: #152b3b; }
+    .atlas .drawer .eyebrow { color: #8bcfd6; }
+    .atlas .drawer h2 { margin: 10px 0 17px; font-family: Georgia, serif; font-size: 30px; font-weight: 400; }
+    .atlas .drawer p { line-height: 1.52; color: #c9d9dd; }
+    .atlas .drawer .scope-line { padding: 15px 0; border-top: 1px solid #456277; border-bottom: 1px solid #456277; font-size: 13px; }
+    .atlas .drawer .insight { margin: 20px 0; padding: 15px; border-radius: 9px; background: #244457; }
+    .atlas .drawer .insight strong { color: #a9eadb; }
+    .atlas .drawer .secondary { width: 100%; margin-top: 10px; }
+    .atlas .drawer .status-message { color: #a9eadb; }
+
+    dialog { width: min(640px, calc(100vw - 28px)); max-height: calc(100vh - 25px); overflow: auto; padding: 0; border: 1px solid #c3d0d4; border-radius: 18px; color: #1a2d3a; background: #fffefa; box-shadow: 0 22px 65px #07131a70; }
+    dialog::backdrop { background: #07131bc2; }
+    .modal-head { padding: 27px 30px 20px; color: #fff; background: #183446; }
+    .modal-head .eyebrow { color: #a3ddd8; }
+    .modal-head h2 { margin: 0 0 7px; font-family: Georgia, serif; font-size: 32px; font-weight: 500; }
+    .modal-head p { margin: 0; color: #d5e0e2; line-height: 1.45; }
+    .modal-body { padding: 24px 30px 30px; }
+    .modal-body label { display: block; margin: 14px 0 6px; font-weight: 700; }
+    .modal-body input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #9baeb4; border-radius: 8px; }
+    .modal-body small { display: block; margin-top: 5px; color: #596c73; }
+    .modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 25px; }
+    .modal-actions .primary { background: #1c6970; color: #fff; }
+    .modal-actions .secondary { color: #1b5665; }
+    .modal-body .demo-note { margin-bottom: 0; padding: 12px; border-radius: 8px; background: #edf4f2; font-size: 13px; line-height: 1.5; }
+    @media (max-width: 1080px) { .workbench .grid { grid-template-columns: 240px 1fr; } .workbench .evidence { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #315057; } .board .body { grid-template-columns: 1fr; } .atlas .shell { grid-template-columns: minmax(0, 1fr) 290px; } .atlas .region { width: 170px; min-height: 170px; } }
+    @media (max-width: 700px) { .switcher { position: static; padding: 10px; } .switcher strong { width: 100%; } .switcher .setup-link { margin-left: 0; } .workbench header { flex-wrap: wrap; padding: 18px; } .workbench .top-actions { width: 100%; min-width: 0; flex-wrap: wrap; } .workbench .grid { display: block; } .workbench .rail, .workbench main, .workbench .evidence { padding: 20px; } .board header, .board .body { padding: 20px; } .board .table-panel { overflow-x: auto; } .board table { min-width: 570px; } .story .steps, .story .example-box { grid-template-columns: 1fr; } .story .hero { padding: 45px 0; } .story .composer { flex-direction: column; } .story .example { padding: 0 22px 40px; } .notebook .masthead { padding: 15px 21px; } .notebook .page { padding-top: 38px; } .notebook .source-block { grid-template-columns: 42px 1fr; gap: 10px; } .atlas .head { padding: 20px; } .atlas .shell { display: block; } .atlas .field { min-height: 850px; } .atlas .field-label { left: 20px; right: 20px; } .atlas .region { width: 150px; min-height: 150px; } .atlas .region:nth-of-type(1) { left: 7%; top: 31%; } .atlas .region:nth-of-type(2) { left: 48%; top: 49%; } .atlas .region:nth-of-type(3) { left: 11%; top: 70%; width: 138px; min-height: 138px; } .atlas .query-dock { left: 12px; right: 12px; top: 125px; bottom: auto; } .atlas .query-dock button { padding: 8px; } .atlas .drawer { border-left: 0; border-top: 1px solid #37556a; } }
+  </style>
+</head>
+<body>
+  <nav class="switcher" aria-label="Draft layouts">
+    <strong>Interface drafts</strong>
+    <a class="new-studies" href="monitoring-radical-concepts.html">New: F–H ↗</a>
+    <button type="button" data-concept="workbench" aria-pressed="false">A · AI workbench</button>
+    <button type="button" data-concept="story" aria-pressed="false">C · Guided AI start</button>
+    <button type="button" data-concept="board" aria-pressed="false">B · Cohort board</button>
+    <button type="button" data-concept="notebook" aria-pressed="true">D · Research notebook</button>
+    <button type="button" data-concept="atlas" aria-pressed="false">E · Cohort atlas</button>
+    <button type="button" class="setup-link" data-open-setup>Preview setup</button>
+  </nav>
+
+  <section id="workbench" class="concept workbench" aria-label="Case workbench concept">
+    <header>
+      <div><p class="eyebrow">MOVER SIS / Research workspace</p><h1>Ask first. Inspect every answer.</h1></div>
+      <div class="top-actions"><span class="chip scope">50 cached · 19,114 indexed</span><button class="secondary" type="button" id="workbench-back" hidden>Back to research brief</button><button class="secondary" data-open-setup>Data sources</button></div>
+    </header>
+    <div class="grid">
+      <aside class="rail"><h2>Ask the local assistant</h2><form id="workbench-ask-form" class="ask-form"><label class="label" for="workbench-question">Research question</label><input id="workbench-question" type="search" placeholder="Find cases with high PIP" required><button class="primary" type="submit">Find evidence with AI</button></form><p class="label">Try a question</p><button class="suggestion" data-suggest="Find laparoscopic cases with high PIP">Cases with high PIP</button><button class="suggestion" data-suggest="Compare knee cases with documented flags">Compare knee cases</button><hr class="rail-divider"><h2>Browse directly</h2><label class="label" for="workbench-search">Procedure or case ID</label><input id="workbench-search" type="search" placeholder="Try laparoscopic"><div class="case-list" id="workbench-cases"></div><p class="research-note muted">Illustrative synthetic cases. The question flow is a UI simulation.</p></aside>
+      <main><div class="case-heading"><div><p class="eyebrow">Selected case / <span data-case-id>SYN-041</span></p><h2 data-case-title>Laparoscopic surgery</h2><p class="muted" data-case-meta>62 years · 143 minutes · sevoflurane</p></div><span class="chip flag-chip">Rule flags · research only</span></div><div class="ai-answer" aria-live="polite"><span class="label">AI research path · prototype</span><p id="ai-result">Ask a question to preview semantic retrieval, case loading, and a source-linked answer. This draft does not call a model.</p></div>
+        <div class="subnav" role="group" aria-label="Case views"><button data-view="timeline" aria-pressed="true">Timeline</button><button data-view="events" aria-pressed="false">Events</button><button data-view="context" aria-pressed="false">Source context</button></div>
+        <div id="workbench-content"></div><p class="status-message" id="workbench-status" role="status"></p>
+      </main>
+      <aside class="evidence"><p class="eyebrow">Keep the answer grounded</p><h2>Evidence desk</h2><div class="card"><span class="label">Case extract</span><p>Inspect selected measurements, missing data, and rule inputs alongside the AI answer.</p><button class="secondary" data-workbench-action="extract">Open source rows</button></div><div class="card"><span class="label">Literature</span><p>No article library is connected in this draft. A local library would show titles, abstracts, and source links here.</p><button class="secondary" data-workbench-action="literature">Preview literature state</button></div><div class="card"><span class="label">Retrieval scope</span><p>19,114 surgeries are indexed. 50 are analyzed in the local sample. A model answer would name which cases it opened.</p></div><p class="research-note muted">For retrospective research and teaching. Not for clinical care.</p></aside>
+    </div>
+  </section>
+
+  <section id="board" class="concept board" aria-label="Cohort board concept">
+    <header><div class="header-row"><div><p class="eyebrow">MOVER SIS / Explore the cohort</p><h1>Find the pattern. Open the case.</h1></div><span class="chip scope">Indexed universe 19,114 · analyzed sample 50</span></div><div class="filters"><input id="board-search" type="search" aria-label="Search cohort" placeholder="Search procedure or case ID"><button type="button" data-filter="all" aria-pressed="true">All cases</button><button type="button" data-filter="flagged" aria-pressed="false">With flags</button><button type="button" data-filter="clean" aria-pressed="false">No flags</button></div></header>
+    <div class="body"><section class="table-panel"><div class="table-title"><h2>Cases in focus</h2><span class="muted" id="board-count">3 illustrative cases</span></div><table><thead><tr><th>Case</th><th>Procedure</th><th>Agent</th><th>Flag status</th></tr></thead><tbody id="board-rows"></tbody></table></section><aside class="detail"><p class="eyebrow">Selected case</p><h2 data-case-title>Laparoscopic surgery</h2><p data-case-meta>62 years · 143 minutes · sevoflurane</p><div class="stat"><span>Case ID</span><strong data-case-id>SYN-041</strong></div><div class="stat"><span>Data state</span><strong>Analyzed sample</strong></div><div class="stat"><span>Flags</span><strong data-case-flags>2 rule episodes</strong></div><p class="muted">Open the timeline for the measured values and rule boundaries. This panel keeps cohort exploration on one screen.</p><button class="primary" data-board-action="timeline">Open case timeline</button><button class="secondary" data-board-action="compare">Add to comparison</button><p class="status-message" id="board-status" role="status"></p><p class="research-note muted">Retrospective research only. No treatment directions.</p></aside></div>
+  </section>
+
+  <section id="story" class="concept story" aria-label="Guided story concept">
+    <header><div class="brand"><span class="label">MOVER SIS · Study mode</span><button class="secondary" data-open-setup>Data sources</button></div><div class="hero"><p class="eyebrow">A guided AI research journey</p><h1>Ask the data what happened.</h1><p>Describe a pattern or question. A local model would use semantic search to find relevant cases, then explain documented evidence you can inspect.</p><form id="story-ask-form"><label for="story-question">Your research question</label><div class="composer"><input id="story-question" type="search" placeholder="Find similar cases with high PIP" required><button class="primary" type="submit">Explore with AI</button></div></form><button class="quiet example-button" data-story-action="start">Try an example question</button><p class="research-note">The search in this draft is simulated. No model or dataset is connected. Retrospective research only.</p></div></header>
+    <div class="steps"><div class="step"><span class="chip" style="background:#deecee;color:#235d67">01 · Ask</span><strong>Ask a question</strong><p>Use natural language. The app searches case descriptions and, when available, a local article collection.</p><button class="secondary" data-story-action="choose">Preview retrieval</button></div><div class="step"><span class="chip" style="background:#f5e4cb;color:#7c4b27">02 · Inspect</span><strong>See the shortlist</strong><p>Open the selected surgery's timeline and see which measurements and rule episodes were loaded.</p><button class="secondary" data-story-action="inspect">Preview timeline</button></div><div class="step"><span class="chip" style="background:#e8e3f3;color:#51447a">03 · Verify</span><strong>Check the answer</strong><p>Review the model's source links and the original extracts before using the summary in research.</p><button class="secondary" data-story-action="explain">Preview evidence</button></div></div>
+    <div class="example" id="story-example"><div class="example-box"><div><p class="eyebrow">Example case / <span data-case-id>SYN-041</span></p><h2 data-case-title>Laparoscopic surgery</h2><p id="story-copy">Choose a step above to see how a researcher moves through this case.</p><button class="secondary" data-story-action="next">Next step</button></div><div><p class="label">What you can verify</p><p id="story-proof">Case source, signal coverage, rule name, threshold version, and article citations when a local library is connected.</p><p class="status-message" id="story-status" role="status"></p></div></div></div>
+  </section>
+
+  <section id="notebook" class="concept notebook active" aria-label="AI research notebook concept">
+    <div class="masthead"><span>MOVER SIS / Research notebook</span><button class="secondary" data-open-setup>Data sources</button></div>
+    <div class="page">
+      <p class="eyebrow">D · A document built from a question</p>
+      <h1>One question. A traceable research brief.</h1>
+      <p class="intro">Ask across the indexed cases. The assistant assembles a short brief, with source cards embedded where each claim appears. Open a source in place instead of moving between panels.</p>
+      <form id="notebook-ask-form" class="question-card">
+        <label for="notebook-question">What would you like to investigate?</label>
+        <textarea id="notebook-question" placeholder="Which documented cases look similar to high PIP episodes?" required></textarea>
+        <div class="question-actions"><p>Local AI · 19,114 indexed surgeries · 50 analyzed in the sample</p><button class="primary" type="submit">Build research brief</button></div>
+      </form>
+      <div class="example-row"><span>Try a question</span><button type="button" data-notebook-question="Find laparoscopic cases with high PIP">High PIP cases</button><button type="button" data-notebook-question="Compare knee cases with documented flags">Knee cases</button><button type="button" id="notebook-atlas">Explore cohort atlas</button></div>
+      <article class="answer" id="notebook-answer" aria-live="polite" hidden>
+        <div class="answer-top"><span class="label">Illustrative AI brief</span><span>Evidence scope · synthetic example only</span></div>
+        <h2 id="notebook-answer-title">Research brief</h2>
+        <p class="answer-lead" id="notebook-answer-lead"></p>
+        <div class="source-block"><span class="source-num">01</span><div><h3>Matched case · <span data-notebook-case-id>SYN-041</span></h3><p><span data-notebook-case-title>Laparoscopic surgery</span> · <span data-notebook-case-meta>62 years · 143 minutes · sevoflurane</span>. A real brief would show the exact source fields and time interval used.</p><div class="source-actions"><button class="secondary" type="button" data-notebook-evidence aria-expanded="false">Show source preview</button><button class="primary" type="button" id="notebook-open-case">Inspect full case in A</button></div><div class="source-detail" id="notebook-source" hidden>Prototype source preview: fictional case label and an illustrative rule episode. A real view would include the EMR table, timestamp, units, missing data, and threshold version.</div></div></div>
+        <div class="source-block"><span class="source-num">02</span><div><h3>Literature check</h3><p>No article collection is connected to this draft. A real brief would distinguish case observations from retrieved papers and cite the inspected abstract.</p></div></div>
+        <p class="footnote">This is a layout simulation. No embedding search, case analysis, or chat model ran. Retrospective research and teaching only.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="atlas" class="concept atlas" aria-label="AI cohort atlas concept">
+    <header class="head"><div><p class="eyebrow">E · Spatial investigation</p><h1>Ask across the cohort. Follow the highlighted region.</h1></div><button class="secondary" data-open-setup>Data sources</button></header>
+    <div class="shell">
+      <div class="field">
+        <div class="field-label"><strong>Illustrative case regions</strong><small>Groups are arranged by procedure for this sketch. Position and distance do not represent learned similarity or clinical risk.</small></div>
+        <button class="region" type="button" data-atlas-case="SYN-041" aria-pressed="false"><span><strong>Laparoscopic</strong><small>1 example · 2 rule episodes</small></span></button>
+        <button class="region" type="button" data-atlas-case="SYN-108" aria-pressed="false"><span><strong>Arthroplasty</strong><small>1 example · 1 rule episode</small></span></button>
+        <button class="region" type="button" data-atlas-case="SYN-223" aria-pressed="false"><span><strong>Thyroid</strong><small>1 example · no flags</small></span></button>
+        <form id="atlas-ask-form" class="query-dock"><label for="atlas-question">Ask the local assistant about the cohort</label><input id="atlas-question" type="search" placeholder="Find knee cases with documented flags" required><button class="primary" type="submit">Map with AI</button></form>
+      </div>
+      <aside class="drawer" aria-live="polite">
+        <p class="eyebrow">AI investigation drawer</p>
+        <h2 id="atlas-title">Choose a region or ask a question.</h2>
+        <p id="atlas-copy">The assistant would retrieve relevant case IDs and highlight their procedure groups. Open a group to inspect one surgery and its sources.</p>
+        <p class="scope-line">Indexed: 19,114 surgeries · Analyzed sample: 50</p>
+        <div class="insight"><strong>Evidence path</strong><p id="atlas-evidence">Question → shortlist → selected case extract → local model answer with source links.</p></div>
+        <button class="secondary" type="button" id="atlas-open" hidden>Open selected case evidence</button>
+        <button class="secondary" type="button" id="atlas-return" hidden>Back to research brief</button>
+        <p class="status-message" id="atlas-status" role="status">This map uses only three fictional examples.</p>
+        <p class="research-note muted">The map and AI results are simulated. Retrospective research only.</p>
+      </aside>
+    </div>
+  </section>
+
+  <dialog id="setup" aria-labelledby="setup-title"><div class="modal-head"><p class="eyebrow">Before the workspace opens</p><h2 id="setup-title">Connect your research data</h2><p>Choose a data source. The app checks the folder and the local AI models before opening the workspace.</p></div><div class="modal-body"><label for="emr-path">SIS EMR folder · required for a real session</label><input id="emr-path" type="text" placeholder="/path/to/EMR"><small>The folder must contain patient_information.csv. Real validation belongs in the desktop app.</small><label for="cache-path">Processed cache · optional</label><input id="cache-path" type="text" placeholder="/path/to/processed"><small>Existing analyzed cases can appear first. Other cases remain searchable by index.</small><label for="model-path">Local Ollama models · chat and embedding</label><input id="model-path" type="text" placeholder="/path/to/models"><small>A real session would show separate chat and embedding model readiness. Manual browsing works if AI is offline.</small><div class="modal-actions"><button class="primary" id="demo-open">Explore these drafts</button><button class="secondary" id="setup-validate">Preview path check</button></div><p class="demo-note" id="setup-result" role="status">This is a visual prototype. It never reads a folder or starts Ollama.</p></div></dialog>
+  <script>
+    const cases = [
+      { id: 'SYN-041', title: 'Laparoscopic surgery', meta: '62 years · 143 minutes · sevoflurane', agent: 'Sevoflurane', flags: 2 },
+      { id: 'SYN-108', title: 'Total knee arthroplasty', meta: '71 years · 118 minutes · desflurane', agent: 'Desflurane', flags: 1 },
+      { id: 'SYN-223', title: 'Thyroid procedure', meta: '48 years · 96 minutes · sevoflurane', agent: 'Sevoflurane', flags: 0 }
+    ];
+    let selected = cases[0];
+    let boardFilter = 'all';
+    let workbenchView = 'timeline';
+    let workbenchOrigin = null;
+    let storyStep = 0;
+    let atlasSelected = null;
+    let atlasActiveQuestion = '';
+    let notebookCase = null;
+    let notebookQuestionText = '';
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    const status = (selector, message) => { $(selector).textContent = message; };
+    function showConcept(name) {
+      $$('.concept').forEach(el => el.classList.toggle('active', el.id === name));
+      $$('[data-concept]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.concept === name)));
+      window.scrollTo(0, 0);
+    }
+    function renderCaseText() {
+      $$('[data-case-id]').forEach(el => el.textContent = selected.id);
+      $$('[data-case-title]').forEach(el => el.textContent = selected.title);
+      $$('[data-case-meta]').forEach(el => el.textContent = selected.meta);
+      $('[data-case-flags]').textContent = `${selected.flags} rule episode${selected.flags === 1 ? '' : 's'}`;
+    }
+    function caseMatches(item, query) { return `${item.id} ${item.title} ${item.agent}`.toLowerCase().includes(query.toLowerCase()); }
+    function renderWorkbenchList() {
+      const query = $('#workbench-search').value.trim();
+      const found = cases.filter(item => caseMatches(item, query));
+      $('#workbench-cases').innerHTML = found.length ? found.map(item => `<button class="case-button" data-select="${item.id}" aria-pressed="${selected.id === item.id}"><strong>${item.id}</strong><span>${item.title}</span><small>${item.flags} rule episode${item.flags === 1 ? '' : 's'} · ${item.agent}</small></button>`).join('') : '<p>No example cases match this search.</p>';
+    }
+    function renderBoard() {
+      const query = $('#board-search').value.trim();
+      const found = cases.filter(item => caseMatches(item, query) && (boardFilter === 'all' || (boardFilter === 'flagged' ? item.flags > 0 : item.flags === 0)));
+      $('#board-count').textContent = `${found.length} illustrative case${found.length === 1 ? '' : 's'}`;
+      $('#board-rows').innerHTML = found.length ? found.map(item => `<tr class="${item.id === selected.id ? 'selected' : ''}" data-select="${item.id}" tabindex="0" role="button" aria-label="Select ${item.id}, ${item.title}"><td><strong>${item.id}</strong></td><td>${item.title}</td><td>${item.agent}</td><td>${item.flags ? `${item.flags} episodes` : 'No flags'}</td></tr>`).join('') : '<tr><td colspan="4" style="padding:20px">No example cases match these filters.</td></tr>';
+    }
+    function renderWorkbenchContent() {
+      const content = $('#workbench-content');
+      if (workbenchView === 'timeline') {
+        content.innerHTML = `<p class="label">Signal timeline · illustrative values</p><div class="chart" role="img" aria-label="Illustrative ventilation signal timeline with one highlighted interval"><span class="chart-label">PIP / ETCO₂ · minutes from incision</span><svg viewBox="0 0 800 260" preserveAspectRatio="none" aria-hidden="true"><rect x="390" y="0" width="120" height="260" fill="#a86b373f"/><polyline points="0,180 70,178 130,168 200,174 270,158 335,166 395,111 450,95 510,127 565,158 630,146 700,160 800,145" fill="none" stroke="#f7bb80" stroke-width="4"/><polyline points="0,205 70,197 130,189 200,194 270,201 335,204 395,183 450,178 510,187 565,196 630,199 700,193 800,198" fill="none" stroke="#8dded0" stroke-width="4"/></svg></div><div class="event"><b>Inspectable flag</b><span>Open the episode to see the measured values, missing data, and threshold version.</span></div>`;
+      } else if (workbenchView === 'events') {
+        content.innerHTML = '<p class="label">Documented sequence</p><div class="event"><b>Start of OR stay</b><span>Event and measurement coverage shown together.</span></div><div class="event"><b>Rule episode</b><span>Clicking a real episode would reveal the source values and rule inputs.</span></div><div class="event"><b>End of OR stay</b><span>Induction and emergence remain in view.</span></div>';
+      } else {
+        content.innerHTML = '<p class="label">Source context</p><div class="event"><b>Extract status</b><span>This draft uses synthetic labels only. The product view would list source table, field, timestamp, units, and missingness for the selected interval.</span></div>';
+      }
+    }
+    function selectCase(id) { selected = cases.find(item => item.id === id) || selected; renderCaseText(); renderWorkbenchList(); renderBoard(); renderWorkbenchContent(); status('#workbench-status', `${selected.id} selected.`); status('#board-status', `${selected.id} selected.`); }
+    function exampleMatch(question) {
+      const lower = question.toLowerCase();
+      return lower.includes('knee') || lower.includes('arthroplasty') ? cases[1] : lower.includes('thyroid') ? cases[2] : cases[0];
+    }
+    function previewQuestion(question) {
+      const text = question.trim();
+      if (!text) return;
+      const match = exampleMatch(text);
+      selectCase(match.id);
+      $('#workbench-question').value = text;
+      $('#story-question').value = text;
+      $('#ai-result').textContent = `Question: “${text}” · This prototype selects ${match.id} to illustrate the flow. The product would embed the question, rank short case descriptions, load source extracts, then ask the local chat model for an answer with source links. No embedding search or model call ran here.`;
+      status('#workbench-status', `AI path preview opened for ${match.id}.`);
+      setWorkbenchOrigin(null);
+      showConcept('workbench');
+    }
+    function setWorkbenchOrigin(origin) {
+      workbenchOrigin = origin;
+      $('#workbench-back').hidden = !origin;
+      if (origin) $('#workbench-back').textContent = origin === 'notebook' ? 'Back to research brief' : 'Back to cohort atlas';
+    }
+    function openWorkbenchFrom(origin, item, question) {
+      selectCase(item.id);
+      $('#workbench-question').value = question;
+      $('#ai-result').textContent = `Opened ${item.id} from ${origin === 'notebook' ? 'the research brief' : 'the cohort atlas'}${question ? ` for “${question}”` : ''}. Inspect this illustrative case and its source context. No embedding search or model call ran here.`;
+      workbenchView = 'context';
+      $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context')));
+      renderWorkbenchContent();
+      setWorkbenchOrigin(origin);
+      showConcept('workbench');
+      status('#workbench-status', `${item.id} source context opened.`);
+    }
+    function renderNotebook(question) {
+      const text = question.trim();
+      if (!text) return;
+      const match = exampleMatch(text);
+      notebookCase = match;
+      notebookQuestionText = text;
+      selectCase(match.id);
+      $('#notebook-question').value = text;
+      $('#notebook-answer-title').textContent = text;
+      $('#notebook-answer-lead').textContent = `This draft selects ${match.id} as a fictional match to demonstrate a document-style answer. A real assistant would search indexed case descriptions, load the relevant source extracts, and explain only what those extracts support.`;
+      $('[data-notebook-case-id]').textContent = match.id;
+      $('[data-notebook-case-title]').textContent = match.title;
+      $('[data-notebook-case-meta]').textContent = match.meta;
+      $('#notebook-answer').hidden = false;
+      $('#notebook-source').hidden = true;
+      $('[data-notebook-evidence]').setAttribute('aria-expanded', 'false');
+      $('[data-notebook-evidence]').textContent = 'Show source preview';
+      $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function focusAtlas(item, question = '', scrollResult = true) {
+      atlasSelected = item;
+      atlasActiveQuestion = question;
+      selectCase(item.id);
+      $$('[data-atlas-case]').forEach(el => { el.setAttribute('aria-pressed', String(el.dataset.atlasCase === item.id)); el.classList.toggle('dim', el.dataset.atlasCase !== item.id); });
+      $('#atlas-title').textContent = item.title;
+      $('#atlas-copy').textContent = question ? `Question: “${question}” This sketch highlights ${item.id} using a simple keyword rule. In the product, semantic retrieval would provide a labeled shortlist before the model answers.` : `${item.id} is selected. Open its source evidence or ask the assistant to find related cases.`;
+      $('#atlas-evidence').textContent = `${item.id} · ${item.meta} · ${item.flags} rule episode${item.flags === 1 ? '' : 's'}. The real result would link to measurements, rule inputs, and any article abstract used.`;
+      $('#atlas-open').hidden = false;
+      status('#atlas-status', question ? 'Illustrative AI highlight. No embedding search or model call ran.' : 'Illustrative region selected.');
+      if (scrollResult && window.innerWidth <= 700) $('#atlas-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function renderStory() {
+      const copy = ['Ask a question above or choose a stage to preview the research path.', 'The app would embed the question and return a short list of relevant cases. Exact filters and analyzed scope stay visible.', 'The timeline opens for a selected case with source values and missing data visible.', 'The local model would answer from retrieved extracts and name the source of each claim.'];
+      const proof = ['Case source, signal coverage, rule name, threshold version, and article citations when a local library is connected.', 'The shortlist names each case ID and separates indexed from analyzed data.', 'The episode connects to its measured values and rule version.', 'The answer separates case observations from literature and shows its citations.'];
+      $('#story-copy').textContent = copy[storyStep];
+      $('#story-proof').textContent = proof[storyStep];
+      status('#story-status', storyStep ? `Step ${storyStep} of 3` : 'Choose a step.');
+      $('#story-example').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    document.addEventListener('click', event => {
+      const concept = event.target.closest('[data-concept]'); if (concept) { if (concept.dataset.concept === 'workbench') setWorkbenchOrigin(null); showConcept(concept.dataset.concept); }
+      const caseButton = event.target.closest('[data-select]'); if (caseButton) selectCase(caseButton.dataset.select);
+      const view = event.target.closest('[data-view]'); if (view) { workbenchView = view.dataset.view; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el === view))); renderWorkbenchContent(); }
+      const filter = event.target.closest('[data-filter]'); if (filter) { boardFilter = filter.dataset.filter; $$('[data-filter]').forEach(el => el.setAttribute('aria-pressed', String(el === filter))); renderBoard(); }
+      const suggestion = event.target.closest('[data-suggest]'); if (suggestion) previewQuestion(suggestion.dataset.suggest);
+      const notebookQuestion = event.target.closest('[data-notebook-question]'); if (notebookQuestion) renderNotebook(notebookQuestion.dataset.notebookQuestion);
+      const notebookEvidence = event.target.closest('[data-notebook-evidence]'); if (notebookEvidence) { const detail = $('#notebook-source'); detail.hidden = !detail.hidden; notebookEvidence.setAttribute('aria-expanded', String(!detail.hidden)); notebookEvidence.textContent = detail.hidden ? 'Show source preview' : 'Hide source preview'; }
+      if (event.target.closest('#notebook-open-case') && notebookCase) openWorkbenchFrom('notebook', notebookCase, notebookQuestionText);
+      if (event.target.closest('#notebook-atlas')) { const hasBrief = Boolean(notebookCase); $('#atlas-return').hidden = !hasBrief; showConcept('atlas'); if (hasBrief) { $('#atlas-question').value = notebookQuestionText; focusAtlas(notebookCase, notebookQuestionText, false); } }
+      const atlasRegion = event.target.closest('[data-atlas-case]'); if (atlasRegion) focusAtlas(cases.find(item => item.id === atlasRegion.dataset.atlasCase));
+      if (event.target.closest('#atlas-open') && atlasSelected) openWorkbenchFrom('atlas', atlasSelected, atlasActiveQuestion);
+      if (event.target.closest('#atlas-return') && notebookCase) { showConcept('notebook'); $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      if (event.target.closest('#workbench-back') && workbenchOrigin) { const origin = workbenchOrigin; showConcept(origin); if (origin === 'notebook') $('#notebook-answer').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      if (event.target.closest('[data-open-setup]')) $('#setup').showModal();
+      const wb = event.target.closest('[data-workbench-action]'); if (wb) { if (wb.dataset.workbenchAction === 'extract') { workbenchView = 'context'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'context'))); renderWorkbenchContent(); } status('#workbench-status', { extract: 'Source context opened.', literature: 'No local article library is connected in this draft.' }[wb.dataset.workbenchAction]); }
+      const board = event.target.closest('[data-board-action]'); if (board) { if (board.dataset.boardAction === 'timeline') { workbenchView = 'timeline'; $$('[data-view]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.view === 'timeline'))); renderWorkbenchContent(); showConcept('workbench'); status('#workbench-status', `${selected.id} timeline opened from the cohort board.`); } else status('#board-status', `${selected.id} added to a draft comparison.`); }
+      const story = event.target.closest('[data-story-action]'); if (story) { if (story.dataset.storyAction === 'start') previewQuestion('Find laparoscopic cases with high PIP'); else { storyStep = ({ choose: 1, inspect: 2, explain: 3, next: storyStep === 3 ? 1 : storyStep + 1 })[story.dataset.storyAction]; renderStory(); } }
+    });
+    document.addEventListener('submit', event => {
+      const id = event.target.id;
+      if (id === 'workbench-ask-form' || id === 'story-ask-form') { event.preventDefault(); previewQuestion(id === 'story-ask-form' ? $('#story-question').value : $('#workbench-question').value); }
+      if (id === 'notebook-ask-form') { event.preventDefault(); renderNotebook($('#notebook-question').value); }
+      if (id === 'atlas-ask-form') { event.preventDefault(); const question = $('#atlas-question').value.trim(); if (question) focusAtlas(exampleMatch(question), question); }
+    });
+    document.addEventListener('keydown', event => { const row = event.target.closest('tr[data-select]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selectCase(row.dataset.select); } });
+    $('#workbench-search').addEventListener('input', renderWorkbenchList);
+    $('#board-search').addEventListener('input', renderBoard);
+    $('#demo-open').addEventListener('click', () => $('#setup').close());
+    $('#setup-validate').addEventListener('click', () => { $('#setup-result').textContent = $('#emr-path').value.trim() ? 'A real app would check the selected EMR folder now. This visual draft cannot read your files.' : 'Enter an EMR folder for a real session, or explore these synthetic drafts.'; });
+    renderCaseText(); renderWorkbenchList(); renderBoard(); renderWorkbenchContent();
+    $('#setup').showModal();
+  </script>
+</body>
+</html>

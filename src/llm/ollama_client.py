@@ -7,11 +7,32 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import Any, Iterator
 
 
 class OllamaError(RuntimeError):
     """Raised when Ollama is unreachable or returns an error."""
+
+
+def parse_embed_response(data: dict[str, Any]) -> list[list[float]]:
+    """Turn an Ollama embed JSON body into row vectors."""
+    if not isinstance(data, dict):
+        raise OllamaError("Ollama embed response was not an object.")
+    if data.get("error"):
+        raise OllamaError(str(data["error"]))
+    rows = data.get("embeddings")
+    if isinstance(rows, list) and rows:
+        out: list[list[float]] = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)):
+                raise OllamaError("Ollama embed row was not a vector.")
+            out.append([float(x) for x in row])
+        return out
+    single = data.get("embedding")
+    if isinstance(single, list) and single:
+        return [[float(x) for x in single]]
+    raise OllamaError("Ollama embed response had no embeddings.")
 
 
 @dataclass
@@ -93,6 +114,20 @@ class OllamaClient:
             if name:
                 names.append(str(name))
         return sorted(names)
+
+    def embed(
+        self, model: str, texts: str | Sequence[str]
+    ) -> list[list[float]]:
+        """Return one vector per input string via POST /api/embed."""
+        payload = [texts] if isinstance(texts, str) else [str(t) for t in texts]
+        if not payload:
+            return []
+        data = self._request_json(
+            "POST",
+            "/api/embed",
+            {"model": model, "input": payload},
+        )
+        return parse_embed_response(data)
 
     def unload_model(self, model: str) -> None:
         """
@@ -265,3 +300,28 @@ class OllamaClient:
             return json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
             raise OllamaError(f"Invalid JSON from Ollama: {raw[:200]}") from e
+
+
+class OllamaEmbedder:
+    """Embedder protocol adapter. Construction still refuses non-loopback hosts."""
+
+    def __init__(self, model: str, *, client: OllamaClient | None = None):
+        self.model = model
+        self.model_id = model
+        self.client = client or OllamaClient()
+
+    def is_available(self) -> bool:
+        try:
+            names = self.client.list_models()
+        except OllamaError:
+            return False
+        want = self.model.strip()
+        want_base = want.split(":")[0]
+        for name in names:
+            base = str(name).split(":")[0]
+            if name == want or str(name).startswith(want + ":") or base == want_base:
+                return True
+        return False
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return self.client.embed(self.model, texts)

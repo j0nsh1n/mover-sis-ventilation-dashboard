@@ -77,14 +77,13 @@ class ChartView(QWidget):
         if not isinstance(fig, plt.Figure):
             self.clear("Unsupported chart type.")
             return
-        style = _style()
         buf = io.BytesIO()
         fig.savefig(
             buf,
             format="png",
             dpi=120,
             bbox_inches="tight",
-            facecolor=style["figure_facecolor"],
+            facecolor=fig.get_facecolor(),
             edgecolor="none",
         )
         plt.close(fig)
@@ -301,6 +300,42 @@ def case_timeline_figure(
                 ax.axvline(t, color=style["critical"], alpha=0.22, lw=0.7)
 
     fig.suptitle("Case timeline", fontsize=11, color=style["text"], y=0.995)
+    fig.tight_layout()
+    return fig
+
+
+def focused_signals_figure(ts: pd.DataFrame, selected_minute: float) -> plt.Figure:
+    """Three source signal tracks with the selected minute marked."""
+    style = {
+        "figure_facecolor": "#142124",
+        "axes_facecolor": "#142124",
+        "text": "#dce8dd",
+        "muted": "#a3b8b2",
+        "grid": "#3b5755",
+        "spine": "#35484a",
+    }
+    fig, axes = plt.subplots(3, 1, figsize=(11, 2.2), sharex=True)
+    fig.patch.set_facecolor(style["figure_facecolor"])
+    x = pd.to_numeric(ts["t_min"], errors="coerce")
+    for ax, (column, label, unit, color) in zip(
+        axes,
+        (
+            ("PIP", "PIP", "cmH₂O", "#f2b173"),
+            ("ETCO2", "ETCO₂", "mmHg", "#8fd8c8"),
+            ("HR", "Heart rate", "bpm", "#c7ace0"),
+        ),
+        strict=True,
+    ):
+        _style_axes(ax, style)
+        if column in ts:
+            y = pd.to_numeric(ts[column], errors="coerce")
+            ax.plot(x, y, color=color, lw=2)
+            selected = y[x == selected_minute]
+            if not selected.empty and pd.notna(selected.iloc[0]):
+                ax.scatter([selected_minute], [selected.iloc[0]], color=color, s=38, zorder=3)
+        ax.axvline(selected_minute, color="#c4ed93", alpha=0.8, lw=1, ls="--")
+        ax.set_ylabel(f"{label}\n{unit}", fontsize=8)
+    axes[-1].set_xlabel("Minutes from incision", fontsize=9)
     fig.tight_layout()
     return fig
 

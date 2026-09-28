@@ -2,14 +2,28 @@
 
 ## Current State
 
-- **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
-- **Branch:** `fix/time-aware-flags` (pushed to origin).
+- **Version:** 0.7.0 (`VERSION` / `src/__version__.py`); local Linux build
+  installed, with the 0.6.0 bundle retained for rollback.
+- **Branch:** `feat/case-retrieval-index` (local implementation branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-24),
-  desktop tests included. Skips: frozen binary, real wave tree.
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` and CI's
+  coverage run — green (245 passed, 2026-09-28). Frozen-binary smoke passed.
+  Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
+- **Desktop implementation:** G is the first tab after setup; local embedding
+  retrieval indexes one short metadata record per surgery and gives up to three
+  case extracts to the local AI. Keyword search remains available when the
+  embedding model is absent. The desktop G uses the evidence map layout;
+  F opens all three case signal tracks and their source rows in a dark studio.
+- **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
+  design and a future article-search proposal based on `HealthDatabaseAccess`.
+- **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
+  starts in G, opens F from an observation or comparison at its cited minute,
+  and returns with the question and comparison intact. H remains an alternate
+  study. The older A–E drafts remain in `monitoring-concepts.html`. All use
+  fictional records and scripted AI.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -27,12 +41,13 @@
 
 | Path | Role |
 |------|------|
-| `src/desktop/` | PySide6 app (Ask first), theme, charts, settings |
+| `src/desktop/` | PySide6 app (G research first), F signals, theme, settings |
 | `src/llm/` | Ollama tools, agent loop, prompts, start/stop/unload |
 | `src/pipeline/` | load → clean → merge → features → flags → run |
 | `src/pipeline/synthetic.py` | Fictional SIS EMR generator + `synthetic_truth.json` |
 | `src/pipeline/profile.py` | Aggregate-only profile / threshold calibration report |
 | `src/services/case_fetch.py` | On-demand EMR shortlist + flag shortlist |
+| `src/services/retrieval.py` | Surgery metadata search + SQLite embedding cache |
 | `src/wave_decode.py` | Waveform decode (Bernoulli/GE S5) |
 | `src/guardrails/` | Config / data / IO validation |
 | `src/config/thresholds.yaml` | Flag rule presets |
@@ -50,23 +65,28 @@
 - **Processed** — parquet: `cases`, `timeseries`, `flags`, `episodes` (+ meta).
 - **Flags** — derived rule screens from thresholds (not stored as source-of-truth in EMR).
 - **Session (LLM)** — `active_pid`, `focus_pids`, tool traces; answers grounded in tools/briefings.
-- **Settings** — paths, theme, `ollama_models_dir` / preferred model under XDG config.
+- **Settings** — paths, theme, chat and embedding model choices under XDG config.
+- **Retrieval cache** — SQLite vectors keyed by source-text hash and embedding model;
+  vectors rank candidates, then bounded source extracts ground the AI answer.
 
 ```
-EMR CSVs ──► pipeline / case_fetch ──► processed parquet
-                                      │
-Wave root (optional) ──► wave_decode  │
-                                      ▼
-                              desktop + LLM tools ──► local Ollama (loopback)
+EMR CSVs ──► metadata index ──► embedding cache ──► retrieved cases
+        └──► pipeline / case_fetch ──► processed parquet / source extracts
+Wave root (optional) ──► wave_decode                   │
+                                                       ▼
+                                          desktop G / F + local Ollama
 ```
 
 ## Non-Obvious Decisions
 
-- **LLM-first UI:** pipeline/filters not on main sidebar; co-pilot + Settings/Setup.
+- **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
+  and Rule reference remain available as secondary tabs.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
   (compute-now vs full corpus precompute).
 - **Research answer gate:** rewrite round on directive phrasing / wrong asserted age
   (live model drifts into “consider reducing TV”, wrong ages).
+- **Research isolation:** G disables legacy agent tools and uses a session limited
+  to retrieved PIDs, so prior Ask-tab selections cannot enter its prompt.
 - **Ollama local-only by default:** remote base URL needs explicit allow env.
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
@@ -89,15 +109,18 @@ Wave root (optional) ──► wave_decode  │
 
 ## Session Handoff
 
-- **Date:** 2026-09-24
-- **Branch:** `fix/time-aware-flags` (pushed to origin; no PR yet)
-- **Done:** minute-grid flag windows; worst-severity / per-episode scoring and
-  `anomaly_score_per_hour`; whole-file PID sampling; total MAC with N₂O; `rr_low`
-  reachable; per-agent concentration caps; OR-stay window (induction kept);
-  synthetic generator; aggregate profile command; spec.md updated (human-approved).
-- **Verified:** full `pytest -q` green incl. desktop; synthetic runs (seeds 0–3, 7):
-  every injected anomaly flagged, no warn/critical on clean cases. Not run on real
-  MOVER data (not available in that session).
-- **Next:** run pipeline + profile on real data and review thresholds; then Parquet
-  conversion of raw CSVs, procedure-event context (label induction/emergence flags),
-  lung-protective ventilation metrics, Phase 3 corpus-tool scoping.
+- **Date:** 2026-09-28
+- **Branch:** `feat/case-retrieval-index` (local, not pushed)
+- **Done:** Version 0.7.0 now renders G as the selected evidence map and F as
+  the signal studio while retaining the live metadata search and local AI.
+  G's AI input is limited to three retrieved extracts and cannot call legacy
+  corpus tools or inherit an active case from Ask.
+  The 0.6.0 bundle remains archived for rollback.
+- **Verified:** Focused G/F interaction and startup tests passed; desktop
+  screenshots at 1440×900 show the revised composition and all three signal
+  tracks. Full pytest, CI coverage, thresholds, packaging, frozen-binary smoke,
+  and installed desktop launch passed on 2026-09-28. Lint and type tools are
+  not configured.
+- **Next:** Rebuild and verify PR #13 after the research isolation fix, merge
+  the authorized PR, then
+  review with real de-identified data and a running local model.
