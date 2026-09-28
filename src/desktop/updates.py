@@ -20,6 +20,9 @@ from src.update import (
 
 
 CHECK_INTERVAL_MS = 60_000
+DEFAULT_UPDATE_MANIFEST_URL = (
+    "https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json"
+)
 
 
 def running_platform() -> str | None:
@@ -41,7 +44,7 @@ class UpdateController(QObject):
 
     def __init__(self, current_version: str, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._url = os.environ.get("MOVER_UPDATE_MANIFEST_URL", "").strip()
+        self._url = os.environ.get("MOVER_UPDATE_MANIFEST_URL", DEFAULT_UPDATE_MANIFEST_URL).strip()
         self._platform = running_platform()
         self._current_version = current_version
         self._etag: str | None = None

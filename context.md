@@ -2,14 +2,18 @@
 
 ## Current State
 
-- **Version:** 0.8.0 on `feat/public-auto-updates`; the installed local build
-  and published release are still v0.7.0, with the 0.6.0 bundle retained.
-- **Branch:** local `feat/public-auto-updates` builds on the published v0.7.0
-  release from merged PRs #13 and #14; update work is not published.
+- **Version:** 0.9.0 in source. The installed local build was v0.7.0 at the
+  start of this task and needs a manual update to enable automatic checks.
+- **Branch:** `main` includes the signed updater from merged PR #15.
+- **Distribution:** The repository and release packages are public. GitHub
+  Pages hosts the signed manifest at
+  `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
+  Frozen v0.9.0 builds check it by default.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q`, packaging,
-  Rust updater and signer suites — green (2026-09-28). A fresh Linux frozen
-  binary launched with the signed updater module included.
+  and Rust updater and signer suites passed locally (2026-09-28). The v0.8.0
+  Linux frozen build and Windows CI smoke passed. v0.9.0 package checks follow
+  its release build.
   Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
@@ -29,10 +33,8 @@
 - **Known gaps:**
   - Python coverage reports do not include updater behavior exercised by the
     separate Rust contract suite.
-  - No public update host or production manifest URL is selected; the updater
-    remains inactive by default. Windows install and rollback CI passed.
-  - The Ed25519 signing secret is stored in GitHub Actions, and the app pins
-    its public key. The public host and manifest publication are pending.
+  - Existing v0.8.0 and older installs need one manual update to v0.9.0.
+  - GitHub Pages caching can delay when a one-minute poll sees a new manifest.
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
   - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
@@ -62,7 +64,9 @@
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
 | `packaging/` | PyInstaller entry + rthooks |
 | `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
-| `.github/workflows/` | `ci.yml`, `release.yml` |
+| `src/update.py`, `src/desktop/updates.py` | Signed checks, staging, apply, rollback |
+| `tools/update-manifest/` | Rust release manifest signer |
+| `.github/workflows/` | CI and release jobs, including Pages deployment |
 | `agents.md` / `spec.md` | Policy (global / project; one agents file) |
 | `context.md` / `CHANGELOG.md` / `roadmap.md` | State / history / plan |
 
@@ -100,6 +104,8 @@ Wave root (optional) ──► wave_decode                   │
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
 - **PyInstaller onedir** (not onefile) for faster cold start; Qt system deps on CI.
+- **Update host:** GitHub Pages serves only the signed manifest. GitHub
+  Releases serves the packages. The app uses no GitHub API for polling.
 - **Streamlit optional**; desktop is primary.
 - **Wave decode:** production code is `src/wave_decode.py` (provider gain overrides
   + NaN sentinels); algorithm cross-checked in tests, not a root script snippet.
@@ -119,15 +125,12 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-28
-- **Branch:** `feat/public-auto-updates`; updater PR #15 is open. No v0.8.0
-  release has been published.
-- **Done:** The v0.8.0 branch verifies signed manifests before using package
-  metadata. A Rust CLI signs release manifests; a dedicated Ed25519 secret is
-  in GitHub Actions. The release workflow can attach a signed manifest when a
-  public base URL is configured. Update checks stay inactive without a host.
-- **Verified:** Full Python suite, packaging, threshold smoke, Rust updater
-  and signer checks, and fresh Linux frozen launch passed on 2026-09-28.
-  The Rust signer output passed through the Python verifier. GitHub Actions
-  run 36466384579 passed Linux and Windows checks, including a frozen Windows
-  launch. Python lint/types are not configured.
-- **Next:** Review the updater PR and choose a public update host later.
+- **Branch:** `main` after the public updater PR merges.
+- **Done:** The source repository is public. Frozen v0.9.0 builds default to
+  the signed Pages manifest, and releases keep packages on GitHub Releases.
+  The signing key is a GitHub Actions secret; the app pins its public key.
+- **Verified:** Local Python and Rust suites passed. The v0.8.0 release
+  downloads return HTTP 200 without authentication. v0.9.0 release CI and
+  installed-app checks are pending. Python lint/types are not configured.
+- **Next:** Publish v0.9.0, verify the public manifest and packages, and
+  install the new Linux build locally.
