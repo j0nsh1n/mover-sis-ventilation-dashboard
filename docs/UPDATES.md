@@ -132,3 +132,5 @@ There is no production manifest URL yet. The updater stays off and sends
 nothing until a host is selected and the manifest URL is configured through
 `MOVER_UPDATE_MANIFEST_URL` in the installed app's environment. Until
 then, users update by downloading the latest release the way they do today.
+Before setting a default URL for users, add signed manifest verification and
+exercise the install swap on Windows.

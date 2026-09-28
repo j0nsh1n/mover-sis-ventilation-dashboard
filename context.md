@@ -124,6 +124,7 @@ Wave root (optional) ──► wave_decode                   │
   updater branch checks a configured public manifest every minute, stages a
   verified newer package, and offers a restart with a previous-version backup.
   FlexWeek's separated release decision, checksum, and swap tests informed it.
+  `spec.md` now records the updater behavior and Rust test gate.
 - **Verified:** Full Python suite, packaging, threshold smoke, Rust updater
   contracts, Rust formatting and Clippy passed on 2026-09-28. Linux helper
   swap and startup rollback and staging from the actual v0.7.0 Linux archive
