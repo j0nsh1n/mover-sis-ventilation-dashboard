@@ -30,7 +30,7 @@
   - Python coverage reports do not include updater behavior exercised by the
     separate Rust contract suite.
   - No public update host or production manifest URL is selected; the updater
-    remains inactive by default. Windows install and rollback CI is pending.
+    remains inactive by default. Windows install and rollback CI passed.
   - The Ed25519 signing secret is stored in GitHub Actions, and the app pins
     its public key. The public host and manifest publication are pending.
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
@@ -126,7 +126,7 @@ Wave root (optional) ──► wave_decode                   │
   public base URL is configured. Update checks stay inactive without a host.
 - **Verified:** Full Python suite, packaging, threshold smoke, Rust updater
   and signer checks, and fresh Linux frozen launch passed on 2026-09-28.
-  The Rust signer output passed through the Python verifier. Windows CI has
-  not run yet. Python lint/types are not configured.
-- **Next:** Push the branch, run Windows install and rollback CI, open the PR,
-  and choose a public update host later.
+  The Rust signer output passed through the Python verifier. GitHub Actions
+  run 36466384579 passed Linux and Windows checks, including a frozen Windows
+  launch. Python lint/types are not configured.
+- **Next:** Review the updater PR and choose a public update host later.
