@@ -1,5 +1,3 @@
-"""Expose updater observations to the dependency-free Rust contract tests."""
-
 from __future__ import annotations
 
 import hashlib
@@ -16,12 +14,16 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from src import update
 
 
 MANIFEST_URL = "https://updates.example/manifest.json"
 LINUX_URL = "https://updates.example/app.tar.gz"
 WINDOWS_URL = "https://updates.example/app.zip"
+TEST_SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32)
+TEST_PUBLIC_KEY = TEST_SIGNING_KEY.public_key().public_bytes_raw()
 
 
 def emit(**values: object) -> None:
@@ -72,6 +74,15 @@ def manifest(version: str, linux_url: str = LINUX_URL, schema: int = 1) -> bytes
     }).encode()
 
 
+def signed_manifest(payload: bytes, *, changed_payload: bytes | None = None, alternate_key: bool = False) -> bytes:
+    key = Ed25519PrivateKey.from_private_bytes(b"\x02" * 32) if alternate_key else TEST_SIGNING_KEY
+    return json.dumps({
+        "schema": 2,
+        "manifest": (changed_payload or payload).decode("utf-8"),
+        "signature": key.sign(payload).hex(),
+    }).encode()
+
+
 def version_case(case: str) -> None:
     if case == "invalid":
         try:
@@ -98,12 +109,17 @@ def check_case(case: str) -> None:
             "bad_schema": manifest("0.8.0", schema=2),
             "bad_package_url": manifest("0.8.0", linux_url="http://updates.example/app.tar.gz"),
             "oversize": b"x" * (update.MAX_MANIFEST_BYTES + 1),
+            "unsigned": manifest("0.8.0"),
+            "tampered": signed_manifest(manifest("0.8.0"), changed_payload=manifest("0.9.0")),
+            "wrong_key": signed_manifest(manifest("0.8.0"), alternate_key=True),
             "not_modified": b"",
             "http": manifest("0.8.0"),
         }[case]
+        if case not in {"oversize", "unsigned", "tampered", "wrong_key", "not_modified"}:
+            body = signed_manifest(body)
         opener = Opener(Response(body, status=304 if case == "not_modified" else 200, headers={"ETag": '"rev-1"'}))
         url = MANIFEST_URL if case != "http" else "http://updates.example/manifest.json"
-        result = update.check_for_update(url, current_version="0.7.0", platform=update.PLATFORM_LINUX, etag='"rev-1"' if case == "not_modified" else None, opener=opener)
+        result = update.check_for_update(url, current_version="0.7.0", platform=update.PLATFORM_LINUX, etag='"rev-1"' if case == "not_modified" else None, opener=opener, public_key=TEST_PUBLIC_KEY)
     emit(status=result.status.value, remote=result.remote_version or "", package_url=result.package.url if result.package else "", etag=result.etag or "", requests=len(opener.urls), sent_etag=opener.etags[0] or "" if opener.etags else "", detail=result.detail)
 
 
@@ -346,6 +362,15 @@ def qt_case(case: str, root: Path) -> None:
 
 
 def main() -> None:
+    if sys.argv[1] == "windows_plan":
+        live, staged = map(Path, sys.argv[2:4])
+        plan = update.prepare_restart_apply(
+            live, staged, platform=update.PLATFORM_WINDOWS, parent_pid=2_147_483_647
+        )
+        if not plan.ready or plan.script_path is None:
+            raise RuntimeError(plan.detail)
+        print(plan.script_path)
+        return
     operation, case = sys.argv[1:3]
     with tempfile.TemporaryDirectory(prefix="mover-rust-contract-") as directory:
         root = Path(directory)

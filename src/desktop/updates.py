@@ -1,5 +1,3 @@
-"""Background update checks for the installed desktop app."""
-
 from __future__ import annotations
 
 import os

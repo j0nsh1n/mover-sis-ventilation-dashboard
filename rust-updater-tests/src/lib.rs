@@ -78,6 +78,9 @@ mod tests {
             "bad_schema",
             "bad_package_url",
             "oversize",
+            "unsigned",
+            "tampered",
+            "wrong_key",
             "http",
         ] {
             let result = probe("check", case);

@@ -1,9 +1,3 @@
-"""Poll a public manifest and stage a verified onedir update.
-
-The engine does not read case data and does not contact any host other than
-the manifest and package URLs the caller passes in. With no URL it stays idle.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -25,6 +19,9 @@ from types import MappingProxyType
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_PACKAGE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_UNPACK_BYTES = MAX_PACKAGE_BYTES
@@ -44,7 +41,9 @@ USER_DATA_LINKS = (Path("data/raw/EMR"), Path("data/processed"))
 
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
+TRUSTED_UPDATE_PUBLIC_KEY_HEX = "d40830ff96bb10f84d9b4f55113a7961423a5011533382b89b37b0b46efd3e6d"
 
 
 class UpdateError(Exception):
@@ -214,6 +213,34 @@ def parse_manifest(raw: bytes) -> Manifest:
     return Manifest(version=version, packages=packages)
 
 
+def parse_signed_manifest(raw: bytes, *, public_key: bytes | None = None) -> Manifest:
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise UpdateError("manifest exceeds 64KiB")
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise UpdateError("malformed signed manifest") from exc
+    if not isinstance(envelope, dict) or set(envelope) != {"schema", "manifest", "signature"}:
+        raise UpdateError("malformed signed manifest")
+    if type(envelope["schema"]) is not int or envelope["schema"] != 2:
+        raise UpdateError("unsupported signed manifest schema")
+    payload = envelope["manifest"]
+    signature_hex = envelope["signature"]
+    if not isinstance(payload, str) or not isinstance(signature_hex, str):
+        raise UpdateError("malformed signed manifest")
+    if _SIGNATURE_RE.fullmatch(signature_hex) is None:
+        raise UpdateError("malformed manifest signature")
+    trusted = bytes.fromhex(TRUSTED_UPDATE_PUBLIC_KEY_HEX) if public_key is None else public_key
+    if not isinstance(trusted, bytes) or len(trusted) != 32:
+        raise UpdateError("invalid trusted update key")
+    payload_bytes = payload.encode("utf-8")
+    try:
+        Ed25519PublicKey.from_public_bytes(trusted).verify(bytes.fromhex(signature_hex), payload_bytes)
+    except (InvalidSignature, ValueError) as exc:
+        raise UpdateError("manifest signature is invalid") from exc
+    return parse_manifest(payload_bytes)
+
+
 def check_for_update(
     manifest_url: str | None,
     *,
@@ -222,6 +249,7 @@ def check_for_update(
     etag: str | None = None,
     timeout: float = MANIFEST_TIMEOUT_SECONDS,
     opener: urllib.request.OpenerDirector | None = None,
+    public_key: bytes | None = None,
 ) -> CheckResult:
     """Poll one manifest URL. No URL means the checker stays inactive."""
     current_text = current_version.strip()
@@ -287,9 +315,9 @@ def check_for_update(
     if len(raw) > MAX_MANIFEST_BYTES:
         return _error(current_text, "manifest exceeds 64KiB", new_etag)
     try:
-        manifest = parse_manifest(raw)
+        manifest = parse_signed_manifest(raw, public_key=public_key)
     except UpdateError as exc:
-        return _error(current_text, str(exc), new_etag)
+        return _error(current_text, str(exc), None)
     remote = manifest.version_text
     if manifest.version <= current:
         return CheckResult(
@@ -648,7 +676,6 @@ def _preserve_user_links(live: Path, staged_root: Path) -> None:
 
 
 def _assert_no_in_bundle_user_data(live: Path) -> None:
-    """Do not replace a bundle that also holds the user's research files."""
     data = live / "data"
     if data.is_symlink():
         raise UpdateError("bundle data link needs manual migration before updating")
