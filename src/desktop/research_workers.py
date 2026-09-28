@@ -54,7 +54,6 @@ class ResearchWorker(QThread):
             response = answer_from_retrieval(
                 question=self.question,
                 model=self.model,
-                session=self.session,
                 candidates=candidates,
                 extracts=extracts,
                 client=OllamaClient(timeout_s=300.0),

@@ -85,6 +85,8 @@ Wave root (optional) ──► wave_decode                   │
   (compute-now vs full corpus precompute).
 - **Research answer gate:** rewrite round on directive phrasing / wrong asserted age
   (live model drifts into “consider reducing TV”, wrong ages).
+- **Research isolation:** G disables legacy agent tools and uses a session limited
+  to retrieved PIDs, so prior Ask-tab selections cannot enter its prompt.
 - **Ollama local-only by default:** remote base URL needs explicit allow env.
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
@@ -111,11 +113,14 @@ Wave root (optional) ──► wave_decode                   │
 - **Branch:** `feat/case-retrieval-index` (local, not pushed)
 - **Done:** Version 0.7.0 now renders G as the selected evidence map and F as
   the signal studio while retaining the live metadata search and local AI.
+  G's AI input is limited to three retrieved extracts and cannot call legacy
+  corpus tools or inherit an active case from Ask.
   The 0.6.0 bundle remains archived for rollback.
 - **Verified:** Focused G/F interaction and startup tests passed; desktop
   screenshots at 1440×900 show the revised composition and all three signal
   tracks. Full pytest, CI coverage, thresholds, packaging, frozen-binary smoke,
   and installed desktop launch passed on 2026-09-28. Lint and type tools are
   not configured.
-- **Next:** Open and merge the authorized PR, then
+- **Next:** Rebuild and verify PR #13 after the research isolation fix, merge
+  the authorized PR, then
   review with real de-identified data and a running local model.

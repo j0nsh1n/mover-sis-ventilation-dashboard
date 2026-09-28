@@ -432,6 +432,7 @@ def run_agent(
     on_status: ProgressCb | None = None,
     skip_prefetch: bool = False,
     extra_prefetched: str = "",
+    allow_tools: bool = True,
 ) -> AgentResult:
     client = client or OllamaClient()
     mode = (mode or MODE_CHAT).lower()
@@ -440,6 +441,8 @@ def run_agent(
         temperature = 0.25 if mode == "analyze" else 0.12
 
     system = build_system_prompt(mode=mode, model=model)
+    if not allow_tools:
+        system += "\nTools are unavailable for this answer. Use only the supplied source extracts."
     n_cases = 0 if session.cases is None else len(session.cases)
 
     auto_traces: list[str] = []
@@ -493,7 +496,7 @@ def run_agent(
                 messages,
                 temperature=temperature,
                 stream=False,
-                tools=AI_TOOLS,
+                tools=AI_TOOLS if allow_tools else None,
             )
         except OllamaError:
             raise
@@ -501,10 +504,10 @@ def run_agent(
             raise OllamaError(str(e)) from e
 
         content = strip_think(result.content or "")
-        native = _normalize_native_calls(result.tool_calls)
+        native = _normalize_native_calls(result.tool_calls) if allow_tools else []
         recovered = (
             extract_tool_calls(content)
-            if not native and looks_like_tool_text(content)
+            if allow_tools and not native and looks_like_tool_text(content)
             else []
         )
         calls = native or [

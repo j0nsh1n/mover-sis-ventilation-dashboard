@@ -49,6 +49,9 @@ change, and `cases.parquet` gains a column.
 
 ### Fixed
 
+- Research answers can no longer run legacy case tools or inherit a prior Ask-tab
+  active case; the local model receives only the retrieved source extracts for
+  the current question, capped at three (2026-09-28).
 - Duration and slope rules counted rows, not minutes. Each case's timeseries now has one
   row per minute (gap minutes are empty), so windows like "PIP rising over 10 minutes"
   and "zero PEEP for 15 minutes" no longer stretch across gaps in the ventilator export.

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+import pandas as pd
+
 from src.llm.agent import AgentResult, ProgressCb, run_agent
 from src.llm.ollama_client import OllamaClient
 from src.llm.prompts import MODE_ANALYZE
@@ -33,7 +35,7 @@ def format_grounded_extracts(
         "Numeric rank scores are omitted. Cite the extract text only.",
         "Each block is labeled indexed surgery or analyzed case.",
     ]
-    n = min(len(candidates), len(extracts))
+    n = min(len(candidates), len(extracts), 3)
     for i in range(n):
         cand = candidates[i]
         lines.append(
@@ -49,7 +51,6 @@ def answer_from_retrieval(
     *,
     question: str,
     model: str,
-    session: SessionState,
     candidates: Sequence[SearchCandidate],
     extracts: Sequence[str],
     client: OllamaClient,
@@ -57,9 +58,13 @@ def answer_from_retrieval(
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
 ) -> AgentResult:
-    """Run the existing agent on source extracts only (skip sample-cache prefetch)."""
+    """Answer from at most three source extracts without corpus tools."""
     prefetched = format_grounded_extracts(
         candidates=candidates, extracts=extracts
+    )
+    cited = candidates[: min(len(candidates), len(extracts), 3)]
+    research_session = SessionState(
+        cases=pd.DataFrame({"PID": [candidate.pid for candidate in cited]})
     )
 
     def status(msg: str) -> None:
@@ -85,10 +90,11 @@ def answer_from_retrieval(
     return run_agent(
         model=model,
         question=question,
-        session=session,
+        session=research_session,
         client=client,
         mode=mode,
         on_status=status,
         skip_prefetch=True,
         extra_prefetched=prefetched,
+        allow_tools=False,
     )
