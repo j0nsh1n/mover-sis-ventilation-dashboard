@@ -50,7 +50,8 @@ change, and `cases.parquet` gains a column.
 ### Fixed
 
 - Release packaging uploads Linux and Windows downloads directly to a draft
-  GitHub Release, then publishes it after both builds complete (2026-09-28).
+  GitHub Release, then publishes it after both builds complete. Published
+  versions reject replacement runs (2026-09-28).
 - Research answers can no longer run legacy case tools or inherit a prior Ask-tab
   active case; the local model receives only the retrieved source extracts for
   the current question, capped at three (2026-09-28).
