@@ -430,6 +430,8 @@ def run_agent(
     max_rounds: int = MAX_TOOL_ROUNDS,
     temperature: float | None = None,
     on_status: ProgressCb | None = None,
+    skip_prefetch: bool = False,
+    extra_prefetched: str = "",
 ) -> AgentResult:
     client = client or OllamaClient()
     mode = (mode or MODE_CHAT).lower()
@@ -440,7 +442,11 @@ def run_agent(
     system = build_system_prompt(mode=mode, model=model)
     n_cases = 0 if session.cases is None else len(session.cases)
 
-    auto_traces = _heuristic_prefetch(question, session, mode=mode)
+    auto_traces: list[str] = []
+    if extra_prefetched.strip():
+        auto_traces.append(extra_prefetched.strip())
+    if not skip_prefetch:
+        auto_traces.extend(_heuristic_prefetch(question, session, mode=mode))
     for t in auto_traces:
         session.last_tool_trace.append(t)
 
