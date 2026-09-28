@@ -53,10 +53,11 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Profile report is **aggregate only**: no PIDs, timestamps or row-level values, and case
   counts below the small-cell threshold (default 11) are suppressed.
 - Optional Streamlit dashboard remains available for browser exploration of the same pipeline.
-- Frozen Linux and Windows desktop builds check for updates only when
-  `MOVER_UPDATE_MANIFEST_URL` names a public HTTPS manifest. Checks run in the
-  background at launch, when the app becomes active, and about once per minute.
-  Without the URL, the app makes no update requests.
+- Frozen Linux and Windows desktop builds check a signed manifest on GitHub
+  Pages by default. Checks run in the background at launch, when the app
+  becomes active, and about once per minute. Set
+  `MOVER_UPDATE_MANIFEST_URL` to an empty string to disable checks, or to
+  another signed HTTPS manifest URL. Source checkouts do not poll.
 - The app accepts only a schema 2 envelope signed with the pinned Ed25519
   public key. The signed payload names both platform packages and their sizes
   and SHA256 digests. A newer version may download and stage automatically
@@ -86,9 +87,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
   theme). Setup opens before the app loads data on first run or for an invalid EMR path.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
-- In an installed build with a configured update manifest, a verified update
-  appears as a **Restart to update** control. The published v0.7.0 build still
-  uses manual downloads.
+- A verified update appears as a **Restart to update** control. Builds older
+  than v0.9.0 need one manual update to enable the default manifest URL.
 
 ## Architecture
 
@@ -125,8 +125,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - `packaging/`, `scripts/build_executable.sh`, `scripts/install_local.sh`
 - External services:
   - **Ollama** (optional, local HTTP, default `http://127.0.0.1:11434`)
-  - **Public update host** (optional, static HTTPS manifest and packages;
-    no production host selected yet)
+  - **GitHub Pages** (small signed manifest) and **public GitHub Releases**
+    (versioned Linux and Windows packages) for installed app updates
   - No cloud LLM/email required for core product
 
 ## Security & Privacy
@@ -138,7 +138,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Update requests carry no case data, research data, telemetry, or machine ID.
   The updater verifies an Ed25519-signed manifest using a pinned public key,
   then checks package size and SHA256. Windows install and rollback run in CI.
-  A public host is required before enabling a default update URL for users.
+  The private signing key stays in the GitHub Actions secret
+  `MOVER_UPDATE_SIGNING_KEY_HEX`.
 - **Research / education only.** Not a medical device; not clinical decision support.
   Outputs discuss historical de-identified extracts; no live treatment orders.
 - Dependencies: pin new deps when added; prefer stdlib; current `requirements.txt` uses
@@ -205,8 +206,10 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - [ ] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`).
 - [ ] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0.
 - [ ] The Rust updater contract checks pass on Linux with Python 3.14 and Qt
-      available. With no configured manifest URL, update checks send no request.
+      available. An empty manifest URL disables requests in a frozen app.
 - [ ] The Rust signer checks pass and the Windows apply test passes in CI.
+- [ ] The public Pages manifest has a valid signature and names both
+      published packages with matching size and SHA256.
 - [ ] `VERSION` matches `src/__version__.py`.
 - [ ] `CHANGELOG.md` updated for user-visible changes.
 - [ ] CI runs on **Python 3.14**.

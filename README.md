@@ -1,6 +1,6 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-**Version 0.7.0**
+**Version 0.9.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine; OR dates largely **2015–2018**). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -125,17 +125,19 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Versioning & releases (v0.8.0)
+## Versioning and releases
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.8.0`, semver `x.y.z`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.9.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag / manual run): GitHub Actions workflow
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds Linux
   and Windows packages and publishes both in a GitHub Release (Python **3.14**).
-- [Desktop update contract](docs/UPDATES.md): the updater checks a signed
-  public manifest when `MOVER_UPDATE_MANIFEST_URL` is configured. The host is
-  not selected, so v0.8.0 ships with update checks inactive by default.
+- [Desktop updates](docs/UPDATES.md): the installed app checks a signed
+  manifest on GitHub Pages about once a minute and downloads verified packages
+  from public GitHub Releases. Install v0.9.0 manually once if you have v0.8.0
+  or an older build. Set `MOVER_UPDATE_MANIFEST_URL` to an empty string to
+  disable automatic checks.
 
 ### Local LLM (Ollama)
 
@@ -170,14 +172,14 @@ Or build only:
 
 ```bash
 ./scripts/build_executable.sh
-# → dist/MOVER-SIS-Monitor-v0.7.0-linux-x86_64.tar.gz
+# → dist/MOVER-SIS-Monitor-v0.9.0-linux-x86_64.tar.gz
 ```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
-| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.7.0` |
-| `dist/MOVER-SIS-Monitor-v0.7.0-linux-x86_64.tar.gz` | Portable archive |
+| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.9.0` |
+| `dist/MOVER-SIS-Monitor-v0.9.0-linux-x86_64.tar.gz` | Portable archive |
 | `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
 
 If the binary fails to start on a minimal install:

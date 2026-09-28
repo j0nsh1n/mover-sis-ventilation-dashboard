@@ -7,13 +7,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-28
+
+### Added
+
+- Frozen Linux and Windows builds check the signed GitHub Pages manifest by
+  default. An empty `MOVER_UPDATE_MANIFEST_URL` disables checks; another HTTPS
+  URL can override the default.
+- Releases publish signed manifests to GitHub Pages after Linux and Windows
+  packages are public. The release job checks asset metadata and public URLs
+  before publishing the stable manifest.
+- The source repository and release packages are public.
+
+## [0.8.0] — 2026-09-28
+
 ### Added
 
 - Desktop updater: with a configured public manifest URL, the installed app
   checks about once a minute, verifies an Ed25519-signed manifest, downloads
   and verifies a newer Linux or Windows package, and offers a restart to apply
-  it with a previous-version backup. Update checks remain off until a public
-  host is selected (2026-09-28).
+  it with a previous-version backup. Update checks stay off by default in
+  v0.8.0 (2026-09-28).
 - Rust release manifest signer and Windows install and rollback validation
   (2026-09-28).
 
