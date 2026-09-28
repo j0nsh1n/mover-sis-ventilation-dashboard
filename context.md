@@ -119,7 +119,8 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-28
-- **Branch:** local `feat/public-auto-updates`; no updater PR or release yet.
+- **Branch:** `feat/public-auto-updates`; updater PR #15 is open. No v0.8.0
+  release has been published.
 - **Done:** The v0.8.0 branch verifies signed manifests before using package
   metadata. A Rust CLI signs release manifests; a dedicated Ed25519 secret is
   in GitHub Actions. The release workflow can attach a signed manifest when a
