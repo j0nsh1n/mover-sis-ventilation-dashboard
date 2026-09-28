@@ -51,9 +51,14 @@ jobs:
         run: |
           tag="${{ steps.ver.outputs.tag }}"
           error_file="$RUNNER_TEMP/release-error.txt"
-          if state=$(gh release view "$tag" --json isDraft --jq .isDraft 2>"$error_file"); then
-            if [ "$state" != "true" ]; then
+          if state=$(gh release view "$tag" --json isDraft,targetCommitish --jq '[.isDraft, .targetCommitish] | @tsv' 2>"$error_file"); then
+            IFS=$'\t' read -r draft target <<< "$state"
+            if [ "$draft" != "true" ]; then
               echo "::error::Release $tag is already published. Bump VERSION to create another release."
+              exit 1
+            fi
+            if [ "$target" != "$GITHUB_SHA" ]; then
+              echo "::error::Draft $tag belongs to $target, not $GITHUB_SHA. Use a new version."
               exit 1
             fi
           elif ! grep -Fxq "release not found" "$error_file"; then
@@ -81,6 +86,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: MOVER SIS Monitor ${{ steps.ver.outputs.tag }}
           draft: true
           body: |
