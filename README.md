@@ -130,8 +130,12 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 - Source of truth: top-level [`VERSION`](VERSION) file (`0.7.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
-- **On merge to `main`** (or tag / manual run): GitHub Actions workflow  
-  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the Linux tarball and publishes a **GitHub Release** with the artifact (Python **3.14**)
+- **On merge to `main`** (or tag / manual run): GitHub Actions workflow
+  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds Linux
+  and Windows packages and publishes both in a GitHub Release (Python **3.14**).
+- [Desktop update contract](docs/UPDATES.md): the updater on this development
+  branch needs a public static manifest URL. The published v0.7.0 app still
+  uses manual downloads.
 
 ### Local LLM (Ollama)
 

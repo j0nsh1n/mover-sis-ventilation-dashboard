@@ -7,6 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Desktop update prototype: with a configured public manifest URL, the installed
+  app checks about once a minute, downloads and verifies a newer Linux or Windows
+  package, and offers a restart to apply it with a previous-version backup.
+  Production checks remain off until an update host is selected (2026-09-28).
+
 ## [0.7.0] — 2026-09-28
 
 Re-run the pipeline to rebuild existing processed caches: flags and scores

@@ -2,8 +2,9 @@
 
 The contract for public desktop updates of MOVER SIS Monitor: how the app
 checks for a new version, what the update host must provide, and how a
-release gets published. This is a plan for future work. The current release,
-v0.7.0, ships as a manual download and contains no update checker.
+release gets published. The checker is implemented on the local development
+branch. The current release, v0.7.0, ships as a manual download and contains
+no update checker.
 
 ## Current state
 
@@ -22,26 +23,27 @@ v0.7.0, ships as a manual download and contains no update checker.
 1. Update work never blocks the UI. Checks, downloads, and file work run in
    the background.
 2. The updater sends no research data and no case data anywhere. Its only
-   network requests are the manifest GET and, after the user accepts an
-   update, the package download. No telemetry, no machine identifiers.
+   network requests are the manifest GET and, for a newer version, the
+   package download. No telemetry, no machine identifiers.
 3. A download starts only when the manifest version is strictly newer than
    the running version (semver compare against `VERSION`). The updater never
    downgrades.
-4. An update applies only after the app exits or restarts. The live install
-   is never modified while the app runs.
+4. A verified package is staged automatically. The app offers a visible
+   restart control and applies the update only after it exits. The live
+   install is never modified while the app runs.
 
 ## Update check
 
 The app checks one small static manifest:
 
-- At launch, after the system resumes from sleep, and about once per minute
-  while the app is open (add jitter to the interval).
+- At launch, when the app becomes active again, and about once per minute
+  while the app is open.
 - The check is `GET <manifest-url>` with `If-None-Match` set to the cached
   ETag. A `304` response ends the check with no body. A `200` response
   carries the manifest.
-- Timeouts are short: 5 seconds to connect and 10 seconds for the whole
-  request. Any error or timeout is logged and the app waits for the next
-  scheduled check. Failures never show dialogs.
+- The manifest request has a 10-second timeout. Errors do not show dialogs;
+  the app waits for the next scheduled check. A failed package download is
+  retried after five minutes.
 - The manifest stays small (a few kilobytes), so the once-per-minute cadence
   costs at most one small request or one `304`.
 
@@ -52,18 +54,18 @@ values; `updates.example.com` is not a real host):
 
 ```json
 {
-  "schema_version": 1,
+  "schema": 1,
   "version": "0.8.0",
   "packages": {
     "linux-x86_64": {
       "url": "https://updates.example.com/mover-sis-monitor/v0.8.0/MOVER-SIS-Monitor-v0.8.0-linux-x86_64.tar.gz",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "size_bytes": 418381824
+      "size": 418381824
     },
     "windows-x86_64": {
       "url": "https://updates.example.com/mover-sis-monitor/v0.8.0/MOVER-SIS-Monitor-v0.8.0-windows-x86_64.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "size_bytes": 441450496
+      "size": 441450496
     }
   }
 }
@@ -71,14 +73,14 @@ values; `updates.example.com` is not a real host):
 
 Field rules:
 
-- `schema_version` is `1`. A client that sees an unknown value ignores the
+- `schema` is `1`. A client that sees an unknown value ignores the
   manifest.
 - `version` is the semver of the release the manifest points at.
 - Each key under `packages` is a platform: `linux-x86_64` or
   `windows-x86_64`.
 - `url` is the HTTPS package URL for that platform.
 - `sha256` is the lowercase hex digest of the package file.
-- `size_bytes` is the exact file size in bytes.
+- `size` is the exact file size in bytes.
 
 ### Publish order
 
@@ -94,19 +96,17 @@ version.
 
 ## Download, verify, stage, apply, rollback
 
-1. Download the package for the running platform into a staging directory
-   next to the live install (on Linux, under
-   `~/.local/share/mover-sis-monitor`). Resume partial downloads with range
-   requests when the host supports them; packages are 400 MB and up.
-2. Verify before use: the byte count must equal `size_bytes` and the SHA256
+1. Stream the package for the running platform to a temporary file outside
+   the live install. Packages are 400 MB and up.
+2. Verify before use: the byte count must equal `size` and the SHA256
    must equal `sha256`. A mismatch deletes the staged files and leaves the
    running version alone.
-3. Stage the verified archive unpacked in `staged-<version>`.
+3. Stage the verified archive in a sibling `<install>.staging` directory.
 4. Apply after the app exits or restarts: rename the live install to
-   `previous`, rename `staged-<version>` into place, then delete the staging
+   `<install>.backup`, rename `<install>.staging` into place, then delete the staging
    directory.
-5. Keep one previous version on disk until the new version has started once.
-   If the new install fails to start, restore `previous` (this extends
+5. Keep one previous version on disk. If the new install exits during its
+   startup check, restore the backup (this extends
    today's practice of keeping the 0.6.0 bundle for rollback).
 
 ## Host requirements
@@ -129,6 +129,6 @@ CORS is not required. The client is the desktop app, not a browser.
 ## Enabling updates
 
 There is no production manifest URL yet. The updater stays off and sends
-nothing until a host is selected and the manifest URL is configured in the
-app (setting or environment variable; chosen at implementation time). Until
+nothing until a host is selected and the manifest URL is configured through
+`MOVER_UPDATE_MANIFEST_URL` in the installed app's environment. Until
 then, users update by downloading the latest release the way they do today.
