@@ -361,6 +361,37 @@ def qt_case(case: str, root: Path) -> None:
         controller.close()
 
 
+def qt_config_case(case: str) -> None:
+    from PySide6.QtWidgets import QApplication
+    from src.desktop import updates
+
+    app = QApplication.instance() or QApplication([])
+    if case == "override":
+        os.environ["MOVER_UPDATE_MANIFEST_URL"] = MANIFEST_URL
+    elif case == "disabled":
+        os.environ["MOVER_UPDATE_MANIFEST_URL"] = ""
+    else:
+        os.environ.pop("MOVER_UPDATE_MANIFEST_URL", None)
+    updates.is_frozen = lambda: case != "unfrozen"
+    calls: list[str] = []
+
+    def fake_check(url: str, **_kwargs: object) -> update.CheckResult:
+        calls.append(url)
+        return update.CheckResult(update.UpdateStatus.NOT_NEWER, "0.9.0", "0.9.0", None, None, "checked")
+
+    updates.check_for_update = fake_check
+    controller = updates.UpdateController("0.9.0")
+    try:
+        controller.check()
+        deadline = time.monotonic() + 2
+        while controller.enabled and not calls and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        emit(enabled=controller.enabled, active=controller.timer.isActive(), calls=len(calls), url=calls[0] if calls else "")
+    finally:
+        controller.close()
+
+
 def main() -> None:
     if sys.argv[1] == "windows_plan":
         live, staged = map(Path, sys.argv[2:4])
@@ -382,6 +413,7 @@ def main() -> None:
             "stage": lambda: stage_case(case, root),
             "apply": lambda: apply_case(case, root),
             "qt": lambda: qt_case(case, root),
+            "qt_config": lambda: qt_config_case(case),
         }[operation]()
 
 

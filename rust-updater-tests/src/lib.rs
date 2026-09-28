@@ -209,6 +209,30 @@ mod tests {
     }
 
     #[test]
+    fn packaged_app_uses_public_manifest_with_override_and_disable() {
+        let default = probe("qt_config", "default");
+        assert_eq!(value(&default, "enabled"), "True");
+        assert_eq!(value(&default, "active"), "True");
+        assert_eq!(value(&default, "calls"), "1");
+        assert_eq!(
+            value(&default, "url"),
+            "https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json"
+        );
+        let override_url = probe("qt_config", "override");
+        assert_eq!(
+            value(&override_url, "url"),
+            "https://updates.example/manifest.json"
+        );
+        let disabled = probe("qt_config", "disabled");
+        assert_eq!(value(&disabled, "enabled"), "False");
+        assert_eq!(value(&disabled, "active"), "False");
+        assert_eq!(value(&disabled, "calls"), "0");
+        let unfrozen = probe("qt_config", "unfrozen");
+        assert_eq!(value(&unfrozen, "enabled"), "False");
+        assert_eq!(value(&unfrozen, "calls"), "0");
+    }
+
+    #[test]
     fn desktop_stages_once_and_retries_after_failed_download() {
         let staged = probe("qt", "stage_once");
         assert_eq!(value(&staged, "ready"), "1");

@@ -222,11 +222,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build signed update manifest when a public base URL is configured
-        if: ${{ vars.MOVER_UPDATE_BASE_URL != '' }}
+      - name: Build signed update manifest
         env:
           GH_TOKEN: ${{ github.token }}
-          MOVER_UPDATE_BASE_URL: ${{ vars.MOVER_UPDATE_BASE_URL }}
           MOVER_UPDATE_SIGNING_KEY_HEX: ${{ secrets.MOVER_UPDATE_SIGNING_KEY_HEX }}
         run: |
           set -euo pipefail
@@ -252,8 +250,24 @@ jobs:
             sign --version "$version" \
             --linux "$packages/MOVER-SIS-Monitor-v$version-linux-x86_64.tar.gz" \
             --windows "$packages/MOVER-SIS-Monitor-v$version-windows-x86_64.zip" \
-            --base-url "$MOVER_UPDATE_BASE_URL" \
+            --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag" \
             --out "$RUNNER_TEMP/update-manifest.json"
+          jq -r '.manifest | fromjson' "$RUNNER_TEMP/update-manifest.json" \
+            > "$RUNNER_TEMP/update-payload.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+            | jq -e --slurpfile payload "$RUNNER_TEMP/update-payload.json" '
+                .assets as $assets |
+                $payload[0].packages | to_entries |
+                all(.[];
+                  .value as $package |
+                  ($package.url | split("/") | last) as $name |
+                  any($assets[];
+                    .name == $name and
+                    .state == "uploaded" and
+                    .size == $package.size and
+                    .digest == ("sha256:" + $package.sha256) and
+                    .browser_download_url == $package.url))
+              '
           gh release upload "$tag" "$RUNNER_TEMP/update-manifest.json" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
@@ -263,3 +277,48 @@ jobs:
         run: |
           gh release edit "v${{ needs.build-windows.outputs.version }}" \
             --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+      - name: Check public package downloads
+        run: |
+          set -euo pipefail
+          jq -r '.packages[].url' "$RUNNER_TEMP/update-payload.json" |
+            while IFS= read -r url; do
+              curl --fail --head --location --silent --show-error \
+                --max-time 30 --retry 5 --retry-delay 5 --retry-all-errors \
+                "$url" > /dev/null
+            done
+
+      - name: Prepare Pages manifest
+        run: |
+          mkdir -p "$RUNNER_TEMP/update-site/updates"
+          cp "$RUNNER_TEMP/update-manifest.json" "$RUNNER_TEMP/update-site/updates/latest.json"
+          cat > "$RUNNER_TEMP/update-site/index.html" <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <meta charset="utf-8">
+          <title>MOVER SIS Monitor updates</title>
+          <h1>MOVER SIS Monitor</h1>
+          <p><a href="https://github.com/j0nsh1n/mover-sis-ventilation-dashboard/releases">Download releases</a></p>
+          <p><a href="updates/latest.json">Signed update manifest</a></p>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/update-site
+
+  deploy-updates:
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy signed manifest to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
