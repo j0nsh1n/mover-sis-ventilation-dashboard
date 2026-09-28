@@ -31,3 +31,6 @@ data/sample/
 
 # Synthetic SIS output (python -m src.pipeline.synthetic)
 data/synthetic/
+
+# Local multi-model handoff notes (not part of the repo)
+.handoff/
