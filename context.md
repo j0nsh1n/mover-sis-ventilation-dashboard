@@ -10,15 +10,15 @@
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
-- **Design draft:** `docs/MONITORING_CONCEPTS.md` and its interactive HTML prototype
-  compare five layouts, a pre-workspace setup modal, and an AI-first, bounded
-  retrieval plan. The current preferred draft opens in D for an AI brief,
-  drills into A for detailed case inspection, and offers E for optional cohort
-  discovery. C and B remain comparison drafts. The article search design draws
-  from sibling `HealthDatabaseAccess` (LitSieve). No product code changed.
-- **Further exploration:** `docs/prototypes/monitoring-radical-concepts.html`
-  compares F's signal studio, G's evidence canvas, and H's review deck. All use
-  the same three fictional records, with explicit scripted AI and source tables.
+- **Design draft:** `docs/MONITORING_CONCEPTS.md` documents the selected G evidence
+  workspace with F as a signal detail view, setup-first entry, and bounded AI
+  retrieval. The article search design draws from sibling `HealthDatabaseAccess`
+  (LitSieve). No product code changed.
+- **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
+  starts in G, opens F from an observation or comparison at its cited minute,
+  and returns with the question and comparison intact. H remains an alternate
+  study. The older A–E drafts remain in `monitoring-concepts.html`. All use
+  fictional records and scripted AI.
 - **Known gaps:**
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
@@ -100,14 +100,16 @@ Wave root (optional) ──► wave_decode  │
 
 - **Date:** 2026-09-27
 - **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Added three distinct interactive studies. F supports time scrubbing,
-  signal comparison, and scripted AI jumps. G traces observations to source
-  records. H supports review decisions and a saved shortlist. The older drafts
-  link to the new studies; production behavior did not change.
-- **Verified:** Desktop and 375 px checks exercised peak and missing-sample
-  queries, source rows, comparison expansion, and shortlist persistence when
-  changing a query. No horizontal overflow or browser console errors observed.
-  Full pytest, packaging, JavaScript syntax, threshold smoke, and diff checks
-  passed on 2026-09-27. No lint or type toolchain is configured.
-- **Next:** compare F with A for signal inspection and H with D for case review;
-  assess G for evidence tracing before choosing a product layout.
+- **Done:** Selected G as the main prototype flow and connected its observation
+  and comparison cards to F at the cited case and minute. F has a return path
+  to the same G question and comparison. Updated the build plan; desktop product
+  behavior did not change.
+- **Verified:** Desktop browser exercised G peak → F at +60 min → source row → G,
+  and G missing-data comparison → F for SYN-108 at +40 min → G. The G question
+  and comparison persisted. At 375 px, G had no horizontal overflow; a mobile
+  text-spacing issue was fixed. Full pytest, packaging, threshold smoke,
+  JavaScript syntax, and diff checks passed on 2026-09-27. Lint and type tools
+  are not configured.
+- **Next:** Researcher review of G → F on real de-identified data, then select
+  evidence-card limits and approve the `spec.md` contract change before desktop
+  implementation.

@@ -38,11 +38,22 @@ function sparkline(record, signal = signals[0], color = '#9b5839') {
   return `<svg viewBox="0 0 360 90" preserveAspectRatio="none" role="img" aria-label="Fictional ${signal.label} trend for ${record.id}. Exact values are available in the source table."><path d="M0 75H360" stroke="currentColor" opacity=".15"/>${paths.map(points => `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.8" stroke-linejoin="round"/>`).join('')}</svg>`;
 }
 
-function showStudy(id) {
+function showStudy(id, fromCanvas = false) {
   $$('.study').forEach(section => { section.hidden = section.id !== id; });
   $$('[data-study]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.study === id)));
+  if (id === 'studio') $('#studio-return-wrap').hidden = !fromCanvas;
   history.replaceState(null, '', `#${id}`);
   window.scrollTo(0, 0);
+}
+
+function openStudioFromCanvas(record, index) {
+  studio.record = record;
+  studio.index = index;
+  studio.compare = false;
+  renderStudio();
+  $('#studio-context').textContent = `${record.id} · ${canvas.mode === 'peak' ? 'peak pressure' : 'missing ETCO₂'} · ${minuteLabel(index)}`;
+  $('#studio-answer').textContent = `Opened ${record.id} at ${minuteLabel(index)} from the evidence workspace. Inspect the surrounding samples and open the source table to verify the observation.`;
+  showStudy('studio', true);
 }
 
 function renderStudio() {
@@ -93,7 +104,7 @@ function renderCanvas() {
   const index = isPeak ? peakIndex(record) : missingSamples(record)[0].index;
   const signal = isPeak ? signals[0] : signals[1];
   $('#canvas-finding-title').textContent = isPeak ? `${record.pip[index]} cmH₂O at ${minuteLabel(index)}` : `ETCO₂ is missing at ${minuteLabel(index)}`;
-  $('#canvas-finding-copy').textContent = isPeak ? 'This is the largest PIP value in the 13 displayed samples. Open the table to check the values before and after it.' : 'Twelve of thirteen ETCO₂ values are present. The plotted line stops at the gap; the missing value is not replaced with zero.';
+  $('#canvas-finding-copy').textContent = isPeak ? 'This is the largest PIP value in the 13 displayed samples. Open the signal detail to inspect the values before and after it.' : 'Twelve of thirteen ETCO₂ values are present. The plotted line stops at the gap; the missing value is not replaced with zero.';
   $('#canvas-spark').innerHTML = sparkline(record, signal);
   $('#canvas-source-signal').textContent = `${signal.label} · ${signal.unit}`;
   $('#canvas-source-coverage').textContent = `${record[signal.key].filter(value => value !== null).length} of 13 samples`;
@@ -177,6 +188,7 @@ $('#studio-scrub').addEventListener('input', event => {
 });
 $('#studio-compare').addEventListener('click', () => { studio.compare = !studio.compare; renderStudio(); });
 $('#studio-source').addEventListener('click', () => openSource(studio.record, studio.index));
+$('#studio-return').addEventListener('click', () => { showStudy('canvas'); $('#canvas-status').textContent = `Returned from ${studio.record.id} at ${minuteLabel(studio.index)}. Your question and comparison are still here.`; });
 $('#studio-form').addEventListener('submit', event => {
   event.preventDefault();
   const mode = promptMode($('#studio-question').value);
@@ -195,8 +207,9 @@ function toggleComparison() { canvas.comparison = !canvas.comparison; renderCanv
 $('#canvas-expand').addEventListener('click', toggleComparison);
 $('#canvas-add').addEventListener('click', toggleComparison);
 $('#canvas-reset').addEventListener('click', () => { canvas.mode = 'peak'; canvas.comparison = false; $('#canvas-question').value = 'Where does pressure peak?'; renderCanvas(); $('#canvas-status').textContent = 'Canvas reset to the peak-pressure example.'; });
-$('#canvas-open-finding').addEventListener('click', () => openSource(records[0], canvas.mode === 'peak' ? peakIndex(records[0]) : missingSamples(records[0])[0].index));
+$('#canvas-open-finding').addEventListener('click', () => openStudioFromCanvas(records[0], canvas.mode === 'peak' ? peakIndex(records[0]) : missingSamples(records[0])[0].index));
 $('#canvas-source').addEventListener('click', () => openSource(records[0]));
+$('#canvas-compare-studio').addEventListener('click', () => openStudioFromCanvas(records[1], canvas.mode === 'peak' ? peakIndex(records[1]) : missingSamples(records[1])[0].index));
 $('#canvas-compare-source').addEventListener('click', () => openSource(records[1], canvas.mode === 'peak' ? peakIndex(records[1]) : missingSamples(records[1])[0].index));
 $('#deck-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -221,5 +234,5 @@ studioAnswer('peak');
 renderCanvas();
 renderDeck();
 const requestedStudy = location.hash.slice(1);
-showStudy(['studio', 'canvas', 'deck'].includes(requestedStudy) ? requestedStudy : 'studio');
+showStudy(['studio', 'canvas', 'deck'].includes(requestedStudy) ? requestedStudy : 'canvas');
 $('#setup-dialog').showModal();

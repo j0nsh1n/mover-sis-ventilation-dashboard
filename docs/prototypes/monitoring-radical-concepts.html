@@ -11,18 +11,19 @@
   <nav class="draft-nav" aria-label="Interface studies">
     <a class="wordmark" href="monitoring-concepts.html">MOVER<span>DESIGN LAB</span></a>
     <div class="draft-tabs">
-      <button data-study="studio" aria-pressed="true"><b>F</b> Signal studio</button>
-      <button data-study="canvas" aria-pressed="false"><b>G</b> Evidence canvas</button>
-      <button data-study="deck" aria-pressed="false"><b>H</b> Review deck</button>
+      <button data-study="canvas" aria-pressed="true"><b>G</b> Evidence workspace</button>
+      <button data-study="studio" aria-pressed="false"><b>F</b> Signal detail</button>
+      <button data-study="deck" aria-pressed="false"><b>H</b> Alternate study</button>
     </div>
     <a class="archive-link" href="monitoring-concepts.html">Compare A–E ↗</a>
   </nav>
   <div class="demo-strip"><span><i></i> Interactive design study</span><span>Fictional measurements · Scripted AI · Nothing is connected</span><button type="button" id="setup-open">Preview setup</button></div>
 
   <main>
-    <section id="studio" class="study studio" aria-labelledby="studio-heading">
+    <section id="studio" class="study studio" aria-labelledby="studio-heading" hidden>
+      <div class="studio-return" id="studio-return-wrap" hidden><button id="studio-return" type="button">← Back to evidence workspace</button><span id="studio-context"></span></div>
       <header class="studio-header">
-        <div><p class="kicker">F / TIME IS THE WORKSPACE</p><h1 id="studio-heading">Go straight to the moment.</h1><p class="subcopy">Ask AI to locate a pattern. Scrub the case. Inspect the exact sample.</p></div>
+        <div><p class="kicker">F / SIGNAL DETAIL</p><h1 id="studio-heading">Go straight to the moment.</h1><p class="subcopy">Inspect the observation from G. Scrub the case and check its exact sample.</p></div>
         <div class="time-stamp"><span>SELECTED MOMENT</span><strong><output id="studio-minute">60</output><small>min</small></strong><span>relative to incision</span></div>
       </header>
       <div class="studio-toolbar"><div class="case-tabs" id="studio-cases" aria-label="Select a fictional case"></div><button class="outline" id="studio-compare" aria-pressed="false">+ Compare knee case</button></div>
@@ -36,19 +37,19 @@
         <div class="studio-answer"><span class="kicker">AI FOCUS / SCRIPTED DEMO</span><p id="studio-answer" role="status"></p><div class="quick-actions"><button data-studio-action="peak">Find peak pressure ↗</button><button data-studio-action="missing">Check missing samples ↗</button><button id="studio-source">Inspect selected sample ↗</button></div></div>
         <form id="studio-form" class="compact-form"><label for="studio-question">Ask about this timeline</label><div><input id="studio-question" placeholder="Try: peak pressure" required><button type="submit" aria-label="Ask about the timeline">↗</button></div></form>
       </div>
-      <footer class="study-caption"><b>The shift from A</b><span>The timeline takes the entire stage. AI changes your focus in time; source details open only when needed.</span></footer>
+      <footer class="study-caption"><b>Part of G</b><span>The evidence workspace opens this full timeline at the cited sample. Return to the same question and comparison when finished.</span></footer>
     </section>
 
-    <section id="canvas" class="study canvas" aria-labelledby="canvas-heading" hidden>
-      <header class="canvas-header"><div><p class="kicker">G / MAKE THE EVIDENCE VISIBLE</p><h1 id="canvas-heading">An answer you can take apart.</h1></div><div class="canvas-controls"><button class="outline" id="canvas-expand" aria-pressed="false">+ Add a comparison</button><button class="outline" id="canvas-reset">Reset canvas</button></div></header>
+    <section id="canvas" class="study canvas" aria-labelledby="canvas-heading">
+      <header class="canvas-header"><div><p class="kicker">G / PRIMARY RESEARCH WORKSPACE</p><h1 id="canvas-heading">An answer you can take apart.</h1></div><div class="canvas-controls"><button class="outline" id="canvas-expand" aria-pressed="false">+ Add a comparison</button><button class="outline" id="canvas-reset">Reset canvas</button></div></header>
       <div class="canvas-workspace">
         <div class="canvas-meta"><span><i></i> EVIDENCE CONNECTIONS</span><span>Links show source relationships. They do not imply causation.</span></div>
         <div class="evidence-map">
           <svg class="connectors" viewBox="0 0 1100 500" preserveAspectRatio="none" aria-hidden="true"><path d="M275 232 C340 232 315 126 380 126 M680 126 L770 126 M536 218 L536 300 M680 374 L770 374"/></svg>
-          <article class="node question-node"><span class="node-id">01 / YOUR QUESTION</span><h2>Start with what<br>you want to know.</h2><form id="canvas-form"><label for="canvas-question">Research question</label><textarea id="canvas-question" required>Where does pressure peak?</textarea><button class="solid" type="submit">Trace the evidence ↗</button></form><small>Try “peak pressure” or “missing data”.</small></article>
-          <article class="node finding-node"><span class="node-id">02 / OBSERVATION</span><div class="node-title"><h2 id="canvas-finding-title"></h2><span class="node-dot" aria-hidden="true"></span></div><p id="canvas-finding-copy"></p><div class="mini-chart" id="canvas-spark"></div><button class="text-action" id="canvas-open-finding">Inspect this observation ↗</button></article>
+          <article class="node question-node"><span class="node-id">01 / YOUR QUESTION</span><h2>Start with what you want to know.</h2><form id="canvas-form"><label for="canvas-question">Research question</label><textarea id="canvas-question" required>Where does pressure peak?</textarea><button class="solid" type="submit">Trace the evidence ↗</button></form><small>Try “peak pressure” or “missing data”.</small></article>
+          <article class="node finding-node"><span class="node-id">02 / OBSERVATION</span><div class="node-title"><h2 id="canvas-finding-title"></h2><span class="node-dot" aria-hidden="true"></span></div><p id="canvas-finding-copy"></p><div class="mini-chart" id="canvas-spark"></div><button class="text-action" id="canvas-open-finding">Explore this signal in F ↗</button></article>
           <article class="node source-node"><span class="node-id">03 / ORIGINAL SAMPLES</span><h2>SYN-041</h2><p>Laparoscopic case<br>13 fictional time samples</p><div class="source-lines"><span>Recorded signal</span><b id="canvas-source-signal">PIP · cmH₂O</b><span>Evidence coverage</span><b id="canvas-source-coverage">13 of 13 samples</b></div><button class="text-action" id="canvas-source">Open source table ↗</button></article>
-          <article class="node compare-node" id="canvas-comparison" hidden><span class="node-id">04 / COMPARE ANOTHER CASE</span><h2 id="canvas-compare-title"></h2><p id="canvas-compare-copy"></p><button class="text-action" id="canvas-compare-source">Check comparison source ↗</button></article>
+          <article class="node compare-node" id="canvas-comparison" hidden><span class="node-id">04 / COMPARE ANOTHER CASE</span><h2 id="canvas-compare-title"></h2><p id="canvas-compare-copy"></p><button class="text-action" id="canvas-compare-studio">Explore this signal in F ↗</button><button class="text-action" id="canvas-compare-source">Check comparison source ↗</button></article>
           <div class="add-node" id="canvas-add-hint"><span aria-hidden="true">+</span><p>Ask AI to add a second case<br>to the evidence trail.</p><button id="canvas-add">Add a comparison</button></div>
           <article class="node limit-node"><span class="node-id">WHAT THIS DOESN'T ESTABLISH</span><h2>An observation has limits.</h2><p id="canvas-limit">These samples describe a pressure pattern. They do not explain its cause or establish what a clinician should do.</p><span class="limit-tag">Keep the uncertainty attached</span></article>
         </div>

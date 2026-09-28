@@ -58,6 +58,11 @@ change, and `cases.parquet` gains a column.
 
 ### Changed
 
+- Selected G as the starting evidence workspace in the interactive prototype.
+  Its observation and comparison cards now open F's signal detail at the cited
+  sample, with a return path that preserves the question and comparison
+  (2026-09-27).
+
 - Connected the preferred D research notebook and A case workbench into a
   question-preserving inspection flow, with E available for cohort discovery
   in the interactive draft (2026-09-27).
