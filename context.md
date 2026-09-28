@@ -6,15 +6,17 @@
   installed, with the 0.6.0 bundle retained for rollback.
 - **Branch:** `feat/case-retrieval-index` (local implementation branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-27),
-  desktop and frozen-binary tests included. Real wave tree unavailable.
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` and CI's
+  coverage run — green (245 passed, 2026-09-28). Frozen-binary smoke passed.
+  Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
   retrieval indexes one short metadata record per surgery and gives up to three
   case extracts to the local AI. Keyword search remains available when the
-  embedding model is absent. F opens a case signal and its source rows.
+  embedding model is absent. The desktop G uses the evidence map layout;
+  F opens all three case signal tracks and their source rows in a dark studio.
 - **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
   design and a future article-search proposal based on `HealthDatabaseAccess`.
 - **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
@@ -105,15 +107,15 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-09-27
+- **Date:** 2026-09-28
 - **Branch:** `feat/case-retrieval-index` (local, not pushed)
-- **Done:** Grok's metadata retrieval and embedding cache are integrated with
-  first-run setup, G question and answer view, and F source signal detail.
-  `spec.md`, the README, and the design draft describe the implemented behavior.
-  Version 0.7.0 was built and installed locally; 0.6.0 remains archived.
-- **Verified:** Synthetic EMR keyword search opened a case in F; focused G/F
-  interaction and startup tests passed. Full pytest, frozen-binary smoke,
-  installed-launcher smoke, and threshold checks passed on 2026-09-27.
-  Lint and type tools are not configured.
-- **Next:** Review the desktop flow with real de-identified data and a running
-  local model; decide article corpus ownership.
+- **Done:** Version 0.7.0 now renders G as the selected evidence map and F as
+  the signal studio while retaining the live metadata search and local AI.
+  The 0.6.0 bundle remains archived for rollback.
+- **Verified:** Focused G/F interaction and startup tests passed; desktop
+  screenshots at 1440×900 show the revised composition and all three signal
+  tracks. Full pytest, CI coverage, thresholds, packaging, frozen-binary smoke,
+  and installed desktop launch passed on 2026-09-28. Lint and type tools are
+  not configured.
+- **Next:** Open and merge the authorized PR, then
+  review with real de-identified data and a running local model.

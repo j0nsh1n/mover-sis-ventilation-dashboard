@@ -79,6 +79,11 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     assert view.stack.currentIndex() == 0
     assert view.question_edit.text() == "Where is peak pressure?"
     assert "caseB" in view.comparison_label.text()
+    view.reset_button.click()
+    assert view.question_edit.text() == ""
+    assert view.candidate_table.rowCount() == 0
+    assert not view.comparison_card.isVisible()
+    assert view.answer_text.toPlainText() == ""
     view.close()
 
 

@@ -337,8 +337,11 @@ class MainWindow(QMainWindow):
     # ----- layout -----
     def _build_ui(self) -> None:
         central = QWidget()
+        central.setObjectName("mainCentral")
+        self.main_central = central
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
+        self.outer_layout = outer
         outer.setContentsMargins(16, 14, 16, 10)
         outer.setSpacing(14)
 
@@ -367,7 +370,9 @@ class MainWindow(QMainWindow):
         metrics.addWidget(_metric_card("With flags", self.metric_flags))
         metrics.addWidget(_metric_card("Max score", self.metric_score))
         header.addLayout(metrics)
-        outer.addLayout(header)
+        self.header_widget = QWidget()
+        self.header_widget.setLayout(header)
+        outer.addWidget(self.header_widget)
 
         body = QHBoxLayout()
         body.setSpacing(14)
@@ -633,6 +638,7 @@ class MainWindow(QMainWindow):
         body.addWidget(self.tabs, stretch=1)
         outer.addLayout(body, stretch=1)
         self.side_panel.hide()
+        self._on_tab_changed(0)
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -907,6 +913,21 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, _index: int) -> None:
         self.side_panel.setVisible(_index != 0)
+        self.header_widget.setVisible(_index != 0)
+        if _index == 0:
+            self.outer_layout.setContentsMargins(0, 0, 0, 0)
+            self.outer_layout.setSpacing(0)
+            self.main_central.setStyleSheet("""
+                QWidget#mainCentral { background: #ebe9e3; }
+                QTabWidget::pane { border: 0; }
+                QTabBar::tab { background: #f8f7f3; color: #645b65; border: 0;
+                    border-right: 1px solid #d5d0d4; padding: 11px 20px; min-height: 22px; }
+                QTabBar::tab:selected { background: #332941; color: #fff9f4; }
+            """)
+        else:
+            self.outer_layout.setContentsMargins(16, 14, 16, 10)
+            self.outer_layout.setSpacing(14)
+            self.main_central.setStyleSheet("")
         self._refresh_charts_if_needed()
 
     def _set_active_pid(self, pid: str | None) -> None:

@@ -117,4 +117,3 @@ def test_embedder_construction_refuses_remote(monkeypatch):
     monkeypatch.delenv("MOVER_ALLOW_REMOTE_OLLAMA", raising=False)
     with pytest.raises(OllamaError):
         OllamaEmbedder("nomic-embed-text", client=OllamaClient(base_url="http://10.0.0.2:11434"))
-

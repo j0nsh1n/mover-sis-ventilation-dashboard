@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.7.0] — 2026-09-27
+## [0.7.0] — 2026-09-28
 
 Re-run the pipeline to rebuild existing processed caches: flags and scores
 change, and `cases.parquet` gains a column.
@@ -68,6 +68,10 @@ change, and `cases.parquet` gains a column.
 
 ### Changed
 
+- The installed desktop now presents G as the warm evidence map and F as a
+  dedicated dark signal studio. The research tab keeps the AI question,
+  observation, source, comparison, and limits visible as distinct regions;
+  F shows all three signal tracks together (2026-09-28).
 - Selected G as the starting evidence workspace in the interactive prototype.
   Its observation and comparison cards now open F's signal detail at the cited
   sample, with a return path that preserves the question and comparison
