@@ -3,17 +3,19 @@
 ## Current State
 
 - **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
-- **Branch:** `docs/monitoring-concepts` (local draft branch).
+- **Branch:** `feat/case-retrieval-index` (local implementation branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-27),
   desktop tests included. Skips: frozen binary, real wave tree.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
-- **Design draft:** `docs/MONITORING_CONCEPTS.md` documents the selected G evidence
-  workspace with F as a signal detail view, setup-first entry, and bounded AI
-  retrieval. The article search design draws from sibling `HealthDatabaseAccess`
-  (LitSieve). No product code changed.
+- **Desktop implementation:** G is the first tab after setup; local embedding
+  retrieval indexes one short metadata record per surgery and gives up to three
+  case extracts to the local AI. Keyword search remains available when the
+  embedding model is absent. F opens a case signal and its source rows.
+- **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
+  design and a future article-search proposal based on `HealthDatabaseAccess`.
 - **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
   starts in G, opens F from an observation or comparison at its cited minute,
   and returns with the question and comparison intact. H remains an alternate
@@ -36,12 +38,13 @@
 
 | Path | Role |
 |------|------|
-| `src/desktop/` | PySide6 app (Ask first), theme, charts, settings |
+| `src/desktop/` | PySide6 app (G research first), F signals, theme, settings |
 | `src/llm/` | Ollama tools, agent loop, prompts, start/stop/unload |
 | `src/pipeline/` | load → clean → merge → features → flags → run |
 | `src/pipeline/synthetic.py` | Fictional SIS EMR generator + `synthetic_truth.json` |
 | `src/pipeline/profile.py` | Aggregate-only profile / threshold calibration report |
 | `src/services/case_fetch.py` | On-demand EMR shortlist + flag shortlist |
+| `src/services/retrieval.py` | Surgery metadata search + SQLite embedding cache |
 | `src/wave_decode.py` | Waveform decode (Bernoulli/GE S5) |
 | `src/guardrails/` | Config / data / IO validation |
 | `src/config/thresholds.yaml` | Flag rule presets |
@@ -59,19 +62,22 @@
 - **Processed** — parquet: `cases`, `timeseries`, `flags`, `episodes` (+ meta).
 - **Flags** — derived rule screens from thresholds (not stored as source-of-truth in EMR).
 - **Session (LLM)** — `active_pid`, `focus_pids`, tool traces; answers grounded in tools/briefings.
-- **Settings** — paths, theme, `ollama_models_dir` / preferred model under XDG config.
+- **Settings** — paths, theme, chat and embedding model choices under XDG config.
+- **Retrieval cache** — SQLite vectors keyed by source-text hash and embedding model;
+  vectors rank candidates, then bounded source extracts ground the AI answer.
 
 ```
-EMR CSVs ──► pipeline / case_fetch ──► processed parquet
-                                      │
-Wave root (optional) ──► wave_decode  │
-                                      ▼
-                              desktop + LLM tools ──► local Ollama (loopback)
+EMR CSVs ──► metadata index ──► embedding cache ──► retrieved cases
+        └──► pipeline / case_fetch ──► processed parquet / source extracts
+Wave root (optional) ──► wave_decode                   │
+                                                       ▼
+                                          desktop G / F + local Ollama
 ```
 
 ## Non-Obvious Decisions
 
-- **LLM-first UI:** pipeline/filters not on main sidebar; co-pilot + Settings/Setup.
+- **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
+  and Rule reference remain available as secondary tabs.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
   (compute-now vs full corpus precompute).
 - **Research answer gate:** rewrite round on directive phrasing / wrong asserted age
@@ -99,17 +105,11 @@ Wave root (optional) ──► wave_decode  │
 ## Session Handoff
 
 - **Date:** 2026-09-27
-- **Branch:** `docs/monitoring-concepts` (local, not pushed)
-- **Done:** Selected G as the main prototype flow and connected its observation
-  and comparison cards to F at the cited case and minute. F has a return path
-  to the same G question and comparison. Updated the build plan; desktop product
-  behavior did not change.
-- **Verified:** Desktop browser exercised G peak → F at +60 min → source row → G,
-  and G missing-data comparison → F for SYN-108 at +40 min → G. The G question
-  and comparison persisted. At 375 px, G had no horizontal overflow; a mobile
-  text-spacing issue was fixed. Full pytest, packaging, threshold smoke,
-  JavaScript syntax, and diff checks passed on 2026-09-27. Lint and type tools
-  are not configured.
-- **Next:** Researcher review of G → F on real de-identified data, then select
-  evidence-card limits and approve the `spec.md` contract change before desktop
-  implementation.
+- **Branch:** `feat/case-retrieval-index` (local, not pushed)
+- **Done:** Grok's metadata retrieval and embedding cache are integrated with
+  first-run setup, G question and answer view, and F source signal detail.
+- **Verified:** Synthetic EMR keyword search opened a case in F; focused G/F
+  interaction and startup tests passed. Full pytest and packaging checks passed
+  on 2026-09-27. Lint and type tools are not configured.
+- **Next:** Review the desktop flow with real de-identified data and a running
+  local model; decide article corpus ownership and update `spec.md` if approved.

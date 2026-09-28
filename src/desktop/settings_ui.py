@@ -32,6 +32,7 @@ from src.runtime_paths import (
     processed_dir,
     wave_dir,
 )
+from src.guardrails.validate_io import validate_emr_dir
 from src.user_settings import (
     THEME_CHOICES,
     THEME_DARK,
@@ -81,7 +82,9 @@ class PathsForm(QWidget):
         self.edit_wave = QLineEdit()
         self.edit_wave.setPlaceholderText("Optional: Waveforms/ or sis_wave*.tar.gz")
         self.edit_wave.setClearButtonEnabled(True)
-        dl.addLayout(self._row("Wave folder", self.edit_wave, self._browse_wave))
+        wave_row = self._row("Wave folder", self.edit_wave, self._browse_wave)
+        if not compact:
+            dl.addLayout(wave_row)
 
         self.edit_processed = QLineEdit()
         self.edit_processed.setPlaceholderText("Parquet cache (often next to EMR)")
@@ -90,6 +93,10 @@ class PathsForm(QWidget):
             self._row("Processed folder", self.edit_processed, self._browse_processed)
         )
         root.addWidget(data_box)
+        if compact:
+            advanced = QGroupBox("Advanced · optional wave data")
+            QVBoxLayout(advanced).addLayout(wave_row)
+            root.addWidget(advanced)
 
         # --- LLM ---
         llm_box = QGroupBox("Local LLM (Ollama)")
@@ -122,6 +129,12 @@ class PathsForm(QWidget):
         self.combo_default_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         form.addRow("Preferred model", self.combo_default_model)
         ll.addLayout(form)
+        self.edit_embed_model = QLineEdit()
+        self.edit_embed_model.setPlaceholderText("nomic-embed-text")
+        form.addRow("Embedding model", self.edit_embed_model)
+        self.lbl_embed_ready = QLabel()
+        self.lbl_embed_ready.setWordWrap(True)
+        ll.addWidget(self.lbl_embed_ready)
         root.addWidget(llm_box)
 
         # --- Appearance ---
@@ -197,6 +210,8 @@ class PathsForm(QWidget):
         self.combo_theme.setCurrentIndex(idx if idx >= 0 else self.combo_theme.findData(THEME_SYSTEM))
 
         preferred = str(cfg.get("ollama_model") or "")
+        embedding_model = str(cfg.get("ollama_embed_model") or "nomic-embed-text")
+        self.edit_embed_model.setText(embedding_model)
         self.combo_default_model.clear()
         self.combo_default_model.addItem("")
         # Best-effort model list
@@ -207,8 +222,12 @@ class PathsForm(QWidget):
             st = ensure_ollama(start_if_needed=False, wait_s=0.5)
             for m in st.models:
                 self.combo_default_model.addItem(m)
+            available = any(m.split(":")[0] == embedding_model.split(":")[0] for m in st.models)
+            self.lbl_embed_ready.setText(
+                "Embedding model ready" if available else "Embedding model unavailable · case search will use keywords"
+            )
         except Exception:
-            pass
+            self.lbl_embed_ready.setText("Ollama unavailable · case search will use keywords")
         if preferred:
             i = self.combo_default_model.findText(preferred)
             if i < 0:
@@ -225,6 +244,7 @@ class PathsForm(QWidget):
             "processed_dir": self.edit_processed.text().strip(),
             "ollama_models_dir": self.edit_ollama_models.text().strip(),
             "ollama_model": self.combo_default_model.currentText().strip(),
+            "ollama_embed_model": self.edit_embed_model.text().strip() or "nomic-embed-text",
             "theme": theme,
         }
 
@@ -276,6 +296,7 @@ class PathsForm(QWidget):
             update_settings(ollama_model=vals["ollama_model"])
         else:
             update_settings(ollama_model=None)
+        update_settings(ollama_embed_model=vals["ollama_embed_model"])
 
         update_settings(theme=vals["theme"])
 
@@ -357,8 +378,9 @@ class _ConfigPage(QWizardPage):
 
     def validatePage(self) -> bool:  # noqa: N802
         try:
+            validate_emr_dir(self.form.edit_emr.text().strip())
             self.form.apply_to_runtime(require_emr=True)
-        except ValueError as e:
+        except Exception as e:
             QMessageBox.critical(self, "Setup", str(e))
             return False
         return True

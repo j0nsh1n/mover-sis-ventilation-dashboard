@@ -305,6 +305,35 @@ def case_timeline_figure(
     return fig
 
 
+def focused_signals_figure(ts: pd.DataFrame, selected_minute: float) -> plt.Figure:
+    """Three source signal tracks with the selected minute marked."""
+    style = _style()
+    fig, axes = plt.subplots(3, 1, figsize=(10, 5.4), sharex=True)
+    fig.patch.set_facecolor(style["figure_facecolor"])
+    x = pd.to_numeric(ts["t_min"], errors="coerce")
+    for ax, (column, label, unit, color) in zip(
+        axes,
+        (
+            ("PIP", "PIP", "cmH₂O", "#fb923c"),
+            ("ETCO2", "ETCO₂", "mmHg", "#22d3ee"),
+            ("HR", "Heart rate", "bpm", "#f87171"),
+        ),
+        strict=True,
+    ):
+        _style_axes(ax, style)
+        if column in ts:
+            y = pd.to_numeric(ts[column], errors="coerce")
+            ax.plot(x, y, color=color, lw=1.7)
+            selected = y[x == selected_minute]
+            if not selected.empty and pd.notna(selected.iloc[0]):
+                ax.scatter([selected_minute], [selected.iloc[0]], color=color, s=38, zorder=3)
+        ax.axvline(selected_minute, color=style["text"], alpha=0.6, lw=1, ls="--")
+        ax.set_ylabel(f"{label}\n{unit}", fontsize=8)
+    axes[-1].set_xlabel("Minutes from incision", fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
 def _legend(ax, style: dict[str, str] | None = None) -> None:
     handles, labels = ax.get_legend_handles_labels()
     if not handles:

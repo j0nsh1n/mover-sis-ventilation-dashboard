@@ -12,6 +12,14 @@ change, and `cases.parquet` gains a column.
 
 ### Added
 
+- Desktop research workspace G opens first after setup, searches indexed surgery
+  metadata with cached local embeddings or keyword fallback, and gives a local
+  model bounded source extracts for a research answer (2026-09-27).
+- Focused signal view F opens a retrieved case at its observed minute, shows
+  PIP, ETCO₂, and heart rate with source rows, and returns to the same question
+  and comparison (2026-09-27).
+- First-run setup now opens before data loading; the setup form checks the EMR
+  folder and shows embedding model readiness (2026-09-27).
 - Radical interface studies F, G, and H: a signal studio, an evidence canvas,
   and a case review deck. Each uses the same fictional measurements with working
   source inspection and scripted AI interactions (2026-09-27).
