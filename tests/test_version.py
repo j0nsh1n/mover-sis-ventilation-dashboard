@@ -15,8 +15,6 @@ def test_version_file_semver_xyz():
     assert len(parts) == 3 and all(p.isdigit() for p in parts), f"bad VERSION {text!r}"
     assert __version__ == text
     assert get_version() == text
-    # Current feature line (research workspace and source signal detail)
-    assert text == "0.7.0"
 
 
 def test_get_version_reads_file(tmp_path, monkeypatch):

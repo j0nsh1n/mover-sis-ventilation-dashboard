@@ -16,3 +16,4 @@ streamlit>=1.28
 pytest>=7.4
 pytest-cov>=4.1
 pyinstaller>=6.3
+cryptography==50.0.1

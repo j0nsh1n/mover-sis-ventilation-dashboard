@@ -62,6 +62,25 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_DEBUG_PLUGINS: "0"
 
+      - name: Run Rust updater tests
+        working-directory: rust-updater-tests
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+        env:
+          PYTHONPATH: ..
+          QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: "0"
+
+      - name: Verify Rust release signer
+        working-directory: tools/update-manifest
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+
       - name: Import dashboard + desktop modules
         run: |
           PYTHONPATH=. python -c "from src.dashboard.components import case_timeline_figure; from src.pipeline.run import run_pipeline; print('pipeline OK')"
@@ -73,3 +92,37 @@ jobs:
         run: PYTHONPATH=. pytest tests/test_packaging.py -q
         env:
           QT_QPA_PLATFORM: offscreen
+
+  updater-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install desktop build dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install "pyinstaller>=6.3"
+
+      - name: Exercise updater install and rollback
+        working-directory: rust-updater-tests
+        run: cargo test --test windows_apply --locked
+
+      - name: Build frozen Windows app
+        run: pyinstaller --noconfirm --clean --distpath dist --workpath build/pyinstaller packaging/mover_sis_monitor.spec
+
+      - name: Smoke test frozen Windows app
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:MOVER_SKIP_SETUP = "1"
+          $app = "dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe"
+          if (-not (Test-Path $app)) { throw "expected $app" }
+          $process = Start-Process -FilePath $app -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 15
+          if ($process.HasExited) { throw "frozen app exited early with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force

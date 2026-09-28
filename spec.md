@@ -53,6 +53,18 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Profile report is **aggregate only**: no PIDs, timestamps or row-level values, and case
   counts below the small-cell threshold (default 11) are suppressed.
 - Optional Streamlit dashboard remains available for browser exploration of the same pipeline.
+- Frozen Linux and Windows desktop builds check for updates only when
+  `MOVER_UPDATE_MANIFEST_URL` names a public HTTPS manifest. Checks run in the
+  background at launch, when the app becomes active, and about once per minute.
+  Without the URL, the app makes no update requests.
+- The app accepts only a schema 2 envelope signed with the pinned Ed25519
+  public key. The signed payload names both platform packages and their sizes
+  and SHA256 digests. A newer version may download and stage automatically
+  after its size and SHA256 match the signed payload. The app offers a restart
+  to apply it, keeps a backup of
+  the previous install, and restores that backup if the new app exits during
+  its startup check. The updater refuses an install with research files inside
+  it or a root `data` symlink until those paths are migrated.
 
 ## User Experience
 
@@ -74,10 +86,18 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
   theme). Setup opens before the app loads data on first run or for an invalid EMR path.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
+- In an installed build with a configured update manifest, a verified update
+  appears as a **Restart to update** control. The published v0.7.0 build still
+  uses manual downloads.
 
 ## Architecture
 
 - Language/runtime: **Python 3.14** — PINNED for agents and CI/release. (Local verified 3.14.x.)
+- Updater contract tests use **Rust 1.98.1** with no third-party Rust crates.
+  A Python probe drives the Python updater and Qt controller; Rust holds the
+  scenarios and assertions.
+- The release manifest signer is a separate Rust CLI with pinned crates.
+  The Python updater verifies signatures with pinned `cryptography`.
 - Frameworks (minimum versions in `requirements.txt`; not fully upper-bound locked):
   - PySide6 ≥ 6.6 (desktop)
   - pandas / numpy / pyarrow / scipy / matplotlib / PyYAML
@@ -98,9 +118,15 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - `src/guardrails/` — limits, config/data/IO validation
   - `src/wave_decode.py` — Bernoulli/GE S5 cpcArchive decode (research waveforms)
   - `src/runtime_paths.py`, `search.py`, `user_settings.py`
+  - `src/update.py`, `src/desktop/updates.py` — manifest checks, package staging,
+    restart apply, and desktop update state
+  - `rust-updater-tests/` — updater contract tests
+  - `tools/update-manifest/` — signed release manifest CLI
   - `packaging/`, `scripts/build_executable.sh`, `scripts/install_local.sh`
 - External services:
   - **Ollama** (optional, local HTTP, default `http://127.0.0.1:11434`)
+  - **Public update host** (optional, static HTTPS manifest and packages;
+    no production host selected yet)
   - No cloud LLM/email required for core product
 
 ## Security & Privacy
@@ -109,6 +135,10 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - `.streamlit/secrets.toml` is gitignored (Streamlit only if used).
 - Case text must not leave the machine via remote Ollama unless explicit override env is set
   (see `src/llm/ollama_client.py` and `tests/test_local_only.py`).
+- Update requests carry no case data, research data, telemetry, or machine ID.
+  The updater verifies an Ed25519-signed manifest using a pinned public key,
+  then checks package size and SHA256. Windows install and rollback run in CI.
+  A public host is required before enabling a default update URL for users.
 - **Research / education only.** Not a medical device; not clinical decision support.
   Outputs discuss historical de-identified extracts; no live treatment orders.
 - Dependencies: pin new deps when added; prefer stdlib; current `requirements.txt` uses
@@ -119,8 +149,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 ## Validation & Tooling
 
-- Lint: **not configured** (no ruff/flake8 project config). Report-only until added.
-- Types: **not configured** (no pyright/mypy project config). Report-only until added.
+- Python lint: **not configured** (no ruff/flake8 project config). Report-only until added.
+- Python types: **not configured** (no pyright/mypy project config). Report-only until added.
 - Tests (must pass for code changes):
   ```bash
   PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q
@@ -129,8 +159,25 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Thresholds smoke:  
   `PYTHONPATH=. python -c "from src.config import load_thresholds; load_thresholds('default')"`
 - Packaging checks: `PYTHONPATH=. pytest tests/test_packaging.py -q`
+- Updater contract checks on Linux, from `rust-updater-tests/`:
+  ```bash
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+  PYTHONPATH=.. QT_QPA_PLATFORM=offscreen cargo test --workspace --locked
+  ```
+- Manifest signer checks, from `tools/update-manifest/`:
+  ```bash
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+  cargo test --workspace --locked
+  ```
+- Windows CI runs the Rust `windows_apply` integration test against the actual
+  PowerShell install helper and rollback path, then builds and launches the
+  frozen Windows app.
 - Quirks: desktop/Qt tests need system Qt libs on CI; skip setup wizard under
   `QT_QPA_PLATFORM=offscreen` or `MOVER_SKIP_SETUP=1`.
+- Python coverage reports do not include updater behavior exercised by the
+  separate Rust contract suite.
 
 ## Project workflow (spec overrides / alignment with agents.md)
 
@@ -157,6 +204,9 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - [ ] Profile output contains no PIDs or timestamps (`tests/test_profile.py`).
 - [ ] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`).
 - [ ] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0.
+- [ ] The Rust updater contract checks pass on Linux with Python 3.14 and Qt
+      available. With no configured manifest URL, update checks send no request.
+- [ ] The Rust signer checks pass and the Windows apply test passes in CI.
 - [ ] `VERSION` matches `src/__version__.py`.
 - [ ] `CHANGELOG.md` updated for user-visible changes.
 - [ ] CI runs on **Python 3.14**.
