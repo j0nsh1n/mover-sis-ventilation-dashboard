@@ -2,9 +2,8 @@
 
 The contract for public desktop updates of MOVER SIS Monitor: how the app
 checks for a new version, what the update host must provide, and how a
-release gets published. The checker is implemented on the local development
-branch. The current release, v0.7.0, ships as a manual download and contains
-no update checker.
+release gets published. The published v0.7.0 app uses manual downloads. The
+v0.8.0 updater remains inactive until a public host is configured.
 
 ## Current state
 
@@ -47,10 +46,24 @@ The app checks one small static manifest:
 - The manifest stays small (a few kilobytes), so the once-per-minute cadence
   costs at most one small request or one `304`.
 
-## Manifest v1
+## Signed manifest v2
 
-One stable URL serves the manifest at all times. Example (placeholder
-values; `updates.example.com` is not a real host):
+One stable URL serves a signed envelope. Its `manifest` field is a UTF-8 JSON
+string with the schema 1 payload below. The `signature` is 128 lowercase hex
+characters encoding an Ed25519 signature over the exact UTF-8 bytes of that
+string. The app verifies the signature against its embedded public key before
+it parses any package URL or version.
+
+```json
+{
+  "schema": 2,
+  "manifest": "{\"schema\":1,\"version\":\"0.8.0\",\"packages\":{...}}",
+  "signature": "<128 lowercase hex characters>"
+}
+```
+
+The payload has this shape (placeholder values; `updates.example.com` is not
+a real host):
 
 ```json
 {
@@ -73,8 +86,8 @@ values; `updates.example.com` is not a real host):
 
 Field rules:
 
-- `schema` is `1`. A client that sees an unknown value ignores the
-  manifest.
+- The envelope `schema` is `2`; the payload `schema` is `1`. A client rejects
+  unknown values, unsigned responses, and invalid signatures.
 - `version` is the semver of the release the manifest points at.
 - Each key under `packages` is a platform: `linux-x86_64` or
   `windows-x86_64`.
@@ -88,11 +101,23 @@ The manifest is published last, after both archives:
 
 1. Upload the Linux and Windows archives to their final versioned URLs.
 2. Download both back and verify the size and SHA256 of each.
-3. Publish the manifest with one atomic write, at the same URL every time.
+3. Sign the payload with the Rust CLI in `tools/update-manifest/` using the
+   repository secret `MOVER_UPDATE_SIGNING_KEY_HEX`.
+4. Publish the signed envelope with one atomic write at the stable URL.
 
 Never point the manifest at a URL whose bytes are not final, and never edit
 an archive after the manifest names it. Fix a bad release by publishing a new
 version.
+
+The release workflow reads `MOVER_UPDATE_SIGNING_KEY_HEX` from GitHub Actions
+secrets. When the repository variable `MOVER_UPDATE_BASE_URL` is set, it checks
+that the key matches the public key embedded in the app, signs the two release
+archives, and attaches `update-manifest.json` to the draft GitHub Release.
+The GitHub Release is in the private source repository; this attachment is
+not the public manifest. The host operator must upload the two archives to
+their versioned public URLs, verify the downloaded bytes, and then copy the
+signed manifest to the stable public URL. No host or variable is configured
+yet.
 
 ## Download, verify, stage, apply, rollback
 
@@ -121,7 +146,7 @@ list works.
 | Short `Cache-Control` (for example `max-age=60`) and an `ETag` on the manifest | Checks run about once per minute; `304` responses keep them cheap. |
 | Immutable, versioned package URLs | A published version's bytes never change. |
 | Long-lived cache headers on packages (`max-age=31536000`, `immutable`) | Repeated downloads stay cheap. |
-| Range requests (ideally) | Resumable downloads for 400 MB packages. |
+| Range requests (optional) | Would allow a future client to resume large downloads; the current client restarts them. |
 | No authentication | Packages are public downloads. |
 
 CORS is not required. The client is the desktop app, not a browser.
@@ -130,7 +155,8 @@ CORS is not required. The client is the desktop app, not a browser.
 
 There is no production manifest URL yet. The updater stays off and sends
 nothing until a host is selected and the manifest URL is configured through
-`MOVER_UPDATE_MANIFEST_URL` in the installed app's environment. Until
-then, users update by downloading the latest release the way they do today.
-Before setting a default URL for users, add signed manifest verification and
-exercise the install swap on Windows.
+`MOVER_UPDATE_MANIFEST_URL` in the installed app's environment. Until then,
+users update by downloading the latest release. The private source repository
+is not an update host. The host must expose both packages without GitHub
+authentication and publish the signed envelope only after both files are
+available and their downloaded bytes match the signed size and SHA256 values.

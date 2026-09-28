@@ -125,17 +125,17 @@ The desktop app:
 PYTHONPATH=. streamlit run src/dashboard/app.py
 ```
 
-## Versioning & releases (v0.7.0)
+## Versioning & releases (v0.8.0)
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.7.0`, semver `x.y.z`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.8.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On merge to `main`** (or tag / manual run): GitHub Actions workflow
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds Linux
   and Windows packages and publishes both in a GitHub Release (Python **3.14**).
-- [Desktop update contract](docs/UPDATES.md): the updater on this development
-  branch needs a public static manifest URL. The published v0.7.0 app still
-  uses manual downloads.
+- [Desktop update contract](docs/UPDATES.md): the updater checks a signed
+  public manifest when `MOVER_UPDATE_MANIFEST_URL` is configured. The host is
+  not selected, so v0.8.0 ships with update checks inactive by default.
 
 ### Local LLM (Ollama)
 

@@ -9,10 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Desktop update prototype: with a configured public manifest URL, the installed
-  app checks about once a minute, downloads and verifies a newer Linux or Windows
-  package, and offers a restart to apply it with a previous-version backup.
-  Production checks remain off until an update host is selected (2026-09-28).
+- Desktop updater: with a configured public manifest URL, the installed app
+  checks about once a minute, verifies an Ed25519-signed manifest, downloads
+  and verifies a newer Linux or Windows package, and offers a restart to apply
+  it with a previous-version backup. Update checks remain off until a public
+  host is selected (2026-09-28).
+- Rust release manifest signer and Windows install and rollback validation
+  (2026-09-28).
 
 ## [0.7.0] — 2026-09-28
 
