@@ -64,6 +64,7 @@ from src.desktop.charts import (
 from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.desktop.theme import apply_theme, chat_role_color
+from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.__version__ import get_version
@@ -251,6 +252,14 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.setStatusBar(QStatusBar())
         self._update_status_paths("Ready")
+        self._updates = UpdateController(self._version, self)
+        self._updates.found.connect(self._on_update_found)
+        self._updates.ready.connect(self._on_update_ready)
+        self._updates.failed.connect(self._on_update_failed)
+        self._update_button = QPushButton("Restart to update", self)
+        self._update_button.clicked.connect(self._restart_for_update)
+        self._update_button.hide()
+        self.statusBar().addPermanentWidget(self._update_button)
 
         QTimer.singleShot(0, self._startup)
 
@@ -297,6 +306,10 @@ class MainWindow(QMainWindow):
         about = QAction("&About", self)
         about.triggered.connect(self._about)
         help_menu.addAction(about)
+        self.update_act = QAction("Restart to finish update", self)
+        self.update_act.setVisible(False)
+        self.update_act.triggered.connect(self._restart_for_update)
+        help_menu.addAction(self.update_act)
 
         # Settings lives on a gear icon in the menu-bar corner, not under Edit
         self.settings_act = QAction(self._gear_icon(), "Settings…", self)
@@ -739,11 +752,52 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Avoid Qt abort if a worker is still running when the window is destroyed
+        self._updates.close()
         for w in (self._worker, getattr(self, "_llm_worker", None), self._research_worker, self._case_worker):
             if w is not None and w.isRunning():
                 w.requestInterruption()
                 w.wait(3000)
         super().closeEvent(event)
+
+    def _on_update_found(self, version: str) -> None:
+        self.statusBar().showMessage(f"Downloading MOVER SIS Monitor v{version} update…")
+
+    def _on_update_ready(self, version: str, _staged: Path) -> None:
+        self._update_button.setText(f"Restart to update to v{version}")
+        self._update_button.show()
+        self.update_act.setVisible(True)
+        self.statusBar().showMessage(f"Version {version} is ready. Restart when convenient.")
+
+    def _on_update_failed(self, detail: str) -> None:
+        self.statusBar().showMessage(f"Update could not be prepared: {detail}", 15_000)
+
+    def _restart_for_update(self) -> None:
+        from src.runtime_paths import app_dir
+        from src.update import prepare_restart_apply, spawn_restart_apply
+
+        staged = self._updates.staged
+        if staged is None:
+            return
+        platform = self._updates.platform
+        if platform is None:
+            return
+        try:
+            plan = prepare_restart_apply(app_dir(), staged, platform=platform)
+        except OSError as exc:
+            QMessageBox.warning(self, "Update could not start", str(exc))
+            return
+        if not plan.ready or not plan.supported_here:
+            QMessageBox.warning(self, "Update could not start", plan.detail)
+            return
+        try:
+            result = spawn_restart_apply(plan)
+        except OSError as exc:
+            QMessageBox.warning(self, "Update could not start", str(exc))
+            return
+        if not result.spawned:
+            QMessageBox.warning(self, "Update could not start", result.detail)
+            return
+        self.close()
 
     def _about(self) -> None:
         QMessageBox.about(

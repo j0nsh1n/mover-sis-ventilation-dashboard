@@ -172,6 +172,25 @@ def test_matching_download_keeps_only_the_verified_archive(tmp_path):
     assert list(tmp_path.iterdir()) == [saved]
 
 
+def test_short_disk_writes_still_save_the_exact_verified_package(tmp_path, monkeypatch):
+    body = b"a complete update package"
+    package = Package(
+        platform=PLATFORM_LINUX,
+        url=LINUX_URL,
+        sha256=hashlib.sha256(body).hexdigest(),
+        size=len(body),
+    )
+    opener, _seen = _opener(lambda req: _response(req.full_url, 200, body))
+    actual_write = os.write
+
+    def short_write(fd, data):
+        return actual_write(fd, data[:3])
+
+    monkeypatch.setattr(os, "write", short_write)
+    saved = download_package(package, tmp_path, opener=opener)
+    assert saved.read_bytes() == body
+
+
 def test_checksum_mismatch_and_size_cap_leave_no_archive(tmp_path):
     body = b"not-the-package"
     package = Package(
@@ -258,6 +277,87 @@ def test_stage_keeps_live_tree_and_user_data_symlinks(tmp_path):
     assert (install / "MOVER-SIS-Monitor").read_text(encoding="utf-8") == "old-binary"
 
 
+def test_stage_refuses_to_hide_research_data_stored_inside_the_install(tmp_path):
+    install = _install(tmp_path)
+    emr = install / "data" / "raw" / "EMR"
+    emr.mkdir(parents=True)
+    (emr / "patient_information.csv").write_text("research-data", encoding="utf-8")
+    archive = _linux_archive(tmp_path)
+
+    with pytest.raises(UpdateError, match="external folder"):
+        stage_package(archive, install, platform=PLATFORM_LINUX)
+
+    assert (emr / "patient_information.csv").read_text(encoding="utf-8") == "research-data"
+    assert not install.with_name(install.name + ".staging").exists()
+
+
+def test_stage_refuses_to_replace_a_data_directory_link(tmp_path):
+    install = _install(tmp_path)
+    external = tmp_path / "research-data"
+    external.mkdir()
+    (external / "patient_information.csv").write_text("research-data", encoding="utf-8")
+    (install / "data").symlink_to(external)
+
+    with pytest.raises(UpdateError, match="manual migration"):
+        stage_package(_linux_archive(tmp_path), install, platform=PLATFORM_LINUX)
+
+    assert (external / "patient_information.csv").read_text(encoding="utf-8") == "research-data"
+
+
+def test_stage_refuses_an_archive_with_a_different_version(tmp_path):
+    install = _install(tmp_path)
+    archive = _linux_archive(tmp_path, extra={"VERSION": b"0.7.0"})
+
+    with pytest.raises(UpdateError, match="version does not match"):
+        stage_package(archive, install, platform=PLATFORM_LINUX, expected_version="0.8.0")
+
+    assert (install / "MOVER-SIS-Monitor").read_text(encoding="utf-8") == "old-binary"
+
+
+def test_windows_portable_zip_stages_without_touching_the_live_install(tmp_path):
+    install = _install(tmp_path)
+    external_emr = tmp_path / "emr"
+    external_emr.mkdir()
+    (install / "data" / "raw").mkdir(parents=True)
+    (install / "data" / "raw" / "EMR").symlink_to(external_emr)
+    archive = tmp_path / "windows.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe", b"MZ-new")
+        bundle.writestr("MOVER-SIS-Monitor/VERSION", b"0.8.0")
+        bundle.writestr("MOVER-SIS-Monitor/_internal/runtime.dll", b"runtime")
+
+    staging = stage_package(
+        archive,
+        install,
+        platform=PLATFORM_WINDOWS,
+        expected_version="0.8.0",
+    )
+
+    assert (staging / "MOVER-SIS-Monitor.exe").read_bytes() == b"MZ-new"
+    assert (staging / "_internal" / "runtime.dll").read_bytes() == b"runtime"
+    assert (staging / "data" / "raw" / "EMR").resolve() == external_emr
+    assert (install / "MOVER-SIS-Monitor").read_text(encoding="utf-8") == "old-binary"
+
+
+def test_linux_archive_keeps_helper_executable_permissions(tmp_path):
+    install = _install(tmp_path)
+    archive = tmp_path / "exec.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, body, mode in (
+            ("MOVER-SIS-Monitor/MOVER-SIS-Monitor", b"app", 0o755),
+            ("MOVER-SIS-Monitor/launch.sh", b"#!/bin/sh\n", 0o755),
+            ("MOVER-SIS-Monitor/_internal/helper", b"helper", 0o755),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            info.mode = mode
+            tar.addfile(info, io.BytesIO(body))
+
+    staging = stage_package(archive, install, platform=PLATFORM_LINUX)
+
+    assert os.access(staging / "_internal" / "helper", os.X_OK)
+
+
 def test_unsafe_archive_paths_and_symlinks_are_not_materialized(tmp_path):
     install = _install(tmp_path)
     outside = tmp_path / "outside"
@@ -329,7 +429,7 @@ def test_apply_waits_for_parent_then_swaps_and_relaunches(tmp_path):
     install, staging = _swap_trees(tmp_path, complete=True)
     stamp = tmp_path / "launched"
     (staging / "launch.sh").write_text(
-        f"#!/bin/sh\necho launched > {stamp}\n",
+        f"#!/bin/sh\necho launched > {stamp}\nsleep 5\n",
         encoding="utf-8",
     )
     (staging / "launch.sh").chmod(0o755)
@@ -365,6 +465,29 @@ def test_apply_waits_for_parent_then_swaps_and_relaunches(tmp_path):
     again = subprocess.run(plan.command, check=False, capture_output=True, timeout=10)
     assert again.returncode != 0
     assert (install / "marker").read_text(encoding="utf-8") == "new"
+
+
+def test_apply_restores_previous_install_when_new_app_exits_during_startup(tmp_path):
+    install, staging = _swap_trees(tmp_path, complete=True)
+    old_launched = tmp_path / "old-launched"
+    (install / "launch.sh").write_text(
+        f"#!/bin/sh\necho old > {old_launched}\nsleep 5\n",
+        encoding="utf-8",
+    )
+    (install / "launch.sh").chmod(0o755)
+    (staging / "launch.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (staging / "launch.sh").chmod(0o755)
+    plan = prepare_restart_apply(install, staging, platform=PLATFORM_LINUX, parent_pid=_dead_pid())
+
+    completed = subprocess.run(plan.command, check=False, capture_output=True, timeout=10)
+    for _ in range(20):
+        if old_launched.exists():
+            break
+        time.sleep(0.1)
+
+    assert completed.returncode != 0
+    assert (install / "marker").read_text(encoding="utf-8") == "old"
+    assert old_launched.read_text(encoding="utf-8").strip() == "old"
 
 
 def test_windows_helper_is_written_but_not_started_on_this_host(tmp_path):

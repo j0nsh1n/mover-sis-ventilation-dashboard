@@ -32,6 +32,7 @@ MAX_ARCHIVE_MEMBERS = 200_000
 MANIFEST_TIMEOUT_SECONDS = 10.0
 DOWNLOAD_TIMEOUT_SECONDS = 60.0
 APPLY_WAIT_SECONDS = 120
+STARTUP_HEALTH_SECONDS = 3
 APP_ROOT = "MOVER-SIS-Monitor"
 USER_AGENT = "MOVER-SIS-Monitor-updater"
 PLATFORM_LINUX = "linux-x86_64"
@@ -195,8 +196,8 @@ def parse_manifest(raw: bytes) -> Manifest:
         raise UpdateError("malformed manifest") from exc
     if not isinstance(data, dict):
         raise UpdateError("malformed manifest")
-    schema = data.get("schema", 1)
-    if schema not in (1, "1"):
+    schema = data.get("schema")
+    if type(schema) is not int or schema != 1:
         raise UpdateError(f"unsupported manifest schema {schema!r}")
     version = parse_version(data.get("version"))
     packages_raw = data.get("packages")
@@ -351,7 +352,7 @@ def download_package(
                 if received > package.size:
                     raise UpdateError("download exceeded the declared size")
                 hasher.update(chunk)
-                os.write(fd, chunk)
+                _write_all(fd, chunk)
         finally:
             response.close()
         os.close(fd)
@@ -369,7 +370,13 @@ def download_package(
         raise
 
 
-def stage_package(archive: Path, install_dir: Path, *, platform: str) -> Path:
+def stage_package(
+    archive: Path,
+    install_dir: Path,
+    *,
+    platform: str,
+    expected_version: str | None = None,
+) -> Path:
     """Unpack a verified archive into a sibling staging directory. The live tree is not written."""
     if platform not in PLATFORMS:
         raise UpdateError(f"unsupported platform {platform!r}")
@@ -388,8 +395,15 @@ def stage_package(archive: Path, install_dir: Path, *, platform: str) -> Path:
         if not app_root.is_dir() or app_root.is_symlink():
             raise UpdateError("archive must contain one MOVER-SIS-Monitor directory")
         _require_payload(app_root, platform)
+        if expected_version is not None:
+            version_file = app_root / "VERSION"
+            if not version_file.is_file() or version_file.is_symlink():
+                raise UpdateError("archive is missing its version marker")
+            if version_file.read_text(encoding="utf-8").strip() != expected_version:
+                raise UpdateError("archive version does not match the manifest")
+        _assert_no_in_bundle_user_data(live)
+        _preserve_user_links(live, app_root)
         if platform == PLATFORM_LINUX:
-            _preserve_user_links(live, app_root)
             _make_executable(app_root, LINUX_PAYLOAD)
         _discard(staging)
         cleared = True
@@ -633,6 +647,29 @@ def _preserve_user_links(live: Path, staged_root: Path) -> None:
         os.symlink(target, dest)
 
 
+def _assert_no_in_bundle_user_data(live: Path) -> None:
+    """Do not replace a bundle that also holds the user's research files."""
+    data = live / "data"
+    if data.is_symlink():
+        raise UpdateError("bundle data link needs manual migration before updating")
+    if not data.is_dir():
+        return
+    placeholders = {
+        Path("data/README.md"),
+        Path("data/raw/EMR/README.txt"),
+    }
+    for path in data.rglob("*"):
+        rel = path.relative_to(live)
+        if path.is_symlink():
+            if rel in USER_DATA_LINKS and not _is_inside(path.resolve(), live):
+                continue
+            raise UpdateError(f"bundle contains a data link that needs manual migration: {rel}")
+        if path.is_file() and rel not in placeholders:
+            raise UpdateError(
+                "bundle contains research data or a processed cache; move it to an external folder in Setup before updating"
+            )
+
+
 def _discard(path: Path) -> None:
     if path.is_symlink():
         path.unlink()
@@ -750,6 +787,7 @@ def _extract_tar(archive: Path, unpack_root: Path) -> None:
             if source is None:
                 raise UpdateError(f"unreadable archive member {member.name!r}")
             written = _write_member(source, dest, written)
+            dest.chmod(member.mode & 0o777 or 0o644)
             seen.add(parts)
     _require_single_root(seen)
 
@@ -785,6 +823,9 @@ def _extract_zip(archive: Path, unpack_root: Path) -> None:
             dest = _destination(unpack_root, parts)
             with bundle.open(info, "r") as source:
                 written = _write_member(source, dest, written)
+            permissions = mode & 0o777
+            if permissions:
+                dest.chmod(permissions)
             seen.add(parts)
     _require_single_root(seen)
 
@@ -802,10 +843,19 @@ def _write_member(source, dest: Path, written: int) -> int:
             written += len(chunk)
             if written > MAX_UNPACK_BYTES:
                 raise UpdateError("unpacked archive exceeds the size cap")
-            os.write(fd, chunk)
+            _write_all(fd, chunk)
     finally:
         os.close(fd)
     return written
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise UpdateError("could not write the complete update")
+        view = view[written:]
 
 
 def _require_single_root(seen: set[tuple[str, ...]]) -> None:
@@ -864,10 +914,14 @@ if [[ ! -f "$binary" || ! -f "$launch" ]]; then
   exit 1
 fi
 chmod +x "$launch" "$binary" 2>/dev/null || true
-if command -v setsid >/dev/null 2>&1; then
-  setsid "$launch" >/dev/null 2>&1 < /dev/null &
-else
+"$launch" >/dev/null 2>&1 < /dev/null &
+child=$!
+sleep {STARTUP_HEALTH_SECONDS}
+if ! kill -0 "$child" 2>/dev/null; then
+  restore
   "$launch" >/dev/null 2>&1 < /dev/null &
+  echo "new app exited during startup; restored previous install" >&2
+  exit 1
 fi
 exit 0
 """
@@ -921,7 +975,18 @@ if (-not (Test-Path -LiteralPath $launch -PathType Leaf)) {{
   Write-Error 'staged install failed verification'
   exit 1
 }}
-Start-Process -FilePath $launch
+try {{
+  $child = Start-Process -FilePath $launch -PassThru
+  Start-Sleep -Seconds {STARTUP_HEALTH_SECONDS}
+  $child.Refresh()
+  if ($child.HasExited) {{
+    throw 'new app exited during startup'
+  }}
+}} catch {{
+  Restore-Live
+  Start-Process -FilePath $launch
+  exit 1
+}}
 exit 0
 """
 
