@@ -7,6 +7,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-27
+
 Re-run the pipeline to rebuild existing processed caches: flags and scores
 change, and `cases.parquet` gains a column.
 

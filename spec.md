@@ -16,7 +16,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 ## Required Behavior
 
 - Load SIS EMR tables from a user-chosen folder; optional wave root; write/read processed
-  parquet (`cases`, `timeseries`, `flags`, `episodes`, `events`).
+  parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
 - Desktop UI is primary. On first run or with an invalid EMR folder, a modal Setup
   wizard validates the folder before data loading. Canceling first-run setup leaves
   the data tabs disabled until setup is completed.

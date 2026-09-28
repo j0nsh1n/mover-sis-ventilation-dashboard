@@ -2,11 +2,12 @@
 
 ## Current State
 
-- **Version:** 0.6.0 (`VERSION` / `src/__version__.py`); Unreleased changes in CHANGELOG.
+- **Version:** 0.7.0 (`VERSION` / `src/__version__.py`); local Linux build
+  installed, with the 0.6.0 bundle retained for rollback.
 - **Branch:** `feat/case-retrieval-index` (local implementation branch).
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` — green (2026-09-27),
-  desktop tests included. Skips: frozen binary, real wave tree.
+  desktop and frozen-binary tests included. Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
@@ -108,9 +109,11 @@ Wave root (optional) ──► wave_decode                   │
 - **Branch:** `feat/case-retrieval-index` (local, not pushed)
 - **Done:** Grok's metadata retrieval and embedding cache are integrated with
   first-run setup, G question and answer view, and F source signal detail.
-  `spec.md` now describes the implemented G/F and retrieval behavior.
+  `spec.md`, the README, and the design draft describe the implemented behavior.
+  Version 0.7.0 was built and installed locally; 0.6.0 remains archived.
 - **Verified:** Synthetic EMR keyword search opened a case in F; focused G/F
-  interaction and startup tests passed. Full pytest and packaging checks passed
-  on 2026-09-27. Lint and type tools are not configured.
+  interaction and startup tests passed. Full pytest, frozen-binary smoke,
+  installed-launcher smoke, and threshold checks passed on 2026-09-27.
+  Lint and type tools are not configured.
 - **Next:** Review the desktop flow with real de-identified data and a running
   local model; decide article corpus ownership.
