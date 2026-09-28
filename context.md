@@ -108,8 +108,9 @@ Wave root (optional) ──► wave_decode                   │
 - **Branch:** `feat/case-retrieval-index` (local, not pushed)
 - **Done:** Grok's metadata retrieval and embedding cache are integrated with
   first-run setup, G question and answer view, and F source signal detail.
+  `spec.md` now describes the implemented G/F and retrieval behavior.
 - **Verified:** Synthetic EMR keyword search opened a case in F; focused G/F
   interaction and startup tests passed. Full pytest and packaging checks passed
   on 2026-09-27. Lint and type tools are not configured.
 - **Next:** Review the desktop flow with real de-identified data and a running
-  local model; decide article corpus ownership and update `spec.md` if approved.
+  local model; decide article corpus ownership.
