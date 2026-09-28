@@ -42,6 +42,13 @@ class Response(io.BytesIO):
         return self.headers
 
 
+class InterruptedResponse(Response):
+    def read(self, size: int = -1) -> bytes:
+        if self.tell() > 0:
+            raise OSError("connection interrupted")
+        return super().read(8)
+
+
 class Opener:
     def __init__(self, response: Response):
         self.response = response
@@ -86,6 +93,8 @@ def check_case(case: str) -> None:
             "same": manifest("0.7.0"),
             "newer": manifest("0.8.0"),
             "malformed": b"{",
+            "not_object": b"[]",
+            "bad_version": manifest("1.0"),
             "bad_schema": manifest("0.8.0", schema=2),
             "bad_package_url": manifest("0.8.0", linux_url="http://updates.example/app.tar.gz"),
             "oversize": b"x" * (update.MAX_MANIFEST_BYTES + 1),
@@ -117,7 +126,10 @@ def download_case(case: str, root: Path) -> None:
     dest = root / "download"
     if case == "inside_install":
         dest.mkdir()
-    opener = Opener(Response(response_body, headers={"Content-Length": str(len(body))} if case == "valid" else {}))
+    response = InterruptedResponse(response_body) if case == "interrupted" else Response(
+        response_body, headers={"Content-Length": str(len(body))} if case == "valid" else {}
+    )
+    opener = Opener(response)
     original_write = os.write
     if case == "short_write":
         os.write = lambda fd, data: original_write(fd, data[:3])
@@ -125,7 +137,7 @@ def download_case(case: str, root: Path) -> None:
         try:
             saved = update.download_package(package, dest, opener=opener, install_dir=dest if case == "inside_install" else None)
             emit(success=True, content_matches=saved.read_bytes() == body, files=len(list(dest.iterdir())), requests=len(opener.urls))
-        except update.UpdateError as exc:
+        except (update.UpdateError, OSError) as exc:
             emit(success=False, error=str(exc), files=len(list(dest.iterdir())) if dest.exists() else 0, requests=len(opener.urls))
     finally:
         os.write = original_write
@@ -185,6 +197,9 @@ def stage_case(case: str, root: Path) -> None:
         (emr / "patient_information.csv").write_text("local-only")
         (live / "data/raw").mkdir(parents=True)
         (live / "data/raw/EMR").symlink_to(emr)
+        processed = root / "external-processed"
+        processed.mkdir()
+        (live / "data/processed").symlink_to(processed)
     if case == "internal_data":
         emr = live / "data/raw/EMR"
         emr.mkdir(parents=True)
@@ -200,7 +215,7 @@ def stage_case(case: str, root: Path) -> None:
     staged = live.with_name(live.name + ".staging")
     try:
         result = update.stage_package(pkg, live, platform=update.PLATFORM_WINDOWS if is_windows else update.PLATFORM_LINUX, expected_version="0.8.0")
-        emit(success=True, live_marker=(live / "marker").read_text(), staged=result == staged, payload=(result / ("MOVER-SIS-Monitor.exe" if is_windows else "MOVER-SIS-Monitor")).is_file(), helper_executable=os.access(result / "_internal/helper", os.X_OK) if not is_windows else True, data_link=(result / "data/raw/EMR").is_symlink(), external_data=(root / "external-emr/patient_information.csv").read_text() if (root / "external-emr/patient_information.csv").exists() else "")
+        emit(success=True, live_marker=(live / "marker").read_text(), staged=result == staged, payload=(result / ("MOVER-SIS-Monitor.exe" if is_windows else "MOVER-SIS-Monitor")).is_file(), helper_executable=os.access(result / "_internal/helper", os.X_OK) if not is_windows else True, data_link=(result / "data/raw/EMR").is_symlink(), processed_link=(result / "data/processed").is_symlink(), external_data=(root / "external-emr/patient_information.csv").read_text() if (root / "external-emr/patient_information.csv").exists() else "", runtime_file=(result / "_internal/runtime.dll").read_bytes() == b"runtime" if is_windows else True)
     except update.UpdateError as exc:
         emit(success=False, error=str(exc), staged=staged.exists(), live_marker=(live / "marker").read_text(), outside=(root / "outside").exists(), preserved_data=(live / "data/raw/EMR/patient_information.csv").read_text() if case == "internal_data" else (root / "external-data/patient_information.csv").read_text() if case == "data_root_link" else "")
 
@@ -220,9 +235,20 @@ def apply_case(case: str, root: Path) -> None:
         platform = update.PLATFORM_LINUX
     parent = subprocess.Popen(["sleep", "30"]) if case == "wait_parent" else None
     try:
-        plan = update.prepare_restart_apply(live, staged, platform=platform, parent_pid=parent.pid if parent else 999999)
+        parent_pid = os.getpid() if case == "spawn_wait_parent" else parent.pid if parent else 999999
+        plan = update.prepare_restart_apply(live, staged, platform=platform, parent_pid=parent_pid)
         script = plan.script_path.read_text() if plan.script_path else ""
         common = dict(ready=plan.ready, script_outside=plan.script_path is not None and live not in plan.script_path.parents, backup_mentioned=str(live.with_name(live.name + ".backup")) in script)
+        if case == "spawn_wait_parent":
+            started = update.spawn_restart_apply(plan)
+            try:
+                time.sleep(0.4)
+                os.kill(started.helper_pid, 0)
+                emit(**common, spawned=started.spawned, live_marker=(live / "marker").read_text(), staged=staged.exists())
+            finally:
+                os.kill(started.helper_pid, 15)
+                os.waitpid(started.helper_pid, 0)
+            return
         if case == "windows":
             started = update.spawn_restart_apply(plan)
             emit(**common, supported=plan.supported_here, spawned=started.spawned, restore_in_script="Restore-Live" in script, move_in_script="Move-Item" in script)
@@ -234,10 +260,15 @@ def apply_case(case: str, root: Path) -> None:
             return
         if case == "startup_rollback":
             (staged / "launch.sh").write_text("#!/bin/sh\nexit 1\n")
-            (live / "launch.sh").write_text("#!/bin/sh\nsleep 5\n")
+            stamp = root / "old-launched"
+            (live / "launch.sh").write_text(f"#!/bin/sh\necho old > {stamp}\nsleep 5\n")
             (live / "launch.sh").chmod(0o755)
             result = subprocess.run(plan.command, capture_output=True, timeout=10)
-            emit(**common, exit=result.returncode, live_marker=(live / "marker").read_text())
+            for _ in range(20):
+                if stamp.exists():
+                    break
+                time.sleep(0.1)
+            emit(**common, exit=result.returncode, live_marker=(live / "marker").read_text(), old_relaunched=stamp.exists() and stamp.read_text().strip() == "old")
             return
         helper = subprocess.Popen(plan.command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.3)
@@ -245,7 +276,8 @@ def apply_case(case: str, root: Path) -> None:
         parent.kill()
         parent.wait(timeout=5)
         code = helper.wait(timeout=8)
-        emit(**common, before=before, exit=code, live_marker=(live / "marker").read_text(), backup_marker=(live.with_name(live.name + ".backup") / "marker").read_text(), staging_exists=staged.exists())
+        repeated = subprocess.run(plan.command, capture_output=True, timeout=10)
+        emit(**common, before=before, exit=code, repeat_exit=repeated.returncode, live_marker=(live / "marker").read_text(), backup_marker=(live.with_name(live.name + ".backup") / "marker").read_text(), staging_exists=staged.exists())
     finally:
         if parent and parent.poll() is None:
             parent.kill()

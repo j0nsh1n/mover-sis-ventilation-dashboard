@@ -62,6 +62,18 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_DEBUG_PLUGINS: "0"
 
+      - name: Run Rust updater tests
+        working-directory: rust-updater-tests
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+        env:
+          PYTHONPATH: ..
+          QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: "0"
+
       - name: Import dashboard + desktop modules
         run: |
           PYTHONPATH=. python -c "from src.dashboard.components import case_timeline_figure; from src.pipeline.run import run_pipeline; print('pipeline OK')"

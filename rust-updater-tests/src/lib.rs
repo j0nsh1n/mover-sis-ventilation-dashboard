@@ -73,6 +73,8 @@ mod tests {
     fn invalid_or_insecure_manifests_are_rejected() {
         for case in [
             "malformed",
+            "not_object",
+            "bad_version",
             "bad_schema",
             "bad_package_url",
             "oversize",
@@ -98,7 +100,13 @@ mod tests {
             assert_eq!(value(&result, "content_matches"), "True", "{case}");
             assert_eq!(value(&result, "files"), "1", "{case}");
         }
-        for case in ["checksum", "cap", "truncated", "inside_install"] {
+        for case in [
+            "checksum",
+            "cap",
+            "truncated",
+            "interrupted",
+            "inside_install",
+        ] {
             let result = probe("download", case);
             assert_eq!(value(&result, "success"), "False", "{case}");
             assert_eq!(value(&result, "files"), "0", "{case}");
@@ -115,9 +123,11 @@ mod tests {
             assert_eq!(value(&result, "payload"), "True", "{case}");
             assert_eq!(value(&result, "live_marker"), "live", "{case}");
             assert_eq!(value(&result, "data_link"), "True", "{case}");
+            assert_eq!(value(&result, "processed_link"), "True", "{case}");
             assert_eq!(value(&result, "external_data"), "local-only", "{case}");
         }
         assert_eq!(value(&probe("stage", "links"), "helper_executable"), "True");
+        assert_eq!(value(&probe("stage", "windows"), "runtime_file"), "True");
     }
 
     #[test]
@@ -155,6 +165,7 @@ mod tests {
         assert_eq!(value(&waited, "backup_mentioned"), "True");
         assert_eq!(value(&waited, "before"), "live");
         assert_eq!(value(&waited, "exit"), "0");
+        assert_ne!(value(&waited, "repeat_exit"), "0");
         assert_eq!(value(&waited, "live_marker"), "new");
         assert_eq!(value(&waited, "backup_marker"), "live");
         assert_eq!(value(&waited, "staging_exists"), "False");
@@ -164,12 +175,20 @@ mod tests {
             assert_eq!(value(&result, "live_marker"), "live", "{case}");
         }
         assert_eq!(value(&probe("apply", "failed_swap"), "backup"), "False");
+        assert_eq!(
+            value(&probe("apply", "startup_rollback"), "old_relaunched"),
+            "True"
+        );
         let windows = probe("apply", "windows");
         assert_eq!(value(&windows, "ready"), "True");
         assert_eq!(value(&windows, "supported"), "False");
         assert_eq!(value(&windows, "spawned"), "False");
         assert_eq!(value(&windows, "restore_in_script"), "True");
         assert_eq!(value(&windows, "move_in_script"), "True");
+        let spawned = probe("apply", "spawn_wait_parent");
+        assert_eq!(value(&spawned, "spawned"), "True");
+        assert_eq!(value(&spawned, "live_marker"), "live");
+        assert_eq!(value(&spawned, "staged"), "True");
     }
 
     #[test]

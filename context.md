@@ -7,8 +7,9 @@
 - **Branch:** local `feat/public-auto-updates` builds on the published v0.7.0
   release from merged PRs #13 and #14; update work is not published.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` and CI's
-  coverage run — green (2026-09-28). Frozen-binary smoke passed.
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q`, packaging,
+  and the Rust updater contract suite — green (2026-09-28). Frozen-binary
+  smoke passed before the test port.
   Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
@@ -26,6 +27,8 @@
   study. The older A–E drafts remain in `monitoring-concepts.html`. All use
   fictional records and scripted AI.
 - **Known gaps:**
+  - Python coverage reports do not include updater behavior exercised by the
+    separate Rust contract suite.
   - No public update host or production manifest URL is selected; the updater
     remains inactive by default. Windows install swap has not run on Windows.
   - Public manifest integrity depends on the chosen HTTPS host; signing should
@@ -58,6 +61,7 @@
 | `src/config/thresholds.yaml` | Flag rule presets |
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
 | `packaging/` | PyInstaller entry + rthooks |
+| `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
 | `.github/workflows/` | `ci.yml`, `release.yml` |
 | `agents.md` / `spec.md` | Policy (global / project; one agents file) |
 | `context.md` / `CHANGELOG.md` / `roadmap.md` | State / history / plan |
@@ -120,9 +124,11 @@ Wave root (optional) ──► wave_decode                   │
   updater branch checks a configured public manifest every minute, stages a
   verified newer package, and offers a restart with a previous-version backup.
   FlexWeek's separated release decision, checksum, and swap tests informed it.
-- **Verified:** Full Python suite, threshold smoke, offscreen desktop launch,
-  Linux helper swap and startup rollback, and staging from the actual v0.7.0
-  Linux archive passed on 2026-09-28. Windows helper behavior has only been
-  inspected and tested as generated script on Linux. Lint/types not configured.
+- **Verified:** Full Python suite, packaging, threshold smoke, Rust updater
+  contracts, Rust formatting and Clippy passed on 2026-09-28. Linux helper
+  swap and startup rollback and staging from the actual v0.7.0 Linux archive
+  passed before the Rust test port. Windows helper behavior has only been
+  inspected and tested as generated script on Linux. Python lint/types are
+  not configured.
 - **Next:** Select a public host, settle manifest signing, test the Windows
   swap on Windows, and then enable the default update URL in a release.

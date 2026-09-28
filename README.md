@@ -222,10 +222,20 @@ PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest
 PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest --cov=src --cov-report=term-missing
 ```
 
+The desktop updater has a separate Rust test crate. It drives the Python
+updater and Qt controller through a small probe, with scenarios and assertions
+in Rust. Run it on Linux after installing the Python dependencies:
+
+```bash
+cd rust-updater-tests
+PYTHONPATH=.. QT_QPA_PLATFORM=offscreen cargo test --workspace --locked
+```
+
 CI runs the same suite on every push/PR (`.github/workflows/ci.yml`), including:
 
 - Pipeline / guardrail unit + integration tests  
 - **Desktop app** offscreen smoke (window construct, data load, chart render, startup budget)  
+- **Updater** Rust contract tests for manifest checks, staging, rollback, and Qt polling
 - **Packaging** structure checks (spec, entrypoint, build script); frozen binary smoke runs when `dist/` exists  
 
 `./scripts/build_executable.sh` also smoke-tests the frozen binary under offscreen Qt after build.
