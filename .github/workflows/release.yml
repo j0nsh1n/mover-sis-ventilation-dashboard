@@ -1,11 +1,11 @@
 name: Release
 
 # Builds Linux and Windows packages, then publishes a GitHub Release from a draft.
-# Runs on main, version tags, or manual dispatch.
+# Runs when VERSION changes on main, or by manual dispatch.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    paths: [VERSION]
   workflow_dispatch:
 
 concurrency:

@@ -130,7 +130,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 - Source of truth: top-level [`VERSION`](VERSION) file (`0.9.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
-- **On merge to `main`** (or tag / manual run): GitHub Actions workflow
+- **On a `VERSION` change merged to `main`** (or a manual run): GitHub Actions workflow
   [`.github/workflows/release.yml`](.github/workflows/release.yml) builds Linux
   and Windows packages and publishes both in a GitHub Release (Python **3.14**).
 - [Desktop updates](docs/UPDATES.md): the installed app checks a signed
