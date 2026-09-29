@@ -79,6 +79,10 @@ from src.runtime_paths import (
 )
 from src.user_settings import apply_ollama_env_from_settings, load_settings, needs_first_run_setup, settings_path
 
+NO_VENT_MESSAGE = (
+    "this surgery has no ventilator rows in the EMR export, so there are no "
+    "ventilation signals or flags to show. Vitals alone are not analyzed."
+)
 
 class DataLoadWorker(QThread):
     finished_ok = Signal(object)
@@ -1367,8 +1371,9 @@ class MainWindow(QMainWindow):
             self.research.set_answer("No matching indexed surgery records were found for this question.")
         elif self.research.selected_model() is None:
             self.research.set_answer("Case search is available. Start and select a local chat model to generate a source-grounded answer.")
-        if result.candidates:
-            self._load_research_case(result.candidates[0].pid, False, False)
+        preferred = self.research.preferred_pid()
+        if preferred:
+            self._load_research_case(preferred, False, False)
 
     def _on_research_answer(self, response) -> None:
         self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."))
@@ -1385,6 +1390,11 @@ class MainWindow(QMainWindow):
             self._queued_case = (pid, comparison, open_detail)
             self.research.set_status(f"Loading {pid} after the current case…")
             return
+        candidate = self.research.candidate_for(pid)
+        if candidate is not None and not candidate.has_vent:
+            # The pipeline analyzes ventilated surgeries only; skip a doomed fetch
+            self.research.show_case_unavailable(pid, NO_VENT_MESSAGE, comparison=comparison)
+            return
         self._pending_case = (pid, comparison, open_detail)
         if self.cases is not None and self.ts is not None and "PID" in self.cases and "PID" in self.ts:
             cases = self.cases[self.cases["PID"].astype(str) == pid]
@@ -1397,7 +1407,9 @@ class MainWindow(QMainWindow):
         self.research.set_status(f"Loading this case: {pid}…")
         self._case_worker = CaseFetchWorker(pid, emr_dir(), parent=self)
         self._case_worker.loaded.connect(self._on_research_case_loaded)
-        self._case_worker.failed.connect(lambda message: self.research.set_status(f"Source unavailable for {pid}: {message}"))
+        self._case_worker.failed.connect(
+            lambda message: self.research.show_case_unavailable(pid, message, comparison=comparison)
+        )
         self._case_worker.finished.connect(self._on_research_case_fetch_done)
         self._case_worker.start()
 
@@ -1416,7 +1428,9 @@ class MainWindow(QMainWindow):
         pid, comparison, open_detail = self._pending_case
         self._pending_case = None
         if timeseries is None or timeseries.empty or "t_min" not in timeseries:
-            self.research.set_status(f"Source unavailable for {pid}: no signal samples were found.")
+            self.research.show_case_unavailable(
+                pid, "no signal samples were found for this surgery.", comparison=comparison
+            )
             return
         self.research.set_case_data(
             pid,
