@@ -32,6 +32,8 @@ to publish.
 - Status: [ ]
 
 ## Backlog (unscheduled)
+- Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
+  into G/F, then review capability parity before changing the desktop UI
 - Optional Streamlit UX parity with desktop co-pilot
 - Full-corpus anomaly tools without loading all timeseries into RAM
 - Dependabot: enable only if human wants weekly bot PRs (pip-only; no npm)

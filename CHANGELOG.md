@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Planned a clickable G/F consolidation study for the existing Ask, Summary,
+  Case timeline, and Rule reference functions.
+
 ### Fixed
 
 - Release asset metadata is verified from the authenticated draft listing before
