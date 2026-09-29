@@ -254,9 +254,50 @@ jobs:
             --out "$RUNNER_TEMP/update-manifest.json"
           jq -r '.manifest | fromjson' "$RUNNER_TEMP/update-manifest.json" \
             > "$RUNNER_TEMP/update-payload.json"
+          gh release upload "$tag" "$RUNNER_TEMP/update-manifest.json" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Verify draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.build-windows.outputs.version }}"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -se --arg tag "$tag" --arg sha "$GITHUB_SHA" \
+                --slurpfile payload "$RUNNER_TEMP/update-payload.json" '
+                add | map(select(.draft == true and .tag_name == $tag)) |
+                if length == 1 then .[0] else error("expected one draft release") end |
+                .target_commitish == $sha and
+                (.assets as $assets |
+                $payload[0].packages | to_entries |
+                all(.[];
+                  .value as $package |
+                  ($package.url | split("/") | last) as $name |
+                  any($assets[];
+                    .name == $name and
+                    .state == "uploaded" and
+                    .size == $package.size and
+                    .digest == ("sha256:" + $package.sha256))))
+              '
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "v${{ needs.build-windows.outputs.version }}" \
+            --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify published release URLs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.build-windows.outputs.version }}"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
-            | jq -e --slurpfile payload "$RUNNER_TEMP/update-payload.json" '
-                .assets as $assets |
+            | jq -e --arg tag "$tag" --slurpfile payload "$RUNNER_TEMP/update-payload.json" '
+                .draft == false and .tag_name == $tag and
+                (.assets as $assets |
                 $payload[0].packages | to_entries |
                 all(.[];
                   .value as $package |
@@ -266,17 +307,8 @@ jobs:
                     .state == "uploaded" and
                     .size == $package.size and
                     .digest == ("sha256:" + $package.sha256) and
-                    .browser_download_url == $package.url))
+                    .browser_download_url == $package.url)))
               '
-          gh release upload "$tag" "$RUNNER_TEMP/update-manifest.json" \
-            --repo "$GITHUB_REPOSITORY" --clobber
-
-      - name: Publish complete release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "v${{ needs.build-windows.outputs.version }}" \
-            --draft=false --latest --repo "$GITHUB_REPOSITORY"
 
       - name: Check public package downloads
         run: |

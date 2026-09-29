@@ -2,18 +2,19 @@
 
 ## Current State
 
-- **Version:** 0.9.0 in source. The installed local build was v0.7.0 at the
-  start of this task and needs a manual update to enable automatic checks.
+- **Version:** 0.9.0 in source and in the local installed build. The prior
+  v0.7.0 install remains as a backup.
 - **Branch:** `main` includes the signed updater from merged PR #15.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
-  Frozen v0.9.0 builds check it by default.
+  Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
+  manifest are live.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q`, packaging,
-  and Rust updater and signer suites passed locally (2026-09-28). The v0.8.0
-  Linux frozen build and Windows CI smoke passed. v0.9.0 package checks follow
-  its release build.
+  and Rust updater and signer suites passed locally (2026-09-28). v0.9.0
+  Linux and Windows release jobs passed. Both archive hashes match the signed
+  Pages manifest; the local frozen Linux app launched and stayed running.
   Real wave tree unavailable.
   Lint/types not configured (report-only per spec).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
@@ -34,7 +35,8 @@
   - Python coverage reports do not include updater behavior exercised by the
     separate Rust contract suite.
   - Existing v0.8.0 and older installs need one manual update to v0.9.0.
-  - GitHub Pages caching can delay when a one-minute poll sees a new manifest.
+  - GitHub Pages currently serves the manifest with a 600-second cache time,
+    which can delay when a one-minute poll sees a new release.
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
   - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
@@ -125,12 +127,15 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-28
-- **Branch:** `main` after the public updater PR merges.
-- **Done:** The source repository is public. Frozen v0.9.0 builds default to
-  the signed Pages manifest, and releases keep packages on GitHub Releases.
-  The signing key is a GitHub Actions secret; the app pins its public key.
-- **Verified:** Local Python and Rust suites passed. The v0.8.0 release
-  downloads return HTTP 200 without authentication. v0.9.0 release CI and
-  installed-app checks are pending. Python lint/types are not configured.
-- **Next:** Publish v0.9.0, verify the public manifest and packages, and
-  install the new Linux build locally.
+- **Branch:** `main` after the release validation fix merges.
+- **Done:** The repository, v0.9.0 release packages, and signed Pages manifest
+  are public. The local v0.9.0 app is running in KDE with external data links
+  preserved and a v0.7.0 backup. The release workflow validates draft asset
+  metadata before publication and public URLs afterward.
+- **Verified:** Local Python and Rust suites passed. The v0.9.0 Linux package
+  launched offscreen and on the desktop. The Windows package passed CI smoke,
+  archive CRC, and digest checks. The live Pages signature verifies, its
+  package hashes match both archives, and update checks return the expected
+  result for v0.8.0 and v0.9.0. Python lint/types are not configured.
+- **Next:** Review the app with real de-identified data and a running local
+  Ollama model. Existing installs older than v0.9.0 need one manual update.

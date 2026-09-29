@@ -25,10 +25,10 @@ Set `MOVER_UPDATE_MANIFEST_URL` to another HTTPS URL to use a different signed
 manifest. Set it to an empty string to disable automatic checks. A manifest
 signed by a different key is rejected even when the URL was overridden.
 
-GitHub Pages may cache a deployed manifest. Polling every minute does not
-guarantee that every client sees a release within one minute. The manifest's
-signature and the package digests protect the update if a cache or host serves
-unexpected bytes.
+GitHub Pages currently sends `Cache-Control: max-age=600` for the manifest.
+Polling every minute does not guarantee that every client sees a release
+within one minute. The manifest's signature and the package digests protect
+the update if a cache or host serves unexpected bytes.
 
 ## Signed manifest
 
@@ -75,9 +75,11 @@ signature, unsupported platform, non-HTTPS URL, invalid size, or bad digest.
 `.github/workflows/release.yml` builds both packages from the same commit.
 It creates a draft release, computes the package metadata, verifies that the
 signing secret matches the public key embedded in the app, signs the manifest
-with `tools/update-manifest/`, and attaches it to the draft release. It then
-publishes the release and deploys that signed manifest to GitHub Pages. Pages
-receives only the small manifest and a landing page, not the packages.
+with `tools/update-manifest/`, and attaches it to the draft release. It checks
+draft asset metadata through the authenticated release listing, publishes the
+release, checks final metadata and public package URLs, and deploys the signed
+manifest to GitHub Pages. Pages receives only the small manifest and a landing
+page, not the packages.
 
 The Actions secret `MOVER_UPDATE_SIGNING_KEY_HEX` holds the private Ed25519
 key. Only the public key is in the app. Keep the secret in GitHub Actions; do

@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Release asset metadata is verified from the authenticated draft listing before
+  publication; public download URLs are checked before Pages is updated.
+
 ## [0.9.0] — 2026-09-28
 
 ### Added
