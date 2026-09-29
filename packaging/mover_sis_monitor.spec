@@ -108,6 +108,15 @@ for _pattern, _dest in (
         if _os.path.isfile(_lib):
             binaries.append((_lib, _dest))
 
+# Qt 6.5+ dlopen()s libxcb-cursor at runtime, so dependency analysis misses it
+# and hosts without it (stock Ubuntu) fail with "could not load the Qt platform
+# plugin xcb". Ship the build host's copy next to the other bundled libxcb libs.
+for _dir in ("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib"):
+    _cursor = Path(_dir) / "libxcb-cursor.so.0"
+    if _cursor.is_file():
+        binaries.append((str(_cursor), "."))
+        break
+
 hiddenimports = sorted(
     set(
         pyside_hidden
@@ -182,7 +191,21 @@ def _is_conflicting_system_qt(src_path: str) -> bool:
     return False
 
 
-a.binaries = [b for b in a.binaries if not _is_conflicting_system_qt(b[1])]
+def _is_host_keyboard_lib(dest_name: str) -> bool:
+    """libxkbcommon must come from the host, like libxkbcommon-x11.
+
+    Qt loads the host's libxkbcommon-x11, which then resolved the bundled
+    libxkbcommon from the build machine. The version mismatch crashed the
+    frozen app in xkb_state_key_get_layout on Nobara (see context.md).
+    """
+    return _os.path.basename(str(dest_name)).startswith("libxkbcommon")
+
+
+a.binaries = [
+    b
+    for b in a.binaries
+    if not _is_conflicting_system_qt(b[1]) and not _is_host_keyboard_lib(b[0])
+]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

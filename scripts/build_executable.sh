@@ -90,8 +90,12 @@ MOVER SIS Ventilation Monitor v${VERSION} — Linux executable
 ============================================================
 
 Run:
-  ./MOVER-SIS-Monitor
+  ./launch.sh
   # or via launcher after install_local.sh
+
+System libraries (usually present on a desktop install; launch.sh checks):
+  Ubuntu / Debian:  sudo apt install libxkbcommon0 libxkbcommon-x11-0
+  Fedora / Nobara:  sudo dnf install libxkbcommon libxkbcommon-x11
 
 Data:
   Put SIS EMR CSVs in:  ./data/raw/EMR/
@@ -132,6 +136,30 @@ export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --
 # User-selected EMR/wave trees may live outside the install dir (e.g. /var/mnt/games)
 export MOVER_ALLOW_EXTERNAL_OUTPUT="${MOVER_ALLOW_EXTERNAL_OUTPUT:-1}"
 export LD_LIBRARY_PATH="$APP_DIR/_internal/PySide6/Qt/lib:$APP_DIR/_internal/numpy.libs:$APP_DIR/_internal/scipy.libs:$APP_DIR/_internal/pillow.libs:$APP_DIR/_internal/PIL.libs:$APP_DIR/_internal/matplotlib.libs:$APP_DIR/_internal/shiboken6:${LD_LIBRARY_PATH:-}"
+
+# Qt's X11 plugin needs these from the system; without them it fails with an
+# unreadable "could not load the Qt platform plugin" message. Say what to install.
+if [[ "$QT_QPA_PLATFORM" == xcb* ]] && command -v ldconfig >/dev/null 2>&1; then
+  host_libs="$(ldconfig -p 2>/dev/null || true)"
+  missing=()
+  for lib in libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-cursor.so.0; do
+    [[ -e "$APP_DIR/_internal/$lib" || "$host_libs" == *"$lib "* ]] || missing+=("$lib")
+  done
+  if (( ${#missing[@]} )); then
+    msg="MOVER SIS Monitor needs system libraries that are not installed: ${missing[*]}
+
+Ubuntu / Debian:  sudo apt install libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0
+Fedora / Nobara:  sudo dnf install libxkbcommon libxkbcommon-x11 xcb-util-cursor"
+    echo "$msg" >&2
+    if command -v kdialog >/dev/null 2>&1; then
+      kdialog --error "$msg" || true
+    elif command -v zenity >/dev/null 2>&1; then
+      zenity --error --text="$msg" || true
+    fi
+    exit 1
+  fi
+fi
+
 cd "$APP_DIR"
 exec "$APP_DIR/MOVER-SIS-Monitor" "$@"
 EOF
