@@ -254,6 +254,22 @@ jobs:
             --out "$RUNNER_TEMP/update-manifest.json"
           jq -r '.manifest | fromjson' "$RUNNER_TEMP/update-manifest.json" \
             > "$RUNNER_TEMP/update-payload.json"
+          gh release upload "$tag" "$RUNNER_TEMP/update-manifest.json" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "v${{ needs.build-windows.outputs.version }}" \
+            --draft=false --latest --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.build-windows.outputs.version }}"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
             | jq -e --slurpfile payload "$RUNNER_TEMP/update-payload.json" '
                 .assets as $assets |
@@ -268,15 +284,6 @@ jobs:
                     .digest == ("sha256:" + $package.sha256) and
                     .browser_download_url == $package.url))
               '
-          gh release upload "$tag" "$RUNNER_TEMP/update-manifest.json" \
-            --repo "$GITHUB_REPOSITORY" --clobber
-
-      - name: Publish complete release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "v${{ needs.build-windows.outputs.version }}" \
-            --draft=false --latest --repo "$GITHUB_REPOSITORY"
 
       - name: Check public package downloads
         run: |

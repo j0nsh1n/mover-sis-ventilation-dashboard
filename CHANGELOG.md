@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Release asset verification now runs after a draft becomes public, when GitHub's
+  by-tag API and final download URLs are available.
+
 ## [0.9.0] — 2026-09-28
 
 ### Added
