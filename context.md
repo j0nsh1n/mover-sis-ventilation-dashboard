@@ -130,8 +130,8 @@ Wave root (optional) ──► wave_decode                   │
 - **Branch:** `main` after the release validation fix merges.
 - **Done:** The repository, v0.9.0 release packages, and signed Pages manifest
   are public. The local v0.9.0 app is running in KDE with external data links
-  preserved and a v0.7.0 backup. The release workflow validates final asset
-  URLs after publication.
+  preserved and a v0.7.0 backup. The release workflow validates draft asset
+  metadata before publication and public URLs afterward.
 - **Verified:** Local Python and Rust suites passed. The v0.9.0 Linux package
   launched offscreen and on the desktop. The Windows package passed CI smoke,
   archive CRC, and digest checks. The live Pages signature verifies, its

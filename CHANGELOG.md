@@ -9,8 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Release asset verification now runs after a draft becomes public, when GitHub's
-  by-tag API and final download URLs are available.
+- Release asset metadata is verified from the authenticated draft listing before
+  publication; public download URLs are checked before Pages is updated.
 
 ## [0.9.0] — 2026-09-28
 
