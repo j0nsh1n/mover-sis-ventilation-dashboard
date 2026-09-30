@@ -138,6 +138,35 @@ class PipelineWorker(QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
+class CorpusScanWorker(QThread):
+    """Score every ventilated surgery in the EMR (bounded memory, can take minutes)."""
+
+    progress = Signal(str)
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, emr: Path, processed: Path, preset: str = "default", parent=None):
+        super().__init__(parent)
+        self.emr = emr
+        self.processed = processed
+        self.preset = preset
+
+    def run(self) -> None:
+        try:
+            from src.pipeline.corpus_scan import scan_corpus
+
+            result = scan_corpus(
+                self.emr,
+                self.processed,
+                preset=self.preset,
+                on_progress=lambda message, _done, _total: self.progress.emit(message),
+                should_stop=self.isInterruptionRequested,
+            )
+            self.finished_ok.emit(result)
+        except Exception as e:
+            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+
+
 class LLMChatWorker(QThread):
     """Tool-using Ollama agent (native tools + extract recovery + verification)."""
 
@@ -240,6 +269,8 @@ class MainWindow(QMainWindow):
         self.flags: pd.DataFrame | None = None
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
+        # Full-EMR scan results (src.pipeline.corpus_scan.ScanResult), if any
+        self.corpus_scan = None
         self._active_pid: str | None = None
         self._focus_pids: list[str] = []
         self._worker: QThread | None = None
@@ -285,6 +316,9 @@ class MainWindow(QMainWindow):
         run_pipe = QAction("Run pipeline (50 cases)…", self)
         run_pipe.triggered.connect(self._run_pipeline_menu)
         file_menu.addAction(run_pipe)
+        scan_act = QAction("Scan full EMR (all ventilated surgeries)…", self)
+        scan_act.triggered.connect(self._run_corpus_scan)
+        file_menu.addAction(scan_act)
         file_menu.addSeparator()
         setup_act = QAction("&Setup…", self)
         setup_act.triggered.connect(self._open_setup_wizard)
@@ -931,8 +965,53 @@ class MainWindow(QMainWindow):
         self._worker.failed.connect(self._on_pipeline_fail)
         self._worker.start()
 
+    def _run_corpus_scan(self) -> None:
+        if self._worker and self._worker.isRunning():
+            QMessageBox.information(self, "Busy", "A background job is already running.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Scan full EMR",
+            "Score every surgery with ventilator data in the EMR folder?\n\n"
+            "This reads the whole export in batches and can take many minutes on the "
+            "full MOVER SIS data. The loaded sample and its charts are not changed; the "
+            "co-pilot uses the scan for whole-dataset questions.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._update_status_paths("Scanning full EMR…")
+        worker = CorpusScanWorker(emr_dir(), processed_dir(), parent=self)
+        worker.progress.connect(lambda message: self.statusBar().showMessage(message))
+        worker.finished_ok.connect(self._on_corpus_scan_ok)
+        worker.failed.connect(self._on_corpus_scan_fail)
+        self._worker = worker
+        worker.start()
+
+    def _on_corpus_scan_ok(self, result) -> None:
+        self.corpus_scan = result
+        meta = result.meta
+        self._update_status_paths(
+            f"Full-EMR scan: {meta.get('n_scanned_cases')} of "
+            f"{meta.get('n_ventilated_surgeries')} ventilated surgeries scored"
+        )
+        self._refresh_tables_and_selectors()
+
+    def _on_corpus_scan_fail(self, msg: str) -> None:
+        self._update_status_paths("Full-EMR scan failed")
+        QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
+
+    def _load_corpus_scan(self) -> None:
+        """Pick up a previous full-EMR scan saved next to the processed sample."""
+        from src.pipeline.corpus_scan import load_corpus_scan
+
+        try:
+            self.corpus_scan = load_corpus_scan(processed_dir())
+        except Exception:
+            self.corpus_scan = None
+
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
+        self._load_corpus_scan()
         self._research_engine = None
         self._update_status_paths(
             f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
@@ -1016,8 +1095,14 @@ class MainWindow(QMainWindow):
         filtered = self._filtered_cases()
         n_all = 0 if self.cases is None else len(self.cases)
         if hasattr(self, "lbl_corpus"):
+            scan = self.corpus_scan.meta if self.corpus_scan is not None else None
             self.lbl_corpus.setText(
-                f"Corpus: {n_all} cases loaded"
+                f"Loaded sample: {n_all} cases"
+                + (
+                    f" · full-EMR scan: {scan.get('n_scanned_cases')} surgeries"
+                    if scan
+                    else " · no full-EMR scan"
+                )
                 + (
                     f" · focus {len(self._focus_pids)}"
                     if self._focus_pids
@@ -1326,6 +1411,9 @@ class MainWindow(QMainWindow):
             events=self.events,
             active_pid=self._active_pid,
             focus_pids=list(self._focus_pids),
+            corpus=self.corpus_scan.cases if self.corpus_scan is not None else None,
+            corpus_episodes=self.corpus_scan.episodes if self.corpus_scan is not None else None,
+            corpus_meta=self.corpus_scan.meta if self.corpus_scan is not None else None,
         )
 
     def _start_research_search(self, question: str) -> None:

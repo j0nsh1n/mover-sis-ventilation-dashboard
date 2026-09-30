@@ -64,6 +64,20 @@ Outputs under `data/processed/`:
 | `events.parquet` | Optional procedure events aligned to a surgery |
 | `run_meta.json` | Sample PID list and counts |
 
+### Score every surgery (full-EMR scan)
+
+The pipeline above analyzes a sample and keeps its minute-level data for charts.
+To score every surgery with ventilator data, use **File → Scan full EMR** or:
+
+```bash
+PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default
+```
+
+It processes the export in batches and keeps only per-case scores and flag episodes
+(`corpus_cases.parquet`, `corpus_episodes.parquet`, `corpus_meta.json`), so memory
+stays bounded. On the full MOVER SIS export expect it to take over an hour. The
+co-pilot then answers whole-dataset questions from the scan and says so.
+
 ### Profile the output (threshold calibration)
 
 ```bash

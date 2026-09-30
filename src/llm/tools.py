@@ -27,6 +27,14 @@ class SessionState:
     active_pid: str | None = None
     focus_pids: list[str] = field(default_factory=list)
     last_tool_trace: list[str] = field(default_factory=list)
+    # Full-EMR scan (src.pipeline.corpus_scan): one scored row per ventilated
+    # surgery, no timeseries. ``cases`` above is only the analyzed sample.
+    corpus: pd.DataFrame | None = None
+    corpus_episodes: pd.DataFrame | None = None
+    corpus_meta: dict[str, Any] | None = None
+
+    def has_corpus_scan(self) -> bool:
+        return self.corpus is not None and not self.corpus.empty
 
     def focus_frame(self) -> pd.DataFrame:
         if self.cases is None or self.cases.empty:
@@ -58,14 +66,80 @@ def _case_line(row: pd.Series) -> str:
     )
 
 
+SCOPE_FULL = "full"
+SCOPE_SAMPLE = "sample"
+
+
+def _emr_counts() -> tuple[int | None, int | None]:
+    """(indexed surgeries, surgeries with ventilator rows) in the configured EMR."""
+    try:
+        from src.services.case_fetch import emr_index
+
+        index = emr_index()
+    except Exception:
+        return None, None
+    if index is None or index.empty:
+        return None, None
+    n_vent = int(index["has_vent"].sum()) if "has_vent" in index.columns else None
+    return int(len(index)), n_vent
+
+
+def _resolve_scope(session: SessionState, scope: str | None) -> str:
+    """'full' when a full-EMR scan is loaded (or requested and present), else 'sample'."""
+    want = str(scope or "auto").strip().lower()
+    if want == SCOPE_SAMPLE:
+        return SCOPE_SAMPLE
+    return SCOPE_FULL if session.has_corpus_scan() else SCOPE_SAMPLE
+
+
+def _scope_frame(session: SessionState, scope: str) -> pd.DataFrame | None:
+    return session.corpus if scope == SCOPE_FULL else session.cases
+
+
+def _scope_line(session: SessionState, scope: str, requested: str | None = None) -> str:
+    """One line every corpus tool starts with, so answers never pass a sample off as the EMR."""
+    n_indexed, n_vent = _emr_counts()
+    meta = session.corpus_meta or {}
+    n_indexed = meta.get("n_indexed_surgeries", n_indexed)
+    n_vent = meta.get("n_ventilated_surgeries", n_vent)
+    emr = ""
+    if n_vent is not None and n_indexed is not None:
+        emr = f"{n_vent} with ventilator data of {n_indexed} indexed surgeries in the EMR"
+    if scope == SCOPE_FULL:
+        n = len(session.corpus) if session.corpus is not None else 0
+        return (
+            f"SCOPE: full-EMR scan — {n} scored surgeries"
+            + (f" ({emr})" if emr else "")
+            + f"; preset {meta.get('preset', '?')}, scanned {meta.get('created_at', '?')}."
+        )
+    n = len(session.cases) if session.cases is not None else 0
+    line = f"SCOPE: loaded sample — {n} analyzed cases, NOT the whole EMR"
+    if emr:
+        line += f" ({emr})"
+    if str(requested or "").lower() == SCOPE_FULL:
+        line += ". A full-EMR scan was requested but none is loaded (File → Scan full EMR)"
+    elif session.has_corpus_scan():
+        line += ". A full-EMR scan is loaded; pass scope='full' to use it"
+    else:
+        line += ". No full-EMR scan loaded (File → Scan full EMR)"
+    return line + "."
+
+
 def tool_corpus_overview(session: SessionState, **_kwargs: Any) -> str:
     cases = session.cases
-    if cases is None or cases.empty:
+    if (cases is None or cases.empty) and not session.has_corpus_scan():
         return "NO_DATA: No processed cases loaded. User must load/run the pipeline (File → Reload processed data or Run pipeline)."
+    scope = _resolve_scope(session, "auto")
+    cases = _scope_frame(session, scope)
     lines = [
-        f"Corpus size: {len(cases)} surgeries (PID = surgery ID).",
+        _scope_line(session, scope),
+        f"Figures below describe the {'full-EMR scan' if scope == SCOPE_FULL else 'loaded sample'} only.",
         f"Active PID: {session.active_pid or '(none selected)'}",
     ]
+    if scope == SCOPE_FULL and session.cases is not None and not session.cases.empty:
+        lines.append(
+            f"Loaded sample for charts and minute-level detail: {len(session.cases)} cases."
+        )
     if session.focus_pids:
         lines.append(f"Focus set: {len(session.focus_pids)} PID(s) from last search.")
     if "primary_agent_name" in cases.columns:
@@ -93,26 +167,31 @@ def tool_search_cases(
     *,
     query: str = "",
     limit: int = 12,
+    scope: str = "auto",
     **_kwargs: Any,
 ) -> str:
-    cases = session.cases
+    used = _resolve_scope(session, scope)
+    cases = _scope_frame(session, used)
     if cases is None or cases.empty:
         return "NO_DATA: corpus empty."
     limit = max(1, min(int(limit or 12), 30))
     q = (query or "").strip()
     if not q:
         return "ERROR: search_cases requires a non-empty query."
-    hit = filter_cases_by_keywords(cases, q, flags=session.flags, match_all=True)
+    # The sample has per-minute flags; scan rows carry rule ids in top_rules
+    flags = session.flags if used == SCOPE_SAMPLE else None
+    hit = filter_cases_by_keywords(cases, q, flags=flags, match_all=True)
     if hit.empty:
         # fallback OR match for light-model queries
-        hit = filter_cases_by_keywords(cases, q, flags=session.flags, match_all=False)
+        hit = filter_cases_by_keywords(cases, q, flags=flags, match_all=False)
     if hit.empty:
         session.focus_pids = []
-        return f"SEARCH_EMPTY: no cases matched query={q!r}."
+        return f"{_scope_line(session, used, scope)}\nSEARCH_EMPTY: no cases matched query={q!r}."
     if "anomaly_score" in hit.columns:
         hit = hit.sort_values("anomaly_score", ascending=False)
     session.focus_pids = [str(p) for p in hit["PID"].head(limit).tolist()]
     lines = [
+        _scope_line(session, used, scope),
         f"SEARCH_OK: query={q!r} · matched={len(hit)} · showing={len(session.focus_pids)}",
         "Set focus to these PIDs. Call select_case with one PID before case detail answers.",
     ]
@@ -125,20 +204,61 @@ def tool_top_anomaly_cases(
     session: SessionState,
     *,
     limit: int = 10,
+    scope: str = "auto",
+    per_hour: bool = False,
     **_kwargs: Any,
 ) -> str:
-    cases = session.cases
+    used = _resolve_scope(session, scope)
+    cases = _scope_frame(session, used)
     if cases is None or cases.empty:
         return "NO_DATA: corpus empty."
     limit = max(1, min(int(limit or 10), 30))
-    if "anomaly_score" not in cases.columns:
-        return "ERROR: anomaly_score column missing."
-    hit = cases.sort_values("anomaly_score", ascending=False).head(limit)
+    key = "anomaly_score_per_hour" if per_hour else "anomaly_score"
+    if key not in cases.columns:
+        return f"ERROR: {key} column missing."
+    hit = cases.sort_values(key, ascending=False).head(limit)
     session.focus_pids = [str(p) for p in hit["PID"].tolist()]
-    lines = [f"TOP_ANOMALY: n={len(hit)}"]
+    lines = [_scope_line(session, used, scope), f"TOP_ANOMALY: n={len(hit)} · ranked by {key}"]
     for _, row in hit.iterrows():
         lines.append(_case_line(row))
     return _clip("\n".join(lines))
+
+
+def _fetch_into_session(session: SessionState, pid: str) -> bool:
+    """Analyze one surgery on demand and add it to the session's sample frames."""
+    try:
+        from src.services.case_fetch import fetch_cases
+
+        fetched = fetch_cases([pid])
+    except Exception:
+        return False
+    if fetched.cases.empty or pid not in set(fetched.cases["PID"].astype(str)):
+        return False
+    for attr, frame in (
+        ("cases", fetched.cases),
+        ("timeseries", fetched.timeseries),
+        ("flags", fetched.flags),
+        ("episodes", fetched.episodes),
+        ("events", fetched.events),
+    ):
+        current = getattr(session, attr)
+        if current is None or current.empty:
+            setattr(session, attr, frame.copy())
+        elif not frame.empty:
+            setattr(session, attr, pd.concat([current, frame], ignore_index=True))
+    return True
+
+
+def _known_elsewhere(session: SessionState, pid: str) -> bool:
+    """PID is in the full-EMR scan or has ventilator rows in the EMR."""
+    if session.has_corpus_scan() and pid in set(session.corpus["PID"].astype(str)):
+        return True
+    try:
+        from src.services.case_fetch import vent_capable_pids
+
+        return pid in vent_capable_pids()
+    except Exception:
+        return False
 
 
 def tool_select_case(
@@ -147,12 +267,22 @@ def tool_select_case(
     pid: str = "",
     **_kwargs: Any,
 ) -> str:
-    cases = session.cases
-    if cases is None or cases.empty:
-        return "NO_DATA: corpus empty."
     pid = str(pid or "").strip()
     if not pid:
         return "ERROR: select_case requires pid."
+    fetched_note = ""
+    loaded = session.cases is not None and not session.cases.empty
+    if (not loaded or pid not in set(session.cases["PID"].astype(str))) and _known_elsewhere(
+        session, pid
+    ):
+        if _fetch_into_session(session, pid):
+            fetched_note = (
+                "NOTE: this surgery was not in the loaded sample; it was analyzed on "
+                "demand from the EMR.\n"
+            )
+    cases = session.cases
+    if cases is None or cases.empty:
+        return "NO_DATA: corpus empty."
     # Allow partial PID match (prefix) for convenience
     pids = cases["PID"].astype(str)
     exact = pids[pids == pid]
@@ -176,7 +306,10 @@ def tool_select_case(
                     f"{', '.join(contains.head(8).tolist())}"
                 )
             else:
-                return f"UNKNOWN_PID: {pid!r} not in loaded corpus."
+                return (
+                    f"UNKNOWN_PID: {pid!r} is not in the loaded sample, the full-EMR "
+                    "scan, or the EMR's ventilated surgeries."
+                )
     session.active_pid = pid
     if pid not in session.focus_pids:
         session.focus_pids = [pid] + [p for p in session.focus_pids if p != pid]
@@ -197,7 +330,7 @@ def tool_select_case(
         )
     except Exception as e:
         return f"SELECTED: {pid} but briefing failed: {e}"
-    return _clip(f"SELECTED_CASE: {pid}\n\n{brief}")
+    return _clip(f"SELECTED_CASE: {pid}\n{fetched_note}\n{brief}")
 
 
 def tool_get_case_briefing(
@@ -244,9 +377,11 @@ def tool_filter_by_agent(
     *,
     agent: str = "",
     limit: int = 15,
+    scope: str = "auto",
     **_kwargs: Any,
 ) -> str:
-    cases = session.cases
+    used = _resolve_scope(session, scope)
+    cases = _scope_frame(session, used)
     if cases is None or cases.empty:
         return "NO_DATA"
     agent = (agent or "").strip().lower()
@@ -261,12 +396,18 @@ def tool_filter_by_agent(
     ]
     if hit.empty:
         session.focus_pids = []
-        return f"SEARCH_EMPTY: no cases with agent containing {agent!r}."
+        return (
+            f"{_scope_line(session, used, scope)}\n"
+            f"SEARCH_EMPTY: no cases with agent containing {agent!r}."
+        )
     if "anomaly_score" in hit.columns:
         hit = hit.sort_values("anomaly_score", ascending=False)
     limit = max(1, min(int(limit or 15), 30))
     session.focus_pids = [str(p) for p in hit["PID"].head(limit).tolist()]
-    lines = [f"AGENT_FILTER: {agent!r} · matched={len(hit)} · showing={len(session.focus_pids)}"]
+    lines = [
+        _scope_line(session, used, scope),
+        f"AGENT_FILTER: {agent!r} · matched={len(hit)} · showing={len(session.focus_pids)}",
+    ]
     for _, row in hit.head(limit).iterrows():
         lines.append(_case_line(row))
     return _clip("\n".join(lines))
@@ -321,6 +462,7 @@ def tool_find_similar_cases(
     agent: str = "",
     flags: str = "",
     limit: int = 10,
+    scope: str = "auto",
     **_kwargs: Any,
 ) -> str:
     """Compose a search query from vignette fields."""
@@ -328,7 +470,7 @@ def tool_find_similar_cases(
     if not parts:
         return "ERROR: find_similar_cases needs procedure (and optionally agent/flags)."
     query = " ".join(str(p).strip() for p in parts)
-    return tool_search_cases(session, query=query, limit=limit or 10)
+    return tool_search_cases(session, query=query, limit=limit or 10, scope=scope)
 
 
 def _management_snapshot(session: SessionState, pid: str) -> str:
@@ -445,15 +587,57 @@ def tool_verify_selection(session: SessionState, **_kwargs: Any) -> str:
                 .tolist()
             ]
             lines.append("(no focus — showing top-5 scores for orientation)")
+    corpus = session.corpus if session.has_corpus_scan() else None
     for pid in show:
         sub = cases[cases["PID"].astype(str) == str(pid)]
+        if sub.empty and corpus is not None:
+            sub = corpus[corpus["PID"].astype(str) == str(pid)]
         if sub.empty:
-            lines.append(f"- {pid}: NOT IN CORPUS")
+            lines.append(f"- {pid}: NOT IN LOADED SAMPLE OR FULL-EMR SCAN")
         else:
             lines.append(_case_line(sub.iloc[0]))
     lines.append(
         "If your planned answer cites any other PID, call select_case on it first."
     )
+    return _clip("\n".join(lines))
+
+
+def tool_rule_case_counts(
+    session: SessionState,
+    *,
+    scope: str = "auto",
+    severity: str = "",
+    **_kwargs: Any,
+) -> str:
+    """How many surgeries each rule fired in, with episode and minute totals."""
+    used = _resolve_scope(session, scope)
+    episodes = session.corpus_episodes if used == SCOPE_FULL else session.episodes
+    frame = _scope_frame(session, used)
+    n_cases = 0 if frame is None else int(frame["PID"].nunique())
+    head = _scope_line(session, used, scope)
+    if episodes is None or episodes.empty or "rule_id" not in episodes.columns:
+        return f"{head}\nRULE_COUNTS: no flag episodes in this scope."
+    ep = episodes
+    sev = (severity or "").strip().lower()
+    if sev:
+        ep = ep[ep["severity"].astype(str).str.lower() == sev]
+    minutes = "n_minutes" if "n_minutes" in ep.columns else "duration_min"
+    table = (
+        ep.groupby("rule_id")
+        .agg(cases=("PID", "nunique"), episodes=("PID", "size"), minutes=(minutes, "sum"))
+        .sort_values(["cases", "episodes"], ascending=False)
+    )
+    lines = [
+        head,
+        f"RULE_COUNTS: {len(table)} rule(s) over {n_cases} surgeries"
+        + (f" · severity={sev}" if sev else ""),
+    ]
+    for rule_id, row in table.iterrows():
+        pct = 100.0 * row["cases"] / n_cases if n_cases else 0.0
+        lines.append(
+            f"- {rule_id}: {int(row['cases'])} cases ({pct:.1f}%) · "
+            f"{int(row['episodes'])} episodes · {int(row['minutes'])} flagged minutes"
+        )
     return _clip("\n".join(lines))
 
 
@@ -465,18 +649,18 @@ TOOL_SPECS: dict[str, dict[str, Any]] = {
     },
     "search_cases": {
         "fn": tool_search_cases,
-        "args": ["query", "limit"],
+        "args": ["query", "limit", "scope"],
         "help": "Keyword search (procedure, PID, agent, flag rules). Sets focus list.",
     },
     "find_similar_cases": {
         "fn": tool_find_similar_cases,
-        "args": ["procedure", "agent", "flags", "limit"],
+        "args": ["procedure", "agent", "flags", "limit", "scope"],
         "help": "Vignette-style similar-case search.",
     },
     "top_anomaly_cases": {
         "fn": tool_top_anomaly_cases,
-        "args": ["limit"],
-        "help": "Highest anomaly_score cases; sets focus.",
+        "args": ["limit", "scope", "per_hour"],
+        "help": "Highest anomaly_score (or per-hour) cases; sets focus.",
     },
     "select_case": {
         "fn": tool_select_case,
@@ -505,8 +689,13 @@ TOOL_SPECS: dict[str, dict[str, Any]] = {
     },
     "filter_by_agent": {
         "fn": tool_filter_by_agent,
-        "args": ["agent", "limit"],
+        "args": ["agent", "limit", "scope"],
         "help": "Cases whose primary agent name contains agent.",
+    },
+    "rule_case_counts": {
+        "fn": tool_rule_case_counts,
+        "args": ["scope", "severity"],
+        "help": "Surgeries, episodes and minutes per flag rule.",
     },
     "rule_reference": {
         "fn": tool_rule_reference,
