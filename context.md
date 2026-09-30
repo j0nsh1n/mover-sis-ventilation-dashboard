@@ -50,8 +50,15 @@
     libraries.
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
-  - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
-  - `requirements.txt` uses minimum versions (`>=`), not full lockfile pins.
+  - Frozen onedir is 399 MB unpacked / 155 MB tarball (was 1.2 GB / 464 MB).
+    The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
+    `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
+  - `requirements.txt` pins direct dependencies exactly; transitive packages
+    are not locked. `scipy` and `plotly` stay listed although the desktop
+    bundle omits both (only the optional Streamlit UI and its tests use plotly;
+    nothing in `src/` imports scipy).
+  - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
+    verified on Linux only; the release workflow's Windows smoke test is the check.
   - Induction is now in the timeseries; rules have no induction/emergence context
     yet, so expect extra flags around intubation (procedure-event context planned).
   - `clean_ranges.RR` [4, 40] blanks RR < 4, so `rr_low` critical (≤ 4) fires only at 4.
@@ -75,7 +82,7 @@
 | `src/guardrails/` | Config / data / IO validation |
 | `src/config/thresholds.yaml` | Flag rule presets |
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
-| `packaging/` | PyInstaller entry + rthooks |
+| `packaging/` | PyInstaller spec (targeted collection + path filters), entry, rthooks |
 | `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
 | `src/update.py`, `src/desktop/updates.py` | Signed checks, staging, apply, rollback |
 | `tools/update-manifest/` | Rust release manifest signer |
@@ -117,6 +124,12 @@ Wave root (optional) ──► wave_decode                   │
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
 - **PyInstaller onedir** (not onefile) for faster cold start; Qt system deps on CI.
+- **Targeted PyInstaller collection:** the spec does not use `collect_all()`
+  for Qt or the scientific stack; only QtCore/QtGui/QtWidgets are imported.
+  Path filters drop embedded Qt platforms, the on-screen keyboard, the PDF image
+  plugin, translations, tests and headers. The GTK3 platform theme (about 19 MB
+  of host GTK libraries) and the SVG icon plugins stay for native dialogs and
+  theme icons. WebEngine is unused, so its env vars are gone.
 - **Update host:** GitHub Pages serves only the signed manifest. GitHub
   Releases serves the packages. The app uses no GitHub API for polling.
 - **Streamlit optional**; desktop is primary.
@@ -137,15 +150,14 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-09-29
-- **Branch:** `fix/research-vent-and-linux-launch` (from `main` after #18).
-- **Done:** Ran the published v0.9.0 Linux package on synthetic data (cloud,
-  Xvfb). Fixed two findings: G search ranked a surgery without ventilator rows
-  first and opened a dead end; the package needed the system `libxcb-cursor0`
-  on stock Ubuntu. `launch.sh` now names missing system libraries.
-- **Verified:** full `pytest` (frozen-binary smoke included) passed; a local
-  build started on Xvfb with the host `libxcb-cursor0` removed, and the same G
-  question opened a ventilated case; `launch.sh` printed install commands when
-  the library was missing.
-- **Next:** Phase 3 (corpus scoping, pins, package size, lint/types), full-data
+- **Date:** 2026-09-30
+- **Branch:** `chore/pins-and-package-size` (Phase 3: pins and package size).
+- **Done:** Pinned direct dependencies exactly (including PyInstaller in the
+  build script and workflows) and cut the Linux onedir from 1.2 GB / 464 MB
+  tarball to 399 MB / 155 MB by dropping unused Qt modules, scipy, tests, and
+  headers from the PyInstaller spec.
+- **Verified:** full `pytest` (frozen smoke included); the frozen build on Xvfb
+  loaded 20 synthetic cases and rendered Research (search and signal preview),
+  Summary charts, and a Case timeline with an empty log.
+- **Next:** Phase 3 (corpus scoping, lint/types), full-data
   anomaly tools, and the G/F consolidation prototype, then a release.

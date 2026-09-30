@@ -7,6 +7,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Direct dependencies in `requirements.txt` are exact `==` pins of the versions
+  resolved on Python 3.14 (PySide6 6.11.2, pandas 3.0.6, numpy 2.5.3, pyarrow
+  25.0.1, scipy 1.18.1, matplotlib 3.11.2, plotly 7.1.0, PyYAML 6.0.3, streamlit
+  1.64.0, pytest 9.1.1, pytest-cov 7.1.0, PyInstaller 6.22.3). PyInstaller uses
+  the same pin in `build_executable.sh`, `ci.yml`, and `release.yml`.
+- The Linux package is smaller: 1.2 GB unpacked / 464 MB tarball down to 399 MB
+  unpacked / 155 MB tarball. The build bundles only the Qt libraries and plugins
+  that QtCore/QtGui/QtWidgets need instead of all of Qt (QtWebEngine, Qt3D,
+  QtQuick/QML, designer, translations), leaves out scipy (the app never imports
+  it), test suites, headers, sample data and pyarrow Flight. `launch.sh` no longer
+  sets unused QtWebEngine variables.
+
 ### Added
 
 - Planned a clickable G/F consolidation study for the existing Ask, Summary,
