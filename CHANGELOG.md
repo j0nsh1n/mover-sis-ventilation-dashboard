@@ -7,6 +7,54 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Anesthesia phase for every minute: `pre_induction`, `induction`, `maintenance`,
+  `emergence`, `post_emergence`. The boundaries come from each surgery's
+  intubation and extubation procedure events, matched by the new `phases:` patterns
+  in `thresholds.yaml`. Without usable events the phases fall back to the first
+  ventilator minute, incision and surgery end. The timeseries gets `phase` and
+  `phase_source` (`events`, `mixed` or `fallback`); the cases table gets
+  `phase_source`. The event-name patterns are guesses until they are checked against
+  the real MOVER event names.
+- Flags and episodes have a `phase` column (episodes also `phase_end`, which
+  differs when a run crosses a phase change). The co-pilot says "during induction"
+  when it lists a case's episodes and flag counts, and the desktop episode table
+  shows the column.
+- A rule can list `skip_phases` in `thresholds.yaml` to stay quiet in those phases.
+  The config check rejects unknown phase names, patterns that are not lists of
+  strings, and invalid regular expressions.
+- The profile report lists procedure event names with counts and the phase role each
+  one matches (names used in fewer than 11 cases are pooled; no PIDs or timestamps),
+  plus observed minutes per phase and how many cases used events or the fallback.
+- Synthetic data gets a brief desaturation right after intubation in every sixth
+  ventilated case (marked `"phase": "induction"` in `synthetic_truth.json`).
+
+### Changed
+
+- Expected transition behavior is no longer flagged by default: `agent_drift`,
+  `agent_fi_et_gap`, `agent_low_maint`, `fio2_high_long`, `etco2_low`,
+  `etco2_zero_vent`, `peep_zero_long`, `fio2_room_air_vent`, `tv_low_mlkg`,
+  `tv_high_mlkg`, `tv_abs_extreme`, `rr_low` and `rr_high` skip the phases where
+  the value is usually routine (for example wash-in and wash-out, pre-oxygenation,
+  mask ventilation, an extubated circuit). `spo2_low`, `hr_high`, `hr_low`,
+  `map_low`, `pip_high`, `pip_rising`, `peep_high`, `etco2_high`, `agent_high` and
+  the composite patterns stay on in every phase. `etco2_zero_vent` stays on in
+  induction and emergence (esophageal tube, disconnect) and skips only mask
+  ventilation and the extubated circuit. On a 60-case synthetic set
+  `agent_drift` dropped from 525 to 49 minute flags.
+- The agent drift window restarts at each phase change, so induction wash-in does
+  not show up as drift in the first maintenance minutes.
+- Re-running the pipeline or the full-EMR scan changes flags, episodes, scores and
+  the top-rules text compared with earlier runs (fewer flags in induction and
+  emergence, and `rr_low` fires on RR 1-3).
+
+### Fixed
+
+- `rr_low` critical (RR 4 or below) fired only at exactly RR 4 because the RR keep
+  range blanked every rate under 4. The range is now 1 to 40, so critical fires across
+  RR 1-4 while tidal volume is delivered. RR 0 is still treated as no rate recorded.
+
 ## [0.10.0] — 2026-09-30
 
 ### Changed

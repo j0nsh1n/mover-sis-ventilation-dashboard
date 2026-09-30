@@ -15,7 +15,7 @@ presets:
 # --- Physiologic keep ranges (cleaning clamps; outside → NaN) ---
 clean_ranges:
   TV: [50, 1500]
-  RR: [4, 40]
+  RR: [1, 40]   # 0 = no rate recorded, blanked; 1-3 kept so rr_low critical (<= 4) is reachable
   PIP: [0, 50]
   PEEP: [0, 25]
   ETCO2: [5, 80]
@@ -56,6 +56,54 @@ mac_age_coef: -0.00269
 # to give total end-tidal MAC (MAC_total_Et), which agent_high uses.
 n2o_mac_age40: 104
 
+# --- Anesthesia phase context ---
+# Each minute of a case gets a `phase`, so rules can tell expected transition
+# behaviour (induction ramps, pre-oxygenation, emergence, extubation) from the
+# same values in steady maintenance. Boundaries per surgery:
+#   pre_induction   before the intubation event (monitors on, pre-oxygenation,
+#                   mask ventilation)
+#   induction       intubation event .. induction_after_min later
+#   maintenance     the rest of the anesthetic
+#   emergence       emergence_before_min before the extubation event .. extubation
+#   post_emergence  from the extubation event on
+# Events come from patient_procedure_events (Event_name matched by the
+# case-insensitive regular expressions below; a plain word matches as a
+# substring). When a case has no usable intubation event, the airway start is
+# the first ventilator minute and induction ends at incision (case_start);
+# with no usable extubation event, emergence starts at surgery end (case_end)
+# and runs to the end of the data. `phase_source` on the timeseries and cases
+# says which: events (both from events), mixed (one), fallback (neither).
+#
+# UNVERIFIED: these patterns are guesses. The real MOVER event names were not
+# available when they were written. Run `python -m src.pipeline.profile` and
+# read its "Procedure event names" table, then edit the patterns to match.
+phases:
+  # Airway start. The earliest matching event inside the case's data counts,
+  # so a re-intubation later in the case does not move the boundary.
+  intubation_patterns:
+    - "intubat"
+    - "airway (secured|placed|established)"
+    - "(lma|laryngeal mask).*(placed|inserted)"
+  # Airway end. The latest matching event after the intubation counts.
+  extubation_patterns:
+    - "extubat"
+    - "airway removed"
+    - "(lma|laryngeal mask).*removed"
+  induction_after_min: 10    # induction lasts this long after the intubation event (agent wash-in)
+  emergence_before_min: 10   # emergence starts this long before the extubation event (agent wash-out)
+  event_pad_min: 5           # events this far outside the case's data are ignored (wrong-day / stray events)
+
+# Per-rule `skip_phases: [...]` suppresses that rule's flags in the listed
+# phases (pre_induction | induction | maintenance | emergence | post_emergence).
+# The skip is applied to each minute before run-length rules count duration, so
+# a run is measured only over the phases where the rule is active. Omit it (or
+# leave it empty) to keep a rule on in every phase. Defaults below skip only
+# values that are expected while the patient is being put to sleep or woken up;
+# safety-relevant findings (spo2_low, hr_high, hr_low, map_low, pip_high,
+# pip_rising, peep_high, etco2_high, agent_high and the composites) stay on in
+# every phase because a desaturation, bradycardia or hypotension during
+# induction is real.
+# A phase is unknown (and nothing is skipped) for minutes without phase labels.
 rules:
   pip_high:
     warn: 30
@@ -81,18 +129,27 @@ rules:
     min_duration_min: 15
     min_tv: 200
     min_rr: 6
+    # Info-level finding about maintenance ventilation. Mask ventilation before
+    # intubation and spontaneous breathing at emergence routinely run without PEEP.
+    skip_phases: [pre_induction, induction, emergence, post_emergence]
     description: "Prolonged zero/negative PEEP during mechanical ventilation"
 
   tv_low_mlkg:
     warn: 4
     critical: 3
     unit: mL/kg IBW
+    # Manual / mask breaths before intubation, pressure-support weaning at emergence
+    # and an extubated patient are not the set ventilation this rule describes.
+    # Kept on in induction: the ventilator is controlling after intubation.
+    skip_phases: [pre_induction, emergence, post_emergence]
     description: "Low tidal volume per ideal body weight"
 
   tv_high_mlkg:
     warn: 10
     critical: 12
     unit: mL/kg IBW
+    # Same reasoning as tv_low_mlkg (hand-bagging and weaning breaths).
+    skip_phases: [pre_induction, emergence, post_emergence]
     description: "High tidal volume per ideal body weight"
 
   tv_abs_extreme:
@@ -100,17 +157,24 @@ rules:
     low: 100
     high: 1000
     unit: mL
+    # Same reasoning as tv_low_mlkg.
+    skip_phases: [pre_induction, emergence, post_emergence]
     description: "Absolute tidal volume outside adult physiologic band"
 
   rr_low:
     warn: 6
     critical: 4
     min_tv: 200
+    # Apnea before intubation and slow spontaneous breathing at emergence are
+    # expected. On again in induction and maintenance, where the ventilator sets the rate.
+    skip_phases: [pre_induction, emergence, post_emergence]
     description: "Low respiratory rate"
 
   rr_high:
     warn: 20
     critical: 30
+    # Tachypnea on hand ventilation and as the patient wakes is expected.
+    skip_phases: [pre_induction, emergence, post_emergence]
     description: "High respiratory rate"
 
   etco2_high:
@@ -123,18 +187,31 @@ rules:
     warn: 28
     critical: 22
     unit: mmHg
+    # ETCO2 climbs from zero after intubation and is unreliable on a mask or
+    # after extubation. Emergence stays on: a low reading there is not a known artifact.
+    skip_phases: [pre_induction, induction, post_emergence]
     description: "Low end-tidal CO2 (excluding zeros)"
 
   etco2_zero_vent:
     min_tv: 200
     min_rr: 8
     min_duration_min: 3
+    # Zero ETCO2 on a mask and after extubation is expected. Induction stays on:
+    # sustained zero ETCO2 with delivered breaths right after intubation is the
+    # sign of an esophageal tube, and min_duration_min already ignores the brief
+    # zero while the tube goes in. Emergence stays on: a disconnect while still
+    # intubated is the finding this rule exists for.
+    skip_phases: [pre_induction, post_emergence]
     description: "Zero ETCO2 while ventilated (disconnect / sensor / esophageal)"
 
   fio2_high_long:
     fio2_min: 90
     min_duration_min: 30
     skip_first_min: 15
+    # Pre-oxygenation and the 100% O2 given at the end of a case are routine.
+    # skip_first_min is counted from incision (t_min), so it is a separate,
+    # older guard; with phases it mostly matters when no intubation event exists.
+    skip_phases: [pre_induction, induction, emergence, post_emergence]
     description: "Prolonged high FiO2 after induction window"
 
   fio2_room_air_vent:
@@ -142,6 +219,9 @@ rules:
     min_tv: 200
     min_rr: 6
     min_duration_min: 5
+    # Room-air FiO2 on a circuit after extubation or before induction is not
+    # a ventilation problem. Induction and emergence stay on.
+    skip_phases: [pre_induction, post_emergence]
     description: "Near room-air FiO2 while mechanically ventilated"
 
   agent_high:
@@ -154,6 +234,9 @@ rules:
     case_frac_start: 0.2
     case_frac_end: 0.8
     n2o_et_exempt: 30
+    # Already limited to mid-case by case_frac_*; the skip only matters if that
+    # window is widened into induction or emergence.
+    skip_phases: [pre_induction, induction, emergence, post_emergence]
     description: "Very low agent MAC during mid-case maintenance window"
 
   agent_drift:
@@ -164,6 +247,10 @@ rules:
       I: 0.5
       D: 1.5
       N: 0.5
+    # Wash-in and wash-out are drift by construction and were the most common
+    # flag around induction and emergence. The rolling median restarts at each
+    # phase change, so the ramp does not bleed into the first maintenance minutes.
+    skip_phases: [pre_induction, induction, emergence, post_emergence]
     description: "Agent concentration drift from recent median"
 
   agent_fi_et_gap:
@@ -174,6 +261,9 @@ rules:
       S: 1.0
       I: 1.0
       D: 3.0
+    # Fi-Et gap is large while the agent is taken up (induction) and washed out
+    # (emergence). Already limited to mid-case by case_frac_*; see agent_low_maint.
+    skip_phases: [pre_induction, induction, emergence, post_emergence]
     description: "Large Fi–Et agent gap mid-case"
 
   spo2_low:

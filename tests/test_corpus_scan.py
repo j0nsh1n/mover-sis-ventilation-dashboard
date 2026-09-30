@@ -33,11 +33,20 @@ def test_scan_matches_pipeline_scores_in_small_batches(emr, tmp_path, allow_exte
     sample = run_pipeline(
         emr_dir=emr, output_dir=tmp_path / "sample", n_cases=40, write_sample_csv=False
     )
-    cols = ["anomaly_score", "n_warn", "n_critical", "n_composite", "n_minutes", "top_rules"]
+    cols = [
+        "anomaly_score", "n_warn", "n_critical", "n_composite", "n_minutes", "top_rules",
+        "phase_source",
+    ]
     a = scan.cases.set_index("PID").sort_index()[cols]
     b = sample["cases"].set_index("PID").sort_index()[cols]
     assert a.equals(b)
     assert len(scan.episodes) == len(sample["episodes"])
+    # Procedure events reach every shard: same phase labels on the episodes
+    key = ["PID", "rule_id", "t_start_min"]
+    a_ep = scan.episodes.sort_values(key).reset_index(drop=True)[key + ["phase", "phase_end"]]
+    b_ep = sample["episodes"].sort_values(key).reset_index(drop=True)[key + ["phase", "phase_end"]]
+    assert a_ep.equals(b_ep)
+    assert set(a["phase_source"]) == {"events"}
     assert scan.meta["n_shards"] > 1
 
 

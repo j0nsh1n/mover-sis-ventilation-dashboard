@@ -84,3 +84,65 @@ def test_build_case_context_from_frames():
     assert "sevoflurane" in ctx
     assert "pip_high" in ctx
     assert "Tidal volume" in ctx or "TV" in ctx
+
+
+def test_context_names_the_phase_of_flags_and_episodes():
+    t0 = pd.Timestamp("2016-01-01 08:00:00")
+    cases = pd.DataFrame([{"PID": "caseA", "Age": 55, "Gender": "M"}])
+    ts = pd.DataFrame(
+        {"PID": ["caseA"] * 4, "Obs_time": [t0 + pd.Timedelta(minutes=i) for i in range(4)],
+         "t_min": [-4.0, -3.0, -2.0, -1.0], "TV": [500.0] * 4}
+    )
+    flags = pd.DataFrame(
+        {
+            "PID": ["caseA"] * 3,
+            "rule_id": ["spo2_low"] * 3,
+            "severity": ["warn"] * 3,
+            "Obs_time": [t0, t0 + pd.Timedelta(minutes=1), t0 + pd.Timedelta(minutes=2)],
+            "t_min": [-4.0, -3.0, -2.0],
+            "value": [90.0] * 3,
+            "message": ["Low SpO2"] * 3,
+            "phase": ["induction", "induction", "maintenance"],
+        }
+    )
+    episodes = pd.DataFrame(
+        [
+            {"PID": "caseA", "rule_id": "spo2_low", "severity": "warn", "t_start_min": -4.0,
+             "t_end_min": -3.0, "message": "Low SpO2", "phase": "induction", "phase_end": "induction"},
+            {"PID": "caseA", "rule_id": "etco2_high", "severity": "warn", "t_start_min": -2.0,
+             "t_end_min": 8.0, "message": "High ETCO2", "phase": "induction", "phase_end": "maintenance"},
+            {"PID": "caseA", "rule_id": "pip_high", "severity": "warn", "t_start_min": 9.0,
+             "t_end_min": 9.0, "message": "High PIP", "phase": None, "phase_end": None},
+        ]
+    )
+    ctx = build_case_context(
+        "caseA", cases=cases, timeseries=ts, flags=flags, episodes=episodes,
+        include_emr_extras=False,
+    )
+    assert "Flagged minutes by phase: induction=2, maintenance=1" in ctx
+    assert "spo2_low [warn]: t=-4–-3 min, during induction" in ctx
+    assert "from induction to maintenance" in ctx
+    pip_line = next(line for line in ctx.splitlines() if "pip_high [warn]: t=" in line)
+    assert "during" not in pip_line
+
+
+def test_list_case_flags_tool_reports_minutes_by_phase():
+    from src.llm.tools import SessionState, tool_list_case_flags
+
+    t0 = pd.Timestamp("2016-01-01 08:00:00")
+    flags = pd.DataFrame(
+        {
+            "PID": ["caseA"] * 2,
+            "rule_id": ["spo2_low"] * 2,
+            "severity": ["warn"] * 2,
+            "Obs_time": [t0, t0 + pd.Timedelta(minutes=1)],
+            "t_min": [-4.0, -3.0],
+            "value": [90.0] * 2,
+            "message": ["Low SpO2"] * 2,
+            "phase": ["induction", "induction"],
+        }
+    )
+    session = SessionState(flags=flags)
+    out = tool_list_case_flags(session, pid="caseA")
+    assert "spo2_low [warn]: 2" in out
+    assert "Flagged minutes by phase: induction=2" in out

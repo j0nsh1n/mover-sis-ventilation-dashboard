@@ -100,8 +100,15 @@ def add_features(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataFra
     # Agent Et rolling median for drift detection
     drift_window = int(rules.get("agent_drift", {}).get("window_min", 15))
     if "Agent_Et" in out.columns:
+        # The window restarts at each phase change, so induction wash-in does not
+        # count as drift from the first maintenance minutes (and vice versa)
+        drift_keys: list = [out["PID"]]
+        if "phase" in out.columns:
+            phase = out["phase"].fillna("")
+            changed = phase.ne(phase.groupby(out["PID"]).shift())
+            drift_keys.append(changed.groupby(out["PID"]).cumsum())
         out["Agent_Et_rollmed"] = (
-            out.groupby("PID", group_keys=False)["Agent_Et"]
+            out.groupby(drift_keys, group_keys=False)["Agent_Et"]
             .apply(lambda s: s.rolling(window=drift_window, min_periods=5).median())
         )
         out["Agent_Et_drift"] = (out["Agent_Et"] - out["Agent_Et_rollmed"]).abs()
@@ -159,6 +166,7 @@ def build_case_summary(ts: pd.DataFrame, flags: pd.DataFrame | None = None) -> p
         "Procedure_short": ("Procedure_short", "first"),
         "primary_agent": ("primary_agent", "first"),
         "primary_agent_name": ("primary_agent_name", "first"),
+        "phase_source": ("phase_source", "first"),
         "median_TV": ("TV", "median"),
         "median_PIP": ("PIP", "median"),
         "median_PEEP": ("PEEP", "median"),

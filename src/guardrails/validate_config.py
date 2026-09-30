@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src.guardrails.exceptions import ConfigValidationError
@@ -28,6 +29,9 @@ LOWER_IS_WORSE_RULES = {
 }
 
 MAC_HIGHER_RULES = {"agent_high"}  # warn_mac / critical_mac
+
+# Anesthesia phases a rule's skip_phases may name (see src/pipeline/phases.py)
+VALID_PHASES = {"pre_induction", "induction", "maintenance", "emergence", "post_emergence"}
 
 
 def _require_dict(obj: Any, name: str) -> dict:
@@ -118,6 +122,20 @@ def validate_rules(rules: dict) -> None:
             if w <= 0 or c <= 0:
                 raise ConfigValidationError(f"rules.{rule_id} MAC thresholds must be > 0")
 
+        if "skip_phases" in spec:
+            skip = spec["skip_phases"]
+            if skip is not None:
+                if not isinstance(skip, list) or not all(isinstance(p, str) for p in skip):
+                    raise ConfigValidationError(
+                        f"rules.{rule_id}.skip_phases must be a list of phase names, got {skip!r}"
+                    )
+                unknown = sorted(set(skip) - VALID_PHASES)
+                if unknown:
+                    raise ConfigValidationError(
+                        f"rules.{rule_id}.skip_phases has unknown phase(s) {unknown}; "
+                        f"allowed: {sorted(VALID_PHASES)}"
+                    )
+
         # Duration rules: non-negative integers
         for key in ("min_duration_min", "window_min", "skip_first_min"):
             if key in spec:
@@ -126,6 +144,34 @@ def validate_rules(rules: dict) -> None:
                     raise ConfigValidationError(
                         f"rules.{rule_id}.{key} must be >= 0, got {v}"
                     )
+
+
+def validate_phases(phases: dict) -> None:
+    for key in ("intubation_patterns", "extubation_patterns"):
+        pats = phases.get(key)
+        if not isinstance(pats, list) or not all(isinstance(p, str) and p.strip() for p in pats):
+            raise ConfigValidationError(
+                f"phases.{key} must be a list of non-empty strings, got {pats!r}"
+            )
+        for p in pats:
+            try:
+                re.compile(p)
+            except re.error as e:
+                raise ConfigValidationError(
+                    f"phases.{key}: {p!r} is not a valid regular expression ({e})"
+                ) from e
+    for key in ("induction_after_min", "emergence_before_min", "event_pad_min"):
+        if key in phases:
+            v = _require_number(phases[key], f"phases.{key}")
+            if v < 0:
+                raise ConfigValidationError(f"phases.{key} must be >= 0, got {v}")
+    unknown = sorted(
+        set(phases)
+        - {"intubation_patterns", "extubation_patterns", "induction_after_min",
+           "emergence_before_min", "event_pad_min"}
+    )
+    if unknown:
+        raise ConfigValidationError(f"phases has unknown key(s) {unknown}")
 
 
 def validate_scoring(scoring: dict) -> None:
@@ -186,6 +232,9 @@ def validate_thresholds(cfg: dict, preset: str | None = None) -> dict:
 
     rules = _require_dict(cfg.get("rules"), "rules")
     validate_rules(rules)
+
+    if cfg.get("phases") is not None:
+        validate_phases(_require_dict(cfg["phases"], "phases"))
 
     scoring = _require_dict(cfg.get("scoring"), "scoring")
     validate_scoring(scoring)
