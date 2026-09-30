@@ -1,6 +1,7 @@
 # G/F consolidation prototype plan
 
-Status: planned. This document does not change the desktop app or the existing
+Status: prototype built at `docs/prototypes/consolidated-workspace.html` and awaiting
+review. This document does not change the desktop app or the existing
 G/F prototype.
 
 ## Decision to test

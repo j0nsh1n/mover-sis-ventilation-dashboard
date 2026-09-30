@@ -18,6 +18,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   episodes and flagged minutes, for the full scan or the loaded sample.
 - Planned a clickable G/F consolidation study for the existing Ask, Summary,
   Case timeline, and Rule reference functions.
+- Built the clickable G/F consolidation prototype at
+  `docs/prototypes/consolidated-workspace.html`. It uses fictional `SYN` data
+  and scripted AI responses, compares a side panel with an inline thread for the
+  AI conversation, and does not change the desktop app.
 - Lint and type checks: `ruff check .` (bug-class rules only) and `mypy` (on
   `src/`) are configured and run in CI. Findings were fixed, including unused
   imports and variables, explicit `zip(strict=...)`, and missing `None` guards.
