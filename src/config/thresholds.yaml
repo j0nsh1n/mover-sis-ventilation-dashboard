@@ -15,7 +15,7 @@ presets:
 # --- Physiologic keep ranges (cleaning clamps; outside → NaN) ---
 clean_ranges:
   TV: [50, 1500]
-  RR: [4, 40]
+  RR: [1, 40]   # 0 = no rate recorded, blanked; 1-3 kept so rr_low critical (<= 4) is reachable
   PIP: [0, 50]
   PEEP: [0, 25]
   ETCO2: [5, 80]
