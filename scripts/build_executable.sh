@@ -20,7 +20,7 @@ echo "==> Building MOVER SIS Monitor v${VERSION}"
 echo "==> Installing build dependencies"
 python -m pip install -q -U pip
 python -m pip install -q -r requirements.txt
-python -m pip install -q 'pyinstaller>=6.3'
+python -m pip install -q 'pyinstaller==6.22.3'
 
 echo "==> Cleaning previous build"
 rm -rf build/pyinstaller dist/MOVER-SIS-Monitor
