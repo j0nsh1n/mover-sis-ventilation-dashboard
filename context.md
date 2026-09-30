@@ -48,9 +48,15 @@
   - v0.9.0 on stock Ubuntu fails to load the Qt xcb plugin without the system
     `libxcb-cursor0`; the same branch bundles it and `launch.sh` names missing
     libraries.
-  - The full-EMR scan has only run on synthetic data here (54 cases in ~13 s,
-    about 0.25 s per surgery); expect over an hour for ~19k real surgeries,
-    single-threaded. It is started manually and not refreshed automatically.
+  - The full-EMR scan has only run on synthetic data here. It now scores shards
+    in a spawn-started process pool (default cores - 1, at most 6): 600 synthetic
+    surgeries took 75 s on 1 worker, 38 s on 2, 26 s on 4 (4-core container; splitting
+    the CSVs is about 1 s of that). That is about 0.13 s per surgery per core, so
+    ~19k real surgeries should take roughly 40 min on one core and 10 to 15 min on
+    four to six, if real rows cost like synthetic ones; real per-worker memory is
+    unmeasured (250 MB per 300-surgery synthetic shard; 1 to 2 GB assumed). The
+    frozen-app and Windows paths of the pool are unverified. It is started
+    manually and not refreshed automatically.
   - Frozen onedir is 399 MB unpacked / 155 MB tarball (was 1.2 GB / 464 MB).
     The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
     `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
@@ -171,6 +177,10 @@ Wave root (optional) ──► wave_decode                   │
 - **Release:** Phase 3 marked complete in `roadmap.md`; `VERSION` 0.10.0 in branch
   `release/v0.10.0`. The Windows release job is the first Windows run of the
   slimmer spec.
+- **Parallel scan (branch `perf/parallel-corpus-scan`, 2026-09-30):** the
+  full-EMR scan scores shards in a spawn process pool (`workers`,
+  `--workers`); output is identical for any worker count. Frozen-app and
+  Windows runs are unverified; real-data time and per-worker memory are unmeasured.
 - **Next:** confirm both release packages and the Pages manifest publish; run the
   pipeline, profile and full-EMR scan on real MOVER data; owner reviews the G/F
   prototype and picks an AI placement before any desktop UI change.

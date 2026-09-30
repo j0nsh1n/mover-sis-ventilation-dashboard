@@ -75,8 +75,15 @@ PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default
 
 It processes the export in batches and keeps only per-case scores and flag episodes
 (`corpus_cases.parquet`, `corpus_episodes.parquet`, `corpus_meta.json`), so memory
-stays bounded. On the full MOVER SIS export expect it to take over an hour. The
-co-pilot then answers whole-dataset questions from the scan and says so.
+stays bounded. Batches are scored in parallel on several CPU cores (default: core
+count minus one, at most 6; set `--workers N`, or `--workers 1` for a single
+process). Each worker holds one batch in memory, about 250 MB on synthetic data and
+probably 1 to 2 GB on real data, so use fewer workers on a small machine. On
+synthetic data one core needs about 0.13 s per surgery, so the full MOVER SIS
+export (about 19,000 surgeries) should take roughly 40 minutes on one core and
+about 15 minutes on four cores; real data may be slower. Cancel stops the workers
+immediately and keeps the previous scan. The co-pilot then answers whole-dataset
+questions from the scan and says so.
 
 ### Profile the output (threshold calibration)
 
