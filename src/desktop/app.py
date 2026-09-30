@@ -1777,7 +1777,8 @@ def main() -> int:
     apply_persisted_settings()
     apply_ollama_env_from_settings()
 
-    app = QApplication.instance()
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else None
     if app is None:
         try:
             QApplication.setAttribute(

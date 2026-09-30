@@ -294,7 +294,7 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
     corpus = set()
     if session.cases is not None and not session.cases.empty:
         corpus = set(session.cases["PID"].astype(str))
-    if session.has_corpus_scan():
+    if session.corpus is not None and session.has_corpus_scan():
         corpus |= set(session.corpus["PID"].astype(str))
 
     claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
