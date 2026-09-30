@@ -67,7 +67,7 @@ raw CSVs
 | Signal | Keep range (soft physiologic) | Notes |
 |--------|-------------------------------|-------|
 | TV (mL) | 50–1500 | Clip/null outside; flag high/low separately |
-| RR | 4–40 | |
+| RR | 1–40 | 0 means no rate recorded and is nulled; 1–3 are kept so `rr_low` critical (≤ 4) is reachable |
 | PIP (cmH₂O) | 0–50 | Negative PIP → null |
 | PEEP (cmH₂O) | 0–25 | Negative → 0 or null |
 | ETCO₂ (mmHg) | 5–80 | 0 often means disconnected / pre-intubation |
@@ -120,6 +120,10 @@ Rules are intentionally simple, transparent, and grounded in common intraoperati
 - **critical**: extreme / sustained / multi-signal concern  
 
 A flag fires on a **minute** if the condition is true. Case-level summary counts minutes and episodes (contiguous runs).
+
+### Phase context
+
+Each minute has a `phase` (`pre_induction`, `induction`, `maintenance`, `emergence`, `post_emergence`), from the intubation and extubation procedure events (patterns under `phases:` in `thresholds.yaml`; unverified against real MOVER event names) or, without events, from the first ventilator minute, incision and surgery end. `phase_source` records which. A rule's `skip_phases` list removes its flags in those phases before run lengths are counted. Defaults skip wash-in/out, pre-oxygenation, mask or weaning ventilation and extubated-circuit values for `agent_drift`, `agent_fi_et_gap`, `agent_low_maint`, `fio2_high_long`, `fio2_room_air_vent`, `etco2_low`, `etco2_zero_vent`, `peep_zero_long`, `tv_*` and `rr_*`. `spo2_low`, `hr_*`, `map_low`, `pip_*`, `peep_high`, `etco2_high`, `agent_high` and the composites are never skipped by default. Flags and episodes carry the phase (episodes also `phase_end`).
 
 ### Ventilation rules
 

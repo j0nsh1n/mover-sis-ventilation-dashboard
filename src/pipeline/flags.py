@@ -42,6 +42,17 @@ def _episodes(mask: pd.Series, min_len: int = 1) -> pd.Series:
     return m & (sizes >= min_len)
 
 
+def _phase_ok(df: pd.DataFrame, rule: dict) -> pd.Series:
+    """True for minutes whose phase is not in the rule's ``skip_phases``.
+
+    Minutes without a phase (no ``phase`` column, or unlabeled) are never skipped.
+    """
+    skip = rule.get("skip_phases") or []
+    if not skip or "phase" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return ~df["phase"].isin(skip)
+
+
 def _append_flags(
     rows: list[dict],
     df: pd.DataFrame,
@@ -60,6 +71,7 @@ def _append_flags(
     else:
         sevs = severity.loc[idx].tolist()
     values = sub[value_col].tolist() if value_col and value_col in sub.columns else [np.nan] * len(sub)
+    phases = sub["phase"].tolist() if "phase" in sub.columns else [None] * len(sub)
     for i, (_, r) in enumerate(sub.iterrows()):
         rows.append({
             "PID": r["PID"],
@@ -69,6 +81,7 @@ def _append_flags(
             "severity": sevs[i],
             "value": values[i],
             "message": message,
+            "phase": phases[i],
         })
 
 
@@ -76,7 +89,8 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
     """
     Apply rule-based flags to a minute-aligned timeseries.
 
-    Returns long-form DataFrame: PID, Obs_time, t_min, rule_id, severity, value, message.
+    Returns long-form DataFrame: PID, Obs_time, t_min, rule_id, severity, value, message,
+    phase. A rule's ``skip_phases`` drops its flags in those phases (see thresholds.yaml).
     """
     if thresholds is None:
         thresholds = load_thresholds()
@@ -85,7 +99,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
 
     if ts.empty:
         return pd.DataFrame(columns=[
-            "PID", "Obs_time", "t_min", "rule_id", "severity", "value", "message"
+            "PID", "Obs_time", "t_min", "rule_id", "severity", "value", "message", "phase"
         ])
 
     df = ts.sort_values(["PID", "Obs_time"]).reset_index(drop=True)
@@ -96,7 +110,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["PIP"].map(
             lambda v: _sev_threshold(v, r.get("warn", 30), r.get("critical", 35), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "pip_high", sevs, r.get("description", "High PIP"), "PIP")
 
     r = rules.get("peep_high", {})
@@ -104,7 +118,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["PEEP"].map(
             lambda v: _sev_threshold(v, r.get("warn", 12), r.get("critical", 15), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "peep_high", sevs, r.get("description", "High PEEP"), "PEEP")
 
     r = rules.get("tv_low_mlkg", {})
@@ -112,7 +126,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["TV_mlkg"].map(
             lambda v: _sev_threshold(v, r.get("warn", 4), r.get("critical", 3), False)
         )
-        mask = sevs.notna() & df.get("likely_mech_vent", True)
+        mask = sevs.notna() & df.get("likely_mech_vent", True) & _phase_ok(df, r)
         _append_flags(rows, df, mask, "tv_low_mlkg", sevs, r.get("description", "Low TV mL/kg"), "TV_mlkg")
 
     r = rules.get("tv_high_mlkg", {})
@@ -120,14 +134,14 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["TV_mlkg"].map(
             lambda v: _sev_threshold(v, r.get("warn", 10), r.get("critical", 12), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "tv_high_mlkg", sevs, r.get("description", "High TV mL/kg"), "TV_mlkg")
 
     r = rules.get("tv_abs_extreme", {})
     if "TV" in df.columns and r:
         adult = df["Age"].fillna(40) >= r.get("adult_age_min", 16) if "Age" in df.columns else True
         low, high = r.get("low", 100), r.get("high", 1000)
-        mask = adult & df["TV"].notna() & ((df["TV"] < low) | (df["TV"] > high))
+        mask = adult & df["TV"].notna() & ((df["TV"] < low) | (df["TV"] > high)) & _phase_ok(df, r)
         _append_flags(rows, df, mask, "tv_abs_extreme", "warn", r.get("description", "Extreme TV"), "TV")
 
     r = rules.get("rr_low", {})
@@ -138,7 +152,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         # Gate on delivered tidal volume only: likely_mech_vent also needs
         # RR >= 6, which would make RR <= 4 (critical) unreachable.
         on_vent = df["TV"] >= r.get("min_tv", 200) if "TV" in df.columns else True
-        mask = sevs.notna() & on_vent
+        mask = sevs.notna() & on_vent & _phase_ok(df, r)
         _append_flags(rows, df, mask, "rr_low", sevs, r.get("description", "Low RR"), "RR")
 
     r = rules.get("rr_high", {})
@@ -146,7 +160,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["RR"].map(
             lambda v: _sev_threshold(v, r.get("warn", 20), r.get("critical", 30), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "rr_high", sevs, r.get("description", "High RR"), "RR")
 
     r = rules.get("etco2_high", {})
@@ -154,7 +168,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["ETCO2"].map(
             lambda v: _sev_threshold(v, r.get("warn", 50), r.get("critical", 60), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "etco2_high", sevs, r.get("description", "High ETCO2"), "ETCO2")
 
     r = rules.get("etco2_low", {})
@@ -164,7 +178,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
             lambda v: _sev_threshold(v, r.get("warn", 28), r.get("critical", 22), False)
             if pd.notna(v) and v > 0 else None
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "etco2_low", sevs, r.get("description", "Low ETCO2"), "ETCO2")
 
     r = rules.get("spo2_low", {})
@@ -172,7 +186,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["SPO2"].map(
             lambda v: _sev_threshold(v, r.get("warn", 92), r.get("critical", 88), False)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "spo2_low", sevs, r.get("description", "Low SpO2"), "SPO2")
 
     r = rules.get("hr_high", {})
@@ -180,7 +194,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["HR"].map(
             lambda v: _sev_threshold(v, r.get("warn", 120), r.get("critical", 140), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "hr_high", sevs, r.get("description", "High HR"), "HR")
 
     r = rules.get("hr_low", {})
@@ -188,7 +202,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["HR"].map(
             lambda v: _sev_threshold(v, r.get("warn", 45), r.get("critical", 40), False)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "hr_low", sevs, r.get("description", "Low HR"), "HR")
 
     r = rules.get("map_low", {})
@@ -196,7 +210,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df["nMAP"].map(
             lambda v: _sev_threshold(v, r.get("warn", 60), r.get("critical", 50), False)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "map_low", sevs, r.get("description", "Low MAP"), "nMAP")
 
     r = rules.get("agent_high", {})
@@ -206,7 +220,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         sevs = df[mac_col].map(
             lambda v: _sev_threshold(v, r.get("warn_mac", 1.5), r.get("critical_mac", 2.0), True)
         )
-        mask = sevs.notna()
+        mask = sevs.notna() & _phase_ok(df, r)
         _append_flags(rows, df, mask, "agent_high", sevs, r.get("description", "High MAC"), mac_col)
 
     # ---- Duration / slope rules (per PID) ----
@@ -220,7 +234,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
             min_slope = r.get("min_slope_cmh2o_per_min", 0.5)
             min_pip = r.get("min_pip", 20)
             min_dur = int(r.get("min_duration_min", 5))
-            raw = (g["PIP_slope"] >= min_slope) & (g["PIP"] >= min_pip)
+            raw = (g["PIP_slope"] >= min_slope) & (g["PIP"] >= min_pip) & _phase_ok(g, r)
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
             full_mask.loc[idx] = mask.values
@@ -237,6 +251,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
                 (g["PEEP"] <= r.get("max_peep", 0))
                 & (g.get("TV", pd.Series(np.nan, index=g.index)) >= r.get("min_tv", 200))
                 & (g.get("RR", pd.Series(np.nan, index=g.index)) >= r.get("min_rr", 6))
+                & _phase_ok(g, r)
             )
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
@@ -254,6 +269,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
                 (g["ETCO2"] == 0)
                 & (g.get("TV", pd.Series(np.nan, index=g.index)) >= r.get("min_tv", 200))
                 & (g.get("RR", pd.Series(np.nan, index=g.index)) >= r.get("min_rr", 8))
+                & _phase_ok(g, r)
             )
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
@@ -268,7 +284,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         if "FIO2" in g.columns and "t_min" in g.columns and r:
             min_dur = int(r.get("min_duration_min", 30))
             skip = r.get("skip_first_min", 15)
-            raw = (g["FIO2"] >= r.get("fio2_min", 90)) & (g["t_min"] >= skip)
+            raw = (g["FIO2"] >= r.get("fio2_min", 90)) & (g["t_min"] >= skip) & _phase_ok(g, r)
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
             full_mask.loc[idx] = mask.values
@@ -285,6 +301,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
                 (g["FIO2"] <= r.get("fio2_max", 25))
                 & (g.get("TV", pd.Series(np.nan, index=g.index)) >= r.get("min_tv", 200))
                 & (g.get("RR", pd.Series(np.nan, index=g.index)) >= r.get("min_rr", 6))
+                & _phase_ok(g, r)
             )
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
@@ -308,6 +325,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
                 & (g["Agent"] != "N")
                 & (g["MAC_Et"] < r.get("max_mac", 0.3))
                 & (etn2o.fillna(0) < n2o_ex)
+                & _phase_ok(g, r)
             )
             full_mask = pd.Series(False, index=df.index)
             full_mask.loc[idx] = raw.fillna(False).values
@@ -322,7 +340,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
             min_dur = int(r.get("min_duration_min", 5))
             deltas = r.get("delta_vol_pct", {"S": 0.5, "I": 0.5, "D": 1.5, "N": 0.5})
             thr = g["Agent"].map(lambda a, deltas=deltas: deltas.get(a, 0.5) if pd.notna(a) else np.nan)
-            raw = g["Agent_Et_drift"] >= thr
+            raw = (g["Agent_Et_drift"] >= thr) & _phase_ok(g, r)
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
             full_mask.loc[idx] = mask.values
@@ -340,7 +358,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
             gaps = r.get("gap_vol_pct", {"S": 1.0, "I": 1.0, "D": 3.0})
             thr = g["Agent"].map(lambda a, gaps=gaps: gaps.get(a, np.nan) if pd.notna(a) else np.nan)
             mid = g["case_frac"].between(frac_lo, frac_hi) if "case_frac" in g.columns else True
-            raw = mid & (g["Agent_Fi_Et_gap"] >= thr)
+            raw = mid & (g["Agent_Fi_Et_gap"] >= thr) & _phase_ok(g, r)
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
             full_mask.loc[idx] = mask.values
@@ -352,7 +370,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
     flags = pd.DataFrame(rows)
     if flags.empty:
         flags = pd.DataFrame(columns=[
-            "PID", "Obs_time", "t_min", "rule_id", "severity", "value", "message"
+            "PID", "Obs_time", "t_min", "rule_id", "severity", "value", "message", "phase"
         ])
         return flags
 
@@ -391,10 +409,15 @@ def _add_composites(df: pd.DataFrame, flags: pd.DataFrame, rules: dict) -> pd.Da
                 raw=True,
             ))
         )
-        mask = has_rule("pip_rising") & (tv_slope.fillna(0) <= 5)
+        mask = (
+            has_rule("pip_rising")
+            & (tv_slope.fillna(0) <= 5)
+            & _phase_ok(df, rules.get("compliance_concern", {}))
+        )
         for _, r in df.loc[mask].iterrows():
             extra.append({
                 "PID": r["PID"], "Obs_time": r["Obs_time"], "t_min": r.get("t_min", np.nan),
+            "phase": r.get("phase"),
                 "rule_id": "compliance_concern", "severity": "warn",
                 "value": r.get("PIP_slope", np.nan),
                 "message": rules.get("compliance_concern", {}).get(
@@ -403,10 +426,15 @@ def _add_composites(df: pd.DataFrame, flags: pd.DataFrame, rules: dict) -> pd.Da
             })
 
     # hypoventilation_pattern
-    mask = has_rule("etco2_high") & (has_rule("tv_low_mlkg") | has_rule("rr_low"))
+    mask = (
+        has_rule("etco2_high")
+        & (has_rule("tv_low_mlkg") | has_rule("rr_low"))
+        & _phase_ok(df, rules.get("hypoventilation_pattern", {}))
+    )
     for _, r in df.loc[mask].iterrows():
         extra.append({
             "PID": r["PID"], "Obs_time": r["Obs_time"], "t_min": r.get("t_min", np.nan),
+            "phase": r.get("phase"),
             "rule_id": "hypoventilation_pattern", "severity": "warn",
             "value": r.get("ETCO2", np.nan),
             "message": rules.get("hypoventilation_pattern", {}).get(
@@ -418,10 +446,13 @@ def _add_composites(df: pd.DataFrame, flags: pd.DataFrame, rules: dict) -> pd.Da
     vent_issue = (
         has_rule("pip_high") | has_rule("etco2_zero_vent") | has_rule("tv_low_mlkg")
     )
-    mask = has_rule("spo2_low") & vent_issue
+    mask = has_rule("spo2_low") & vent_issue & _phase_ok(
+        df, rules.get("desat_with_vent_issue", {})
+    )
     for _, r in df.loc[mask].iterrows():
         extra.append({
             "PID": r["PID"], "Obs_time": r["Obs_time"], "t_min": r.get("t_min", np.nan),
+            "phase": r.get("phase"),
             "rule_id": "desat_with_vent_issue", "severity": "critical",
             "value": r.get("SPO2", np.nan),
             "message": rules.get("desat_with_vent_issue", {}).get(
@@ -521,7 +552,7 @@ def collapse_episodes(flags: pd.DataFrame) -> pd.DataFrame:
     if flags is None or flags.empty:
         return pd.DataFrame(columns=[
             "PID", "rule_id", "severity", "t_start_min", "t_end_min",
-            "duration_min", "value_mean", "message",
+            "duration_min", "value_mean", "message", "phase", "phase_end",
         ])
 
     f = flags.sort_values(["PID", "rule_id", "Obs_time"]).copy()
@@ -530,12 +561,18 @@ def collapse_episodes(flags: pd.DataFrame) -> pd.DataFrame:
     f["new_ep"] = (f["gap"].isna()) | (f["gap"] > 1.5)
     f["episode"] = f.groupby(["PID", "rule_id"])["new_ep"].cumsum()
 
+    if "phase" not in f.columns:
+        f["phase"] = None
     agg = f.groupby(["PID", "rule_id", "episode"]).agg(
         severity=("severity", lambda s: "critical" if (s == "critical").any() else ("warn" if (s == "warn").any() else "info")),
         t_start_min=("t_min", "min"),
         t_end_min=("t_min", "max"),
         value_mean=("value", "mean"),
         message=("message", "first"),
+        # Phase where the episode starts and ends; they differ when a run
+        # crosses a phase boundary (for example induction into maintenance)
+        phase=("phase", "first"),
+        phase_end=("phase", "last"),
         n_minutes=("Obs_time", "count"),
     ).reset_index()
     agg["duration_min"] = agg["t_end_min"] - agg["t_start_min"] + 1

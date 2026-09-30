@@ -43,6 +43,7 @@ from src.pipeline.load import (
     sample_pids_with_ventilator,
 )
 from src.pipeline.merge import merge_vent_vitals
+from src.pipeline.phases import assign_phases
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +96,12 @@ def process_frames(
         )
 
     # --- merge + features ---
-    log("[pipeline] merging & features…")
+    log("[pipeline] merging, phases & features…")
     ts = merge_vent_vitals(vent, vitals, cases)
     if ts.empty:
         raise PipelineError("Merged timeseries is empty")
+    # Phase labels first: the agent-drift window restarts at each phase change
+    ts = assign_phases(ts, events, thresholds)
     ts = add_features(ts, thresholds)
     # Enforce sort + unique minutes (invariant for flagging and plots)
     ts = ts.sort_values(["PID", "Obs_time"]).drop_duplicates(

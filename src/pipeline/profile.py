@@ -8,10 +8,15 @@ processed directory and reports:
 - per-signal distributions (percentiles over observed minutes)
 - per-rule firing rates, and where each warn/critical threshold falls in the
   observed distribution of its signal
+- minutes per anesthesia phase and how each case's phases were derived
+- procedure event names with counts (from ``events.parquet``, written by the
+  sample pipeline), marked with the phase role the configured patterns give
+  them, to check the ``phases`` patterns in thresholds.yaml against the real names
 
 No PIDs, timestamps or row-level values are written. Case counts between 1
-and ``min_cell - 1`` are shown as ``<min_cell``, and signal distributions
-drawn from fewer than ``min_cell`` cases are suppressed. Check your MOVER data
+and ``min_cell - 1`` are shown as ``<min_cell``, signal distributions
+drawn from fewer than ``min_cell`` cases are suppressed, and event names used
+in fewer than ``min_cell`` cases are pooled into one row. Check your MOVER data
 use agreement before sharing even aggregate output.
 
     PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md
@@ -29,8 +34,12 @@ import pandas as pd
 
 from src.config import load_thresholds
 from src.pipeline.features import OBSERVED_SIGNAL_COLS
+from src.pipeline.phases import PHASE_SOURCES, PHASES, classify_event_names
 
 PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
+
+# Event names listed individually; the rest are pooled with the small-cell names
+MAX_EVENT_NAMES = 100
 
 PROFILE_SIGNALS = [
     ("TV", "mL"), ("TV_mlkg", "mL/kg IBW"), ("RR", "/min"), ("PIP", "cmH2O"),
@@ -116,6 +125,46 @@ def _pctl(values: pd.Series) -> dict[str, float]:
     return {f"p{p}": round(float(np.percentile(arr, p)), 2) for p in PERCENTILES}
 
 
+def _event_profile(events: pd.DataFrame, thresholds: dict, n_cases: int, min_cell: int) -> dict:
+    """Event-name counts, suppressed like the rest of the report."""
+    ev = events.dropna(subset=["Event_name"]).copy()
+    ev["Event_name"] = ev["Event_name"].astype(str).str.strip()
+    roles = classify_event_names(ev["Event_name"], thresholds.get("phases") or {})
+    ev = ev.assign(_role=roles)
+    per_name = (
+        ev.groupby("Event_name")
+        .agg(events=("PID", "size"), cases=("PID", "nunique"), role=("_role", "first"))
+        .reset_index()
+        .sort_values(["cases", "events", "Event_name"], ascending=[False, False, True])
+    )
+    shown = per_name[per_name["cases"] >= min_cell].head(MAX_EVENT_NAMES)
+    pooled = per_name.drop(shown.index)
+    names = [
+        {
+            "name": r["Event_name"],
+            "events": int(r["events"]),
+            "cases": int(r["cases"]),
+            "role": r["role"],
+        }
+        for _, r in shown.iterrows()
+    ]
+
+    def cases_with(role: str) -> int | str:
+        return _case_count(int(ev.loc[ev["_role"] == role, "PID"].nunique()), min_cell)
+
+    return {
+        "n_events": int(len(ev)),
+        "n_event_names": int(len(per_name)),
+        "cases_with_events": _case_count(int(ev["PID"].nunique()), min_cell),
+        "cases_with_intubation_match": cases_with("intubation"),
+        "cases_with_extubation_match": cases_with("extubation"),
+        "names": names,
+        "pooled_names": int(len(pooled)),
+        "pooled_events": int(pooled["events"].sum()) if len(pooled) else 0,
+        "n_cases": n_cases,
+    }
+
+
 def profile_processed(
     processed_dir: Path | str,
     thresholds: dict | None = None,
@@ -143,6 +192,17 @@ def profile_processed(
     }
     for stream, cols in STREAMS.items():
         coverage.update(_stream_gaps(ts, stream, cols, min_cell))
+
+    if "phase" in ts.columns:
+        phase_minutes = ts.loc[ts["_observed"], "phase"].value_counts()
+        coverage["observed_minutes_by_phase"] = {
+            p: int(phase_minutes.get(p, 0)) for p in PHASES
+        }
+    if "phase_source" in ts.columns:
+        per_case = ts.drop_duplicates("PID")["phase_source"].value_counts()
+        coverage["cases_by_phase_source"] = {
+            src: _case_count(int(per_case.get(src, 0)), min_cell) for src in PHASE_SOURCES
+        }
 
     signal_stats: dict[str, Any] = {}
     obs = ts[ts["_observed"]]
@@ -199,11 +259,19 @@ def profile_processed(
                     })
         rule_stats[rule_id] = entry
 
+    events_path = root / "events.parquet"
+    events_profile: dict[str, Any] = {}
+    if events_path.exists():
+        events = pd.read_parquet(events_path)
+        if not events.empty and {"PID", "Event_name"} <= set(events.columns):
+            events_profile = _event_profile(events, thresholds, n_cases, min_cell)
+
     return {
         "min_cell": min_cell,
         "coverage": coverage,
         "signals": signal_stats,
         "rules": rule_stats,
+        "events": events_profile,
     }
 
 
@@ -221,7 +289,11 @@ def render_markdown(profile: dict[str, Any]) -> str:
         "| Measure | Value |",
         "|---|---|",
     ]
-    lines += [f"| {k} | {v} |" for k, v in c.items()]
+    for k, v in c.items():
+        if isinstance(v, dict):
+            lines += [f"| {k}.{sub} | {val} |" for sub, val in v.items()]
+        else:
+            lines.append(f"| {k} | {v} |")
 
     pcols = [f"p{p}" for p in PERCENTILES]
     lines += [
@@ -257,7 +329,48 @@ def render_markdown(profile: dict[str, Any]) -> str:
             f"{r.get('pct_minutes_beyond_warn', '')} | {r.get('critical', '')} | "
             f"{r.get('pct_minutes_beyond_critical', '')} |"
         )
+    lines += _render_events(profile)
     return "\n".join(lines) + "\n"
+
+
+def _md_cell(text: str) -> str:
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
+def _render_events(profile: dict[str, Any]) -> list[str]:
+    ev = profile.get("events")
+    lines = [
+        "",
+        "## Procedure event names",
+        "",
+    ]
+    if not ev:
+        return lines + [
+            "No `events.parquet` in the processed directory (or it is empty). Run the "
+            "sample pipeline on the EMR to list its event names.",
+        ]
+    min_cell = profile["min_cell"]
+    lines += [
+        "Names are listed as recorded. The last column shows which phase boundary the "
+        "`phases` patterns in `thresholds.yaml` give each name; edit the patterns until "
+        "the real intubation and extubation names are matched.",
+        "",
+        f"Events: {ev['n_events']} in {ev['cases_with_events']} of {ev['n_cases']} cases "
+        f"({ev['n_event_names']} distinct names). Cases with a matched intubation event: "
+        f"{ev['cases_with_intubation_match']}; with a matched extubation event: "
+        f"{ev['cases_with_extubation_match']}.",
+        "",
+        "| Event name | Events | Cases | Matched as |",
+        "|---|---|---|---|",
+    ]
+    for n in ev["names"]:
+        lines.append(f"| {_md_cell(n['name'])} | {n['events']} | {n['cases']} | {n['role']} |")
+    if ev["pooled_names"]:
+        lines.append(
+            f"| (other names, each in fewer than {min_cell} cases: {ev['pooled_names']} names) "
+            f"| {ev['pooled_events']} | <{min_cell} | |"
+        )
+    return lines
 
 
 def main(argv: list[str] | None = None) -> None:

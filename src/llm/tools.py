@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from src.llm.case_context import build_case_context
+from src.llm.case_context import build_case_context, phase_counts_line
 from src.runtime_paths import wave_dir, waveform_case_dir
 from src.search import filter_cases_by_keywords
 
@@ -373,6 +373,9 @@ def tool_list_case_flags(
     lines = [f"FLAGS for {pid}: {len(fsub)} minute-flag rows"]
     for _, r in counts.head(30).iterrows():
         lines.append(f"- {r['rule_id']} [{r['severity']}]: {int(r['n'])}")
+    by_phase = phase_counts_line(fsub)
+    if by_phase:
+        lines.append(by_phase)
     return _clip("\n".join(lines))
 
 
@@ -433,6 +436,11 @@ def tool_rule_reference(session: SessionState, **_kwargs: Any) -> str:
         details = {k: v for k, v in spec.items() if k != "description"}
         if details:
             lines.append(f"  params: {details}")
+    lines.append(
+        "Phases: flags and episodes carry the anesthesia phase of the minute (pre_induction, "
+        "induction, maintenance, emergence, post_emergence); skip_phases lists where a rule is "
+        "not raised."
+    )
     lines.append(f"Scoring: {cfg.get('scoring', {})}")
     return _clip("\n".join(lines))
 

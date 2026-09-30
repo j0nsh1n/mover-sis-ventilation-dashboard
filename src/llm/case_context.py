@@ -10,6 +10,28 @@ import pandas as pd
 from src.runtime_paths import emr_dir, wave_dir, waveform_case_dir
 
 
+def phase_note(row: pd.Series) -> str:
+    """Suffix such as ", during induction" for a flag or episode row; "" when the phase is unknown."""
+    start = row.get("phase")
+    if start is None or pd.isna(start):
+        return ""
+    end = row.get("phase_end")
+    start_txt = str(start).replace("_", " ")
+    if end is None or pd.isna(end) or end == start:
+        return f", during {start_txt}"
+    return f", from {start_txt} to {str(end).replace('_', ' ')}"
+
+
+def phase_counts_line(flags: pd.DataFrame) -> str:
+    """One line of flagged minutes per phase; empty when the flags carry no phase."""
+    if "phase" not in flags.columns or flags["phase"].isna().all():
+        return ""
+    minutes = flags.dropna(subset=["phase"]).groupby("phase")["Obs_time"].nunique()
+    order = ["pre_induction", "induction", "maintenance", "emergence", "post_emergence"]
+    parts = [f"{p}={int(minutes[p])}" for p in order if p in minutes.index]
+    return "Flagged minutes by phase: " + ", ".join(parts) if parts else ""
+
+
 def _fmt_num(x: Any, nd: int = 1) -> str:
     try:
         if pd.isna(x):
@@ -161,6 +183,9 @@ def build_case_context(
                 lines.append(
                     f"- {r['rule_id']} [{r['severity']}]: {int(r['n'])} minute-flags"
                 )
+            by_phase = phase_counts_line(fsub)
+            if by_phase:
+                lines.append(f"- {by_phase}")
     if episodes is not None and not episodes.empty:
         esub = episodes[episodes["PID"].astype(str) == pid]
         if not esub.empty and "rule_id" in esub.columns:
@@ -174,6 +199,7 @@ def build_case_context(
                 lines.append(
                     f"- {r.get('rule_id')} [{r.get('severity')}]: "
                     f"t={_fmt_num(t0, 0)}–{_fmt_num(t1, 0)} min"
+                    + phase_note(r)
                     + (
                         f" ({r.get('message')})"
                         if "message" in r.index and pd.notna(r.get("message"))

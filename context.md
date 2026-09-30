@@ -2,10 +2,9 @@
 
 ## Current State
 
-- **Version:** 0.10.0 in source (release PR); installed builds on v0.9.0 update
-  through the signed Pages manifest once the release publishes.
-- **Branch:** `main` includes the signed updater and release validation from
-  merged PRs #15–#17. A local docs branch holds the G/F consolidation plan.
+- **Version:** 0.10.0 released 2026-09-30; installed v0.9.0 builds update through
+  the signed Pages manifest. `main` has unreleased phase context (#25).
+- **Branch:** `main` includes everything through v0.10.0 (#15–#24) and #25.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -66,11 +65,10 @@
     nothing in `src/` imports scipy).
   - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
     verified on Linux only; the release workflow's Windows smoke test is the check.
-  - Induction is now in the timeseries; rules have no induction/emergence context
-    yet, so expect extra flags around intubation (procedure-event context planned).
-  - `clean_ranges.RR` [4, 40] blanks RR < 4, so `rr_low` critical (≤ 4) fires only at 4.
-  - `agent_drift` (info) fires in most cases around induction/emergence ramps;
-    procedure-event context would separate those.
+  - Procedure-event name patterns (`phases:` in `thresholds.yaml`) are unverified on
+    real data: the synthetic EMR uses "Intubation"/"Extubation", the real MOVER names
+    are unknown. Until they are checked (profile report, "Procedure event names"),
+    real cases may fall back to `phase_source = fallback`.
   - Thresholds not yet calibrated against real distributions (`src.pipeline.profile`
     exists for that; needs a run on real data).
 
@@ -81,6 +79,7 @@
 | `src/desktop/` | PySide6 app (G research first), F signals, theme, settings |
 | `src/llm/` | Ollama tools, agent loop, prompts, start/stop/unload |
 | `src/pipeline/` | load → clean → merge → features → flags → run |
+| `src/pipeline/phases.py` | Per-minute anesthesia phase from procedure events (fallback: case times) |
 | `src/pipeline/synthetic.py` | Fictional SIS EMR generator + `synthetic_truth.json` |
 | `src/pipeline/profile.py` | Aggregate-only profile / threshold calibration report |
 | `src/pipeline/corpus_scan.py` | Full-EMR scan in PID shards; `process_frames` shared with `run.py` |
@@ -153,6 +152,14 @@ Wave root (optional) ──► wave_decode                   │
 - **Minute grid:** `fill_minute_grid` (merge + start of `add_features`) inserts empty
   rows for missing minutes so row-based rolling windows and run lengths are minutes.
   Cases spanning > 28 h are left ungridded. `n_minutes` counts observed minutes only.
+- **Phases:** the earliest matching intubation event and the latest extubation event
+  after it set the boundaries (a re-intubation does not restart induction); events
+  outside the case's data are ignored. Induction is the intubation event plus
+  `induction_after_min`, emergence starts `emergence_before_min` before extubation.
+  `skip_phases` is applied to each minute before run lengths are counted, and the
+  agent-drift rolling window restarts at each phase change. Safety rules (`spo2_low`,
+  `hr_*`, `map_low`, `pip_*`, `etco2_high`, `agent_high`, composites) have no default skip.
+  `RR` 0 stays blanked (no rate recorded); 1-3 are kept for `rr_low` critical.
 - **Score:** each flagged minute scores once at its worst severity; composites weight
   per episode. `n_warn`/`n_critical` still count minutes with any flag of that severity.
 - **Agent caps per agent:** `clean_ranges.Agent_Et/Fi` is the widest bound (18%);
@@ -165,22 +172,23 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-30
-- **Branch:** `chore/lint-types` (merges `main` and `chore/pins-and-package-size`).
-- **Done (roadmap Phase 3):** co-pilot tools state sample vs full-EMR scope and
-  a bounded-memory full-EMR scan exists (#20); direct dependencies pinned and
-  the Linux onedir cut from 1.2 GB / 464 MB to 399 MB / 155 MB (#22); `ruff.toml`,
-  `mypy.ini` and CI steps with all 44 ruff and 38 mypy findings fixed, including
-  a real crash in File → Open Wave folder. G/F consolidation prototype built
-  (#21) and awaiting the owner's review.
-- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed; frozen build on
-  Xvfb rendered Research, Summary and Case timeline with 20 synthetic cases.
-- **Release:** Phase 3 marked complete in `roadmap.md`; `VERSION` 0.10.0 in branch
-  `release/v0.10.0`. The Windows release job is the first Windows run of the
+- **Branch:** `perf/parallel-corpus-scan` (merges `main` after #25).
+- **Released:** v0.10.0 is published (Linux and Windows packages; signed Pages
+  manifest deployed). The Windows release job passed its smoke test on the
   slimmer spec.
-- **Parallel scan (branch `perf/parallel-corpus-scan`, 2026-09-30):** the
-  full-EMR scan scores shards in a spawn process pool (`workers`,
-  `--workers`); output is identical for any worker count. Frozen-app and
-  Windows runs are unverified; real-data time and per-worker memory are unmeasured.
-- **Next:** confirm both release packages and the Pages manifest publish; run the
-  pipeline, profile and full-EMR scan on real MOVER data; owner reviews the G/F
-  prototype and picks an AI placement before any desktop UI change.
+- **Done since v0.10.0:** anesthesia phase context (#25): per-minute `phase` and
+  case-level `phase_source` from procedure events with a case-time fallback,
+  per-rule `skip_phases`, `phase` on flags and episodes, a procedure-event-name
+  table in the profile report, and `clean_ranges.RR` 1-40 so `rr_low` critical
+  fires across RR 1-4. On a 60-case synthetic set `agent_drift` went from 525 to
+  49 minute flags with every injected anomaly still flagged. This branch: the
+  full-EMR scan scores shards in a spawn process pool (`workers`, `--workers`);
+  output is identical for any worker count (26 s vs 75 s on 600 synthetic
+  surgeries with 4 cores).
+- **Unverified:** event-name patterns against real MOVER data; the parallel scan
+  on Windows; real-data scan time and per-worker memory.
+- **Next:** run the sample pipeline and profile on real MOVER data, read the
+  event-name table and adjust `phases.intubation_patterns` /
+  `extubation_patterns`; run the full-EMR scan; owner reviews the G/F prototype
+  and picks an AI placement before any desktop UI change. `spec.md` drift
+  (phases, `--workers`) awaits owner approval.

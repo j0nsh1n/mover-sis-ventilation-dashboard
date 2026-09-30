@@ -97,3 +97,39 @@ def test_cases_table_has_per_hour_score(synthetic_run):
     assert (cases["n_minutes"] > 0).all()
     expected = (cases["anomaly_score"] / (cases["n_minutes"] / 60)).round(2)
     assert (cases["anomaly_score_per_hour"] - expected).abs().max() < 1e-9
+
+
+def test_induction_desaturation_is_still_flagged(synthetic_run):
+    _, result, truth = synthetic_run
+    flags, ts = result["flags"], result["timeseries"]
+    induction = [
+        (pid, a)
+        for pid, c in truth["cases"].items()
+        for a in c["anomalies"]
+        if a.get("phase") == "induction"
+    ]
+    assert induction
+    for pid, a in induction:
+        lo, hi = pd.Timestamp(a["start"]), pd.Timestamp(a["end"])
+        hit = flags[
+            (flags["PID"] == pid)
+            & (flags["rule_id"] == "spo2_low")
+            & flags["Obs_time"].between(lo, hi)
+        ]
+        assert not hit.empty
+        assert set(hit["phase"]) == {"induction"}
+    # Procedure events from the synthetic EMR drive every ventilated case's phases
+    sources = ts.drop_duplicates("PID").set_index("PID")["phase_source"]
+    assert set(sources) == {"events"}
+
+
+def test_agent_wash_in_and_out_are_not_drift_flags(synthetic_run):
+    _, result, truth = synthetic_run
+    flags = result["flags"]
+    drift = flags[flags["rule_id"] == "agent_drift"]
+    overdose = {
+        pid for pid, c in truth["cases"].items()
+        if any(a["kind"] == "agent_overdose" for a in c["anomalies"])
+    }
+    assert set(drift["PID"]) <= overdose
+    assert set(drift["phase"]) <= {"maintenance"}
