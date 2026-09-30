@@ -23,4 +23,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # First thing in the frozen app: the full-EMR scan starts worker processes
+    # that re-launch this executable, and freeze_support() lets those children
+    # run their job instead of opening a second window.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(main())

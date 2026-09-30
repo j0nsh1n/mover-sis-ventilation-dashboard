@@ -143,11 +143,19 @@ class CorpusScanWorker(QThread):
     finished_ok = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, emr: Path, processed: Path, preset: str = "default", parent=None):
+    def __init__(
+        self,
+        emr: Path,
+        processed: Path,
+        preset: str = "default",
+        workers: int | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.emr = emr
         self.processed = processed
         self.preset = preset
+        self.workers = workers  # None = automatic (CPU cores minus one)
 
     def run(self) -> None:
         try:
@@ -157,6 +165,7 @@ class CorpusScanWorker(QThread):
                 self.emr,
                 self.processed,
                 preset=self.preset,
+                workers=self.workers,
                 on_progress=lambda message, _done, _total: self.progress.emit(message),
                 should_stop=self.isInterruptionRequested,
             )
@@ -972,8 +981,8 @@ class MainWindow(QMainWindow):
             self,
             "Scan full EMR",
             "Score every surgery with ventilator data in the EMR folder?\n\n"
-            "This reads the whole export in batches and can take many minutes on the "
-            "full MOVER SIS data. The loaded sample and its charts are not changed; the "
+            "This reads the whole export in batches, using several CPU cores at once, "
+            "and can take many minutes on the full MOVER SIS data. The loaded sample and its charts are not changed; the "
             "co-pilot uses the scan for whole-dataset questions.",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1807,4 +1816,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(main())

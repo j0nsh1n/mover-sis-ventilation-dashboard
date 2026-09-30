@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import time
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from src.guardrails.exceptions import PipelineError
+from src.pipeline import corpus_scan as corpus_scan_module
 from src.pipeline.corpus_scan import (
     CORPUS_CASES,
+    CORPUS_EPISODES,
     CORPUS_META,
+    MAX_DEFAULT_WORKERS,
     ScanCancelled,
+    default_workers,
     load_corpus_scan,
     scan_corpus,
 )
@@ -70,6 +79,121 @@ def test_cancel_keeps_previous_scan(emr, tmp_path, allow_external):
     assert (tmp_path / CORPUS_CASES).is_file()
     assert not (tmp_path / "_corpus_scan_tmp").exists()
     assert isinstance(pd.read_parquet(tmp_path / CORPUS_CASES), pd.DataFrame)
+
+
+TIMING_KEYS = {"created_at", "seconds", "seconds_split", "seconds_score", "workers"}
+
+
+def test_parallel_scan_matches_serial_scan(emr, tmp_path, allow_external):
+    serial = scan_corpus(emr, tmp_path / "serial", cases_per_shard=7, workers=1)
+    parallel = scan_corpus(emr, tmp_path / "parallel", cases_per_shard=7, workers=2)
+    assert serial.meta["workers"] == 1
+    assert parallel.meta["workers"] == 2
+    pd.testing.assert_frame_equal(serial.cases, parallel.cases)
+    pd.testing.assert_frame_equal(serial.episodes, parallel.episodes)
+    assert {k: v for k, v in serial.meta.items() if k not in TIMING_KEYS} == {
+        k: v for k, v in parallel.meta.items() if k not in TIMING_KEYS
+    }
+    for name in (CORPUS_CASES, CORPUS_EPISODES):
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_path / "serial" / name),
+            pd.read_parquet(tmp_path / "parallel" / name),
+        )
+    assert not (tmp_path / "parallel" / "_corpus_scan_tmp").exists()
+
+
+def test_parallel_progress_is_reported_from_the_calling_thread(emr, tmp_path, allow_external):
+    import threading
+
+    calls: list[tuple[str, int, int, int]] = []
+    caller = threading.get_ident()
+    scan_corpus(
+        emr,
+        tmp_path,
+        cases_per_shard=10,
+        workers=2,
+        on_progress=lambda m, d, t: calls.append((m, d, t, threading.get_ident())),
+    )
+    assert {c[3] for c in calls} == {caller}
+    totals = [c for c in calls if c[2] > 0]
+    assert totals[-1][1] == totals[-1][2]
+    dones = [c[1] for c in totals]
+    assert dones == sorted(dones)
+    assert any("CPU cores" in c[0] for c in calls)
+
+
+def test_parallel_cancel_keeps_previous_scan_and_stops_workers(emr, tmp_path, allow_external):
+    scan_corpus(emr, tmp_path, cases_per_shard=20, workers=1)
+    before = (tmp_path / CORPUS_META).read_text()
+    started = time.monotonic()
+    scoring = {"started": False}
+
+    def on_progress(message: str, _done: int, _total: int) -> None:
+        if "CPU cores" in message:
+            scoring["started"] = True
+
+    with pytest.raises(ScanCancelled):
+        scan_corpus(
+            emr,
+            tmp_path,
+            cases_per_shard=2,
+            workers=2,
+            on_progress=on_progress,
+            should_stop=lambda: scoring["started"],
+        )
+    assert time.monotonic() - started < 60
+    assert (tmp_path / CORPUS_META).read_text() == before
+    assert not (tmp_path / "_corpus_scan_tmp").exists()
+
+
+def test_worker_error_names_the_shard(emr, tmp_path, allow_external, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(corpus_scan_module, "_score_shard", boom)
+    with pytest.raises(PipelineError, match=r"shard \d+ failed.*synthetic failure"):
+        scan_corpus(emr, tmp_path, cases_per_shard=20, workers=1)
+    assert not (tmp_path / "_corpus_scan_tmp").exists()
+
+
+def test_parallel_worker_error_surfaces_without_hanging(emr, tmp_path, allow_external):
+    # A non-numeric pad raises TypeError inside the spawned worker process
+    started = time.monotonic()
+    with pytest.raises(PipelineError, match=r"shard \d+ failed: \w+Error"):
+        scan_corpus(emr, tmp_path, cases_per_shard=20, workers=2, pad_minutes="bad")  # type: ignore[arg-type]
+    assert time.monotonic() - started < 120
+    assert not (tmp_path / "_corpus_scan_tmp").exists()
+
+
+def test_default_workers_bounds(monkeypatch):
+    monkeypatch.setattr(corpus_scan_module.os, "cpu_count", lambda: 1)
+    assert default_workers(50) == 1
+    monkeypatch.setattr(corpus_scan_module.os, "cpu_count", lambda: 64)
+    assert default_workers(50) == MAX_DEFAULT_WORKERS
+    assert default_workers(3) == 3
+    monkeypatch.setattr(corpus_scan_module.os, "cpu_count", lambda: None)
+    assert default_workers(50) == 1
+    monkeypatch.setattr(corpus_scan_module.os, "cpu_count", lambda: 4)
+    assert default_workers(50) == 3
+
+
+def test_invalid_worker_count_is_rejected(emr, tmp_path, allow_external):
+    with pytest.raises(PipelineError, match="workers"):
+        scan_corpus(emr, tmp_path, workers=0)
+
+
+def test_scan_module_does_not_import_qt():
+    code = (
+        "import sys; import src.pipeline.corpus_scan; "
+        "sys.exit(any(m.startswith('PySide6') for m in sys.modules))"
+    )
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_frozen_entry_point_calls_freeze_support_first():
+    entry = (Path(__file__).resolve().parents[1] / "packaging" / "entrypoint.py").read_text()
+    guard = entry.index('if __name__ == "__main__":')
+    assert entry.index("multiprocessing.freeze_support()", guard) < entry.index("main()", guard)
 
 
 def test_desktop_scan_action_feeds_copilot_session(emr, tmp_path, monkeypatch, allow_external):
