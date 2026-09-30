@@ -17,14 +17,12 @@ def _setup_qt_env() -> None:
     qt_root = meipass / "PySide6" / "Qt"
     qt_lib = qt_root / "lib"
     qt_plugins = qt_root / "plugins"
-    qt_libexec = qt_root / "libexec"
 
     lib_dirs = [
         str(meipass),
         str(meipass / "shiboken6"),
         str(meipass / "PySide6"),
         str(meipass / "numpy.libs"),
-        str(meipass / "scipy.libs"),
         str(meipass / "pandas.libs"),
         str(meipass / "pillow.libs"),
         str(meipass / "PIL.libs"),
@@ -42,18 +40,6 @@ def _setup_qt_env() -> None:
     if qt_plugins.is_dir():
         os.environ.setdefault("QT_PLUGIN_PATH", str(qt_plugins))
         os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(qt_plugins / "platforms"))
-
-    webengine = qt_libexec / "QtWebEngineProcess"
-    if webengine.is_file():
-        os.environ.setdefault("QTWEBENGINEPROCESS_PATH", str(webengine))
-        os.environ.setdefault(
-            "QTWEBENGINE_RESOURCES_PATH",
-            str(qt_root / "resources"),
-        )
-        os.environ.setdefault(
-            "QTWEBENGINE_LOCALES_PATH",
-            str(qt_root / "translations" / "qtwebengine_locales"),
-        )
 
 
 _setup_qt_env()
