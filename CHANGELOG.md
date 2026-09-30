@@ -48,6 +48,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Re-running the pipeline or the full-EMR scan changes flags, episodes, scores and
   the top-rules text compared with earlier runs (fewer flags in induction and
   emergence, and `rr_low` fires on RR 1-3).
+- The full-EMR scan (File → Scan full EMR, or `python -m src.pipeline.corpus_scan`)
+  now scores several batches at the same time on separate CPU cores. By default it
+  uses your core count minus one, up to 6; `--workers N` on the command line sets it
+  (`--workers 1` runs everything in one process, as before). On 600 synthetic
+  surgeries with 4 cores it took 26 s instead of 75 s; the results are identical
+  whatever the worker count. The progress text shows how many cores are in use, and
+  Cancel stops the worker processes right away and keeps the previous scan. Each
+  worker needs memory for one batch, so lower `--workers` on a small machine.
+- If a batch fails to score, the error now names the batch and suggests fewer
+  workers when a worker process was killed (for example, out of memory).
+- Surgeries with the same anomaly score are now listed in PID order in the scan
+  results, so repeated scans give the same order.
 
 ### Fixed
 

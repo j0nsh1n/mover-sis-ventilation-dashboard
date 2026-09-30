@@ -2,10 +2,9 @@
 
 ## Current State
 
-- **Version:** 0.10.0 in source (release PR); installed builds on v0.9.0 update
-  through the signed Pages manifest once the release publishes.
-- **Branch:** `main` includes the signed updater and release validation from
-  merged PRs #15–#17. A local docs branch holds the G/F consolidation plan.
+- **Version:** 0.10.0 released 2026-09-30; installed v0.9.0 builds update through
+  the signed Pages manifest. `main` has unreleased phase context (#25).
+- **Branch:** `main` includes everything through v0.10.0 (#15–#24) and #25.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -48,9 +47,15 @@
   - v0.9.0 on stock Ubuntu fails to load the Qt xcb plugin without the system
     `libxcb-cursor0`; the same branch bundles it and `launch.sh` names missing
     libraries.
-  - The full-EMR scan has only run on synthetic data here (54 cases in ~13 s,
-    about 0.25 s per surgery); expect over an hour for ~19k real surgeries,
-    single-threaded. It is started manually and not refreshed automatically.
+  - The full-EMR scan has only run on synthetic data here. It now scores shards
+    in a spawn-started process pool (default cores - 1, at most 6): 600 synthetic
+    surgeries took 75 s on 1 worker, 38 s on 2, 26 s on 4 (4-core container; splitting
+    the CSVs is about 1 s of that). That is about 0.13 s per surgery per core, so
+    ~19k real surgeries should take roughly 40 min on one core and 10 to 15 min on
+    four to six, if real rows cost like synthetic ones; real per-worker memory is
+    unmeasured (250 MB per 300-surgery synthetic shard; 1 to 2 GB assumed). The
+    frozen-app and Windows paths of the pool are unverified. It is started
+    manually and not refreshed automatically.
   - Frozen onedir is 399 MB unpacked / 155 MB tarball (was 1.2 GB / 464 MB).
     The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
     `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
@@ -167,19 +172,23 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-30
-- **Branch:** `feat/phase-context` (from `main` at v0.10.0; not pushed).
-- **Done:** per-minute `phase` and case-level `phase_source` from procedure events with
-  a case-time fallback; `skip_phases` per rule with conservative defaults; `phase` on
-  flags and episodes (co-pilot case context, `list_case_flags`, desktop episode table);
-  profile report gains a procedure-event-name table; `clean_ranges.RR` now 1-40 so
-  `rr_low` critical fires across RR 1-4. Re-running the pipeline changes flags and scores.
-- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed. On a 60-case synthetic
-  set `agent_drift` went from 525 to 49 minute flags and every injected anomaly is still
-  flagged, including a desaturation during induction.
-- **Earlier (unchanged):** v0.10.0 is in source on the release branch; its Linux and
-  Windows packages and the Pages manifest still need confirming, and the owner has yet
-  to review the G/F prototype before any desktop UI change.
-- **Next:** run the sample pipeline and profile on real MOVER data, read the event-name
-  table, and adjust `phases.intubation_patterns` / `extubation_patterns`; then re-check
-  flag rates per phase before calibrating thresholds. Case timeline event markers are not
-  drawn yet. `spec.md` does not mention phases (proposed edit in the change summary).
+- **Branch:** `perf/parallel-corpus-scan` (merges `main` after #25).
+- **Released:** v0.10.0 is published (Linux and Windows packages; signed Pages
+  manifest deployed). The Windows release job passed its smoke test on the
+  slimmer spec.
+- **Done since v0.10.0:** anesthesia phase context (#25): per-minute `phase` and
+  case-level `phase_source` from procedure events with a case-time fallback,
+  per-rule `skip_phases`, `phase` on flags and episodes, a procedure-event-name
+  table in the profile report, and `clean_ranges.RR` 1-40 so `rr_low` critical
+  fires across RR 1-4. On a 60-case synthetic set `agent_drift` went from 525 to
+  49 minute flags with every injected anomaly still flagged. This branch: the
+  full-EMR scan scores shards in a spawn process pool (`workers`, `--workers`);
+  output is identical for any worker count (26 s vs 75 s on 600 synthetic
+  surgeries with 4 cores).
+- **Unverified:** event-name patterns against real MOVER data; the parallel scan
+  on Windows; real-data scan time and per-worker memory.
+- **Next:** run the sample pipeline and profile on real MOVER data, read the
+  event-name table and adjust `phases.intubation_patterns` /
+  `extubation_patterns`; run the full-EMR scan; owner reviews the G/F prototype
+  and picks an AI placement before any desktop UI change. `spec.md` drift
+  (phases, `--workers`) awaits owner approval.
