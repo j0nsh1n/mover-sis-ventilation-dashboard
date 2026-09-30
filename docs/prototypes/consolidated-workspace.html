@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOVER / Consolidated G and F workspace</title>
+  <link rel="stylesheet" href="consolidated-workspace.css">
+  <script defer src="consolidated-workspace.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <header class="topbar">
+    <div class="wordmark">MOVER<span>CONSOLIDATED G / F STUDY</span></div>
+    <p class="topbar-note">Fictional data · Demo — scripted AI · Nothing is connected</p>
+    <button type="button" class="ghost" id="setup-open">Setup</button>
+  </header>
+
+  <main id="main">
+    <section id="welcome" class="welcome" hidden aria-labelledby="welcome-heading">
+      <p class="kicker">SETUP CANCELED</p>
+      <h1 id="welcome-heading">The workspace is unavailable.</h1>
+      <p>No data has been loaded and no model has been contacted. Open setup to load the fictional demo data.</p>
+      <button type="button" class="solid" id="welcome-setup">Open setup</button>
+    </section>
+
+    <section id="g-view" class="g-view" hidden aria-labelledby="g-heading">
+      <header class="g-head">
+        <div>
+          <p class="kicker">G / EVIDENCE WORKSPACE</p>
+          <h1 id="g-heading">Ask, inspect, compare.</h1>
+        </div>
+        <div class="g-controls">
+          <div class="segmented" role="group" aria-label="Workspace area">
+            <button type="button" id="view-board" aria-pressed="true">Evidence board</button>
+            <button type="button" id="view-cases" aria-pressed="false">Cases overview</button>
+          </div>
+          <button type="button" class="outline" id="rules-open" aria-expanded="false" aria-controls="rules-drawer">Rules reference</button>
+        </div>
+      </header>
+
+      <form id="ask-form" class="ask" novalidate>
+        <label for="ask-input">Research question</label>
+        <div class="ask-row">
+          <input id="ask-input" type="text" autocomplete="off" placeholder="For example: Where does pressure peak?">
+          <button type="submit" class="solid">Ask</button>
+        </div>
+        <p id="ask-error" class="field-error" role="alert" hidden>Enter a question first.</p>
+        <div class="ask-meta">
+          <div class="chips" aria-label="Example questions">
+            <span>Try</span>
+            <button type="button" data-example="Where does pressure peak?">Where does pressure peak?</button>
+            <button type="button" data-example="58-year-old laparoscopic case with high airway pressure">58-year-old laparoscopic case</button>
+            <button type="button" data-example="Which cases have missing ETCO2?">Missing ETCO2</button>
+            <button type="button" data-example="Which cases have ETCO2 flags?">ETCO2 flags</button>
+            <button type="button" data-example="Why did pressure rise?">Why did pressure rise?</button>
+          </div>
+          <div class="ask-switches">
+            <button type="button" role="switch" aria-checked="true" id="model-switch" class="switch"><span class="switch-track" aria-hidden="true"></span><span id="model-switch-label">Local model: available (simulated)</span></button>
+            <div class="segmented small" role="group" aria-label="AI conversation placement">
+              <button type="button" id="place-side" aria-pressed="true">Side panel</button>
+              <button type="button" id="place-inline" aria-pressed="false">Inline thread</button>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <div class="working-set" id="working-set" aria-live="polite"></div>
+      <div id="inline-slot"></div>
+
+      <div class="g-body" id="g-body">
+        <div class="g-main">
+          <div id="board"></div>
+          <div id="cases" hidden></div>
+        </div>
+        <div id="side-slot" class="side-slot">
+          <section id="thread" class="thread" aria-labelledby="thread-title">
+            <div class="thread-head"><h2 id="thread-title">Conversation</h2><span id="thread-place" class="mono"></span></div>
+            <div id="thread-list" class="thread-list" role="log" aria-live="polite"></div>
+          </section>
+        </div>
+      </div>
+
+      <aside id="rules-drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="rules-title" hidden>
+        <div class="drawer-top"><div><p class="kicker">RULE REFERENCE</p><h2 id="rules-title">All rules</h2></div><button type="button" class="close-button" id="rules-close" aria-label="Close rule reference">×</button></div>
+        <p class="drawer-note" id="rules-version"></p>
+        <label for="rules-search" class="visually-hidden">Search rules</label>
+        <input id="rules-search" type="search" placeholder="Search rule id, description or signal" autocomplete="off">
+        <p id="rules-count" class="mono" role="status"></p>
+        <div id="rules-list" class="rules-list"></div>
+      </aside>
+    </section>
+
+    <section id="f-view" class="f-view" hidden aria-labelledby="f-heading">
+      <div class="f-return"><button type="button" id="f-back">← Back to evidence workspace</button><span id="f-context" class="mono"></span></div>
+      <header class="f-header">
+        <div><p class="kicker">F / CASE DETAIL</p><h1 id="f-heading" tabindex="-1"></h1><p id="f-sub" class="subcopy"></p></div>
+        <div class="time-stamp"><span>SELECTED MINUTE</span><strong><output id="f-minute">0</output></strong><span id="f-minute-of"></span></div>
+      </header>
+      <div class="f-toolbar">
+        <label for="f-case">Case</label>
+        <select id="f-case"></select>
+        <button type="button" class="outline-dark" id="f-overlay" aria-pressed="false"></button>
+        <div class="jumps" role="group" aria-label="Jump to a moment">
+          <button type="button" id="jump-peak">Peak PIP</button>
+          <button type="button" id="jump-missing">Next missing sample</button>
+          <button type="button" id="jump-flag">Next flag</button>
+        </div>
+      </div>
+      <div class="timeline-shell">
+        <div class="timeline-topline"><span id="f-case-label"></span><span class="mono">1 SAMPLE / MINUTE · Grey band = missing sample, not filled</span></div>
+        <div id="f-tracks"></div>
+        <div class="scrubber"><label for="f-scrub">Move through the case <span>Arrow keys move one minute, Page keys ten</span></label><input id="f-scrub" type="range" min="0" max="0" value="0" step="1"><div class="ruler" id="f-ruler"></div></div>
+      </div>
+      <div class="f-grid">
+        <div class="f-col">
+          <section class="panel" aria-labelledby="src-title">
+            <div class="panel-top"><h2 id="src-title">Source row</h2><button type="button" class="outline-dark" id="src-all">All source rows</button></div>
+            <div id="f-source"></div>
+          </section>
+          <section class="panel" id="rule-panel" aria-labelledby="rule-title" tabindex="-1">
+            <h2 id="rule-title">Rule detail</h2>
+            <div id="f-rule"></div>
+          </section>
+        </div>
+        <div class="f-col">
+          <section class="panel ai-panel" aria-labelledby="fai-title">
+            <h2 id="fai-title">Ask about this minute</h2>
+            <div id="f-answer" class="f-answer" role="status"></div>
+            <form id="f-form"><label for="f-question" id="f-question-label"></label><div class="ask-row dark"><input id="f-question" type="text" autocomplete="off" placeholder="Try: explain this minute"><button type="submit">Ask</button></div><p id="f-error" class="field-error" role="alert" hidden>Enter a question first.</p></form>
+          </section>
+          <section class="panel" aria-labelledby="ep-title">
+            <h2 id="ep-title">Flag episodes</h2>
+            <div id="f-episodes"></div>
+            <details class="minute-flags"><summary id="f-flags-summary"></summary><div id="f-flags"></div></details>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="legal-bar"><b>Research use only — not for clinical care.</b><span>Signal patterns describe recorded values; they do not prove a cause or direct care.</span></footer>
+  <div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+
+  <dialog id="setup-dialog" aria-labelledby="setup-heading">
+    <div class="dialog-top"><div><p class="kicker">BEFORE YOU BEGIN</p><h2 id="setup-heading">Choose your workspace.</h2></div></div>
+    <p>This study loads a fictional dataset and a simulated local model. No folder is read and nothing leaves this page.</p>
+    <dl class="setup-ready" id="setup-ready"></dl>
+    <button type="button" role="switch" aria-checked="false" id="setup-model-switch" class="switch"><span class="switch-track" aria-hidden="true"></span><span>Simulate the local model being unavailable</span></button>
+    <div class="dialog-actions"><button type="button" class="ghost" id="setup-cancel">Cancel</button><button type="button" class="solid" id="setup-ok">Open workspace</button></div>
+  </dialog>
+
+  <dialog id="source-dialog" class="wide" aria-labelledby="source-title">
+    <div class="dialog-top"><div><p class="kicker">FICTIONAL SOURCE ROWS</p><h2 id="source-title"></h2></div><button type="button" class="close-button" id="source-close" aria-label="Close source rows">×</button></div>
+    <p>One row per minute. A dash is a missing sample; it is not zero and it is not interpolated. Units: PIP cmH2O, ETCO2 mmHg, heart rate bpm.</p>
+    <div class="table-scroll"><table><thead><tr><th scope="col">Minute</th><th scope="col">PIP</th><th scope="col">ETCO2</th><th scope="col">HR</th><th scope="col">Flags</th></tr></thead><tbody id="source-rows"></tbody></table></div>
+  </dialog>
+</body>
+</html>
