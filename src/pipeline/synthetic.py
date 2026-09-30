@@ -10,10 +10,13 @@ pipeline loads, reproducing the quirks of the MOVER SIS dump:
 - ventilator dropouts, duplicate samples, sparse NIBP (every 3-5 minutes)
 - missing or implausible height; vitals-only (no ventilator) cases
 - an optional row cap on the ventilator file, like the real export ceiling
+- Intubation / Incision / Extubation procedure events, and agent wash-in and
+  wash-out ramps after intubation and before extubation (phase context)
 
 Every surgery is fictional; PIDs start with ``SYN``. Injected anomalies are
 recorded in ``synthetic_truth.json`` next to the CSVs so flag recall can be
-checked.
+checked. Every sixth ventilated case also gets a brief desaturation right after
+intubation (recorded with ``"phase": "induction"``).
 
     PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30
 """
@@ -185,6 +188,21 @@ def _plan_anomalies(case: _Case, rng: np.random.Generator, rate: float) -> None:
                 break
 
 
+def _add_induction_desaturation(case: _Case) -> None:
+    """A brief desaturation right after intubation, from the case's own times (no random draws).
+
+    Phase context must never hide it: spo2_low has to fire during induction.
+    """
+    t0 = case.intubation + pd.Timedelta(minutes=2)
+    case.anomalies.append({
+        "kind": "desaturation",
+        "start": t0.isoformat(),
+        "end": (t0 + pd.Timedelta(minutes=3)).isoformat(),
+        "expected_rules": ANOMALY_RULES["desaturation"],
+        "phase": "induction",
+    })
+
+
 def _active(case: _Case, kind: str, t: pd.Timestamp) -> tuple[bool, int]:
     for a in case.anomalies:
         if a["kind"] == kind:
@@ -331,6 +349,8 @@ def generate_synthetic_emr(
     for i in range(n_cases):
         case = _make_case(i, rng, day0)
         _plan_anomalies(case, rng, anomaly_rate)
+        if case.ventilated and i % 6 == 4:
+            _add_induction_desaturation(case)
         v, w = _case_rows(case, rng)
         vent_rows.extend(v)
         vit_rows.extend(w)

@@ -80,3 +80,63 @@ def test_cli_writes_markdown_and_json(tmp_path, thresholds):
     main(["--processed-dir", str(root), "--out", str(md), "--json", str(js)])
     assert md.read_text().startswith("# MOVER SIS pipeline profile")
     assert json.loads(js.read_text())["coverage"]["n_cases"] == 12
+
+
+def _write_events(tmp_path, n_cases: int, rare_cases: int = 3):
+    rows = []
+    for c in range(n_cases):
+        pid = f"PID{c:03d}"
+        rows += [
+            {"PID": pid, "Event_time": T0 + pd.Timedelta(days=c), "Event_name": "Intubation"},
+            {"PID": pid, "Event_time": T0 + pd.Timedelta(days=c, minutes=90), "Event_name": "Extubation"},
+            {"PID": pid, "Event_time": T0 + pd.Timedelta(days=c, minutes=30), "Event_name": "Incision | skin"},
+        ]
+        if c < rare_cases:
+            rows.append({"PID": pid, "Event_time": T0 + pd.Timedelta(days=c), "Event_name": "Rare oddity"})
+    pd.DataFrame(rows).to_parquet(tmp_path / "events.parquet")
+
+
+def test_profile_lists_event_names_with_counts_and_roles(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    _write_events(root, 12)
+    p = profile_processed(root, thresholds)
+    names = {n["name"]: n for n in p["events"]["names"]}
+    assert names["Intubation"]["cases"] == 12 and names["Intubation"]["role"] == "intubation"
+    assert names["Extubation"]["events"] == 12 and names["Extubation"]["role"] == "extubation"
+    assert names["Incision | skin"]["role"] == ""
+    assert p["events"]["cases_with_intubation_match"] == 12
+    md = render_markdown(p)
+    assert "## Procedure event names" in md
+    assert "| Intubation | 12 | 12 | intubation |" in md
+    assert "Incision \\| skin" in md
+
+
+def test_rare_event_names_are_pooled_and_output_has_no_identifiers(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    _write_events(root, 12, rare_cases=3)
+    p = profile_processed(root, thresholds)
+    assert "Rare oddity" not in {n["name"] for n in p["events"]["names"]}
+    assert p["events"]["pooled_names"] == 1
+    out = json.dumps(p) + render_markdown(p)
+    assert "Rare oddity" not in out
+    assert "PID0" not in out and "2016-" not in out
+    assert "fewer than 11 cases" in out
+
+
+def test_profile_without_events_says_so(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    p = profile_processed(root, thresholds)
+    assert p["events"] == {}
+    assert "No `events.parquet`" in render_markdown(p)
+
+
+def test_profile_reports_phase_minutes_and_sources(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    ts = pd.read_parquet(root / "timeseries.parquet")
+    ts["phase"] = np.where(ts["t_min"] < 5, "induction", "maintenance")
+    ts["phase_source"] = "events"
+    ts.to_parquet(root / "timeseries.parquet")
+    cov = profile_processed(root, thresholds)["coverage"]
+    assert cov["observed_minutes_by_phase"]["induction"] == 12 * 5
+    assert cov["observed_minutes_by_phase"]["maintenance"] == 12 * 15
+    assert cov["cases_by_phase_source"] == {"events": 12, "mixed": 0, "fallback": 0}
