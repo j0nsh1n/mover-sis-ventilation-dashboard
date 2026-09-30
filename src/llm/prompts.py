@@ -106,6 +106,9 @@ ANSWER_SHAPE = """
 TOOL_RULES = """
 ## Tools
 Use native function tools for all corpus facts.
+Every search/ranking tool result starts with a SCOPE line. Repeat that scope in the
+answer ("in the loaded sample of N cases" or "across all N scanned surgeries"), and
+never describe a loaded sample as the whole EMR or dataset.
 Tools: """ + ", ".join(sorted({t["function"]["name"] for t in AI_TOOLS})) + """
 Prefer native tool calls. Fallback only: {"name":"…","arguments":{…}}
 """.strip()

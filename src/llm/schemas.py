@@ -13,14 +13,25 @@ from typing import Any
 
 MAX_TOOL_ROUNDS = 8
 
+# Shared by every tool that ranks or searches surgeries
+SCOPE_PARAM: dict[str, Any] = {
+    "type": "string",
+    "enum": ["auto", "full", "sample"],
+    "description": (
+        "'full' = every ventilated surgery from the full-EMR scan; 'sample' = the "
+        "loaded analyzed sample only; 'auto' (default) = full when a scan is loaded."
+    ),
+}
+
 AI_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
             "name": "corpus_overview",
             "description": (
-                "Counts, agent mix, anomaly-score range, active PID and focus list. "
-                "Call first when the user has not named a case."
+                "Scope (full-EMR scan vs loaded sample and EMR totals), counts, agent "
+                "mix, anomaly-score range, active PID and focus list. Call first when "
+                "the user has not named a case or asks about the whole dataset."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
@@ -44,6 +55,7 @@ AI_TOOLS: list[dict[str, Any]] = [
                         "type": "integer",
                         "description": "Max cases to return (1–30, default 12)",
                     },
+                    "scope": SCOPE_PARAM,
                 },
                 "required": ["query"],
             },
@@ -73,6 +85,7 @@ AI_TOOLS: list[dict[str, Any]] = [
                         "description": "Flag rule keywords (e.g. pip_high etco2)",
                     },
                     "limit": {"type": "integer", "description": "Max results (default 10)"},
+                    "scope": SCOPE_PARAM,
                 },
                 "required": ["procedure"],
             },
@@ -82,11 +95,19 @@ AI_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "top_anomaly_cases",
-            "description": "Highest anomaly_score cases; sets focus list.",
+            "description": (
+                "Highest anomaly_score cases (or per observed hour); sets focus list. "
+                "The result's SCOPE line says whether it covers every ventilated surgery."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "How many (default 10)"},
+                    "scope": SCOPE_PARAM,
+                    "per_hour": {
+                        "type": "boolean",
+                        "description": "Rank by score per observed hour instead of total",
+                    },
                 },
                 "required": [],
             },
@@ -102,8 +123,31 @@ AI_TOOLS: list[dict[str, Any]] = [
                 "properties": {
                     "agent": {"type": "string"},
                     "limit": {"type": "integer"},
+                    "scope": SCOPE_PARAM,
                 },
                 "required": ["agent"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rule_case_counts",
+            "description": (
+                "For each flag rule: how many surgeries it fired in (and %), episodes, "
+                "and flagged minutes. Use for 'how common is …' questions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": SCOPE_PARAM,
+                    "severity": {
+                        "type": "string",
+                        "enum": ["", "info", "warn", "critical"],
+                        "description": "Only count episodes of this severity",
+                    },
+                },
+                "required": [],
             },
         },
     },
