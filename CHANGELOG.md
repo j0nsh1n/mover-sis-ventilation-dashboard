@@ -24,9 +24,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   "No case selected".
 - Linux build ships `libxcb-cursor`, which Qt loads at runtime, so the app starts
   on stock Ubuntu instead of failing to load the Qt "xcb" platform plugin.
-- Linux build no longer bundles `libxkbcommon`; it now comes from the system
-  together with `libxkbcommon-x11`. The mixed pair crashed the app in keyboard
-  handling on Nobara.
 - `launch.sh` names any missing system library and the install command for
   Ubuntu/Debian and Fedora/Nobara (also as a dialog when kdialog or zenity is
   available) instead of Qt's generic plugin error.

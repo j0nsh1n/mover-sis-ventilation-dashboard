@@ -97,11 +97,9 @@ def test_frozen_binary_smoke_offscreen():
             proc.kill()
 
 
-def test_spec_bundles_xcb_cursor_and_leaves_xkbcommon_to_host():
+def test_spec_bundles_xcb_cursor():
     spec = (ROOT / "packaging" / "mover_sis_monitor.spec").read_text(encoding="utf-8")
     assert "libxcb-cursor.so.0" in spec
-    assert "_is_host_keyboard_lib" in spec
-    assert 'startswith("libxkbcommon")' in spec
 
 
 def _generated_launch_script() -> str:

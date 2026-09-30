@@ -101,10 +101,10 @@ jobs:
             cd MOVER-SIS-Monitor
             ./launch.sh
             ```
-            The app uses the system's X keyboard libraries, which desktop installs
-            normally include. If `launch.sh` reports them missing:
-            Ubuntu / Debian `sudo apt install libxkbcommon0 libxkbcommon-x11-0`;
-            Fedora / Nobara `sudo dnf install libxkbcommon libxkbcommon-x11`.
+            The app uses the system's X keyboard library, which desktop installs
+            normally include. If `launch.sh` reports it missing:
+            Ubuntu / Debian `sudo apt install libxkbcommon-x11-0`;
+            Fedora / Nobara `sudo dnf install libxkbcommon-x11`.
 
             ### Windows
             1. Download `MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip`

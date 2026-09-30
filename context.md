@@ -43,9 +43,8 @@
     and loads `libxkbcommon-x11.so.0` from this Nobara host. The installed app
     reproduced a SIGSEGV twice in `xkb_state_key_get_layout`. An isolated copy
     without the bundled library loaded both host XKB libraries and stayed open
-    past 40 seconds. Branch `fix/research-vent-and-linux-launch` drops the
-    bundled library from the spec; not yet released or re-checked on Nobara
-    (the Ubuntu cloud build starts and takes keyboard input).
+    past 40 seconds. The project owner treats this as a one-off bug; the
+    bundle is unchanged and no fix is planned.
   - v0.9.0 on stock Ubuntu fails to load the Qt xcb plugin without the system
     `libxcb-cursor0`; the same branch bundles it and `launch.sh` names missing
     libraries.
@@ -143,11 +142,10 @@ Wave root (optional) ──► wave_decode                   │
 - **Done:** Ran the published v0.9.0 Linux package on synthetic data (cloud,
   Xvfb). Fixed two findings: G search ranked a surgery without ventilator rows
   first and opened a dead end; the package needed the system `libxcb-cursor0`
-  on stock Ubuntu. Also dropped the bundled `libxkbcommon` (Nobara crash above)
-  and made `launch.sh` name missing system libraries.
+  on stock Ubuntu. `launch.sh` now names missing system libraries.
 - **Verified:** full `pytest` (frozen-binary smoke included) passed; a local
   build started on Xvfb with the host `libxcb-cursor0` removed, and the same G
   question opened a ventilated case; `launch.sh` printed install commands when
-  the library was missing. Not re-checked on Nobara.
-- **Next:** Release, then confirm on Nobara that the frozen app no longer
-  crashes on key input. The G/F consolidation plan is still unbuilt.
+  the library was missing.
+- **Next:** Phase 3 (corpus scoping, pins, package size, lint/types), full-data
+  anomaly tools, and the G/F consolidation prototype, then a release.

@@ -93,9 +93,9 @@ Run:
   ./launch.sh
   # or via launcher after install_local.sh
 
-System libraries (usually present on a desktop install; launch.sh checks):
-  Ubuntu / Debian:  sudo apt install libxkbcommon0 libxkbcommon-x11-0
-  Fedora / Nobara:  sudo dnf install libxkbcommon libxkbcommon-x11
+System library (usually present on a desktop install; launch.sh checks):
+  Ubuntu / Debian:  sudo apt install libxkbcommon-x11-0
+  Fedora / Nobara:  sudo dnf install libxkbcommon-x11
 
 Data:
   Put SIS EMR CSVs in:  ./data/raw/EMR/

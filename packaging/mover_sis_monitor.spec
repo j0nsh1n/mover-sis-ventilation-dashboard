@@ -191,21 +191,7 @@ def _is_conflicting_system_qt(src_path: str) -> bool:
     return False
 
 
-def _is_host_keyboard_lib(dest_name: str) -> bool:
-    """libxkbcommon must come from the host, like libxkbcommon-x11.
-
-    Qt loads the host's libxkbcommon-x11, which then resolved the bundled
-    libxkbcommon from the build machine. The version mismatch crashed the
-    frozen app in xkb_state_key_get_layout on Nobara (see context.md).
-    """
-    return _os.path.basename(str(dest_name)).startswith("libxkbcommon")
-
-
-a.binaries = [
-    b
-    for b in a.binaries
-    if not _is_conflicting_system_qt(b[1]) and not _is_host_keyboard_lib(b[0])
-]
+a.binaries = [b for b in a.binaries if not _is_conflicting_system_qt(b[1])]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
