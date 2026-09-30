@@ -7,6 +7,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-30
+
 ### Changed
 
 - Direct dependencies in `requirements.txt` are exact `==` pins of the versions

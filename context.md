@@ -2,8 +2,8 @@
 
 ## Current State
 
-- **Version:** 0.9.0 in source and in the local installed build. The prior
-  v0.7.0 install remains as a backup.
+- **Version:** 0.10.0 in source (release PR); installed builds on v0.9.0 update
+  through the signed Pages manifest once the release publishes.
 - **Branch:** `main` includes the signed updater and release validation from
   merged PRs #15–#17. A local docs branch holds the G/F consolidation plan.
 - **Distribution:** The repository and release packages are public. GitHub
@@ -168,5 +168,9 @@ Wave root (optional) ──► wave_decode                   │
   (#21) and awaiting the owner's review.
 - **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed; frozen build on
   Xvfb rendered Research, Summary and Case timeline with 20 synthetic cases.
-- **Next:** mark Phase 3 complete in the roadmap, bump `VERSION` for a release,
-  and watch the Windows release job (first run of the slimmer spec on Windows).
+- **Release:** Phase 3 marked complete in `roadmap.md`; `VERSION` 0.10.0 in branch
+  `release/v0.10.0`. The Windows release job is the first Windows run of the
+  slimmer spec.
+- **Next:** confirm both release packages and the Pages manifest publish; run the
+  pipeline, profile and full-EMR scan on real MOVER data; owner reviews the G/F
+  prototype and picks an AI placement before any desktop UI change.
