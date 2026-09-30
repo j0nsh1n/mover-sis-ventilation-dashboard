@@ -53,6 +53,106 @@ def repo_root() -> Path:
     return app_dir()
 
 
+def process_frames(
+    cases_raw: pd.DataFrame,
+    vent_raw: pd.DataFrame,
+    vitals_raw: pd.DataFrame,
+    events_raw: pd.DataFrame,
+    thresholds: dict,
+    *,
+    pad_minutes: float = 5.0,
+    validate: bool = True,
+    verbose: bool = True,
+) -> dict[str, pd.DataFrame]:
+    """Clean, merge, feature and flag raw SIS frames for a set of surgeries.
+
+    Shared by ``run_pipeline`` (a sample written to disk) and the full-EMR
+    scan (batches whose timeseries are dropped after scoring).
+    Returns dict with keys: cases, timeseries, flags, episodes, scores, events.
+    """
+
+    def log(message: str) -> None:
+        if verbose:
+            print(message)
+
+    # --- clean ---
+    log("[pipeline] cleaning…")
+    cases = clean_case_info(cases_raw)
+    vent = clean_ventilator(vent_raw, thresholds)
+    vitals = clean_vitals(vitals_raw, thresholds)
+    events = clean_procedure_events(events_raw)
+
+    if validate:
+        assert_cleaned_cases(cases)
+
+    vent = filter_to_case_window(vent, cases, pad_minutes=pad_minutes)
+    vitals = filter_to_case_window(vitals, cases, pad_minutes=pad_minutes)
+
+    if vent.empty:
+        raise PipelineError(
+            "No ventilator rows remain after cleaning/window filter. "
+            "Check timestamps and case OR windows."
+        )
+
+    # --- merge + features ---
+    log("[pipeline] merging & features…")
+    ts = merge_vent_vitals(vent, vitals, cases)
+    if ts.empty:
+        raise PipelineError("Merged timeseries is empty")
+    ts = add_features(ts, thresholds)
+    # Enforce sort + unique minutes (invariant for flagging and plots)
+    ts = ts.sort_values(["PID", "Obs_time"]).drop_duplicates(
+        subset=["PID", "Obs_time"], keep="last"
+    ).reset_index(drop=True)
+    log(f"  timeseries rows: {len(ts)}  cases: {ts['PID'].nunique()}")
+
+    # --- flags ---
+    log("[pipeline] flagging anomalies…")
+    flags = flag_anomalies(ts, thresholds)
+    episodes = collapse_episodes(flags)
+
+    scores = score_cases(flags, thresholds)
+
+    case_summary = build_case_summary(ts, flags)
+    drop_pre = [
+        c
+        for c in ["n_info", "n_warn", "n_critical", "n_composite_rows", "n_rule_types"]
+        if c in case_summary.columns
+    ]
+    case_summary = case_summary.drop(columns=drop_pre, errors="ignore")
+    case_summary["PID"] = case_summary["PID"].astype(str)
+    if scores is not None and not scores.empty:
+        scores = scores.copy()
+        scores["PID"] = scores["PID"].astype(str)
+        case_summary = case_summary.merge(scores, on="PID", how="left")
+    for c in ["n_info", "n_warn", "n_critical", "n_composite", "anomaly_score"]:
+        if c not in case_summary.columns:
+            case_summary[c] = 0
+        case_summary[c] = case_summary[c].fillna(0).astype(int)
+    # Score per observed hour, so long cases do not outrank short ones on
+    # duration alone; cases with no observed minutes stay NaN
+    hours = case_summary["n_minutes"].astype(float) / 60.0
+    case_summary["anomaly_score_per_hour"] = (
+        case_summary["anomaly_score"] / hours.where(hours > 0)
+    ).round(2)
+    if "top_rules" not in case_summary.columns:
+        case_summary["top_rules"] = ""
+    else:
+        case_summary["top_rules"] = case_summary["top_rules"].fillna("")
+    case_summary = case_summary.sort_values(
+        "anomaly_score", ascending=False
+    ).reset_index(drop=True)
+
+    return {
+        "cases": case_summary,
+        "timeseries": ts,
+        "flags": flags,
+        "episodes": episodes,
+        "scores": scores,
+        "events": events,
+    }
+
+
 def run_pipeline(
     emr_dir: Path | str | None = None,
     output_dir: Path | str | None = None,
@@ -146,73 +246,21 @@ def run_pipeline(
 
     events_raw = load_procedure_events(emr_path, pids=pids)
 
-    # --- clean ---
-    print("[pipeline] cleaning…")
-    cases = clean_case_info(cases_raw)
-    vent = clean_ventilator(vent_raw, thresholds)
-    vitals = clean_vitals(vitals_raw, thresholds)
-    events = clean_procedure_events(events_raw)
-
-    if validate:
-        assert_cleaned_cases(cases)
-
-    vent = filter_to_case_window(vent, cases, pad_minutes=pad_minutes)
-    vitals = filter_to_case_window(vitals, cases, pad_minutes=pad_minutes)
-
-    if vent.empty:
-        raise PipelineError(
-            "No ventilator rows remain after cleaning/window filter. "
-            "Check timestamps and case OR windows."
-        )
-
-    # --- merge + features ---
-    print("[pipeline] merging & features…")
-    ts = merge_vent_vitals(vent, vitals, cases)
-    if ts.empty:
-        raise PipelineError("Merged timeseries is empty")
-    ts = add_features(ts, thresholds)
-    # Enforce sort + unique minutes (invariant for flagging and plots)
-    ts = ts.sort_values(["PID", "Obs_time"]).drop_duplicates(
-        subset=["PID", "Obs_time"], keep="last"
-    ).reset_index(drop=True)
-    print(f"  timeseries rows: {len(ts)}  cases: {ts['PID'].nunique()}")
-
-    # --- flags ---
-    print("[pipeline] flagging anomalies…")
-    flags = flag_anomalies(ts, thresholds)
-    episodes = collapse_episodes(flags)
-
-    scores = score_cases(flags, thresholds)
-
-    case_summary = build_case_summary(ts, flags)
-    drop_pre = [
-        c
-        for c in ["n_info", "n_warn", "n_critical", "n_composite_rows", "n_rule_types"]
-        if c in case_summary.columns
-    ]
-    case_summary = case_summary.drop(columns=drop_pre, errors="ignore")
-    case_summary["PID"] = case_summary["PID"].astype(str)
-    if scores is not None and not scores.empty:
-        scores = scores.copy()
-        scores["PID"] = scores["PID"].astype(str)
-        case_summary = case_summary.merge(scores, on="PID", how="left")
-    for c in ["n_info", "n_warn", "n_critical", "n_composite", "anomaly_score"]:
-        if c not in case_summary.columns:
-            case_summary[c] = 0
-        case_summary[c] = case_summary[c].fillna(0).astype(int)
-    # Score per observed hour, so long cases do not outrank short ones on
-    # duration alone; cases with no observed minutes stay NaN
-    hours = case_summary["n_minutes"].astype(float) / 60.0
-    case_summary["anomaly_score_per_hour"] = (
-        case_summary["anomaly_score"] / hours.where(hours > 0)
-    ).round(2)
-    if "top_rules" not in case_summary.columns:
-        case_summary["top_rules"] = ""
-    else:
-        case_summary["top_rules"] = case_summary["top_rules"].fillna("")
-    case_summary = case_summary.sort_values(
-        "anomaly_score", ascending=False
-    ).reset_index(drop=True)
+    frames = process_frames(
+        cases_raw,
+        vent_raw,
+        vitals_raw,
+        events_raw,
+        thresholds,
+        pad_minutes=pad_minutes,
+        validate=validate,
+    )
+    case_summary = frames["cases"]
+    ts = frames["timeseries"]
+    flags = frames["flags"]
+    episodes = frames["episodes"]
+    scores = frames["scores"]
+    events = frames["events"]
 
     if validate:
         validate_pipeline_outputs(

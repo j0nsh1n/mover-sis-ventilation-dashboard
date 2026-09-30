@@ -294,6 +294,8 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
     corpus = set()
     if session.cases is not None and not session.cases.empty:
         corpus = set(session.cases["PID"].astype(str))
+    if session.has_corpus_scan():
+        corpus |= set(session.corpus["PID"].astype(str))
 
     claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
     bad = []
@@ -307,7 +309,7 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
     if bad:
         notes.append("unknown_pids:" + ",".join(bad[:5]))
         text += (
-            "\n\n**Verification note:** PID-like tokens not in the loaded corpus: "
+            "\n\n**Verification note:** PID-like tokens not in the loaded sample or full-EMR scan: "
             f"{', '.join(bad[:5])}. Prefer PIDs from tool results only."
         )
 

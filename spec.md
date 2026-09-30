@@ -52,6 +52,11 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   a truth file of injected anomalies; it never reads real data.
 - Profile report is **aggregate only**: no PIDs, timestamps or row-level values, and case
   counts below the small-cell threshold (default 11) are suppressed.
+- Co-pilot corpus tools state their scope on every search or ranking result: the
+  full-EMR scan when one is loaded, otherwise the loaded sample with the EMR's
+  indexed and ventilated counts. Answers must not present the sample as the whole EMR.
+- The full-EMR scan scores every surgery with ventilator rows in bounded batches and
+  stores per-case scores and episodes only; its scores equal the pipeline's.
 - Optional Streamlit dashboard remains available for browser exploration of the same pipeline.
 - Frozen Linux and Windows desktop builds check a signed manifest on GitHub
   Pages by default. Checks run in the background at launch, when the app
@@ -78,6 +83,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `55y woman, hysterectomy, sevoflurane, elevated PIP` to request a grounded
   research answer about similar cases and documented management patterns.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
+- **Full-EMR scan:** File → Scan full EMR, or
+  `PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default`
 - **Profile (threshold calibration):**
   `PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md`
 - **Synthetic data (no MOVER access needed):**
@@ -110,6 +117,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Major components:
   - `src/pipeline/` — load → clean → merge → features → flags → run
   - `src/pipeline/synthetic.py` — fictional SIS EMR generator; `profile.py` — aggregate report
+  - `src/pipeline/corpus_scan.py` — full-EMR scan in PID shards (bounded memory)
   - `src/services/` — `ensure_data` / `load_processed`; `case_fetch.py` on-demand
     case data; `retrieval.py` metadata search and embedding cache
   - `src/desktop/` — PySide6 app, G research workspace, F signal view, charts,

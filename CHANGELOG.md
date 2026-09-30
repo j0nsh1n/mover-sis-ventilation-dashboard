@@ -23,8 +23,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Full-EMR scan: **File → Scan full EMR** or
+  `python -m src.pipeline.corpus_scan` scores every surgery with ventilator data
+  in batches, keeping only per-case scores and flag episodes
+  (`corpus_cases.parquet`, `corpus_episodes.parquet`, `corpus_meta.json`), so
+  memory stays bounded on the full export. Scores match the normal pipeline.
+- Co-pilot tool `rule_case_counts`: how many surgeries each rule fired in, with
+  episodes and flagged minutes, for the full scan or the loaded sample.
 - Planned a clickable G/F consolidation study for the existing Ask, Summary,
   Case timeline, and Rule reference functions.
+
+### Changed
+
+- Co-pilot tools now say what they cover. Every search and ranking result starts
+  with a SCOPE line: the full-EMR scan (when loaded) or "loaded sample — N
+  analyzed cases, NOT the whole EMR" with the EMR's indexed and ventilated
+  counts. `corpus_overview` no longer reports the sample as "Corpus size".
+  `search_cases`, `find_similar_cases`, `top_anomaly_cases` (optionally per
+  observed hour) and `filter_by_agent` take `scope` = auto / full / sample.
+- Selecting a surgery that is in the full scan but not the loaded sample
+  analyzes it on demand instead of reporting an unknown PID.
+- The sidebar shows the loaded sample size and whether a full-EMR scan exists.
 
 ### Fixed
 

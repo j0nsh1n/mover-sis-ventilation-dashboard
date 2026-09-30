@@ -48,8 +48,9 @@
   - v0.9.0 on stock Ubuntu fails to load the Qt xcb plugin without the system
     `libxcb-cursor0`; the same branch bundles it and `launch.sh` names missing
     libraries.
-  - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
-    **cached sample**, not full EMR corpus — can overstate “corpus size.”
+  - The full-EMR scan has only run on synthetic data here (54 cases in ~13 s,
+    about 0.25 s per surgery); expect over an hour for ~19k real surgeries,
+    single-threaded. It is started manually and not refreshed automatically.
   - Frozen onedir is 399 MB unpacked / 155 MB tarball (was 1.2 GB / 464 MB).
     The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
     `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
@@ -76,6 +77,7 @@
 | `src/pipeline/` | load → clean → merge → features → flags → run |
 | `src/pipeline/synthetic.py` | Fictional SIS EMR generator + `synthetic_truth.json` |
 | `src/pipeline/profile.py` | Aggregate-only profile / threshold calibration report |
+| `src/pipeline/corpus_scan.py` | Full-EMR scan in PID shards; `process_frames` shared with `run.py` |
 | `src/services/case_fetch.py` | On-demand EMR shortlist + flag shortlist |
 | `src/services/retrieval.py` | Surgery metadata search + SQLite embedding cache |
 | `src/wave_decode.py` | Waveform decode (Bernoulli/GE S5) |
@@ -95,7 +97,9 @@
 - **PID** — surgery-level ID (not a lifelong patient).
 - **EMR** — tabular CSVs (`patient_information`, ventilator, vitals, meds, events, …).
 - **Wave** — optional archives / `Waveforms/<prefix>/<PID>/`.
-- **Processed** — parquet: `cases`, `timeseries`, `flags`, `episodes` (+ meta).
+- **Processed** — parquet: `cases`, `timeseries`, `flags`, `episodes` (+ meta) for the
+  analyzed sample; optional `corpus_cases` / `corpus_episodes` / `corpus_meta.json`
+  from the full-EMR scan (no timeseries).
 - **Flags** — derived rule screens from thresholds (not stored as source-of-truth in EMR).
 - **Session (LLM)** — `active_pid`, `focus_pids`, tool traces; answers grounded in tools/briefings.
 - **Settings** — paths, theme, chat and embedding model choices under XDG config.
