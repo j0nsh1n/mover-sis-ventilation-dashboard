@@ -43,7 +43,11 @@
     and loads `libxkbcommon-x11.so.0` from this Nobara host. The installed app
     reproduced a SIGSEGV twice in `xkb_state_key_get_layout`. An isolated copy
     without the bundled library loaded both host XKB libraries and stayed open
-    past 40 seconds. The released package has not been fixed.
+    past 40 seconds. The project owner treats this as a one-off bug; the
+    bundle is unchanged and no fix is planned.
+  - v0.9.0 on stock Ubuntu fails to load the Qt xcb plugin without the system
+    `libxcb-cursor0`; the same branch bundles it and `launch.sh` names missing
+    libraries.
   - Some LLM tools (`corpus_overview`, `top_anomaly_cases`, …) still reflect
     **cached sample**, not full EMR corpus — can overstate “corpus size.”
   - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
@@ -134,18 +138,14 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-29
-- **Branch:** `docs/consolidated-gf-plan` (local, not pushed).
-- **Done:** The repository, v0.9.0 release packages, and signed Pages manifest
-  are public. The v0.9.0 install keeps external data links and a v0.7.0 backup.
-  The release workflow validates draft asset metadata before publication and
-  public URLs afterward. The G/F consolidation prototype is planned in
-  `docs/CONSOLIDATED_WORKSPACE_PLAN.md`; no prototype was built.
-- **Verified:** Local Python and Rust suites passed. The v0.9.0 Linux package
-  launched offscreen and on the desktop. The Windows package passed CI smoke,
-  archive CRC, and digest checks. The live Pages signature verifies, its
-  package hashes match both archives, and update checks return the expected
-  result for v0.8.0 and v0.9.0. Python lint/types are not configured.
-- **Next:** Review the G/F consolidation plan, then build its fictional
-  clickable prototype when requested. Fix the Linux XKB packaging mismatch
-  before treating the frozen app as stable on Nobara. Existing installs older
-  than v0.9.0 need one manual update.
+- **Branch:** `fix/research-vent-and-linux-launch` (from `main` after #18).
+- **Done:** Ran the published v0.9.0 Linux package on synthetic data (cloud,
+  Xvfb). Fixed two findings: G search ranked a surgery without ventilator rows
+  first and opened a dead end; the package needed the system `libxcb-cursor0`
+  on stock Ubuntu. `launch.sh` now names missing system libraries.
+- **Verified:** full `pytest` (frozen-binary smoke included) passed; a local
+  build started on Xvfb with the host `libxcb-cursor0` removed, and the same G
+  question opened a ventilated case; `launch.sh` printed install commands when
+  the library was missing.
+- **Next:** Phase 3 (corpus scoping, pins, package size, lint/types), full-data
+  anomaly tools, and the G/F consolidation prototype, then a release.

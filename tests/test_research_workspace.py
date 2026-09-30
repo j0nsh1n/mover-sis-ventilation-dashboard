@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import replace
 
 import pandas as pd
 import pytest
@@ -132,4 +133,40 @@ def test_startup_opens_setup_before_loading_when_emr_invalid(qapp, tmp_path, mon
     win.show()
     qapp.processEvents()
     assert calls == [("setup", True)]
+    win.close()
+
+
+def test_results_select_first_case_with_ventilator_data(qapp):
+    view = ResearchWorkspace()
+    no_vent = replace(_candidate("caseN"), has_vent=False)
+    view.set_results(RetrievalResult(candidates=(no_vent, _candidate("caseA"))))
+    assert view.preferred_pid() == "caseA"
+    assert view.candidate_table.currentRow() == 1
+    assert view.source_title.text() == "caseA"
+    assert "No case selected" not in view.source_label.text()
+
+    view.show_case_unavailable("caseN", "no ventilator rows.")
+    assert view.source_title.text() == "caseN"
+    assert view.source_label.text() == "no ventilator rows."
+    assert "caseN" in view.status_label.text()
+    view.close()
+
+
+def test_mainwindow_does_not_fetch_case_without_ventilator_data(qapp, synthetic_emr, tmp_path, monkeypatch):
+    monkeypatch.setenv("MOVER_EMR_DIR", str(synthetic_emr))
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
+    monkeypatch.setenv("MOVER_SKIP_SETUP", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setattr("src.desktop.app.MainWindow._refresh_ollama_models", lambda self, **kwargs: self.research.set_models([]))
+
+    from src.desktop import app as desktop_app
+
+    started = []
+    monkeypatch.setattr(desktop_app.CaseFetchWorker, "start", lambda self: started.append(self.pid))
+    win = desktop_app.MainWindow()
+    no_vent = replace(_candidate("caseN"), has_vent=False)
+    win.research.set_results(RetrievalResult(candidates=(no_vent,)))
+    win._load_research_case("caseN", False, False)
+    assert started == []
+    assert "no ventilator rows" in win.research.source_label.text()
     win.close()

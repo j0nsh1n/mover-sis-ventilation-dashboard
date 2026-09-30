@@ -546,9 +546,11 @@ class ResearchWorkspace(QWidget):
         self.candidate_table.resizeColumnsToContents()
         self._selected_pid = None
         if result.candidates:
-            self.candidate_table.setCurrentCell(0, 0)
-            self._select_candidate(0)
-            self.source_title.setText(result.candidates[0].pid)
+            row = self._preferred_row()
+            self.candidate_table.setCurrentCell(row, 0)
+            self._select_candidate(row)
+            self.source_title.setText(result.candidates[row].pid)
+            self.source_label.setText("Loading source values…")
             self.finding_title.setText("Open a case to inspect its measurements")
             self.finding_copy.setText("The shortlist is based on indexed surgery metadata. Detailed signal values load on demand.")
         else:
@@ -599,6 +601,31 @@ class ResearchWorkspace(QWidget):
         if self.result is None:
             return None
         return next((candidate for candidate in self.result.candidates if candidate.pid == pid), None)
+
+    def candidate_for(self, pid: str) -> SearchCandidate | None:
+        return self._candidate(pid)
+
+    def _preferred_row(self) -> int:
+        """First candidate with ventilator data; row 0 when none has any."""
+        if self.result is None:
+            return 0
+        return next(
+            (i for i, candidate in enumerate(self.result.candidates) if candidate.has_vent),
+            0,
+        )
+
+    def preferred_pid(self) -> str | None:
+        """The case to open automatically after a search."""
+        if self.result is None or not self.result.candidates:
+            return None
+        return self.result.candidates[self._preferred_row()].pid
+
+    def show_case_unavailable(self, pid: str, message: str, *, comparison: bool = False) -> None:
+        """Say why a case cannot be shown, in the source card and status line."""
+        if not comparison:
+            self.source_title.setText(pid)
+            self.source_label.setText(message)
+        self.set_status(f"Source unavailable for {pid}: {message}")
 
     def _select_candidate(self, row: int) -> None:
         if self.result is None or row >= len(self.result.candidates):
