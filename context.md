@@ -60,11 +60,10 @@
     nothing in `src/` imports scipy).
   - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
     verified on Linux only; the release workflow's Windows smoke test is the check.
-  - Induction is now in the timeseries; rules have no induction/emergence context
-    yet, so expect extra flags around intubation (procedure-event context planned).
-  - `clean_ranges.RR` [4, 40] blanks RR < 4, so `rr_low` critical (≤ 4) fires only at 4.
-  - `agent_drift` (info) fires in most cases around induction/emergence ramps;
-    procedure-event context would separate those.
+  - Procedure-event name patterns (`phases:` in `thresholds.yaml`) are unverified on
+    real data: the synthetic EMR uses "Intubation"/"Extubation", the real MOVER names
+    are unknown. Until they are checked (profile report, "Procedure event names"),
+    real cases may fall back to `phase_source = fallback`.
   - Thresholds not yet calibrated against real distributions (`src.pipeline.profile`
     exists for that; needs a run on real data).
 
@@ -75,6 +74,7 @@
 | `src/desktop/` | PySide6 app (G research first), F signals, theme, settings |
 | `src/llm/` | Ollama tools, agent loop, prompts, start/stop/unload |
 | `src/pipeline/` | load → clean → merge → features → flags → run |
+| `src/pipeline/phases.py` | Per-minute anesthesia phase from procedure events (fallback: case times) |
 | `src/pipeline/synthetic.py` | Fictional SIS EMR generator + `synthetic_truth.json` |
 | `src/pipeline/profile.py` | Aggregate-only profile / threshold calibration report |
 | `src/pipeline/corpus_scan.py` | Full-EMR scan in PID shards; `process_frames` shared with `run.py` |
@@ -147,6 +147,14 @@ Wave root (optional) ──► wave_decode                   │
 - **Minute grid:** `fill_minute_grid` (merge + start of `add_features`) inserts empty
   rows for missing minutes so row-based rolling windows and run lengths are minutes.
   Cases spanning > 28 h are left ungridded. `n_minutes` counts observed minutes only.
+- **Phases:** the earliest matching intubation event and the latest extubation event
+  after it set the boundaries (a re-intubation does not restart induction); events
+  outside the case's data are ignored. Induction is the intubation event plus
+  `induction_after_min`, emergence starts `emergence_before_min` before extubation.
+  `skip_phases` is applied to each minute before run lengths are counted, and the
+  agent-drift rolling window restarts at each phase change. Safety rules (`spo2_low`,
+  `hr_*`, `map_low`, `pip_*`, `etco2_high`, `agent_high`, composites) have no default skip.
+  `RR` 0 stays blanked (no rate recorded); 1-3 are kept for `rr_low` critical.
 - **Score:** each flagged minute scores once at its worst severity; composites weight
   per episode. `n_warn`/`n_critical` still count minutes with any flag of that severity.
 - **Agent caps per agent:** `clean_ranges.Agent_Et/Fi` is the widest bound (18%);
@@ -159,18 +167,19 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-30
-- **Branch:** `chore/lint-types` (merges `main` and `chore/pins-and-package-size`).
-- **Done (roadmap Phase 3):** co-pilot tools state sample vs full-EMR scope and
-  a bounded-memory full-EMR scan exists (#20); direct dependencies pinned and
-  the Linux onedir cut from 1.2 GB / 464 MB to 399 MB / 155 MB (#22); `ruff.toml`,
-  `mypy.ini` and CI steps with all 44 ruff and 38 mypy findings fixed, including
-  a real crash in File → Open Wave folder. G/F consolidation prototype built
-  (#21) and awaiting the owner's review.
-- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed; frozen build on
-  Xvfb rendered Research, Summary and Case timeline with 20 synthetic cases.
-- **Release:** Phase 3 marked complete in `roadmap.md`; `VERSION` 0.10.0 in branch
-  `release/v0.10.0`. The Windows release job is the first Windows run of the
-  slimmer spec.
-- **Next:** confirm both release packages and the Pages manifest publish; run the
-  pipeline, profile and full-EMR scan on real MOVER data; owner reviews the G/F
-  prototype and picks an AI placement before any desktop UI change.
+- **Branch:** `feat/phase-context` (from `main` at v0.10.0; not pushed).
+- **Done:** per-minute `phase` and case-level `phase_source` from procedure events with
+  a case-time fallback; `skip_phases` per rule with conservative defaults; `phase` on
+  flags and episodes (co-pilot case context, `list_case_flags`, desktop episode table);
+  profile report gains a procedure-event-name table; `clean_ranges.RR` now 1-40 so
+  `rr_low` critical fires across RR 1-4. Re-running the pipeline changes flags and scores.
+- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed. On a 60-case synthetic
+  set `agent_drift` went from 525 to 49 minute flags and every injected anomaly is still
+  flagged, including a desaturation during induction.
+- **Earlier (unchanged):** v0.10.0 is in source on the release branch; its Linux and
+  Windows packages and the Pages manifest still need confirming, and the owner has yet
+  to review the G/F prototype before any desktop UI change.
+- **Next:** run the sample pipeline and profile on real MOVER data, read the event-name
+  table, and adjust `phases.intubation_patterns` / `extubation_patterns`; then re-check
+  flag rates per phase before calibrating thresholds. Case timeline event markers are not
+  drawn yet. `spec.md` does not mention phases (proposed edit in the change summary).

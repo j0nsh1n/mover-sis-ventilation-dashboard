@@ -57,12 +57,31 @@ Outputs under `data/processed/`:
 
 | File | Content |
 |------|---------|
-| `timeseries.parquet` | One row per minute (gap minutes empty): vent + vitals + features |
+| `timeseries.parquet` | One row per minute (gap minutes empty): vent + vitals + features, plus `phase` (see below) |
 | `cases.parquet` | Per-surgery summary + anomaly scores (total and per observed hour) |
-| `flags.parquet` | Long-form minute flags |
-| `episodes.parquet` | Contiguous flag runs |
+| `flags.parquet` | Long-form minute flags, with `phase` |
+| `episodes.parquet` | Contiguous flag runs, with `phase` and `phase_end` |
 | `events.parquet` | Optional procedure events aligned to a surgery |
 | `run_meta.json` | Sample PID list and counts |
+
+### Anesthesia phases
+
+Every minute carries a `phase`: `pre_induction` (before the intubation event),
+`induction` (intubation event plus 10 minutes), `maintenance`, `emergence` (from 10
+minutes before the extubation event) and `post_emergence` (from the extubation event).
+Boundaries come from `patient_procedure_events.csv`: event names are matched by the
+case-insensitive patterns under `phases:` in `src/config/thresholds.yaml`. Without a
+usable intubation event the airway start is the first ventilator minute and induction
+ends at incision; without an extubation event emergence starts at surgery end.
+`phase_source` (`events`, `mixed`, `fallback`) on the timeseries and cases tables says
+which. **The default patterns are guesses, not checked against the real MOVER event
+names.** Run the sample pipeline, then the profile report below, and read its
+"Procedure event names" table before trusting the phases.
+
+Rules can list `skip_phases` in `thresholds.yaml` to stay quiet in those phases; the
+defaults suppress expected transition behavior (agent wash-in and wash-out,
+pre-oxygenation) and never `spo2_low`, `hr_*` or `map_low`. Flags and episodes carry the
+phase, so the co-pilot can say "during induction".
 
 ### Score every surgery (full-EMR scan)
 
@@ -86,7 +105,9 @@ PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out
 
 Writes aggregates only: ventilator/vitals gap statistics, signal percentiles, and for
 each rule how often it fired and what share of observed minutes lie past its warn and
-critical thresholds. No PIDs or timestamps; case counts under 11 print as `<11`.
+critical thresholds, observed minutes per phase, and a table of procedure event names
+with counts (for checking the `phases` patterns). No PIDs or timestamps; case counts
+under 11 print as `<11` and event names used in fewer than 11 cases are pooled.
 Check your MOVER DUA before sharing even aggregate output.
 
 ### No MOVER data yet?
