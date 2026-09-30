@@ -11,6 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 - Planned a clickable G/F consolidation study for the existing Ask, Summary,
   Case timeline, and Rule reference functions.
+- Built the clickable G/F consolidation prototype at
+  `docs/prototypes/consolidated-workspace.html`. It uses fictional `SYN` data
+  and scripted AI responses, compares a side panel with an inline thread for the
+  AI conversation, and does not change the desktop app.
 
 ### Fixed
 
