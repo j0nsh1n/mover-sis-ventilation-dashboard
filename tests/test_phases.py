@@ -252,17 +252,18 @@ def test_fio2_high_run_is_measured_over_active_phases_only(thresholds):
     assert "fio2_high_long" not in set(pre["rule_id"])
 
 
-def test_etco2_zero_vent_skipped_in_induction_but_not_maintenance(thresholds):
+def test_etco2_zero_vent_skipped_before_intubation_but_on_in_induction(thresholds):
     etco2 = np.full(N, 38.0)
-    etco2[11:15] = 0.0  # induction, tube not yet confirmed
+    etco2[2:7] = 0.0    # pre-induction: mask ventilation, expected
+    etco2[11:15] = 0.0  # induction: zero after intubation (esophageal tube), must flag
     etco2[60:65] = 0.0  # maintenance: disconnect
     ts = _ts(ETCO2=etco2.tolist())
     flags = _run(ts, _events(Intubation=INTUB, Extubation=EXTUB), thresholds)
     hit = flags[flags["rule_id"] == "etco2_zero_vent"]
-    assert set(hit["phase"]) == {"maintenance"}
-    assert hit["Obs_time"].min() >= _t(60)
+    assert set(hit["phase"]) == {"induction", "maintenance"}
+    assert hit["Obs_time"].min() >= _t(11)
     no_events = _run(ts, None, {k: v for k, v in thresholds.items() if k != "phases"})
-    assert (no_events["rule_id"] == "etco2_zero_vent").sum() == 9  # 4 + 5 without phase context
+    assert (no_events["rule_id"] == "etco2_zero_vent").sum() == 14  # 5 + 4 + 5 without phase context
 
 
 def test_ventilation_rules_skip_pre_induction_and_emergence(thresholds):

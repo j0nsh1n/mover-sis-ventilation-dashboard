@@ -39,7 +39,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   the value is usually routine (for example wash-in and wash-out, pre-oxygenation,
   mask ventilation, an extubated circuit). `spo2_low`, `hr_high`, `hr_low`,
   `map_low`, `pip_high`, `pip_rising`, `peep_high`, `etco2_high`, `agent_high` and
-  the composite patterns stay on in every phase. On a 60-case synthetic set
+  the composite patterns stay on in every phase. `etco2_zero_vent` stays on in
+  induction and emergence (esophageal tube, disconnect) and skips only mask
+  ventilation and the extubated circuit. On a 60-case synthetic set
   `agent_drift` dropped from 525 to 49 minute flags.
 - The agent drift window restarts at each phase change, so induction wash-in does
   not show up as drift in the first maintenance minutes.

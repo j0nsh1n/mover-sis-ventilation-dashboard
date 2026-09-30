@@ -196,10 +196,12 @@ rules:
     min_tv: 200
     min_rr: 8
     min_duration_min: 3
-    # Zero ETCO2 on a mask, at intubation (before the tube is confirmed) and after
-    # extubation is expected. Emergence stays on: a disconnect while still
+    # Zero ETCO2 on a mask and after extubation is expected. Induction stays on:
+    # sustained zero ETCO2 with delivered breaths right after intubation is the
+    # sign of an esophageal tube, and min_duration_min already ignores the brief
+    # zero while the tube goes in. Emergence stays on: a disconnect while still
     # intubated is the finding this rule exists for.
-    skip_phases: [pre_induction, induction, post_emergence]
+    skip_phases: [pre_induction, post_emergence]
     description: "Zero ETCO2 while ventilated (disconnect / sensor / esophageal)"
 
   fio2_high_long:
