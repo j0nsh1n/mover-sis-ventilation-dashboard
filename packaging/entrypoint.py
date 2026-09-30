@@ -6,16 +6,11 @@ import os
 
 
 def main() -> int:
-    # Must set platform env BEFORE importing Qt / WebEngine
+    # Must set platform env BEFORE importing Qt
     if os.environ.get("XDG_SESSION_TYPE") == "wayland" and not os.environ.get(
         "QT_QPA_PLATFORM"
     ):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
-    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
-    os.environ.setdefault(
-        "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--no-sandbox --disable-gpu-sandbox --disable-seccomp-filter-sandbox",
-    )
 
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication

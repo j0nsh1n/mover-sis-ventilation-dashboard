@@ -105,11 +105,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   scenarios and assertions.
 - The release manifest signer is a separate Rust CLI with pinned crates.
   The Python updater verifies signatures with pinned `cryptography`.
-- Frameworks (minimum versions in `requirements.txt`; not fully upper-bound locked):
-  - PySide6 ≥ 6.6 (desktop)
+- Frameworks (exact `==` pins in `requirements.txt`, resolved on Python 3.14; transitive
+  dependencies are not locked):
+  - PySide6 6.11.2 (desktop)
   - pandas / numpy / pyarrow / scipy / matplotlib / PyYAML
-  - streamlit ≥ 1.28 (optional UI)
-  - pytest / pyinstaller (dev & packaging)
+  - streamlit 1.64.0 (optional UI)
+  - pytest / pytest-cov / pyinstaller 6.22.3 (dev & packaging)
 - Storage: local filesystem — EMR CSVs, optional waves, parquet cache; prefs in
   `~/.config/mover-sis-monitor/settings.json` (override with `MOVER_CONFIG_DIR`).
   The embedding cache is `case_embeddings.sqlite3` beside the settings file.
@@ -150,8 +151,10 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `MOVER_UPDATE_SIGNING_KEY_HEX`.
 - **Research / education only.** Not a medical device; not clinical decision support.
   Outputs discuss historical de-identified extracts; no live treatment orders.
-- Dependencies: pin new deps when added; prefer stdlib; current `requirements.txt` uses
-  minimum versions (tighten over time if desired). **Dependabot is not required** for this
+- Dependencies: pin new deps when added; prefer stdlib; `requirements.txt` pins every
+  direct dependency to an exact version (`==`); bump pins deliberately and rerun the tests
+  and a frozen build. The PyInstaller pin is repeated in `scripts/build_executable.sh` and
+  the CI/release workflows. **Dependabot is not required** for this
   repo unless the human enables it deliberately.
 - Versioning: keep **semver `x.y.z`** in sync across `VERSION`, `src/__version__.py`, and
   release tags. After shipping app changes, rebuild with `./scripts/install_local.sh`.

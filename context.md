@@ -51,8 +51,15 @@
   - The full-EMR scan has only run on synthetic data here (54 cases in ~13 s,
     about 0.25 s per surgery); expect over an hour for ~19k real surgeries,
     single-threaded. It is started manually and not refreshed automatically.
-  - Frozen onedir is large (~400MB+) — scipy/matplotlib/pyarrow/Qt collected broadly.
-  - `requirements.txt` uses minimum versions (`>=`), not full lockfile pins.
+  - Frozen onedir is 399 MB unpacked / 155 MB tarball (was 1.2 GB / 464 MB).
+    The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
+    `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
+  - `requirements.txt` pins direct dependencies exactly; transitive packages
+    are not locked. `scipy` and `plotly` stay listed although the desktop
+    bundle omits both (only the optional Streamlit UI and its tests use plotly;
+    nothing in `src/` imports scipy).
+  - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
+    verified on Linux only; the release workflow's Windows smoke test is the check.
   - Induction is now in the timeseries; rules have no induction/emergence context
     yet, so expect extra flags around intubation (procedure-event context planned).
   - `clean_ranges.RR` [4, 40] blanks RR < 4, so `rr_low` critical (≤ 4) fires only at 4.
@@ -77,7 +84,7 @@
 | `src/guardrails/` | Config / data / IO validation |
 | `src/config/thresholds.yaml` | Flag rule presets |
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
-| `packaging/` | PyInstaller entry + rthooks |
+| `packaging/` | PyInstaller spec (targeted collection + path filters), entry, rthooks |
 | `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
 | `src/update.py`, `src/desktop/updates.py` | Signed checks, staging, apply, rollback |
 | `tools/update-manifest/` | Rust release manifest signer |
@@ -125,6 +132,12 @@ Wave root (optional) ──► wave_decode                   │
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
 - **PyInstaller onedir** (not onefile) for faster cold start; Qt system deps on CI.
+- **Targeted PyInstaller collection:** the spec does not use `collect_all()`
+  for Qt or the scientific stack; only QtCore/QtGui/QtWidgets are imported.
+  Path filters drop embedded Qt platforms, the on-screen keyboard, the PDF image
+  plugin, translations, tests and headers. The GTK3 platform theme (about 19 MB
+  of host GTK libraries) and the SVG icon plugins stay for native dialogs and
+  theme icons. WebEngine is unused, so its env vars are gone.
 - **Update host:** GitHub Pages serves only the signed manifest. GitHub
   Releases serves the packages. The app uses no GitHub API for polling.
 - **Streamlit optional**; desktop is primary.
@@ -146,10 +159,14 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-30
-- **Branch:** `chore/lint-types` (local, not pushed).
-- **Done:** Added `ruff.toml`, `mypy.ini`, and CI steps; fixed all 44 ruff and
-  38 mypy findings. The mypy pass found a real crash: File → Open Wave folder
-  called a nonexistent `_on_filters_changed`; fixed with a regression test.
-- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed.
-- **Next:** Phase 3 (corpus scoping, pins, package size), full-data anomaly
-  tools, and the G/F consolidation prototype, then a release.
+- **Branch:** `chore/lint-types` (merges `main` and `chore/pins-and-package-size`).
+- **Done (roadmap Phase 3):** co-pilot tools state sample vs full-EMR scope and
+  a bounded-memory full-EMR scan exists (#20); direct dependencies pinned and
+  the Linux onedir cut from 1.2 GB / 464 MB to 399 MB / 155 MB (#22); `ruff.toml`,
+  `mypy.ini` and CI steps with all 44 ruff and 38 mypy findings fixed, including
+  a real crash in File → Open Wave folder. G/F consolidation prototype built
+  (#21) and awaiting the owner's review.
+- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed; frozen build on
+  Xvfb rendered Research, Summary and Case timeline with 20 synthetic cases.
+- **Next:** mark Phase 3 complete in the roadmap, bump `VERSION` for a release,
+  and watch the Windows release job (first run of the slimmer spec on Windows).
