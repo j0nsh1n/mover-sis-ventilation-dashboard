@@ -29,12 +29,15 @@ to publish.
   - Tighten dependency pins / PyInstaller includes (large onedir ~400MB+)
   - Optional: add lint/type toolchain only if human requests (document in spec)
 - Complete when: tool outputs explicitly scope sample vs full EMR; package size reduced or justified
-- Status: [ ]
+- Status: [x] 2026-09-30 — scoped tools and full-EMR scan (#20), exact pins and
+  1.2 GB → 399 MB Linux onedir (#22), ruff + mypy in CI (#23); released in v0.10.0
 
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
   into G/F, then review capability parity before changing the desktop UI
+  (prototype built: `docs/prototypes/consolidated-workspace.html`, #21; awaiting review)
 - Optional Streamlit UX parity with desktop co-pilot
 - Full-corpus anomaly tools without loading all timeseries into RAM
+  (done 2026-09-30: `src/pipeline/corpus_scan.py`, co-pilot scope, #20)
 - Dependabot: enable only if human wants weekly bot PRs (pip-only; no npm)
 - Windows/Linux release polish (signing, smaller Qt subset)
