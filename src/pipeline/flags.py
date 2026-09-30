@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Iterable
-
 import numpy as np
 import pandas as pd
 
@@ -212,7 +210,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         _append_flags(rows, df, mask, "agent_high", sevs, r.get("description", "High MAC"), mac_col)
 
     # ---- Duration / slope rules (per PID) ----
-    for pid, g in df.groupby("PID", sort=False):
+    for _pid, g in df.groupby("PID", sort=False):
         idx = g.index
         g = g.copy()
 
@@ -323,7 +321,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
         if "Agent_Et_drift" in g.columns and r:
             min_dur = int(r.get("min_duration_min", 5))
             deltas = r.get("delta_vol_pct", {"S": 0.5, "I": 0.5, "D": 1.5, "N": 0.5})
-            thr = g["Agent"].map(lambda a: deltas.get(a, 0.5) if pd.notna(a) else np.nan)
+            thr = g["Agent"].map(lambda a, deltas=deltas: deltas.get(a, 0.5) if pd.notna(a) else np.nan)
             raw = g["Agent_Et_drift"] >= thr
             mask = _episodes(raw, min_dur)
             full_mask = pd.Series(False, index=df.index)
@@ -340,7 +338,7 @@ def flag_anomalies(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
             frac_lo = r.get("case_frac_start", 0.15)
             frac_hi = r.get("case_frac_end", 0.85)
             gaps = r.get("gap_vol_pct", {"S": 1.0, "I": 1.0, "D": 3.0})
-            thr = g["Agent"].map(lambda a: gaps.get(a, np.nan) if pd.notna(a) else np.nan)
+            thr = g["Agent"].map(lambda a, gaps=gaps: gaps.get(a, np.nan) if pd.notna(a) else np.nan)
             mid = g["case_frac"].between(frac_lo, frac_hi) if "case_frac" in g.columns else True
             raw = mid & (g["Agent_Fi_Et_gap"] >= thr)
             mask = _episodes(raw, min_dur)
@@ -372,9 +370,9 @@ def _add_composites(df: pd.DataFrame, flags: pd.DataFrame, rules: dict) -> pd.Da
         hit = flags.loc[flags["rule_id"] == rule, ["PID", "Obs_time"]].drop_duplicates()
         if hit.empty:
             return pd.Series(False, index=df.index)
-        key = set(zip(hit["PID"], hit["Obs_time"]))
+        key = set(zip(hit["PID"], hit["Obs_time"], strict=True))
         return pd.Series(
-            [(p, t) in key for p, t in zip(df["PID"], df["Obs_time"])],
+            [(p, t) in key for p, t in zip(df["PID"], df["Obs_time"], strict=True)],
             index=df.index,
         )
 
@@ -493,7 +491,7 @@ def score_cases(flags: pd.DataFrame, thresholds: dict | None = None) -> pd.DataF
     )
     top_map: dict[str, str] = {}
     for pid, g in top.groupby("PID", sort=False):
-        parts = [f"{r}({n})" for r, n in zip(g["rule_id"].head(5), g["n"].head(5))]
+        parts = [f"{r}({n})" for r, n in zip(g["rule_id"].head(5), g["n"].head(5), strict=True)]
         top_map[str(pid)] = ", ".join(parts)
     top_rules = pd.Series(top_map, name="top_rules")
 

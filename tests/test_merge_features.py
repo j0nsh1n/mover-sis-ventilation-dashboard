@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from src.pipeline.clean import clean_case_info, clean_ventilator, clean_vitals
 from src.pipeline.features import add_features, age_adjusted_mac

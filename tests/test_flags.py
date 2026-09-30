@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from src.pipeline.features import add_features
 from src.pipeline.flags import (

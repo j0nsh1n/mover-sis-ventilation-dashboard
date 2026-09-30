@@ -17,7 +17,6 @@ import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
-    QFont,
     QGuiApplication,
     QIcon,
     QPainter,
@@ -39,7 +38,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QStatusBar,
     QTabWidget,
