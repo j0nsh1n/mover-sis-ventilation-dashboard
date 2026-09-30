@@ -20,7 +20,7 @@ echo "==> Building MOVER SIS Monitor v${VERSION}"
 echo "==> Installing build dependencies"
 python -m pip install -q -U pip
 python -m pip install -q -r requirements.txt
-python -m pip install -q 'pyinstaller>=6.3'
+python -m pip install -q 'pyinstaller==6.22.3'
 
 echo "==> Cleaning previous build"
 rm -rf build/pyinstaller dist/MOVER-SIS-Monitor
@@ -131,11 +131,9 @@ cat > "$APP_DIR/launch.sh" <<'EOF'
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-export QTWEBENGINE_DISABLE_SANDBOX=1
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox}"
 # User-selected EMR/wave trees may live outside the install dir (e.g. /var/mnt/games)
 export MOVER_ALLOW_EXTERNAL_OUTPUT="${MOVER_ALLOW_EXTERNAL_OUTPUT:-1}"
-export LD_LIBRARY_PATH="$APP_DIR/_internal/PySide6/Qt/lib:$APP_DIR/_internal/numpy.libs:$APP_DIR/_internal/scipy.libs:$APP_DIR/_internal/pillow.libs:$APP_DIR/_internal/PIL.libs:$APP_DIR/_internal/matplotlib.libs:$APP_DIR/_internal/shiboken6:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$APP_DIR/_internal/PySide6/Qt/lib:$APP_DIR/_internal/numpy.libs:$APP_DIR/_internal/pillow.libs:$APP_DIR/_internal/PIL.libs:$APP_DIR/_internal/matplotlib.libs:$APP_DIR/_internal/shiboken6:${LD_LIBRARY_PATH:-}"
 
 # Qt's X11 plugin needs these from the system; without them it fails with an
 # unreadable "could not load the Qt platform plugin" message. Say what to install.
@@ -179,7 +177,7 @@ ls -lh "$BIN" "$TARBALL" 2>/dev/null || true
 
 mkdir -p "$ROOT/build"
 echo "==> Smoke-test frozen binary (offscreen, 5s)"
-if QT_QPA_PLATFORM=offscreen QTWEBENGINE_DISABLE_SANDBOX=1 \
+if QT_QPA_PLATFORM=offscreen \
   timeout 5 "$BIN" >"$ROOT/build/frozen_smoke.log" 2>&1; then
   echo "WARNING: binary exited before timeout — see build/frozen_smoke.log"
   tail -30 "$ROOT/build/frozen_smoke.log" || true

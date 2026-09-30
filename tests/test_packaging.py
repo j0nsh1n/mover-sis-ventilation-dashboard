@@ -36,6 +36,15 @@ def test_spec_bundles_thresholds_and_shiboken():
     assert "console=False" in spec
 
 
+def test_spec_is_targeted_not_collect_all():
+    """Only QtCore/QtGui/QtWidgets are used; the spec must not re-bundle all of Qt."""
+    spec = (ROOT / "packaging" / "mover_sis_monitor.spec").read_text(encoding="utf-8")
+    for pkg in ("PySide6", "scipy", "numpy", "pandas", "pyarrow", "matplotlib", "PIL"):
+        assert f'collect_all("{pkg}")' not in spec
+    assert '"PySide6.QtWebEngineCore"' in spec
+    assert '"scipy"' in spec
+
+
 def test_entrypoint_imports_without_gui_show(monkeypatch):
     """Import chain for frozen entry must resolve (offscreen)."""
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -69,7 +78,6 @@ def test_frozen_binary_smoke_offscreen():
     binary = ROOT / "dist" / "MOVER-SIS-Monitor" / "MOVER-SIS-Monitor"
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
-    env["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
     proc = subprocess.Popen(
         [str(binary)],
         cwd=str(binary.parent),

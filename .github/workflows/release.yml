@@ -70,7 +70,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install 'pyinstaller>=6.3' pytest
+          pip install 'pyinstaller==6.22.3' pytest
 
       - name: Run non-GUI tests
         run: PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q --ignore=tests/test_desktop_app.py --ignore=tests/test_desktop_paths_ui.py
@@ -155,7 +155,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "pyinstaller>=6.3" pytest
+          pip install "pyinstaller==6.22.3" pytest
 
       - name: Run non-GUI tests
         env:
