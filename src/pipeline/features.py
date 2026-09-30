@@ -53,7 +53,7 @@ def add_features(ts: pd.DataFrame, thresholds: dict | None = None) -> pd.DataFra
 
     mac1 = [
         age_adjusted_mac(a, age, thresholds) if pd.notna(a) else np.nan
-        for a, age in zip(agents, ages)
+        for a, age in zip(agents, ages, strict=True)
     ]
     out["MAC_1pct"] = mac1
     if "Agent_Et" in out.columns:

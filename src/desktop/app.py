@@ -17,7 +17,6 @@ import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
-    QFont,
     QGuiApplication,
     QIcon,
     QPainter,
@@ -39,7 +38,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -739,8 +737,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Invalid wave folder", str(e))
             return
+        # Waveforms are looked up from wave_dir() on demand, so the status bar is
+        # the only thing to refresh (the old filters sidebar no longer exists).
         self._update_status_paths("Wave folder set")
-        self._on_filters_changed()
 
     def _browse_data_folder(self) -> None:
         """Menu shortcut: same as EMR browse (legacy)."""
@@ -1779,7 +1778,8 @@ def main() -> int:
     apply_persisted_settings()
     apply_ollama_env_from_settings()
 
-    app = QApplication.instance()
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else None
     if app is None:
         try:
             QApplication.setAttribute(

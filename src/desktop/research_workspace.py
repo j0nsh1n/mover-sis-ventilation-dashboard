@@ -50,6 +50,14 @@ def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
     return card, layout
 
 
+def _name_kicker(layout: QVBoxLayout) -> None:
+    """Restyle a card's heading label (its first item) as a node kicker."""
+    item = layout.itemAt(0)
+    heading = item.widget() if item is not None else None
+    if heading is not None:
+        heading.setObjectName("nodeKicker")
+
+
 def _wrap(text: str = "") -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
@@ -189,7 +197,7 @@ class ResearchWorkspace(QWidget):
         content.setVerticalSpacing(20)
         question_card, question_layout = _card("01 / YOUR QUESTION")
         question_card.setObjectName("questionNode")
-        question_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(question_layout)
         question_title = _wrap("Start with what you want to know.")
         question_title.setObjectName("nodeTitle")
         question_layout.addWidget(question_title)
@@ -237,7 +245,7 @@ class ResearchWorkspace(QWidget):
 
         finding_card, finding_layout = _card("02 / OBSERVATION")
         finding_card.setObjectName("findingNode")
-        finding_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(finding_layout)
         self.finding_title = _wrap("Select a retrieved case")
         self.finding_title.setObjectName("nodeTitle")
         finding_layout.addWidget(self.finding_title)
@@ -254,7 +262,7 @@ class ResearchWorkspace(QWidget):
 
         source_card, source_layout = _card("03 / ORIGINAL SAMPLES")
         source_card.setObjectName("sourceNode")
-        source_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(source_layout)
         self.source_title = _wrap("Choose a case")
         self.source_title.setObjectName("nodeTitle")
         source_layout.addWidget(self.source_title)
@@ -269,7 +277,7 @@ class ResearchWorkspace(QWidget):
 
         self.comparison_hint, hint_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_hint.setObjectName("comparisonHint")
-        hint_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(hint_layout)
         hint_layout.addWidget(_wrap("Add a second case to the evidence trail."))
         self.hint_button = _button("Add a comparison")
         self.hint_button.setObjectName("outlineAction")
@@ -279,7 +287,7 @@ class ResearchWorkspace(QWidget):
 
         self.comparison_card, compare_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_card.setObjectName("comparisonNode")
-        compare_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(compare_layout)
         self.comparison_label = _wrap()
         compare_layout.addWidget(self.comparison_label)
         compare_button = _button("Explore comparison in F  ↗")
@@ -291,7 +299,7 @@ class ResearchWorkspace(QWidget):
 
         limit_card, limit_layout = _card("WHAT THIS DOES NOT ESTABLISH")
         limit_card.setObjectName("limitNode")
-        limit_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(limit_layout)
         limit_title = _wrap("An observation has limits.")
         limit_title.setObjectName("nodeTitle")
         limit_layout.addWidget(limit_title)
@@ -307,7 +315,7 @@ class ResearchWorkspace(QWidget):
 
         candidate_card, candidate_layout = _card("RETRIEVED CASES / SOURCE SHORTLIST")
         candidate_card.setObjectName("shortlistNode")
-        candidate_layout.itemAt(0).widget().setObjectName("nodeKicker")
+        _name_kicker(candidate_layout)
         self.candidate_table = QTableWidget(0, 3)
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

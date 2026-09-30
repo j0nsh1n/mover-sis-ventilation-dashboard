@@ -14,7 +14,7 @@ from src.runtime_paths import (
     resolve_user_data_choice,
     set_session_paths,
 )
-from src.user_settings import load_settings, save_settings, settings_path, update_settings
+from src.user_settings import load_settings, settings_path, update_settings
 
 
 @pytest.fixture(autouse=True)

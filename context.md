@@ -18,7 +18,7 @@
   Pages manifest. The local frozen Linux app later crashed in Qt XCB keyboard
   handling on this Nobara host.
   Real wave tree unavailable.
-  Lint/types not configured (report-only per spec).
+  `ruff check .` and `mypy` both report 0 findings and run in CI (2026-09-30).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
@@ -116,6 +116,10 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Non-Obvious Decisions
 
+- **Narrow lint rules, no pandas-stubs:** ruff selects only `E4/E7/E9/F/B` and
+  mypy checks `src/` without `pandas-stubs`, so adoption finds real bugs without
+  reformatting the codebase or drowning in stub false positives. Widening either
+  is a possible later step.
 - **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
   and Rule reference remain available as secondary tabs.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
@@ -155,13 +159,14 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-09-30
-- **Branch:** `chore/pins-and-package-size` (Phase 3: pins and package size).
-- **Done:** Pinned direct dependencies exactly (including PyInstaller in the
-  build script and workflows) and cut the Linux onedir from 1.2 GB / 464 MB
-  tarball to 399 MB / 155 MB by dropping unused Qt modules, scipy, tests, and
-  headers from the PyInstaller spec.
-- **Verified:** full `pytest` (frozen smoke included); the frozen build on Xvfb
-  loaded 20 synthetic cases and rendered Research (search and signal preview),
-  Summary charts, and a Case timeline with an empty log.
-- **Next:** Phase 3 (corpus scoping, lint/types), full-data
-  anomaly tools, and the G/F consolidation prototype, then a release.
+- **Branch:** `chore/lint-types` (merges `main` and `chore/pins-and-package-size`).
+- **Done (roadmap Phase 3):** co-pilot tools state sample vs full-EMR scope and
+  a bounded-memory full-EMR scan exists (#20); direct dependencies pinned and
+  the Linux onedir cut from 1.2 GB / 464 MB to 399 MB / 155 MB (#22); `ruff.toml`,
+  `mypy.ini` and CI steps with all 44 ruff and 38 mypy findings fixed, including
+  a real crash in File → Open Wave folder. G/F consolidation prototype built
+  (#21) and awaiting the owner's review.
+- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed; frozen build on
+  Xvfb rendered Research, Summary and Case timeline with 20 synthetic cases.
+- **Next:** mark Phase 3 complete in the roadmap, bump `VERSION` for a release,
+  and watch the Windows release job (first run of the slimmer spec on Windows).

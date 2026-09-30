@@ -188,7 +188,7 @@ def profile_processed(
                     vals = vals[vals > 0]  # the rule excludes zeros
                 warn, crit = spec.get(wkey), spec.get(ckey)
                 if len(vals) and warn is not None and crit is not None:
-                    beyond = (lambda v: vals >= v) if higher else (lambda v: vals <= v)
+                    beyond = (lambda v, vals=vals: vals >= v) if higher else (lambda v, vals=vals: vals <= v)
                     entry.update({
                         "signal": col,
                         "direction": "high" if higher else "low",

@@ -31,7 +31,7 @@ def test_mainwindow_constructs_offscreen(monkeypatch):
         from PySide6.QtWidgets import QApplication
 
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-        app = QApplication.instance() or QApplication([])
+        _app = QApplication.instance() or QApplication([])  # keep a reference alive
         from src.desktop.app import MainWindow
 
         win = MainWindow()

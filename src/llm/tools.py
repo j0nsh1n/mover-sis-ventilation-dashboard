@@ -127,10 +127,13 @@ def _scope_line(session: SessionState, scope: str, requested: str | None = None)
 
 def tool_corpus_overview(session: SessionState, **_kwargs: Any) -> str:
     cases = session.cases
+    no_data = "NO_DATA: No processed cases loaded. User must load/run the pipeline (File → Reload processed data or Run pipeline)."
     if (cases is None or cases.empty) and not session.has_corpus_scan():
-        return "NO_DATA: No processed cases loaded. User must load/run the pipeline (File → Reload processed data or Run pipeline)."
+        return no_data
     scope = _resolve_scope(session, "auto")
     cases = _scope_frame(session, scope)
+    if cases is None:
+        return no_data
     lines = [
         _scope_line(session, scope),
         f"Figures below describe the {'full-EMR scan' if scope == SCOPE_FULL else 'loaded sample'} only.",
@@ -251,7 +254,8 @@ def _fetch_into_session(session: SessionState, pid: str) -> bool:
 
 def _known_elsewhere(session: SessionState, pid: str) -> bool:
     """PID is in the full-EMR scan or has ventilator rows in the EMR."""
-    if session.has_corpus_scan() and pid in set(session.corpus["PID"].astype(str)):
+    corpus = session.corpus
+    if corpus is not None and session.has_corpus_scan() and pid in set(corpus["PID"].astype(str)):
         return True
     try:
         from src.services.case_fetch import vent_capable_pids
@@ -271,10 +275,10 @@ def tool_select_case(
     if not pid:
         return "ERROR: select_case requires pid."
     fetched_note = ""
-    loaded = session.cases is not None and not session.cases.empty
-    if (not loaded or pid not in set(session.cases["PID"].astype(str))) and _known_elsewhere(
-        session, pid
-    ):
+    sample = session.cases
+    if (
+        sample is None or sample.empty or pid not in set(sample["PID"].astype(str))
+    ) and _known_elsewhere(session, pid):
         if _fetch_into_session(session, pid):
             fetched_note = (
                 "NOTE: this surgery was not in the loaded sample; it was analyzed on "

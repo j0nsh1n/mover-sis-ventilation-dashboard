@@ -50,7 +50,7 @@ import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 import numpy as np
 import pandas as pd
@@ -340,6 +340,7 @@ class RetrievalEngine:
         Returns the number of vectors written this call (0 on a cache hit).
         """
         available = self.model_available()
+        embedder = self.embedder
         index = case_fetch.emr_index(self.emr)
         records = self._records_from_index(index)
         self._records = records
@@ -365,7 +366,7 @@ class RetrievalEngine:
             )
             return 0
 
-        if not available:
+        if not available or embedder is None:
             _emit(
                 on_progress,
                 RetrievalProgress(
@@ -392,7 +393,7 @@ class RetrievalEngine:
             )
             return 0
 
-        model_id = self.embedder.model_id
+        model_id = embedder.model_id
         missing: list[SearchRecord] = []
         for rec in records:
             cached = self._cache.get(rec.source_text_hash, model_id)
@@ -415,7 +416,7 @@ class RetrievalEngine:
                 ),
             )
             try:
-                vectors = self.embedder.embed([r.source_text for r in batch])
+                vectors = embedder.embed([r.source_text for r in batch])
             except Exception as exc:
                 _emit(
                     on_progress,
@@ -477,7 +478,8 @@ class RetrievalEngine:
         )
         pool = [r for r in self._records if _record_matches(r, filters)]
 
-        if available:
+        embedder = self.embedder
+        if available and embedder is not None:
             try:
                 _emit(
                     on_progress,
@@ -488,7 +490,7 @@ class RetrievalEngine:
                         model_available=True,
                     ),
                 )
-                q_vecs = self.embedder.embed([question or ""])
+                q_vecs = embedder.embed([question or ""])
                 q_vec = q_vecs[0] if q_vecs else []
                 _emit(
                     on_progress,
@@ -742,7 +744,7 @@ class RetrievalEngine:
         return header + brief
 
 
-def _optional_float(value: object) -> float | None:
+def _optional_float(value: Any) -> float | None:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
     try:

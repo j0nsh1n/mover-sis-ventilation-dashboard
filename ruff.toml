@@ -1,0 +1,18 @@
+target-version = "py314"
+extend-exclude = [
+    ".venv",
+    "build",
+    "dist",
+    "rust-updater-tests/target",
+    "tools/update-manifest/target",
+]
+
+[lint]
+# Bug-class rules only (no style/import-order rules) so adoption does not reformat the codebase.
+select = ["E4", "E7", "E9", "F", "B"]
+
+[lint.per-file-ignores]
+# These entry-point modules insert the repo root on sys.path before importing `src.*`
+# so `streamlit run` / direct launch work; the imports must follow that bootstrap.
+"src/dashboard/app.py" = ["E402"]
+"src/desktop/app.py" = ["E402"]

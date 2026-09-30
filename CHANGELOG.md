@@ -36,6 +36,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   `docs/prototypes/consolidated-workspace.html`. It uses fictional `SYN` data
   and scripted AI responses, compares a side panel with an inline thread for the
   AI conversation, and does not change the desktop app.
+- Lint and type checks: `ruff check .` (bug-class rules only) and `mypy` (on
+  `src/`) are configured and run in CI. Findings were fixed, including unused
+  imports and variables, explicit `zip(strict=...)`, and missing `None` guards.
 
 ### Changed
 
@@ -51,6 +54,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- File → Open Wave folder no longer raises an error after saving the chosen
+  folder; the status bar now shows the new wave folder.
 - Release asset metadata is verified from the authenticated draft listing before
   publication; public download URLs are checked before Pages is updated.
 - Research (G) search no longer opens a dead end first. Equal matches now rank

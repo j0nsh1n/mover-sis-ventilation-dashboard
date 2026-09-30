@@ -470,6 +470,7 @@ def prepare_restart_apply(
     suffix = ".ps1" if platform == PLATFORM_WINDOWS else ".sh"
     script_path = _helper_path(live, staged, suffix)
     backup = live.with_name(live.name + ".backup")
+    command: tuple[str, ...]
     if platform == PLATFORM_WINDOWS:
         script_path.write_text(_windows_script(pid, live, staged, backup), encoding="utf-8", newline="\n")
         command = ("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path))

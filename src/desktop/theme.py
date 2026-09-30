@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -530,7 +530,7 @@ def system_prefers_dark() -> bool:
         pass
     try:
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             c = app.palette().color(QPalette.ColorRole.Window)
             return c.lightness() < 128
     except Exception:
@@ -578,19 +578,20 @@ def _palette_from_tokens(t: dict[str, str]) -> QPalette:
     return p
 
 
-def apply_theme(app: QApplication | None = None, mode: str | None = None) -> str:
+def apply_theme(app: QCoreApplication | None = None, mode: str | None = None) -> str:
     """
     Apply palette + stylesheet for the given preference.
 
     Returns the concrete theme used (``light`` or ``dark``).
     """
     global _active_concrete
-    app = app or QApplication.instance()
+    if app is None:
+        app = QApplication.instance()
     concrete = resolve_theme_mode(mode)
     _active_concrete = concrete
     tokens = _DARK if concrete == THEME_DARK else _LIGHT
     sheet = _build_stylesheet(tokens)
-    if app is not None:
+    if isinstance(app, QApplication):
         app.setStyle("Fusion")
         app.setPalette(_palette_from_tokens(tokens))
         app.setStyleSheet(sheet)

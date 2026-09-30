@@ -116,7 +116,7 @@ def clean_case_info(df: pd.DataFrame, max_or_hours: float = 24.0) -> pd.DataFram
     out.loc[~out["Gender"].isin(["M", "F", "U"]), "Gender"] = "U"
 
     out["IBW_kg"] = [
-        ideal_body_weight_kg(h, g) for h, g in zip(out["Ht"], out["Gender"])
+        ideal_body_weight_kg(h, g) for h, g in zip(out["Ht"], out["Gender"], strict=True)
     ]
     out["IBW_kg"] = pd.to_numeric(out["IBW_kg"], errors="coerce")
     out.loc[out["IBW_kg"] <= 0, "IBW_kg"] = np.nan
@@ -124,7 +124,7 @@ def clean_case_info(df: pd.DataFrame, max_or_hours: float = 24.0) -> pd.DataFram
     # Record *why* a case cannot carry weight-normalised measures, so the UI and the
     # co-pilot can say so rather than silently omitting (or worse, flagging) it.
     problems = [
-        anthropometric_problems(h, w) for h, w in zip(out["Ht"], out["Wt"])
+        anthropometric_problems(h, w) for h, w in zip(out["Ht"], out["Wt"], strict=True)
     ]
     out["dq_anthropometrics_ok"] = [not p for p in problems]
     out["dq_reasons"] = ["; ".join(p) for p in problems]

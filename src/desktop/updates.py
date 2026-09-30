@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from src.runtime_paths import app_dir, is_frozen
 from src.update import (
     CheckResult,
+    UpdateError,
     UpdateStatus,
     check_for_update,
     download_package,
@@ -62,7 +63,7 @@ class UpdateController(QObject):
             self.timer.start()
             QTimer.singleShot(0, self.check)
             app = QApplication.instance()
-            if app is not None:
+            if isinstance(app, QApplication):
                 app.applicationStateChanged.connect(self._on_app_state)
 
     @property
@@ -91,10 +92,13 @@ class UpdateController(QObject):
         staged: Path | None = None
         error: str | None = None
         try:
+            platform = self._platform
+            if platform is None:  # enabled requires a platform; same message as the updater
+                raise UpdateError(f"unsupported platform {platform!r}")
             result = check_for_update(
                 self._url,
                 current_version=self._current_version,
-                platform=self._platform,
+                platform=platform,
                 etag=self._etag,
             )
             if (
@@ -118,7 +122,7 @@ class UpdateController(QObject):
                     staged = stage_package(
                         archive,
                         live,
-                        platform=self._platform,
+                        platform=platform,
                         expected_version=result.remote_version,
                     )
                 finally:
