@@ -158,8 +158,19 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 ## Validation & Tooling
 
-- Python lint: **not configured** (no ruff/flake8 project config). Report-only until added.
-- Python types: **not configured** (no pyright/mypy project config). Report-only until added.
+- Python lint: `ruff check .` (config: `ruff.toml`, ruff 0.16.9). The rule set is
+  bug-class only: `E4`, `E7`, `E9`, `F`, `B`. Style, formatting, and import-order
+  rules are deliberately excluded, and `ruff format` is not used. `E402` is ignored
+  only in `src/dashboard/app.py` and `src/desktop/app.py`, which put the repo root
+  on `sys.path` before importing `src.*`. CI enforces it.
+- Python types: `mypy` (config: `mypy.ini`, mypy 2.3.1, checks `src/` only, missing
+  third-party imports ignored, unused `type: ignore` and redundant casts reported).
+  `pandas-stubs` is intentionally not installed: its strict DataFrame typing would
+  produce mostly false positives on this pandas-heavy code. `types-PyYAML` is
+  installed. CI enforces it.
+- Install the checkers with
+  `pip install ruff==0.16.9 mypy==2.3.1 types-PyYAML` (they are not in
+  `requirements.txt`).
 - Tests (must pass for code changes):
   ```bash
   PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q
@@ -213,6 +224,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - [ ] Profile output contains no PIDs or timestamps (`tests/test_profile.py`).
 - [ ] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`).
 - [ ] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0.
+- [ ] `ruff check .` and `mypy` exit 0.
 - [ ] The Rust updater contract checks pass on Linux with Python 3.14 and Qt
       available. An empty manifest URL disables requests in a frozen app.
 - [ ] The Rust signer checks pass and the Windows apply test passes in CI.

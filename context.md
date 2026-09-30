@@ -18,7 +18,7 @@
   Pages manifest. The local frozen Linux app later crashed in Qt XCB keyboard
   handling on this Nobara host.
   Real wave tree unavailable.
-  Lint/types not configured (report-only per spec).
+  `ruff check .` and `mypy` both report 0 findings and run in CI (2026-09-30).
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
@@ -109,6 +109,10 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Non-Obvious Decisions
 
+- **Narrow lint rules, no pandas-stubs:** ruff selects only `E4/E7/E9/F/B` and
+  mypy checks `src/` without `pandas-stubs`, so adoption finds real bugs without
+  reformatting the codebase or drowning in stub false positives. Widening either
+  is a possible later step.
 - **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
   and Rule reference remain available as secondary tabs.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
@@ -141,15 +145,11 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-09-29
-- **Branch:** `fix/research-vent-and-linux-launch` (from `main` after #18).
-- **Done:** Ran the published v0.9.0 Linux package on synthetic data (cloud,
-  Xvfb). Fixed two findings: G search ranked a surgery without ventilator rows
-  first and opened a dead end; the package needed the system `libxcb-cursor0`
-  on stock Ubuntu. `launch.sh` now names missing system libraries.
-- **Verified:** full `pytest` (frozen-binary smoke included) passed; a local
-  build started on Xvfb with the host `libxcb-cursor0` removed, and the same G
-  question opened a ventilated case; `launch.sh` printed install commands when
-  the library was missing.
-- **Next:** Phase 3 (corpus scoping, pins, package size, lint/types), full-data
-  anomaly tools, and the G/F consolidation prototype, then a release.
+- **Date:** 2026-09-30
+- **Branch:** `chore/lint-types` (local, not pushed).
+- **Done:** Added `ruff.toml`, `mypy.ini`, and CI steps; fixed all 44 ruff and
+  38 mypy findings. The mypy pass found a real crash: File → Open Wave folder
+  called a nonexistent `_on_filters_changed`; fixed with a regression test.
+- **Verified:** `ruff check .` 0, `mypy` 0, full `pytest` passed.
+- **Next:** Phase 3 (corpus scoping, pins, package size), full-data anomaly
+  tools, and the G/F consolidation prototype, then a release.
