@@ -108,6 +108,15 @@ for _pattern, _dest in (
         if _os.path.isfile(_lib):
             binaries.append((_lib, _dest))
 
+# Qt 6.5+ dlopen()s libxcb-cursor at runtime, so dependency analysis misses it
+# and hosts without it (stock Ubuntu) fail with "could not load the Qt platform
+# plugin xcb". Ship the build host's copy next to the other bundled libxcb libs.
+for _dir in ("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib"):
+    _cursor = Path(_dir) / "libxcb-cursor.so.0"
+    if _cursor.is_file():
+        binaries.append((str(_cursor), "."))
+        break
+
 hiddenimports = sorted(
     set(
         pyside_hidden

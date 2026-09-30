@@ -95,3 +95,55 @@ def test_frozen_binary_smoke_offscreen():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def test_spec_bundles_xcb_cursor():
+    spec = (ROOT / "packaging" / "mover_sis_monitor.spec").read_text(encoding="utf-8")
+    assert "libxcb-cursor.so.0" in spec
+
+
+def _generated_launch_script() -> str:
+    text = (ROOT / "scripts" / "build_executable.sh").read_text(encoding="utf-8")
+    start = text.index("cat > \"$APP_DIR/launch.sh\" <<'EOF'\n") + len("cat > \"$APP_DIR/launch.sh\" <<'EOF'\n")
+    return text[start : text.index("\nEOF\n", start) + 1]
+
+
+def _run_launcher(tmp_path, ldconfig_libs: list[str], bundled: list[str] = ()):
+    app = tmp_path / "app"
+    (app / "_internal").mkdir(parents=True)
+    for lib in bundled:
+        (app / "_internal" / lib).write_text("")
+    launch = app / "launch.sh"
+    launch.write_text(_generated_launch_script())
+    launch.chmod(0o755)
+    binary = app / "MOVER-SIS-Monitor"
+    binary.write_text("#!/bin/sh\necho started\n")
+    binary.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    lines = "".join(f"\t{lib} (libc6,x86-64) => /usr/lib/{lib}\\n" for lib in ldconfig_libs)
+    (fake_bin / "ldconfig").write_text(f"#!/bin/sh\nprintf '{lines}'\n")
+    (fake_bin / "ldconfig").chmod(0o755)
+    env = {"PATH": f"{fake_bin}:/usr/bin:/bin", "QT_QPA_PLATFORM": "xcb", "HOME": str(tmp_path)}
+    return subprocess.run([str(launch)], env=env, capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="launch.sh is the Linux launcher")
+def test_launcher_names_missing_system_libraries(tmp_path):
+    result = _run_launcher(tmp_path, ["libxkbcommon.so.0"], bundled=["libxcb-cursor.so.0"])
+    assert result.returncode == 1
+    assert "libxkbcommon-x11.so.0" in result.stderr
+    assert "libxcb-cursor.so.0" not in result.stderr.split("installed:")[1].splitlines()[0]
+    assert "sudo apt install" in result.stderr and "sudo dnf install" in result.stderr
+    assert "started" not in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="launch.sh is the Linux launcher")
+def test_launcher_starts_app_when_libraries_present(tmp_path):
+    result = _run_launcher(
+        tmp_path,
+        ["libxkbcommon.so.0", "libxkbcommon-x11.so.0"],
+        bundled=["libxcb-cursor.so.0"],
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "started"

@@ -127,6 +127,8 @@ class SearchCandidate:
     source_text: str
     rank_method: str
     score: float
+    # Surgeries without ventilator rows cannot be analyzed or plotted
+    has_vent: bool = True
 
 
 @dataclass(frozen=True)
@@ -189,8 +191,21 @@ def build_case_search_text(
     )
 
 
-def source_label(analyzed: bool) -> str:
-    return "analyzed case" if analyzed else "indexed surgery"
+def source_label(analyzed: bool, has_vent: bool = True) -> str:
+    if analyzed:
+        return "analyzed case"
+    return "indexed surgery" if has_vent else "indexed surgery · no ventilator data"
+
+
+def _rank_key(item: tuple[float, "SearchRecord"]) -> tuple[float, bool, bool]:
+    """Relevance first; equal scores prefer cases the app can open and plot."""
+    score, rec = item
+    return (score, rec.has_vent, rec.analyzed)
+
+
+def prefer_ventilated(candidates: Sequence["SearchCandidate"]) -> list["SearchCandidate"]:
+    """Stable reorder putting candidates with ventilator data first."""
+    return [c for c in candidates if c.has_vent] + [c for c in candidates if not c.has_vent]
 
 
 def _emit(cb: ProgressCb | None, progress: RetrievalProgress) -> RetrievalProgress:
@@ -590,7 +605,7 @@ class RetrievalEngine:
                 on_progress,
                 RetrievalProgress(
                     phase=RetrievalPhase.FETCHING,
-                    message=f"Loaded {source_label(rec.analyzed)} {pid}.",
+                    message=f"Loaded {source_label(rec.analyzed, rec.has_vent)} {pid}.",
                     current=i,
                     total=len(wanted),
                     model_available=self.model_available(),
@@ -612,7 +627,8 @@ class RetrievalEngine:
         if selected_pids:
             pids = list(selected_pids)
         else:
-            pids = [c.pid for c in result.candidates[: self.extract_limit]]
+            # Extracts without ventilator data have no signals to ground an answer
+            pids = [c.pid for c in prefer_ventilated(result.candidates)[: self.extract_limit]]
         extracts, fetched = self.fetch_extracts(
             pids, on_progress=on_progress, session_frames=session_frames
         )
@@ -667,7 +683,7 @@ class RetrievalEngine:
             if vec is None:
                 continue
             scored.append((_cosine(query, vec), rec))
-        scored.sort(key=lambda item: item[0], reverse=True)
+        scored.sort(key=_rank_key, reverse=True)
         return [
             _candidate(rec, score=score, method="embedding")
             for score, rec in scored[:limit]
@@ -680,7 +696,8 @@ class RetrievalEngine:
         has_terms = bool([t for t in str(question).lower().split() if len(t) > 2])
         if has_terms:
             scored = [(s, r) for s, r in scored if s > 0]
-            scored.sort(key=lambda item: item[0], reverse=True)
+        # Short metadata texts tie often; ties must not fall to file order
+        scored.sort(key=_rank_key, reverse=True)
         return [
             _candidate(rec, score=score, method="keyword")
             for score, rec in scored[:limit]
@@ -692,7 +709,7 @@ class RetrievalEngine:
         session_frames: dict[str, pd.DataFrame] | None,
     ) -> str:
         header = (
-            f"SOURCE EXTRACT ({source_label(rec.analyzed)}) PID={rec.pid}\n"
+            f"SOURCE EXTRACT ({source_label(rec.analyzed, rec.has_vent)}) PID={rec.pid}\n"
             f"{rec.source_text}\n"
         )
         frames = _frames_for_pid(rec.pid, session_frames)
@@ -762,7 +779,7 @@ def _record_matches(rec: SearchRecord, filters: CaseFilters) -> bool:
 def _candidate(rec: SearchRecord, *, score: float, method: str) -> SearchCandidate:
     return SearchCandidate(
         pid=rec.pid,
-        source_label=source_label(rec.analyzed),
+        source_label=source_label(rec.analyzed, rec.has_vent),
         analyzed=rec.analyzed,
         procedure=rec.procedure,
         age=rec.age,
@@ -770,6 +787,7 @@ def _candidate(rec: SearchRecord, *, score: float, method: str) -> SearchCandida
         source_text=rec.source_text,
         rank_method=method,
         score=float(score),
+        has_vent=rec.has_vent,
     )
 
 

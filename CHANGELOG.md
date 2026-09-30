@@ -16,6 +16,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 - Release asset metadata is verified from the authenticated draft listing before
   publication; public download URLs are checked before Pages is updated.
+- Research (G) search no longer opens a dead end first. Equal matches now rank
+  surgeries with ventilator data ahead of those without, the first ventilated
+  result opens automatically, and the AI extracts use ventilated cases first.
+  Surgeries without ventilator rows are labelled "no ventilator data" and
+  explained when opened, instead of "no signal samples were found" next to
+  "No case selected".
+- Linux build ships `libxcb-cursor`, which Qt loads at runtime, so the app starts
+  on stock Ubuntu instead of failing to load the Qt "xcb" platform plugin.
+- `launch.sh` names any missing system library and the install command for
+  Ubuntu/Debian and Fedora/Nobara (also as a dialog when kdialog or zenity is
+  available) instead of Qt's generic plugin error.
 
 ## [0.9.0] — 2026-09-28
 

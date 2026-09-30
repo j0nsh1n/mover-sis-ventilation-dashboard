@@ -221,3 +221,51 @@ def test_retrieve_fetches_only_selected_or_top_limit(engine, monkeypatch):
     result = engine.retrieve("cholecystectomy appendectomy")
     assert len(seen) == 1
     assert result.fetched_pids == (seen[0],)
+
+
+@pytest.fixture
+def emr_with_unventilated_first(synthetic_emr):
+    """caseN: same procedure as caseA, listed first, but no ventilator rows."""
+    info = pd.read_csv(synthetic_emr / "patient_information.csv")
+    extra = info[info["PID"] == "caseA"].assign(PID="caseN")
+    pd.concat([extra, info]).to_csv(synthetic_emr / "patient_information.csv", index=False)
+    return synthetic_emr
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_equal_matches_prefer_cases_with_ventilator_data(
+    emr_with_unventilated_first, cache_path, available
+):
+    engine = RetrievalEngine(
+        emr=emr_with_unventilated_first,
+        cache_path=cache_path,
+        embedder=FakeEmbedder(available=available),
+        candidate_limit=10,
+        extract_limit=1,
+    )
+    result = engine.search("laparoscopic cholecystectomy")
+    pids = [c.pid for c in result.candidates]
+    assert pids.index("caseA") < pids.index("caseN")
+    no_vent = next(c for c in result.candidates if c.pid == "caseN")
+    assert no_vent.has_vent is False
+    assert "no ventilator data" in no_vent.source_label
+
+
+def test_retrieve_extracts_skip_cases_without_ventilator_data(
+    emr_with_unventilated_first, cache_path, monkeypatch
+):
+    engine = RetrievalEngine(
+        emr=emr_with_unventilated_first,
+        cache_path=cache_path,
+        embedder=None,
+        extract_limit=1,
+    )
+    monkeypatch.setattr(engine, "_extract_for", lambda rec, frames: f"extract {rec.pid}")
+    # "caseN" alone scores higher here, yet the extract goes to a ventilated case
+    monkeypatch.setattr(
+        "src.services.retrieval._keyword_score",
+        lambda q, text: 1.0 if "caseN" in text else 0.5,
+    )
+    result = engine.retrieve("laparoscopic cholecystectomy")
+    assert result.candidates[0].pid == "caseN"
+    assert result.fetched_pids == ("caseA",)
