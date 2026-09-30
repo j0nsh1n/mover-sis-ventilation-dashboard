@@ -737,8 +737,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Invalid wave folder", str(e))
             return
+        # Waveforms are looked up from wave_dir() on demand, so the status bar is
+        # the only thing to refresh (the old filters sidebar no longer exists).
         self._update_status_paths("Wave folder set")
-        self._on_filters_changed()
 
     def _browse_data_folder(self) -> None:
         """Menu shortcut: same as EMR browse (legacy)."""

@@ -158,3 +158,35 @@ def test_main_window_has_no_data_locations_sidebar(qapp):
     assert not hasattr(win, "edit_wave")
     assert not hasattr(win, "lbl_emr_path")
     win.close()
+
+
+def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch):
+    """File > Open Wave folder saves the folder and refreshes the status bar (no crash)."""
+    from src.desktop.app import MainWindow
+    from src.runtime_paths import wave_dir
+    from src.user_settings import load_settings
+
+    wave_root = tmp_path / "wave_root"
+    (wave_root / "Waveforms").mkdir(parents=True)
+    monkeypatch.setattr(
+        "src.desktop.app.QFileDialog.getExistingDirectory",
+        lambda *a, **k: str(wave_root),
+    )
+    monkeypatch.setattr(
+        "src.desktop.app.QMessageBox.critical",
+        lambda *a, **k: pytest.fail("unexpected error dialog"),
+    )
+
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+    win._browse_wave_folder()
+    qapp.processEvents()
+
+    assert wave_dir() == wave_root.resolve()
+    assert load_settings().get("wave_dir") == str(wave_root.resolve())
+    status = win.statusBar().currentMessage()
+    assert "Wave folder set" in status
+    assert str(wave_root.resolve()) in status
+    win.close()
+    qapp.processEvents()
