@@ -174,6 +174,36 @@ class CorpusScanWorker(QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
+class OllamaWorker(QThread):
+    finished_ok = Signal(str, object)
+    failed = Signal(str, str)
+
+    def __init__(self, action: str, parent=None):
+        super().__init__(parent)
+        self.action = action
+
+    def run(self) -> None:
+        try:
+            from src.llm.service import ensure_ollama, probe_ollama, start_ollama, stop_ollama
+
+            if self.action == "start":
+                status = start_ollama(wait_s=35.0, should_stop=self.isInterruptionRequested)
+            elif self.action == "ensure":
+                status = ensure_ollama(start_if_needed=True, wait_s=20.0, should_stop=self.isInterruptionRequested)
+            elif self.action == "stop":
+                ok, message = stop_ollama()
+                if not ok:
+                    raise RuntimeError(message)
+                status = probe_ollama()
+            else:
+                status = probe_ollama()
+            if not self.isInterruptionRequested():
+                self.finished_ok.emit(self.action, status)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(self.action, str(exc))
+
+
 class LLMChatWorker(QThread):
     """Tool-using Ollama agent (native tools + extract recovery + verification)."""
 
@@ -281,6 +311,12 @@ class MainWindow(QMainWindow):
         self._active_pid: str | None = None
         self._focus_pids: list[str] = []
         self._worker: QThread | None = None
+        self._ollama_worker: OllamaWorker | None = None
+        self._ollama_available = False
+        self._pending_chat: str | None = None
+        self._pending_ollama_action: str | None = None
+        self._ollama_button_labels: tuple[str, str] | None = None
+        self._closing = False
         self._research_worker: ResearchWorker | None = None
         self._case_worker: CaseFetchWorker | None = None
         self._research_engine = None
@@ -562,6 +598,7 @@ class MainWindow(QMainWindow):
         # ---- Research workspace and existing views ----
         self.tabs = QTabWidget()
         self.research = ResearchWorkspace()
+        self._research_start_button = self.research.start_button
         self.research.question_submitted.connect(self._start_research_search)
         self.research.case_requested.connect(self._load_research_case)
         self.research.setup_requested.connect(self._open_setup_wizard)
@@ -797,13 +834,23 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        # Avoid Qt abort if a worker is still running when the window is destroyed
         self._updates.close()
-        for w in (self._worker, getattr(self, "_llm_worker", None), self._research_worker, self._case_worker):
-            if w is not None and w.isRunning():
-                w.requestInterruption()
-                w.wait(3000)
+        running = [w for w in (
+            self._worker, getattr(self, "_llm_worker", None), self._research_worker,
+            self._case_worker, self._ollama_worker,
+        ) if w is not None and w.isRunning()]
+        if running:
+            self._closing = True
+            self.hide()
+            for worker in running:
+                worker.requestInterruption()
+            event.ignore()
+            QTimer.singleShot(50, self.close)
+            return
+        self._closing = False
         super().closeEvent(event)
+        if not event.isAccepted():
+            self._closing = False
 
     def _on_update_found(self, version: str) -> None:
         self.statusBar().showMessage(f"Downloading MOVER SIS Monitor v{version} update…")
@@ -1229,13 +1276,10 @@ class MainWindow(QMainWindow):
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         if not hasattr(self, "combo_llm_model"):
             return
-        from src.llm.service import ensure_ollama, ollama_status_summary, probe_ollama
-        from src.user_settings import load_settings
+        self._start_ollama_worker("ensure" if start_if_needed else "probe")
 
-        if start_if_needed:
-            status = ensure_ollama(start_if_needed=True, wait_s=20.0)
-        else:
-            status = probe_ollama()
+    def _apply_ollama_status(self, status) -> None:
+        from src.llm.service import ollama_status_summary
 
         prev = self.combo_llm_model.currentText().strip()
         self.combo_llm_model.blockSignals(True)
@@ -1244,7 +1288,8 @@ class MainWindow(QMainWindow):
             self.combo_llm_model.addItem("(Ollama stopped — click Start)")
             self.combo_llm_model.blockSignals(False)
             self._set_ollama_status_ui(status)
-            self.statusBar().showMessage(status.message)
+            if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
+                self.statusBar().showMessage(status.message)
             return
 
         models = status.models
@@ -1276,11 +1321,14 @@ class MainWindow(QMainWindow):
             self.combo_llm_model.currentTextChanged.connect(self._on_ollama_model_changed)
             self._ollama_model_hooked = True
         self._set_ollama_status_ui(status)
-        self.statusBar().showMessage(ollama_status_summary(status))
+        if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
+            self.statusBar().showMessage(ollama_status_summary(status))
 
     def _set_ollama_status_ui(self, status) -> None:
         if not hasattr(self, "lbl_ollama_status"):
             return
+        self._ollama_available = status.available
+        busy = self._ollama_worker is not None and self._ollama_worker.isRunning()
         if status.available:
             n = len(status.models)
             extra = " · started by app" if status.started_by_app else ""
@@ -1289,16 +1337,16 @@ class MainWindow(QMainWindow):
             )
             self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
             if hasattr(self, "btn_ollama_start"):
-                self.btn_ollama_start.setEnabled(False)
-                self.btn_ollama_stop.setEnabled(True)
-                self.btn_ollama_unload.setEnabled(True)
+                self.btn_ollama_start.setEnabled(not busy)
+                self.btn_ollama_stop.setEnabled(not busy)
+                self.btn_ollama_unload.setEnabled(not busy)
         else:
             self.lbl_ollama_status.setText(
                 "Ollama: <b style='color:#f87171'>stopped</b> — click Start to activate"
             )
             self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
             if hasattr(self, "btn_ollama_start"):
-                self.btn_ollama_start.setEnabled(True)
+                self.btn_ollama_start.setEnabled(not busy)
                 self.btn_ollama_stop.setEnabled(False)
                 self.btn_ollama_unload.setEnabled(False)
         if hasattr(self, "research"):
@@ -1308,76 +1356,92 @@ class MainWindow(QMainWindow):
             )
 
     def _ollama_start(self) -> None:
-        from src.llm.service import start_ollama
+        self._start_ollama_worker("start")
 
-        self.statusBar().showMessage("Starting Ollama…")
-        for b in (
-            getattr(self, "btn_ollama_start", None),
-            getattr(self, "btn_ollama_stop", None),
-            getattr(self, "btn_ollama_unload", None),
-        ):
-            if b is not None:
-                b.setEnabled(False)
-        QApplication.processEvents()
-        try:
-            status = start_ollama(wait_s=35.0)
-            # Refresh list without a second start attempt
-            self._refresh_ollama_models(start_if_needed=False)
-            if not status.available:
-                # Force UI back to startable state even if probe raced
-                self.btn_ollama_start.setEnabled(True)
-                self.btn_ollama_stop.setEnabled(False)
-                self.btn_ollama_unload.setEnabled(False)
-                self.lbl_ollama_status.setText(
-                    "Ollama: <b style='color:#f87171'>failed to start</b> — try again"
-                )
-                self.lbl_ollama_status.setTextFormat(Qt.TextFormat.RichText)
-                QMessageBox.warning(
-                    self,
-                    "Ollama start",
-                    status.message
-                    + "\n\nIf you just clicked Stop, wait 2 seconds and try Start again.",
-                )
+    def _start_ollama_worker(self, action: str) -> None:
+        if self._closing:
+            return
+        if self._ollama_worker is not None and self._ollama_worker.isRunning():
+            if action == "ensure":
+                self._pending_ollama_action = action
+            return
+        self._ollama_button_labels = (self.btn_ollama_start.text(), self._research_start_button.text())
+        if self.btn_ollama_start.hasFocus() or self._research_start_button.hasFocus():
+            self.research.question_edit.setFocus()
+        label = {"probe": "Checking…", "stop": "Stopping…"}.get(action, "Starting…")
+        self.btn_ollama_start.setText(label)
+        self._research_start_button.setText(label)
+        self._research_start_button.setEnabled(False)
+        for button in (self.btn_ollama_start, self.btn_ollama_stop, self.btn_ollama_unload):
+            button.setEnabled(False)
+        message = {"probe": "Checking local model…", "stop": "Stopping local model…"}.get(action, "Starting local model…")
+        self.lbl_ollama_status.setText(message)
+        self.research.set_status(message)
+        self.statusBar().showMessage(message)
+        worker = OllamaWorker(action, parent=self)
+        self._ollama_worker = worker
+        worker.finished_ok.connect(self._on_ollama_ready)
+        worker.failed.connect(self._on_ollama_failure)
+        worker.finished.connect(self._on_ollama_done)
+        worker.start()
+
+    def _on_ollama_done(self) -> None:
+        if self.sender() is not self._ollama_worker:
+            return
+        self.btn_ollama_start.setEnabled(True)
+        self.btn_ollama_stop.setEnabled(self._ollama_available)
+        self.btn_ollama_unload.setEnabled(self._ollama_available)
+        if self._ollama_button_labels is not None:
+            start, research = self._ollama_button_labels
+            self.btn_ollama_start.setText(start)
+            self._research_start_button.setText(research)
+            self._ollama_button_labels = None
+        self._research_start_button.setEnabled(True)
+        action = self._pending_ollama_action
+        self._pending_ollama_action = None
+        if action is not None and self._pending_chat is not None:
+            self._start_ollama_worker(action)
+
+    def _on_ollama_ready(self, action: str, status) -> None:
+        if self._closing:
+            return
+        self._apply_ollama_status(status)
+        self.research.set_status("Local model ready." if status.available else status.message)
+        if not status.available and action == "start":
+            self._on_ollama_failure(action, status.message)
+        if self._pending_chat is not None:
+            if not status.available and action == "probe":
+                self._pending_ollama_action = "ensure"
+                return
+            question = self._pending_chat
+            self._pending_chat = None
+            self._pending_ollama_action = None
+            self.btn_send_chat.setEnabled(True)
+            self._send_chat_question(question)
+
+    def _on_ollama_failure(self, action: str, message: str) -> None:
+        if self._closing:
+            return
+        self._ollama_available = False
+        self.lbl_ollama_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_ollama_status.setText(f"Local model failed: {message}")
+        self.research.set_status(f"Local model failed: {message}")
+        self.statusBar().showMessage(f"Local model failed: {message}")
+        if action == "start":
+            QMessageBox.warning(self, "Ollama start", message)
+        if self._pending_chat is not None:
+            if action == "probe":
+                self._pending_ollama_action = "ensure"
             else:
-                self.statusBar().showMessage(status.message)
-        except Exception as e:
-            self.btn_ollama_start.setEnabled(True)
-            self.btn_ollama_stop.setEnabled(False)
-            self.btn_ollama_unload.setEnabled(False)
-            QMessageBox.critical(self, "Ollama start", str(e))
-            self._refresh_ollama_models(start_if_needed=False)
+                self._pending_chat = None
+                self.btn_send_chat.setEnabled(True)
+                QMessageBox.warning(self, "Ollama model", f"Ollama is not ready.\n\n{message}")
 
     def _ollama_stop(self) -> None:
-        from src.llm.service import stop_ollama
-
-        w = getattr(self, "_llm_worker", None)
-        if w is not None and w.isRunning():
-            w.requestInterruption()
-            w.wait(1500)
-
-        self.statusBar().showMessage("Stopping Ollama…")
-        for b in (
-            getattr(self, "btn_ollama_start", None),
-            getattr(self, "btn_ollama_stop", None),
-            getattr(self, "btn_ollama_unload", None),
-        ):
-            if b is not None:
-                b.setEnabled(False)
-        QApplication.processEvents()
-        try:
-            ok, msg = stop_ollama()
-        except Exception as e:
-            ok, msg = False, str(e)
-        # Always refresh + re-enable Start so user can restart without relaunching the app
-        self._refresh_ollama_models(start_if_needed=False)
-        self.btn_ollama_start.setEnabled(True)
-        self.btn_ollama_stop.setEnabled(False)
-        self.btn_ollama_unload.setEnabled(False)
-        self.statusBar().showMessage(msg)
-        if ok:
-            QMessageBox.information(self, "Ollama stopped", msg)
-        else:
-            QMessageBox.warning(self, "Ollama stop", msg)
+        worker = getattr(self, "_llm_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        self._start_ollama_worker("stop")
 
     def _ollama_unload(self) -> None:
         from src.llm.service import unload_ollama_model
@@ -1612,9 +1676,14 @@ class MainWindow(QMainWindow):
             return
         model = self.combo_llm_model.currentText().strip()
         if not model or model.startswith("("):
-            # Try auto-start once (user may not have clicked Start)
+            self._pending_chat = question
+            self.btn_send_chat.setEnabled(False)
             self._refresh_ollama_models(start_if_needed=True)
-            model = self.combo_llm_model.currentText().strip()
+            return
+        self._send_chat_question(question)
+
+    def _send_chat_question(self, question: str) -> None:
+        model = self.combo_llm_model.currentText().strip()
         if not model or model.startswith("("):
             QMessageBox.warning(
                 self,

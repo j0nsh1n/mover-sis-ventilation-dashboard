@@ -201,6 +201,32 @@ def open_tab(run: Run, *, label: str) -> dict[str, Any]:
     }
 
 
+def slow_ollama_start(run: Run) -> dict[str, Any]:
+    import src.llm.service as service
+    from PySide6.QtCore import QTimer
+
+    def start(**_kwargs: Any) -> Any:
+        time.sleep(2)
+        return service.OllamaStatus(True, "Synthetic local model ready", [], service.DEFAULT_BASE_URL)
+
+    service.start_ollama = start
+    ticks: list[float] = []
+    QTimer.singleShot(10, lambda: ticks.append(time.monotonic()))
+    started = time.monotonic()
+    run.win.btn_ollama_start.click()
+    run.win._ollama_start()
+    run.wait(lambda: bool(ticks), "a GUI timer tick", timeout_s=0.1)
+    assert ticks[0] - started < 0.1
+    assert not run.win.btn_ollama_start.isEnabled()
+    return {"timer_ms": round((ticks[0] - started) * 1000), "status": run.win.research.status_label.text()}
+
+
+def ollama_ready(run: Run) -> dict[str, Any]:
+    run.wait(lambda: not run.win._ollama_worker.isRunning(), "the fake Ollama start")
+    assert run.win.btn_ollama_start.isEnabled()
+    return {"status": run.win.research.status_label.text()}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -213,6 +239,7 @@ TAB_STEPS = tuple(
 )
 
 SCENARIOS: dict[str, Scenario] = {
+    "ollama-start": Scenario((Step("starting", slow_ollama_start), Step("ready", ollama_ready)), llm_modes=("off",)),
     "research-roundtrip": Scenario(
         (Step("ask", ask), Step("case", open_case), Step("return", return_to_question))
     ),

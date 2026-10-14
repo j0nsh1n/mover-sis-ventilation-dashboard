@@ -211,3 +211,64 @@ def test_startup_budget_with_data(qapp, pipeline_result, monkeypatch, tmp_path):
     assert win.cases is not None
     assert total < 3.0, f"startup to data+charts {total:.2f}s exceeds 3s budget"
     win.close()
+
+
+@requires_qt
+def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
+    from PySide6.QtCore import QTimer
+    from src.desktop.app import MainWindow
+    from src.llm.service import OllamaStatus
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    calls = []
+
+    def slow_start(**kwargs):
+        calls.append(kwargs)
+        time.sleep(2)
+        return OllamaStatus(True, "Ready", ["synthetic-model"], "http://127.0.0.1:11434")
+
+    monkeypatch.setattr("src.llm.service.start_ollama", slow_start)
+    win = MainWindow()
+    ticks = []
+    timer = QTimer(win)
+    timer.setSingleShot(True)
+    timer.timeout.connect(lambda: ticks.append(time.perf_counter()))
+    started = time.perf_counter()
+    timer.start(10)
+    try:
+        win.btn_ollama_start.click()
+        first_worker = win._ollama_worker
+        win._ollama_start()
+        assert win._ollama_worker is first_worker
+        assert win.btn_ollama_start.text() == "Starting…"
+        assert not win.btn_ollama_start.isEnabled()
+        while not ticks and time.perf_counter() - started < 0.1:
+            qapp.processEvents()
+            time.sleep(0.001)
+        assert ticks and ticks[0] - started < 0.1
+        assert first_worker.wait(3000)
+        qapp.processEvents()
+        assert len(calls) == 1
+        assert win.btn_ollama_start.isEnabled()
+        assert "ready" in win.research.status_label.text().lower()
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_ollama_failure_names_reason(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    monkeypatch.setattr("src.llm.service.start_ollama", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("port busy")))
+    win = MainWindow()
+    try:
+        win._ollama_start()
+        assert win._ollama_worker.wait(1000)
+        qapp.processEvents()
+        assert "port busy" in win.research.status_label.text()
+        assert win.btn_ollama_start.isEnabled()
+    finally:
+        win.close()

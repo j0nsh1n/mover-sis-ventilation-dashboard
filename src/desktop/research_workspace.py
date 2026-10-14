@@ -148,6 +148,11 @@ class ResearchWorkspace(QWidget):
             QWidget#signalPage QSlider::handle:horizontal { background: #c4ed93; width: 16px;
                 margin: -6px 0; border-radius: 8px; }
             QWidget#signalPage QWidget#chartView { background: #142124; }
+            QPushButton:focus,
+            QFrame#questionNode QPushButton#primaryBtn:focus,
+            QWidget#evidencePage QPushButton#textAction:focus,
+            QWidget#evidencePage QPushButton#outlineAction:focus,
+            QWidget#signalPage QPushButton:focus { border: 2px solid #8c739f; }
         """)
 
     def _build_canvas(self) -> None:
@@ -219,9 +224,9 @@ class ResearchWorkspace(QWidget):
         model_row.addWidget(self.model_combo, stretch=1)
         question_layout.addLayout(model_row)
         model_actions = QHBoxLayout()
-        start = _button("Start AI")
-        start.clicked.connect(self.model_start_requested)
-        model_actions.addWidget(start)
+        self.start_button = _button("Start AI")
+        self.start_button.clicked.connect(self.model_start_requested)
+        model_actions.addWidget(self.start_button)
         refresh = _button("Refresh")
         refresh.clicked.connect(self.model_refresh_requested)
         model_actions.addWidget(refresh)
