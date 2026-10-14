@@ -271,6 +271,17 @@ def _claimed_ages(text: str) -> set[int]:
     }
 
 
+# Ages that describe a group, not a person: a statistic, a bound, or a range.
+# "mean age 56" or "aged 80 or older" must not read as a claimed age of 56 or 80.
+_POPULATION_AGE = re.compile(
+    r"\b(?:mean|median|average|modal)\s+ages?\s*(?:of\s+)?[:=]?\s*\d{1,3}"
+    r"|\bage[sd]?\s*[:=]?\s*\d{1,3}\s*(?:or|and)\s+(?:older|younger|over|under|above|below)"
+    r"|\bages?\s*[:=]?\s*\d{1,3}\s*(?:to|through|and|-|\u2013)\s*\d{1,3}"
+    r"|\bages?\s*(?:>=|<=|>|<|\u2265|\u2264)\s*\d{1,3}",
+    re.IGNORECASE,
+)
+
+
 def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
     """
     Checks the answer reports each checked case's own age.
@@ -307,7 +318,8 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
     # A case without a recorded age could be any age, so loose ages are then unchecked.
     if None not in ages:
         known = sorted(a for a in ages if a is not None)
-        stray = sorted(_claimed_ages(parts.unattributed) - set(known))
+        loose = _POPULATION_AGE.sub(" ", parts.unattributed)
+        stray = sorted(_claimed_ages(loose) - set(known))
         if stray:
             problems.append(
                 f"the answer states age {', '.join(map(str, stray))} without naming a "

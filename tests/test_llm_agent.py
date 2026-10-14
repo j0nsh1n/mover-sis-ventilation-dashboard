@@ -524,6 +524,29 @@ def test_an_unattributed_age_that_one_cited_case_has_passes(text):
     assert find_unstated_case_facts(text, _cited_session()) == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "None of the cited cases involved patients aged 80 or older.",
+        "The cited patients had a mean age of 56.",
+        "Ages 50 to 60 were represented; the median age was 55.",
+        "Both were adults (age >= 18) with documented ventilator data.",
+    ],
+)
+def test_a_group_age_in_unattributed_text_is_not_a_claimed_age(text):
+    from src.llm.agent import find_unstated_case_facts
+
+    assert find_unstated_case_facts(text, _cited_session()) == []
+
+
+def test_a_group_age_phrase_does_not_hide_an_individual_age():
+    from src.llm.agent import find_unstated_case_facts
+
+    text = "The mean age was 56, and the first case was a 70-year-old."
+    problems = find_unstated_case_facts(text, _cited_session())
+    assert problems and "70" in problems[0] and "56" not in problems[0]
+
+
 def test_a_dose_before_the_first_pid_must_match_some_cited_case():
     from src.llm.agent import find_medication_mismatches
 
