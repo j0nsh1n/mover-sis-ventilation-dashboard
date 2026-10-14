@@ -63,6 +63,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The answer check now catches hedged advice ("would likely be better", "worth
+  trying a higher PEEP", "I'd suggest", "Recommended:", "ought to have extubated")
+  and no longer flags record descriptions such as "Increase in PIP began at minute
+  40" or "Monitor alarms were not recorded".
 - The Research answer check now verifies ages, doses and case IDs of the cited
   cases. A misstated age or dose, or a PID outside the cited set, sends the draft
   back for one rewrite.

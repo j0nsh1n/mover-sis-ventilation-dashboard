@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import string
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -33,52 +34,63 @@ from src.llm.schemas import (
 from src.llm.tools import SessionState, execute_tool, tool_select_case
 
 _PID_TOKEN = re.compile(r"\b([0-9a-f]{8,32})\b", re.IGNORECASE)
-_CLINICAL_DIRECTIVE = re.compile(
-    r"\b(you should|must administer|prescribe|increase the dose|"
-    r"extubate now|start dopamine|give bolus|clinical recommendation|"
-    r"treat the patient|order a)\b",
-    re.IGNORECASE,
-)
-
-# Recommendation framing the narrow list above misses entirely. Real rejected output
-# included "Consider reducing TV", "adjust ventilator settings", "require immediate
-# intervention" and "ensuring adequate neuromuscular blockade" — none matched.
-#
-# Each pattern targets advice *aimed at a reader*. Past-tense description of what the
+# Each shape targets advice *aimed at a reader*. Past-tense description of what the
 # record shows ("PEEP was increased at t=40", "TV was reduced") must stay legal, so the
 # verbs are anchored to imperative/gerund/modal framing rather than matched bare.
+# tests/fixtures/gate_drafts.yaml holds the sentences each shape must catch or pass.
 _ADVICE_VERB = (
     r"consider|recommend|advise|ensure|optimi[sz]e|adjust|reduce|lower|increase|raise|"
     r"titrate|administer|initiate|address|correct|avoid|monitor|check|maintain|"
-    r"troubleshoot|manage|assess|evaluate|verify|confirm|escalate|intervene"
+    r"troubleshoot|manage|assess|evaluate|verify|confirm|escalate|intervene|"
+    r"extubate|switch|repeat|set|keep|use|try|give|start|stop|apply|wean|recruit|"
+    r"reverse|review|reassess|perform|obtain|prevent|continue|document|kept|"
+    r"do not|don't|make sure|be sure"
 )
-_DIRECTIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # modal advice: "should be reduced", "must be optimized", "needs to be adjusted"
-    re.compile(
-        rf"\b(should|must|need(?:s)? to|ought to|is indicated|are indicated)\b"
-        rf"(?:\s+\w+){{0,3}}\s+\b(?:be\s+)?(?:{_ADVICE_VERB})\w*",
-        re.IGNORECASE,
-    ),
-    # sentence-initial or bulleted imperative: "Consider reducing…", "- Adjust the…"
-    re.compile(
-        rf"(?:^\s*[-*•]?\s*|[.!?]\s+[-*•]?\s*|[\n\r]\s*[-*•]?\s*|:\s*)"
-        rf"\b(?:{_ADVICE_VERB})\b\s+\w+",
-        re.IGNORECASE,
-    ),
+_DIRECTIVE_SHAPES = (
+    # explicit orders
+    r"\b(?:you should|must administer|prescribe|increase the dose|extubate now|"
+    r"start dopamine|give bolus|treat the patient|order a)\b",
+    # obligation: "should be reduced", "ought to have extubated", "has to be kept"
+    rf"\b(?:should|must|needs? to|ought to|has to|have to)\b"
+    rf"(?:\s+\w+){{0,3}}\s+\b(?:be\s+)?(?:{_ADVICE_VERB})\w*",
+    # sentence-initial, bulleted or quoted imperative: "Consider reducing…",
+    # "- Adjust the…". A noun reading ("Increase in PIP", "Monitor alarms were")
+    # is description.
+    rf"(?:^|[.!?]\s+|[\n\r]|:|[\"“'‘(])\s*[-*•]?\s*(?:please\s+)?\b(?:{_ADVICE_VERB})\b"
+    r"(?!\s+(?:in|of)\b)(?!(?:\s+[\w-]+){1,2}\s+(?:was|were|occurred|resumed)\b)"
+    r"\s+\w+",
     # urgency framing: "requires immediate intervention", "warrants prompt…"
-    re.compile(
-        r"\b(require(?:s|d)?|warrant(?:s|ed)?|necessitat(?:e|es|ed))\s+"
-        r"(?:\w+\s+){0,2}(immediate|prompt|urgent|close|further)?\s*"
-        r"(intervention|attention|action|treatment|management|troubleshooting|monitoring)",
-        re.IGNORECASE,
-    ),
-    # goal framing: "focus on avoiding…", "with a view to optimising…"
-    re.compile(
-        rf"\b(focus(?:ing)? on|aim(?:ing)? to|in order to|so as to)\s+"
-        rf"(?:\w+\s+){{0,2}}\b(?:{_ADVICE_VERB})\w*",
-        re.IGNORECASE,
-    ),
+    r"\b(?:requires?|warrants?|necessitates?)\s+(?:\w+\s+){0,2}"
+    r"(?:intervention|attention|action|treatment|management|troubleshooting|monitoring)",
+    # goal framing: "focus on avoiding…"
+    rf"\b(?:focus(?:ing)? on|aim(?:ing)? to)\s+(?:\w+\s+){{0,2}}\b(?:{_ADVICE_VERB})\w*",
+    # the footer's own "not clinical recommendations" is a disclaimer
+    r"\brecommend(?:s|ed|ing)?\b|\b(?<!not clinical )recommendations?\b|"
+    r"\badvis(?:e|es|ed|able)\b|\b(?:is|are)\s+(?:the\s+)?preferred\b",
+    r"\b(?:i|we)(?:'d|’d|\s+would)?\s+(?:\w+\s+)?(?:suggest|propose)\b|"
+    r"\bmy\s+(?:suggestion|advice)\b",
+    # hedged advice: "would likely be better", "might help to"
+    r"\b(?:would|could|might|may)\s+(?:\w+\s+){0,2}(?:better|preferable|reasonable|"
+    r"prudent|sensible|wise|safer|beneficial|appropriate|help\s+to)\b",
+    # "It is best to keep…", "It is essential to confirm…"; "important to note" is not
+    r"\b(?:better|best|preferable|safer|wiser?|prudent|reasonable|sensible|important|"
+    r"essential|crucial|necessary)\s+to\s+(?!note\b|mention\b)\w+",
+    r"\bworth\s+(?:a\s+(?:trial|try)|(?!noting\b|mentioning\b)\w+ing)\b",
+    # "may be warranted"; "is indicated by" infers from the data
+    r"\b(?:is|are|be)\s+(?:\w+\s+)?(?:warranted|indicated)\b(?!\s+by\b)",
+    r"\b(?:clinicians?|providers?|team|anesthesiologists?)\s+"
+    r"(?:could|should|ought|must|need)\b",
+    r"\b(?:may|might|could)\s+(?:\w+\s+){0,2}(?:consider|benefit from|want to|wish to)\b",
+    # hindsight critique; "might have been caused" stays a reading of the data
+    rf"\b(?:could|should)\s+(?:\w+\s+)?have\s+(?:been\s+)?(?:{_ADVICE_VERB})\w*|"
+    r"\b(?:might|would)\s+(?:\w+\s+)?have\s+been\s+(?:avoided|prevented)\b",
+    r"\b(?:option|approach|alternative)\s+(?:would|could|might)\s+be\s+to\b",
+    r"\b(?:going forward|in future cases|next time|next step|ideally)\b",
 )
+# One alternation over ASCII-lowercased text runs about a third faster than the shapes
+# one by one with IGNORECASE, and the offsets still index the original casing.
+_DIRECTIVE = re.compile("|".join(f"(?:{shape})" for shape in _DIRECTIVE_SHAPES))
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 
 def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
@@ -90,15 +102,15 @@ def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
     """
     found: list[str] = []
     seen: set[str] = set()
-    for pattern in (_CLINICAL_DIRECTIVE, *_DIRECTIVE_PATTERNS):
-        for m in pattern.finditer(text or ""):
-            snippet = " ".join(m.group(0).split()).strip(" -*•:")
-            key = snippet.lower()
-            if snippet and key not in seen:
-                seen.add(key)
-                found.append(snippet)
-                if len(found) >= limit:
-                    return found
+    text = text or ""
+    for m in _DIRECTIVE.finditer(text.translate(_ASCII_LOWER)):
+        snippet = " ".join(text[m.start() : m.end()].split()).strip(" -*•:")
+        key = snippet.lower()
+        if snippet and key not in seen:
+            seen.add(key)
+            found.append(snippet)
+            if len(found) >= limit:
+                return found
     return found
 
 
