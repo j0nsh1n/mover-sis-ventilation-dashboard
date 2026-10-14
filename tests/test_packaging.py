@@ -122,6 +122,22 @@ def test_spec_bundles_xcb_cursor():
     assert "libxcb-cursor.so.0" in spec
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux bundles use libQt6Core")
+def test_frozen_bundle_contains_qt_core():
+    app = ROOT / "dist" / "MOVER-SIS-Monitor"
+    if not app.is_dir():
+        pytest.skip("Frozen bundle not built in this workspace")
+    version_path = app / "VERSION"
+    if not version_path.is_file():
+        version_path = app / "_internal" / "VERSION"
+    if not version_path.is_file() or version_path.read_text().strip() != (ROOT / "VERSION").read_text().strip():
+        pytest.skip("Frozen bundle does not match VERSION; rebuild first")
+    qt_lib = app / "_internal" / "PySide6" / "Qt" / "lib"
+    assert any(path.is_file() for path in qt_lib.glob("libQt6Core.so*")), (
+        f"Bundled PySide6 Qt libraries missing libQt6Core in {qt_lib}"
+    )
+
+
 def _generated_launch_script() -> str:
     text = (ROOT / "scripts" / "build_executable.sh").read_text(encoding="utf-8")
     start = text.index("cat > \"$APP_DIR/launch.sh\" <<'EOF'\n") + len("cat > \"$APP_DIR/launch.sh\" <<'EOF'\n")

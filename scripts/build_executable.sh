@@ -58,6 +58,14 @@ if [[ -d "$INTERNAL/PySide6/Qt/lib" ]]; then
   shopt -u nullglob
 fi
 
+shopt -s nullglob
+qt_core=("$INTERNAL"/PySide6/Qt/lib/libQt6Core.so*)
+shopt -u nullglob
+if (( ${#qt_core[@]} == 0 )) || [[ ! -f "${qt_core[0]}" ]]; then
+  echo "ERROR: bundled PySide6 Qt libraries missing libQt6Core in $INTERNAL/PySide6/Qt/lib"
+  exit 1
+fi
+
 # Stamp version into the app bundle
 cp -f "$ROOT/VERSION" "$APP_DIR/VERSION"
 echo "v${VERSION}" > "$APP_DIR/BUILD_INFO.txt"

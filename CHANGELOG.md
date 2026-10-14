@@ -80,6 +80,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   trying a higher PEEP", "I'd suggest", "Recommended:", "ought to have extubated")
   and no longer flags record descriptions such as "Increase in PIP began at minute
   40" or "Monitor alarms were not recorded".
+- Local Linux packages include the PySide6 wheel's Qt libraries when the build
+  path contains parentheses, preventing a crash from loading host Qt libraries.
 - The Research answer check now verifies ages, doses and case IDs of the cited
   cases. A misstated age or dose, or a PID outside the cited set, sends the draft
   back for one rewrite. A sentence naming several cases is checked against each of

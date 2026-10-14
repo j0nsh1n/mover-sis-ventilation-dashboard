@@ -51,6 +51,20 @@ _site_candidates = [
 ]
 _site = next((p for p in _site_candidates if p.is_dir()), _site_candidates[0])
 
+if _sys.platform == "linux":
+    from PyInstaller.depend import bindepend
+    from PyInstaller.utils.hooks.qt import pyside6_library_info
+
+    _qt_lib_dir = str(pyside6_library_info.qt_lib_dir)
+    _get_imports = bindepend.get_imports
+
+    def _get_imports_with_qt_fallback(filename, search_paths=None):
+        # PyInstaller 6.22.3's ldd parser truncates paths at parenthesized
+        # directory names. Resolve missing Qt/ICU paths from the wheel instead.
+        return _get_imports(filename, [*(search_paths or []), _qt_lib_dir])
+
+    bindepend.get_imports = _get_imports_with_qt_fallback
+
 for _pattern, _dest in (
     (str(_site / "shiboken6" / "libshiboken6*.so*"), "shiboken6"),
     (str(_site / "shiboken6" / "Shiboken.abi3.so"), "shiboken6"),
