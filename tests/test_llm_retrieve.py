@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,12 +16,20 @@ from src.llm.tools import SessionState
 from src.services.retrieval import SearchCandidate
 
 
+def _all_description(label_request: dict) -> ChatResult:
+    """The advice check's reply when it finds no advice: every sentence is description."""
+    keys = label_request["format"]["required"]
+    return ChatResult(content=json.dumps(dict.fromkeys(keys, "description")))
+
+
 class FakeClient:
     def __init__(self, content: str = "In this extract, caseA is age 55 M."):
         self.messages = None
         self.content = content
 
-    def chat_turn(self, model, messages, **_kwargs):
+    def chat_turn(self, model, messages, **kwargs):
+        if kwargs.get("format"):
+            return _all_description(kwargs)
         self.messages = messages
         return ChatResult(content=self.content, tool_calls=[])
 
@@ -32,7 +41,9 @@ class DraftClient:
         self.drafts = drafts
         self.sent: list[list[dict]] = []
 
-    def chat_turn(self, model, messages, **_kwargs):
+    def chat_turn(self, model, messages, **kwargs):
+        if kwargs.get("format"):
+            return _all_description(kwargs)
         self.sent.append([dict(m) for m in messages])
         draft = self.drafts[min(len(self.sent), len(self.drafts)) - 1]
         return ChatResult(content=draft, tool_calls=[])
@@ -141,6 +152,8 @@ def test_research_answer_cannot_call_case_tools_outside_shortlist():
             self.tools = object()
 
         def chat_turn(self, model, messages, **kwargs):
+            if kwargs.get("format"):
+                return _all_description(kwargs)
             self.messages = messages
             self.tools = kwargs["tools"]
             return ChatResult(

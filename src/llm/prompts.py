@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from src.llm.model_profiles import model_guidance
 from src.llm.schemas import AI_TOOLS
 
@@ -180,6 +182,30 @@ REWRITE_RESEARCH = {
     "case_facts": "any age/sex/procedure given for a cited case is that case's ACTUAL one",
     "sources": "the source extracts above",
 }
+
+
+# The second answer check: the chat model labels each sentence, in one call.
+ADVICE_CHECK_SYSTEM = """
+You label sentences from a research summary of de-identified anesthesia records.
+Label each numbered sentence "advice" or "description".
+
+advice: the sentence tells a clinician what to do, or says what would have been
+better. This includes commands ("Monitor SpO2", "Titrate PEEP"), suggestions,
+hedged or polite forms ("could", "might", "it may help", "would be reasonable"),
+hindsight ("should have", "would have been preferable"), saying one option is
+better or preferred, and saying the patient needs or requires an action.
+
+description: the sentence reports what was recorded, documented, measured, or
+observed. Management the record documents is description ("PEEP was increased to
+8 cmH2O"), and so are what a note says, what the data cannot show, how a rule or
+flag works, and cautions about how to read the data.
+
+Reply with JSON only: one key per sentence number, each "advice" or "description".
+""".strip()
+
+
+def advice_check_message(sentences: Sequence[str]) -> str:
+    return "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, 1))
 
 
 SYSTEM_PROMPT = build_system_prompt(mode=MODE_ANALYZE)

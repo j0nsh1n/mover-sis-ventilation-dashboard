@@ -10,11 +10,13 @@ from __future__ import annotations
 import json
 import re
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, NamedTuple
 
 import pandas as pd
 
+from src.llm.advice_check import AdviceCheck, NotRun, check_advice
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     MODE_CHAT,
@@ -115,6 +117,14 @@ def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
             found.append(snippet)
             if len(found) >= limit:
                 return found
+    return found
+
+
+def _advice_phrases(text: str, advice: Sequence[str]) -> list[str]:
+    """Pattern hits, then each model-flagged sentence that no pattern hit already quotes."""
+    found = find_directive_phrases(text)
+    quoted = [f.lower() for f in found]
+    found += [s for s in advice if s in text and not any(q in s.lower() for q in quoted)]
     return found
 
 
@@ -440,7 +450,14 @@ def _heuristic_prefetch(
     return traces
 
 
-def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
+def verify_answer(
+    answer: str, session: SessionState, *, advice: AdviceCheck | None = None
+) -> tuple[str, list[str]]:
+    """
+    Append a visible note for each problem the answer still has.
+
+    ``advice`` is the model check of this answer; None when the caller ran none.
+    """
     notes: list[str] = []
     text = strip_think((answer or "").strip())
     if not text:
@@ -470,13 +487,19 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
             f"{', '.join(bad[:5])}. Prefer PIDs from tool results only."
         )
 
-    directives = find_directive_phrases(text)
+    directives = _advice_phrases(text, advice.advice if advice else ())
     if directives:
         notes.append("clinical_directive_language:" + " | ".join(directives[:3]))
         text += (
             "\n\n**Verification note:** Directive clinical language was detected "
             f"({'; '.join(repr(d) for d in directives[:3])}). "
             "This co-pilot is research-only and must not be used for live care decisions."
+        )
+    if isinstance(advice, NotRun):
+        notes.append(f"advice_check_not_run:{advice.reason}")
+        text += (
+            "\n\n**Verification note:** the model advice check did not run, so only "
+            "the word-pattern check was applied."
         )
 
     for problem in find_unstated_case_facts(text, session):
@@ -588,11 +611,17 @@ def _dose_problems(text: str, med: pd.DataFrame) -> list[str]:
     return problems
 
 
-def answer_problems(text: str, session: SessionState) -> list[str]:
-    """Reasons a draft must be rewritten, phrased for the model to act on."""
+def answer_problems(
+    text: str, session: SessionState, *, advice: Sequence[str] = ()
+) -> list[str]:
+    """
+    Reasons a draft must be rewritten, phrased for the model to act on.
+
+    ``advice`` holds the sentences the model check labeled as advice.
+    """
     problems = [
         f'- prescriptive phrasing: "{d}" — describe what the record shows instead'
-        for d in find_directive_phrases(text)
+        for d in _advice_phrases(text, advice)
     ]
     problems += [f"- {p}" for p in find_unstated_case_facts(text, session)]
     problems += [
@@ -773,7 +802,8 @@ def run_agent(
     # Safety rewrite: a draft that advises the reader or misstates a checked case is
     # rejected and sent back once.
     # Annotating prescriptive text with a disclaimer still ships the prescription.
-    problems = answer_problems(final_text, session)
+    advice = check_advice(final_text, client, model)
+    problems = answer_problems(final_text, session, advice=advice.advice)
     if problems:
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
         if on_status:
@@ -793,18 +823,17 @@ def run_agent(
                 model, messages, temperature=0.0, stream=False, tools=None
             )
             rewritten = strip_think(retry.content or "").strip()
-            if rewritten and not answer_problems(rewritten, session):
-                final_text = rewritten
-                trace.append("rewrite:accepted")
-            elif rewritten:
+            if rewritten:
+                rewritten_advice = check_advice(rewritten, client, model)
+                left = answer_problems(rewritten, session, advice=rewritten_advice.advice)
                 # Keep whichever draft has fewer violations
-                if len(answer_problems(rewritten, session)) < len(problems):
-                    final_text = rewritten
-                trace.append("rewrite:still_flagged")
+                if len(left) < len(problems):
+                    final_text, advice = rewritten, rewritten_advice
+                trace.append("rewrite:still_flagged" if left else "rewrite:accepted")
         except Exception as e:  # keep the original answer if the retry fails
             trace.append(f"rewrite:failed:{e}")
 
-    verified, notes = verify_answer(final_text, session)
+    verified, notes = verify_answer(final_text, session, advice=advice)
     if notes:
         trace.append("verify:" + ";".join(notes))
 
