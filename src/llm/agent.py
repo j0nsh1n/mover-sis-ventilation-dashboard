@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import pandas as pd
+
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     MODE_CHAT,
@@ -100,32 +102,102 @@ def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
     return found
 
 
-def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
-    """
-    Checks the answer actually reports the selected case's own demographics.
+@dataclass(frozen=True)
+class CaseFacts:
+    """One case the answer gate checks a draft against."""
 
-    The observed failure was an answer claiming "Age: 55 (aligned)" for a case that is
-    60 — restating the user's description as though it were the record. Requiring the
-    real value to appear catches that without guessing at sentence meaning.
-    """
-    problems: list[str] = []
-    pid = session.active_pid
-    if not pid or session.cases is None or session.cases.empty:
-        return problems
-    rows = session.cases[session.cases["PID"].astype(str) == str(pid)]
+    pid: str
+    age: int | None
+    # Ask compares a described patient with the selected case, so its age must appear.
+    # A Research answer may leave ages out; it must only not misstate them.
+    age_required: bool
+    # None: not preloaded, so the dose check reads this case's rows from the EMR.
+    medications: pd.DataFrame | None
+
+
+def _record_age(session: SessionState, pid: str) -> int | None:
+    cases = session.cases
+    if cases is None or cases.empty:
+        return None
+    rows = cases[cases["PID"].astype(str) == pid]
     if rows.empty:
-        return problems
-    row = rows.iloc[0]
-    age = row.get("Age")
+        return None
     try:
-        age_int = int(float(age))
+        return int(float(rows.iloc[0].get("Age")))
     except (TypeError, ValueError):
-        return problems
+        return None
 
-    # Look for asserted ages, not for the digits anywhere in the text. Mere presence is
-    # useless: "60" turns up in flag times, counts, even the note this check appends —
-    # while the answer still calls a 60-year-old case "55-year-old".
-    claimed = {
+
+def _preloaded_medications(session: SessionState, pid: str) -> pd.DataFrame | None:
+    med = session.medications
+    if med is None:
+        return None
+    if med.empty or "PID" not in med.columns:
+        return pd.DataFrame()
+    return med[med["PID"].astype(str) == pid]
+
+
+def gate_cases(session: SessionState) -> list[CaseFacts]:
+    """The cases a draft is checked against: the cited cases, else the Ask selection."""
+    if session.cited_pids:
+        pids, required = [str(p) for p in session.cited_pids], False
+    elif session.active_pid:
+        pids, required = [str(session.active_pid)], True
+    else:
+        return []
+    return [
+        CaseFacts(
+            pid=pid,
+            age=_record_age(session, pid),
+            age_required=required,
+            medications=_preloaded_medications(session, pid),
+        )
+        for pid in pids
+    ]
+
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
+_CLAUSE_BREAK = re.compile(r"[;,]|\b(?:and|but|while|whereas)\b", re.IGNORECASE)
+
+
+def _named_pid(clause: str, pids: list[str]) -> str | None:
+    low = clause.lower()
+    return next((p for p in pids if p.lower() in low), None)
+
+
+def _text_by_case(text: str, pids: list[str]) -> dict[str, str]:
+    """
+    Each case's share of the answer, so a fact is checked against its own case.
+
+    A single case owns the whole answer. With several, a clause belongs to the cited
+    PID it names, else to the nearest one named in its sentence, else to the last one
+    named before it. Text before any PID is named belongs to no case.
+    """
+    if len(pids) == 1:
+        return {pids[0]: text}
+    owned: dict[str, list[str]] = {p: [] for p in pids}
+    last: str | None = None
+    for sentence in _SENTENCE_BREAK.split(text or ""):
+        clauses = _CLAUSE_BREAK.split(sentence)
+        named = [_named_pid(c, pids) for c in clauses]
+        for i, clause in enumerate(clauses):
+            owner = (
+                named[i]
+                or next((n for n in reversed(named[:i]) if n), None)
+                or next((n for n in named[i + 1 :] if n), None)
+                or last
+            )
+            if owner:
+                owned[owner].append(clause)
+        last = next((n for n in reversed(named) if n), last)
+    return {p: "\n".join(parts) for p, parts in owned.items()}
+
+
+def _claimed_ages(text: str) -> set[int]:
+    # Asserted ages, not the digits anywhere in the text. Mere presence is useless:
+    # "60" turns up in flag times, counts, even the note this check appends — while
+    # the answer still calls a 60-year-old case "55-year-old".
+    return {
         int(g)
         for m in re.finditer(
             r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:year[- ]?old|y/?o\b|yr[s]?\b|[FM]\b)"
@@ -136,18 +208,51 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
         for g in [m.group(1) or m.group(2)]
         if g
     }
-    if not claimed:
-        problems.append(
-            f"the matched case {pid} is age {age_int}, but the answer never states it"
-        )
-    elif age_int not in claimed:
-        wrong = ", ".join(str(c) for c in sorted(claimed))
-        problems.append(
-            f"the answer describes the matched case as age {wrong}, but {pid} is "
-            f"age {age_int} — state the real age and note the difference from the "
-            f"described patient"
-        )
+
+
+def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
+    """
+    Checks the answer reports each checked case's own age.
+
+    The observed failure was an answer claiming "Age: 55 (aligned)" for a case that is
+    60 — restating the user's description as though it were the record. Requiring the
+    real value to appear catches that without guessing at sentence meaning. A case
+    without a recorded age is never checked, so no age is ever supplied for it.
+    """
+    problems: list[str] = []
+    cases = gate_cases(session)
+    owned = _text_by_case(text, [c.pid for c in cases])
+    for case in cases:
+        if case.age is None:
+            continue
+        claimed = _claimed_ages(owned[case.pid])
+        if not claimed:
+            if case.age_required:
+                problems.append(
+                    f"the matched case {case.pid} is age {case.age}, "
+                    f"but the answer never states it"
+                )
+        elif case.age not in claimed:
+            wrong = ", ".join(str(c) for c in sorted(claimed))
+            problems.append(
+                f"the answer describes the matched case as age {wrong}, but {case.pid} is "
+                f"age {case.age} — state the real age and note the difference from the "
+                f"described patient"
+            )
     return problems
+
+
+def _unknown_pids(text: str, known: set[str]) -> list[str]:
+    """PID-like tokens in the answer that match none of ``known``."""
+    if not known:
+        return []
+    known_l = [p.lower() for p in known]
+    claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
+    return sorted(
+        c
+        for c in claimed
+        if not any(p == c or p.startswith(c) or c in p for p in known_l)
+    )
 
 ProgressCb = Callable[[str], None]
 
@@ -297,15 +402,7 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
     if session.corpus is not None and session.has_corpus_scan():
         corpus |= set(session.corpus["PID"].astype(str))
 
-    claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
-    bad = []
-    for c in claimed:
-        if not corpus:
-            break
-        if not any(
-            p.lower() == c or p.lower().startswith(c) or c in p.lower() for p in corpus
-        ):
-            bad.append(c)
+    bad = _unknown_pids(text, corpus)
     if bad:
         notes.append("unknown_pids:" + ",".join(bad[:5]))
         text += (
@@ -342,11 +439,20 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
 _DOSE_UNITS = r"mcg|µg|ug|mg|g|mL|ml|L|units?|IU"
 
 
+def _read_medications(pid: str) -> pd.DataFrame:
+    try:
+        from src.llm.case_context import load_case_medications
+
+        return load_case_medications(pid)
+    except Exception:
+        return pd.DataFrame()
+
+
 def find_medication_mismatches(
     text: str, session: SessionState, *, limit: int = 5
 ) -> list[str]:
     """
-    Doses in the answer that disagree with the medication record.
+    Doses in the answer that disagree with each checked case's medication record.
 
     Observed: an answer reported "Phenylephrine 50 mcg" for a case documenting 100 mcg,
     and "Vecuronium 0.15 mg/kg" where the record holds absolute mg. Altered doses are
@@ -354,16 +460,21 @@ def find_medication_mismatches(
 
     Best-effort: silent when the EMR is unreachable or the case has no medications.
     """
-    pid = session.active_pid
-    if not pid or not (text or "").strip():
+    if not (text or "").strip():
         return []
-    try:
-        from src.llm.case_context import load_case_medications
+    cases = gate_cases(session)
+    owned = _text_by_case(text, [c.pid for c in cases])
+    problems: list[str] = []
+    for case in cases:
+        med = case.medications
+        if med is None:
+            med = _read_medications(case.pid)
+        problems += _dose_problems(owned[case.pid], med)
+    return problems[:limit]
 
-        med = load_case_medications(str(pid))
-    except Exception:
-        return []
-    if med is None or med.empty or "Drug_name" not in med.columns:
+
+def _dose_problems(text: str, med: pd.DataFrame) -> list[str]:
+    if med.empty or "Drug_name" not in med.columns:
         return []
 
     documented: dict[str, set[tuple[str, str]]] = {}
@@ -403,8 +514,6 @@ def find_medication_mismatches(
                     f'"{head} {claimed} {unit}" does not match the record '
                     f"({documented_str})"
                 )
-            if len(problems) >= limit:
-                return problems
     return problems
 
 
@@ -418,6 +527,13 @@ def answer_problems(text: str, session: SessionState) -> list[str]:
     problems += [
         f"- dose does not match the extract: {p}"
         for p in find_medication_mismatches(text, session)
+    ]
+    # Ask keeps an appended note for unknown PIDs; a Research answer may name only
+    # the cases it was given.
+    cited = ", ".join(session.cited_pids)
+    problems += [
+        f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
+        for pid in _unknown_pids(text, set(session.cited_pids))
     ]
     return problems
 
@@ -583,13 +699,14 @@ def run_agent(
             "Ask: 'Using the focus list, summarize management for the top case.'"
         )
 
-    # Safety rewrite: a draft that advises the reader is rejected and sent back once.
+    # Safety rewrite: a draft that advises the reader or misstates a checked case is
+    # rejected and sent back once.
     # Annotating prescriptive text with a disclaimer still ships the prescription.
     problems = answer_problems(final_text, session)
     if problems:
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
         if on_status:
-            on_status("Rewriting to remove prescriptive language…")
+            on_status("Rewriting the draft to pass the answer check…")
         messages.append({"role": "assistant", "content": final_text})
         messages.append(
             {

@@ -356,3 +356,59 @@ def test_prompt_forbids_computing_doses():
     prompt = build_system_prompt(mode="analyze")
     assert "do not compute them" in prompt.lower()
     assert "mg/kg" in prompt
+
+
+def _cited_session(medications: pd.DataFrame | None = None) -> SessionState:
+    """A Research session: the two cited cases only, no Ask selection."""
+    session = _sample_session()
+    session.cited_pids = ["aabb0011", "ccdd0022"]  # ages 50 and 60
+    session.medications = medications
+    return session
+
+
+def test_each_cited_case_age_is_checked_against_its_own_sentences():
+    from src.llm.agent import find_unstated_case_facts
+
+    session = _cited_session()
+    right = "aabb0011 is a 50-year-old woman. ccdd0022 is a 60-year-old man."
+    assert find_unstated_case_facts(right, session) == []
+
+    swapped = "aabb0011 is a 60-year-old woman. ccdd0022 is a 50-year-old man."
+    problems = find_unstated_case_facts(swapped, session)
+    assert len(problems) == 2
+    assert "aabb0011 is age 50" in problems[0]
+    assert "ccdd0022 is age 60" in problems[1]
+
+    # A Research answer need not state ages at all
+    assert find_unstated_case_facts("aabb0011 had a PIP median of 28.", session) == []
+
+
+def test_each_cited_case_dose_is_checked_against_its_own_medication_rows():
+    from src.llm.agent import find_medication_mismatches
+
+    med = pd.DataFrame(
+        [
+            {"PID": "aabb0011", "Drug_name": "Fentanyl", "Dose": "100", "Drug_units": "mcg"},
+            {"PID": "ccdd0022", "Drug_name": "Fentanyl", "Dose": "50", "Drug_units": "mcg"},
+        ]
+    )
+    session = _cited_session(med)
+    right = "aabb0011 received fentanyl 100 mcg. ccdd0022 received fentanyl 50 mcg."
+    assert find_medication_mismatches(right, session) == []
+
+    swapped = "aabb0011 received fentanyl 50 mcg. ccdd0022 received fentanyl 100 mcg."
+    problems = find_medication_mismatches(swapped, session)
+    assert len(problems) == 2
+    assert "(100 mcg)" in problems[0] and "(50 mcg)" in problems[1]
+
+
+def test_uncited_pid_is_a_rewrite_problem_on_research_but_not_on_ask():
+    from src.llm.agent import answer_problems
+
+    text = "aabb0011 resembled deadbeef99 in PIP."
+    research = _cited_session()
+    assert any("deadbeef99" in p for p in answer_problems(text, research))
+
+    ask = _sample_session()
+    ask.active_pid = "aabb0011"
+    assert not any("deadbeef99" in p for p in answer_problems(text, ask))

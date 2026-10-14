@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 import pandas as pd
 
 from src.llm.agent import AgentResult, ProgressCb, run_agent
+from src.llm.case_context import load_medications
 from src.llm.ollama_client import OllamaClient
 from src.llm.prompts import MODE_ANALYZE
 from src.llm.tools import SessionState
@@ -47,6 +48,27 @@ def format_grounded_extracts(
     return "\n".join(lines)
 
 
+def _research_session(cited: Sequence[SearchCandidate]) -> SessionState:
+    """A session holding only the cited cases, so the answer gate checks exactly them."""
+    pids = [candidate.pid for candidate in cited]
+    try:
+        medications = load_medications(pids)
+    except Exception:
+        medications = pd.DataFrame()
+    return SessionState(
+        cases=pd.DataFrame(
+            {
+                "PID": pids,
+                "Age": [candidate.age for candidate in cited],
+                "Gender": [candidate.gender for candidate in cited],
+                "Procedure_short": [candidate.procedure for candidate in cited],
+            }
+        ),
+        cited_pids=pids,
+        medications=medications,
+    )
+
+
 def answer_from_retrieval(
     *,
     question: str,
@@ -63,9 +85,7 @@ def answer_from_retrieval(
         candidates=candidates, extracts=extracts
     )
     cited = candidates[: min(len(candidates), len(extracts), 3)]
-    research_session = SessionState(
-        cases=pd.DataFrame({"PID": [candidate.pid for candidate in cited]})
-    )
+    research_session = _research_session(cited)
 
     def status(msg: str) -> None:
         if on_status is not None:

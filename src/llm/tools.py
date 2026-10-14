@@ -32,6 +32,10 @@ class SessionState:
     corpus: pd.DataFrame | None = None
     corpus_episodes: pd.DataFrame | None = None
     corpus_meta: dict[str, Any] | None = None
+    # Research answers: the answer gate checks these cited PIDs (Ask checks only
+    # active_pid) against ``medications``. None there means read the EMR per case.
+    cited_pids: list[str] = field(default_factory=list)
+    medications: pd.DataFrame | None = None
 
     def has_corpus_scan(self) -> bool:
         return self.corpus is not None and not self.corpus.empty

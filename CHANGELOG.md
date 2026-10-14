@@ -63,6 +63,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The Research answer check now verifies ages, doses and case IDs of the cited
+  cases. A misstated age or dose, or a PID outside the cited set, sends the draft
+  back for one rewrite.
 - `rr_low` critical (RR 4 or below) fired only at exactly RR 4 because the RR keep
   range blanked every rate under 4. The range is now 1 to 40, so critical fires across
   RR 1-4 while tidal volume is delivered. RR 0 is still treated as no rate recorded.
