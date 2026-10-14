@@ -200,7 +200,7 @@ def _claimed_ages(text: str) -> set[int]:
     return {
         int(g)
         for m in re.finditer(
-            r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:year[- ]?old|y/?o\b|yr[s]?\b|[FM]\b)"
+            r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:years?[- ]?old|years?\s+of\s+age|y/?o\b|yr[s]?\b|[FM]\b)"
             r"|(?:\bage[d]?\s*[:=]?\s*)(\d{1,3})(?!\d)",
             text or "",
             re.IGNORECASE,

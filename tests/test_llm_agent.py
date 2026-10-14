@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.llm.agent import parse_tool_calls, verify_answer
 from src.llm.prompts import SYSTEM_PROMPT, build_system_prompt, user_message
@@ -412,3 +413,19 @@ def test_uncited_pid_is_a_rewrite_problem_on_research_but_not_on_ask():
     ask = _sample_session()
     ask.active_pid = "aabb0011"
     assert not any("deadbeef99" in p for p in answer_problems(text, ask))
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["a 65 years old woman", "65 years of age", "a 65-year-old", "aged 65", "65 yo"],
+)
+def test_claimed_ages_reads_common_age_phrasings(phrase):
+    from src.llm.agent import _claimed_ages
+
+    assert _claimed_ages(phrase) == {65}
+
+
+def test_claimed_ages_ignores_durations():
+    from src.llm.agent import _claimed_ages
+
+    assert _claimed_ages("the record began 65 years ago") == set()
