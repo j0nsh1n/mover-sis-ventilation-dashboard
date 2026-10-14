@@ -11,14 +11,16 @@ import json
 import re
 import string
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import pandas as pd
 
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     MODE_CHAT,
+    REWRITE_ASK,
     REWRITE_INSTRUCTION,
+    REWRITE_RESEARCH,
     VERIFICATION_FOOTER,
     build_system_prompt,
     session_header_text,
@@ -33,7 +35,9 @@ from src.llm.schemas import (
 )
 from src.llm.tools import SessionState, execute_tool, tool_select_case
 
-_PID_TOKEN = re.compile(r"\b([0-9a-f]{8,32})\b", re.IGNORECASE)
+# MOVER PIDs are 16 hex characters; synthetic ones are SYN + 10 (src/pipeline/synthetic.py).
+# Anything looser reads counts and timestamps as PIDs.
+_PID_TOKEN = re.compile(r"\b(SYN[0-9a-f]{10}|[0-9a-f]{16})\b", re.IGNORECASE)
 # Each shape targets advice *aimed at a reader*. Past-tense description of what the
 # record shows ("PEEP was increased at t=40", "TV was reduced") must stay legal, so the
 # verbs are anchored to imperative/gerund/modal framing rather than matched bare.
@@ -172,37 +176,72 @@ _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
 _CLAUSE_BREAK = re.compile(r"[;,]|\b(?:and|but|while|whereas)\b", re.IGNORECASE)
 
 
-def _named_pid(clause: str, pids: list[str]) -> str | None:
-    low = clause.lower()
-    return next((p for p in pids if p.lower() in low), None)
+# Words that may stand beside PIDs in a shared subject: "Both A and B were…".
+_SUBJECT_WORDS = frozenset({"both", "all", "the", "case", "cases", "pid", "pids", "patient", "patients"})
 
 
-def _text_by_case(text: str, pids: list[str]) -> dict[str, str]:
+class _Attribution(NamedTuple):
+    """The answer split by the cited cases each part describes."""
+
+    # Every clause about the case, including a clause naming it alongside others.
+    by_case: dict[str, str]
+    # Text naming no cited case; its facts must match at least one of them.
+    unattributed: str
+
+
+def _clause_owners(clauses: list[str], pids: list[str]) -> list[frozenset[str]]:
+    """
+    The cited PIDs each clause names. A clause that is only a subject ("Both A", "B,")
+    lends its PIDs to the next clause, so "A and B were 55" names both cases.
+    """
+    owners: list[frozenset[str]] = []
+    subject: frozenset[str] = frozenset()
+    for clause in clauses:
+        rest = clause.lower()
+        named = frozenset(p for p in pids if p.lower() in rest)
+        for pid in named:
+            rest = rest.replace(pid.lower(), " ")
+        words = re.findall(r"[a-z]+|\d", rest)
+        if named and _SUBJECT_WORDS.issuperset(words):
+            subject |= named
+            owners.append(subject)
+        elif words:
+            owners.append(subject | named if named else frozenset())
+            subject = frozenset()
+        else:
+            owners.append(frozenset())
+    return owners
+
+
+def _attribute(text: str, pids: list[str]) -> _Attribution:
     """
     Each case's share of the answer, so a fact is checked against its own case.
 
     A single case owns the whole answer. With several, a clause belongs to the cited
-    PID it names, else to the nearest one named in its sentence, else to the last one
-    named before it. Text before any PID is named belongs to no case.
+    PIDs it names, else to the nearest clause naming one in its sentence, else to the
+    last ones named before it. Text before any PID is named is unattributed.
     """
     if len(pids) == 1:
-        return {pids[0]: text}
+        return _Attribution({pids[0]: text}, "")
     owned: dict[str, list[str]] = {p: [] for p in pids}
-    last: str | None = None
+    loose: list[str] = []
+    last: frozenset[str] = frozenset()
     for sentence in _SENTENCE_BREAK.split(text or ""):
         clauses = _CLAUSE_BREAK.split(sentence)
-        named = [_named_pid(c, pids) for c in clauses]
+        named = _clause_owners(clauses, pids)
         for i, clause in enumerate(clauses):
-            owner = (
+            owners = (
                 named[i]
-                or next((n for n in reversed(named[:i]) if n), None)
-                or next((n for n in named[i + 1 :] if n), None)
+                or next((n for n in reversed(named[:i]) if n), frozenset())
+                or next((n for n in named[i + 1 :] if n), frozenset())
                 or last
             )
-            if owner:
-                owned[owner].append(clause)
+            for pid in owners:
+                owned[pid].append(clause)
+            if not owners:
+                loose.append(clause)
         last = next((n for n in reversed(named) if n), last)
-    return {p: "\n".join(parts) for p, parts in owned.items()}
+    return _Attribution({p: "\n".join(parts) for p, parts in owned.items()}, "\n".join(loose))
 
 
 def _claimed_ages(text: str) -> set[int]:
@@ -229,15 +268,18 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
     The observed failure was an answer claiming "Age: 55 (aligned)" for a case that is
     60 — restating the user's description as though it were the record. Requiring the
     real value to appear catches that without guessing at sentence meaning. A case
-    without a recorded age is never checked, so no age is ever supplied for it.
+    without a recorded age is never checked, so no age is ever supplied for it. An age
+    in text naming no cited case must be the age of one of them.
     """
     problems: list[str] = []
     cases = gate_cases(session)
-    owned = _text_by_case(text, [c.pid for c in cases])
+    if not cases:
+        return []
+    parts = _attribute(text, [c.pid for c in cases])
     for case in cases:
         if case.age is None:
             continue
-        claimed = _claimed_ages(owned[case.pid])
+        claimed = _claimed_ages(parts.by_case[case.pid])
         if not claimed:
             if case.age_required:
                 problems.append(
@@ -247,9 +289,20 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
         elif case.age not in claimed:
             wrong = ", ".join(str(c) for c in sorted(claimed))
             problems.append(
-                f"the answer describes the matched case as age {wrong}, but {case.pid} is "
+                f"the answer describes {case.pid} as age {wrong}, but {case.pid} is "
                 f"age {case.age} — state the real age and note the difference from the "
                 f"described patient"
+            )
+    ages = {c.age for c in cases}
+    # A case without a recorded age could be any age, so loose ages are then unchecked.
+    if None not in ages:
+        known = sorted(a for a in ages if a is not None)
+        stray = sorted(_claimed_ages(parts.unattributed) - set(known))
+        if stray:
+            problems.append(
+                f"the answer states age {', '.join(map(str, stray))} without naming a "
+                f"case, but the cited cases are age {', '.join(map(str, known))} — "
+                f"attach each age to the case it belongs to"
             )
     return problems
 
@@ -258,13 +311,9 @@ def _unknown_pids(text: str, known: set[str]) -> list[str]:
     """PID-like tokens in the answer that match none of ``known``."""
     if not known:
         return []
-    known_l = [p.lower() for p in known]
-    claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
-    return sorted(
-        c
-        for c in claimed
-        if not any(p == c or p.startswith(c) or c in p for p in known_l)
-    )
+    known_l = {p.lower() for p in known}
+    claimed = {m.group(1) for m in _PID_TOKEN.finditer(text)}
+    return sorted((c for c in claimed if c.lower() not in known_l), key=str.lower)
 
 ProgressCb = Callable[[str], None]
 
@@ -351,13 +400,12 @@ def _heuristic_prefetch(
         tool_verify_selection,
     )
 
-    pids = set(session.cases["PID"].astype(str))
+    pids = {p.lower(): p for p in session.cases["PID"].astype(str)}
     for m in _PID_TOKEN.finditer(q):
-        cand = m.group(1)
-        matches = [p for p in pids if p == cand or p.startswith(cand) or cand in p]
-        if len(matches) == 1:
-            out = tool_summarize_management(session, pid=matches[0])
-            traces.append(f"[auto] summarize_management pid={matches[0]}\n{out[:1200]}")
+        pid = pids.get(m.group(1).lower())
+        if pid:
+            out = tool_summarize_management(session, pid=pid)
+            traces.append(f"[auto] summarize_management pid={pid}\n{out[:1200]}")
             traces.append(f"[auto] verify_selection\n{tool_verify_selection(session)[:600]}")
             return traces
 
@@ -442,6 +490,12 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
             "\n\n**Verification note:** reported doses disagree with the medication "
             "record — " + "; ".join(dose_problems[:3]) + "."
         )
+    if session.medications_unreadable:
+        notes.append(f"dose_check_skipped:{session.medications_unreadable}")
+        text += (
+            "\n\n**Verification note:** doses were not checked — the medication record "
+            "could not be read."
+        )
 
     if VERIFICATION_FOOTER.strip() not in text:
         text = text.rstrip() + VERIFICATION_FOOTER
@@ -475,13 +529,18 @@ def find_medication_mismatches(
     if not (text or "").strip():
         return []
     cases = gate_cases(session)
-    owned = _text_by_case(text, [c.pid for c in cases])
+    if not cases:
+        return []
+    parts = _attribute(text, [c.pid for c in cases])
+    records = {
+        c.pid: _read_medications(c.pid) if c.medications is None else c.medications
+        for c in cases
+    }
     problems: list[str] = []
-    for case in cases:
-        med = case.medications
-        if med is None:
-            med = _read_medications(case.pid)
-        problems += _dose_problems(owned[case.pid], med)
+    for pid, med in records.items():
+        problems += _dose_problems(parts.by_case[pid], med)
+    if parts.unattributed.strip():
+        problems += _dose_problems(parts.unattributed, pd.concat(records.values()))
     return problems[:limit]
 
 
@@ -723,7 +782,10 @@ def run_agent(
         messages.append(
             {
                 "role": "user",
-                "content": REWRITE_INSTRUCTION.format(problems="\n".join(problems)),
+                "content": REWRITE_INSTRUCTION.format(
+                    problems="\n".join(problems),
+                    **(REWRITE_RESEARCH if session.cited_pids else REWRITE_ASK),
+                ),
             }
         )
         try:

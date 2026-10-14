@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 
 import pandas as pd
 
+from src.guardrails.exceptions import PipelineError
 from src.llm.agent import AgentResult, ProgressCb, run_agent
 from src.llm.case_context import load_medications
 from src.llm.ollama_client import OllamaClient
@@ -51,10 +52,11 @@ def format_grounded_extracts(
 def _research_session(cited: Sequence[SearchCandidate]) -> SessionState:
     """A session holding only the cited cases, so the answer gate checks exactly them."""
     pids = [candidate.pid for candidate in cited]
+    unreadable = None
     try:
         medications = load_medications(pids)
-    except Exception:
-        medications = pd.DataFrame()
+    except (PipelineError, OSError) as exc:
+        medications, unreadable = pd.DataFrame(), str(exc)
     return SessionState(
         cases=pd.DataFrame(
             {
@@ -66,6 +68,7 @@ def _research_session(cited: Sequence[SearchCandidate]) -> SessionState:
         ),
         cited_pids=pids,
         medications=medications,
+        medications_unreadable=unreadable,
     )
 
 

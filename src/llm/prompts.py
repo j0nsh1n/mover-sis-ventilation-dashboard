@@ -163,12 +163,23 @@ Problems found:
 Rewrite the SAME content so that:
 - every management sentence describes what the record shows, in the past tense
 - no sentence tells a reader to do, consider, ensure, adjust, monitor or optimise anything
-- the matched case's ACTUAL age/sex/procedure are stated, with any difference from the
+- {case_facts}, with any difference from the
   described patient called out explicitly
-- all numbers come from tool results already returned
+- all numbers come from {sources}
 
 Output only the rewritten answer.
 """.strip()
+
+# Ask checks one matched case it must describe; Research checks the cited cases from
+# source extracts, without tools, and only forbids misstating them.
+REWRITE_ASK = {
+    "case_facts": "the matched case's ACTUAL age/sex/procedure are stated",
+    "sources": "tool results already returned",
+}
+REWRITE_RESEARCH = {
+    "case_facts": "any age/sex/procedure given for a cited case is that case's ACTUAL one",
+    "sources": "the source extracts above",
+}
 
 
 SYSTEM_PROMPT = build_system_prompt(mode=MODE_ANALYZE)

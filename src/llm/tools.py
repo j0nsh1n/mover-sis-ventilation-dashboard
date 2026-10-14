@@ -36,6 +36,8 @@ class SessionState:
     # active_pid) against ``medications``. None there means read the EMR per case.
     cited_pids: list[str] = field(default_factory=list)
     medications: pd.DataFrame | None = None
+    # Why ``medications`` could not be read; the answer then says doses went unchecked.
+    medications_unreadable: str | None = None
 
     def has_corpus_scan(self) -> bool:
         return self.corpus is not None and not self.corpus.empty

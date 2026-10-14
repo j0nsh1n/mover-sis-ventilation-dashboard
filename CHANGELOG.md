@@ -69,7 +69,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   40" or "Monitor alarms were not recorded".
 - The Research answer check now verifies ages, doses and case IDs of the cited
   cases. A misstated age or dose, or a PID outside the cited set, sends the draft
-  back for one rewrite.
+  back for one rewrite. A sentence naming several cases is checked against each of
+  them, and an age or dose that names no case must match one of the cited cases.
+  When the medication record cannot be read, the answer says doses were not checked.
+- Only 16-character hex IDs and synthetic `SYN` IDs count as PIDs in answers, so
+  synthetic PIDs are checked and long numbers such as sample counts are no longer
+  reported as unknown PIDs. A PID typed in a question must now be complete to open
+  that case.
 - `rr_low` critical (RR 4 or below) fired only at exactly RR 4 because the RR keep
   range blanked every rate under 4. The range is now 1 to 40, so critical fires across
   RR 1-4 while tidal volume is delivered. RR 0 is still treated as no rate recorded.

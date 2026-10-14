@@ -214,17 +214,30 @@ def test_dose_absent_from_the_cited_case_medications_is_rewritten(synthetic_emr_
     assert "250 mcg" not in result.answer
 
 
-def test_pid_outside_the_cited_set_is_rewritten():
-    cited = replace(_candidate(), pid="aabb0011")
+@pytest.mark.parametrize(
+    ("cited_pid", "uncited_pid"),
+    [("SYN0a1b2c3d4e", "SYN99ffee8877"), ("0123456789abcdef", "deadbeef99887766")],
+    ids=["synthetic", "real_shape"],
+)
+def test_pid_outside_the_cited_set_is_rewritten(cited_pid, uncited_pid):
+    cited = replace(_candidate(), pid=cited_pid)
     client = DraftClient(
-        "aabb0011 had a PIP median of 22, like deadbeef99.",
-        "aabb0011 had a PIP median of 22.",
+        f"{cited_pid} had a PIP median of 22, like {uncited_pid}.",
+        f"{cited_pid} had a PIP median of 22.",
     )
     result = _answer(client, cited)
     assert len(client.sent) == 2
-    assert "deadbeef99" in client.rewrite_request()
-    assert "deadbeef99" not in result.answer
-    assert "aabb0011" in result.answer
+    assert uncited_pid in client.rewrite_request()
+    assert uncited_pid not in result.answer
+    assert cited_pid in result.answer
+    assert "Verification note" not in result.answer
+
+
+def test_a_case_number_is_not_mistaken_for_an_uncited_pid():
+    client = DraftClient("SYN0a1b2c3d4e had 12345678 ventilator samples.")
+    result = _answer(client, replace(_candidate(), pid="SYN0a1b2c3d4e"))
+    assert len(client.sent) == 1
+    assert "Verification note" not in result.answer
 
 
 def test_correct_draft_makes_exactly_one_chat_call(synthetic_emr_dir):
@@ -288,3 +301,73 @@ def test_ask_selection_never_enters_the_research_answer(synthetic_emr_dir):
     assert len(client.sent) == 1, "caseB's medications must not gate a caseA answer"
     assert result.active_pid is None
     assert result.focus_pids == []
+
+
+_TWO_CASES = (
+    replace(_candidate(), pid="caseA", age=40.0),
+    replace(_candidate(), pid="caseC", age=60.0),
+)
+
+
+@pytest.mark.parametrize(
+    ("draft", "named"),
+    [
+        ("caseA is a 40-year-old. caseC is a 65-year-old.", "caseC is age 60"),
+        ("caseA had a PIP of 22. You should increase PEEP.", "You should"),
+        ("caseA had a PIP of 22, like SYN99ffee8877.", "SYN99ffee8877"),
+        ("caseA received fentanyl 250 mcg.", "fentanyl 250 mcg"),
+    ],
+    ids=["age", "directive", "uncited_pid", "dose"],
+)
+def test_a_draft_still_flagged_after_the_rewrite_ships_with_a_note(
+    synthetic_emr_dir, draft, named
+):
+    _write_medications(
+        synthetic_emr_dir,
+        [{"PID": "caseA", "Drug_name": "Fentanyl", "Dose": "100", "Drug_units": "mcg"}],
+    )
+    client = DraftClient(draft, draft)
+    result = _answer(client, *_TWO_CASES)
+    assert len(client.sent) == 2
+    assert "rewrite:still_flagged" in result.tool_trace
+    notes = result.answer.split("**Verification note:**")[1:]
+    assert any(named in note for note in notes), result.answer
+
+
+def test_unreadable_medication_record_still_answers_with_a_note(synthetic_emr_dir):
+    (synthetic_emr_dir / "patient_medication.csv").write_text(
+        'PID,Drug_name,Dose,Drug_units\ncaseA,"Fentanyl,100,mcg\n', encoding="utf-8"
+    )
+    client = DraftClient("caseA, a 55-year-old man, received fentanyl 250 mcg.")
+    result = _answer(client, _candidate())
+    assert len(client.sent) == 1
+    assert "fentanyl 250 mcg" in result.answer
+    notes = result.answer.split("**Verification note:**")[1:]
+    assert len(notes) == 1 and "doses were not checked" in notes[0]
+
+
+def test_a_bug_reading_medications_is_not_hidden(monkeypatch):
+    import src.llm.retrieve as retrieve
+
+    def broken(_pids):
+        raise TypeError("bug, not a missing file")
+
+    monkeypatch.setattr(retrieve, "load_medications", broken)
+    with pytest.raises(TypeError):
+        _answer(DraftClient("caseA had a PIP median of 22."), _candidate())
+
+
+def test_rewrite_request_names_the_research_sources_and_keeps_ask_wording():
+    research = DraftClient("caseA is a 65-year-old.", "caseA is a 55-year-old.")
+    _answer(research, _candidate())
+    request = research.rewrite_request()
+    assert "tool results" not in request and "matched case" not in request
+    assert "source extracts" in request
+
+    ask = _session()
+    ask.active_pid = "caseA"
+    client = DraftClient("caseA is a 65-year-old.", "caseA is a 55-year-old.")
+    run_agent(model="fake", question="q", session=ask, client=client, skip_prefetch=True)
+    request = client.rewrite_request()
+    assert "the matched case's ACTUAL age/sex/procedure are stated" in request
+    assert "all numbers come from tool results already returned" in request
