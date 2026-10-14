@@ -60,7 +60,9 @@ def test_research_roundtrip_keeps_the_question(tmp_path):
     assert by_step["case"]["view"] == "detail"
     assert by_step["return"]["view"] == "canvas"
     assert by_step["return"]["question_kept"] is True
-    assert by_step["ask"]["answer"] != ""
+    assert by_step["ask"]["candidates"] > 0
+    assert "highest sampled PIP" in by_step["ask"]["answer"]
+    assert "failed" not in by_step["ask"]["research_status"].lower()
     for step in ("ask", "case", "return"):
         png = out / f"{step}.png"
         assert png.stat().st_size > 0
@@ -81,3 +83,18 @@ def test_invalid_emr_exits_nonzero_with_reason(tmp_path):
     assert "invalid EMR" in proc.stderr
     assert "patient_information.csv" in proc.stderr
     assert not (out / "ask.png").exists()
+
+
+def test_refuses_an_out_folder_it_did_not_write(tmp_path):
+    emr = tmp_path / "EMR"
+    write_synthetic_emr(["--out", str(emr), "--n-cases", "10", "--seed", "3"])
+    out = tmp_path / "someone-elses"
+    (out / "state").mkdir(parents=True)
+    keep = out / "state" / "keep.txt"
+    keep.write_text("not the driver's")
+
+    proc = _drive("--emr", str(emr), "--out", str(out), "--scenario", "research-roundtrip")
+
+    assert proc.returncode == 2
+    assert "not written by this driver" in proc.stderr
+    assert keep.read_text() == "not the driver's"

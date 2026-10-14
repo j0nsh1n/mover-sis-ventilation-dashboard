@@ -44,6 +44,7 @@ DEFAULT_DRAFTS = (
 FRAME_INTERVAL_S = 0.2
 FRAME_RATE = 5
 STEP_TIMEOUT_S = 90.0
+OUT_MARKER = ".desktop_drive"
 
 
 class InputError(Exception):
@@ -89,6 +90,8 @@ class Run:
 class Step:
     name: str
     act: Callable[[Run], dict[str, Any]]
+    # A warning or critical dialog fails the step unless the step expects one.
+    expects_alert: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,11 @@ def ask(run: Run) -> dict[str, Any]:
     research.ask_button.click()
     run.wait(lambda: _research_idle(run.win), "the research answer and first case")
     result = research.result
+    status = research.status_label.text()
+    if "failed" in status.lower():
+        raise RuntimeError(status)
+    if result is None or not result.candidates:
+        raise RuntimeError(f"research returned no candidates: {status}")
     return {
         "question": research.question_edit.text(),
         "candidates": len(result.candidates) if result is not None else 0,
@@ -393,11 +401,15 @@ def drive(args: argparse.Namespace) -> int:
     llm = args.llm or scenario.llm_modes[0]
     if llm not in scenario.llm_modes:
         raise InputError(f"scenario {args.scenario} runs only with --llm {'/'.join(scenario.llm_modes)}")
-    drafts = load_drafts(args.drafts)
+    drafts = load_drafts(args.drafts) if llm == "scripted" else ()
 
     emr = args.emr.expanduser().resolve()
     out = args.out.expanduser().resolve()
+    marker = out / OUT_MARKER
+    if out.exists() and any(out.iterdir()) and not marker.exists():
+        raise InputError(f"--out {out} is not empty and was not written by this driver")
     out.mkdir(parents=True, exist_ok=True)
+    marker.touch()
     state = out / "state"
     shutil.rmtree(state, ignore_errors=True)
     isolate_environment(emr, state)
@@ -436,6 +448,9 @@ def drive(args: argparse.Namespace) -> int:
             event: dict[str, Any] = {"step": step.name}
             try:
                 facts = step.act(run)
+                alerts = [d for d in run.dialogs[dialogs_before:] if d["kind"] in ("warning", "critical")]
+                if alerts and not step.expects_alert:
+                    raise RuntimeError(f"unexpected {alerts[0]['kind']} dialog: {alerts[0]['text']}")
                 event.update(ok=True, **facts)
             except Exception as exc:
                 failed = True
