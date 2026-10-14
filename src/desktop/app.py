@@ -142,6 +142,7 @@ class CorpusScanWorker(QThread):
     progress = Signal(str)
     finished_ok = Signal(object)
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(
         self,
@@ -158,9 +159,9 @@ class CorpusScanWorker(QThread):
         self.workers = workers  # None = automatic (CPU cores minus one)
 
     def run(self) -> None:
-        try:
-            from src.pipeline.corpus_scan import scan_corpus
+        from src.pipeline.corpus_scan import ScanCancelled, scan_corpus
 
+        try:
             result = scan_corpus(
                 self.emr,
                 self.processed,
@@ -170,6 +171,8 @@ class CorpusScanWorker(QThread):
                 should_stop=self.isInterruptionRequested,
             )
             self.finished_ok.emit(result)
+        except ScanCancelled:
+            self.cancelled.emit()
         except Exception as e:
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
@@ -319,6 +322,10 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._research_worker: ResearchWorker | None = None
         self._case_worker: CaseFetchWorker | None = None
+        self._research_request_id = 0
+        self._active_research_request: int | None = None
+        self._research_workers: dict[int, ResearchWorker] = {}
+        self._case_request_id = 0
         self._research_engine = None
         self._pending_case: tuple[str, bool, bool] | None = None
         self._queued_case: tuple[str, bool, bool] | None = None
@@ -338,6 +345,11 @@ class MainWindow(QMainWindow):
         self._update_button.clicked.connect(self._restart_for_update)
         self._update_button.hide()
         self.statusBar().addPermanentWidget(self._update_button)
+        self._scan_cancel_button = QPushButton("Cancel scan", self)
+        self._scan_cancel_button.setStyleSheet("QPushButton:focus { border: 2px solid #8c739f; }")
+        self._scan_cancel_button.clicked.connect(self._cancel_corpus_scan)
+        self._scan_cancel_button.hide()
+        self.statusBar().addPermanentWidget(self._scan_cancel_button)
 
         QTimer.singleShot(0, self._startup)
 
@@ -600,6 +612,7 @@ class MainWindow(QMainWindow):
         self.research = ResearchWorkspace()
         self._research_start_button = self.research.start_button
         self.research.question_submitted.connect(self._start_research_search)
+        self.research.cancel_requested.connect(self._cancel_research)
         self.research.case_requested.connect(self._load_research_case)
         self.research.setup_requested.connect(self._open_setup_wizard)
         self.research.model_start_requested.connect(self._ollama_start)
@@ -812,6 +825,8 @@ class MainWindow(QMainWindow):
             self.metric_flags.setText("—")
             self.metric_score.setText("—")
             self.research.set_status("No analyzed case cache. Indexed surgery search is available after setup.")
+            if not needs_first_run_setup():
+                self._on_load_fail("Missing processed files: cases.parquet")
             return
         if self._worker and self._worker.isRunning():
             return
@@ -824,8 +839,14 @@ class MainWindow(QMainWindow):
     def _on_load_fail(self, msg: str) -> None:
         self._update_status_paths("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
-        if "Missing processed files" not in msg:
-            QMessageBox.warning(self, "Load error", msg[:2000])
+        self._warn("Load error", f"Processed data: {processed_dir()}\n\n{msg[:2000]}")
+
+    def _warn(self, title: str, text: str) -> None:
+        # Not modal: this can fire during startup, where a modal box would hold the
+        # window back until the user dismissed it.
+        box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -837,7 +858,7 @@ class MainWindow(QMainWindow):
         self._updates.close()
         running = [w for w in (
             self._worker, getattr(self, "_llm_worker", None), self._research_worker,
-            self._case_worker, self._ollama_worker,
+            self._case_worker, self._ollama_worker, *self._research_workers.values(),
         ) if w is not None and w.isRunning()]
         if running:
             self._closing = True
@@ -1039,20 +1060,39 @@ class MainWindow(QMainWindow):
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
         worker.finished_ok.connect(self._on_corpus_scan_ok)
         worker.failed.connect(self._on_corpus_scan_fail)
+        worker.cancelled.connect(self._on_corpus_scan_cancelled)
+        worker.finished.connect(self._scan_cancel_button.hide)
+        self._scan_cancel_button.setEnabled(True)
+        self._scan_cancel_button.show()
         self._worker = worker
         worker.start()
+
+    def _cancel_corpus_scan(self) -> None:
+        if isinstance(self._worker, CorpusScanWorker) and self._worker.isRunning():
+            self._worker.requestInterruption()
+            self._scan_cancel_button.setEnabled(False)
+            self.statusBar().showMessage("Cancelling full-EMR scan…")
 
     def _on_corpus_scan_ok(self, result) -> None:
         self.corpus_scan = result
         meta = result.meta
-        self._update_status_paths(
+        failures = meta.get("failed_shards", [])
+        failed_count = sum(shard.get("n_pids", 0) for shard in failures)
+        message = (
             f"Full-EMR scan: {meta.get('n_scanned_cases')} of "
-            f"{meta.get('n_ventilated_surgeries')} ventilated surgeries scored"
+            f"{meta.get('n_ventilated_surgeries')} surgeries scored"
         )
+        if failed_count:
+            message += f"; {failed_count} could not be scored (see details)"
+        self.statusBar().setToolTip(str(failures[0].get("error", ""))[:300] if failures else "")
+        self._update_status_paths(message)
         self._refresh_tables_and_selectors()
 
+    def _on_corpus_scan_cancelled(self) -> None:
+        self._update_status_paths("Full-EMR scan cancelled; the previous scan was kept.")
+
     def _on_corpus_scan_fail(self, msg: str) -> None:
-        self._update_status_paths("Full-EMR scan failed")
+        self._update_status_paths(msg.splitlines()[0])
         QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
 
     def _load_corpus_scan(self) -> None:
@@ -1061,8 +1101,15 @@ class MainWindow(QMainWindow):
 
         try:
             self.corpus_scan = load_corpus_scan(processed_dir())
-        except Exception:
+        except Exception as exc:
             self.corpus_scan = None
+            root = processed_dir()
+            self._warn(
+                "Saved full-EMR scan could not load",
+                f"Could not read saved scan files in {root}:\n"
+                f"{root / 'corpus_cases.parquet'}\n{root / 'corpus_episodes.parquet'}\n"
+                f"{root / 'corpus_meta.json'}\n\n{exc}",
+            )
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
@@ -1493,14 +1540,13 @@ class MainWindow(QMainWindow):
         from src.llm.ollama_client import OllamaEmbedder
         from src.services.retrieval import RetrievalEngine
 
-        if self._research_worker is not None and self._research_worker.isRunning():
-            return
         try:
             source = validate_emr_dir(emr_dir())
         except Exception as exc:
             self.research.set_status(f"EMR setup required: {exc}")
             return
-        if self._research_engine is None or self._research_engine.emr != source:
+        if (self._research_engine is None or self._research_engine.emr != source
+                or any(worker.isRunning() for worker in self._research_workers.values())):
             embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
             self._research_engine = RetrievalEngine(
                 emr=source,
@@ -1508,8 +1554,12 @@ class MainWindow(QMainWindow):
                 embedder=OllamaEmbedder(embed_model),
                 analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
             )
-        self.research.set_searching(True)
-        self.research.set_answer("")
+        if self._research_worker is not None and self._research_worker.isRunning():
+            self._research_worker.requestInterruption()
+        self._research_request_id += 1
+        request_id = self._research_request_id
+        self._active_research_request = request_id
+        self.research.begin_question(question)
         self.research.set_status("Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             self._research_engine,
@@ -1518,14 +1568,31 @@ class MainWindow(QMainWindow):
             self._make_session_snapshot(),
             parent=self,
         )
-        self._research_worker.progress.connect(lambda progress: self.research.set_status(progress.message))
-        self._research_worker.shortlist.connect(self._on_research_shortlist)
-        self._research_worker.answer.connect(self._on_research_answer)
-        self._research_worker.failed.connect(self._on_research_fail)
-        self._research_worker.finished.connect(self._on_research_done)
+        self._research_workers[request_id] = self._research_worker
+        self._research_worker.progress.connect(
+            lambda progress: self.research.set_status(progress.message)
+            if request_id == self._active_research_request else None
+        )
+        self._research_worker.shortlist.connect(lambda result: self._on_research_shortlist(result, request_id))
+        self._research_worker.answer.connect(lambda response: self._on_research_answer(response, request_id))
+        self._research_worker.failed.connect(lambda message: self._on_research_fail(message, request_id))
+        self._research_worker.finished.connect(lambda: self._on_research_done(request_id))
         self._research_worker.start()
 
-    def _on_research_shortlist(self, result) -> None:
+    def _cancel_research(self) -> None:
+        self._active_research_request = None
+        self._case_request_id += 1
+        if self._research_worker is not None and self._research_worker.isRunning():
+            self._research_worker.requestInterruption()
+        if self._case_worker is not None and self._case_worker.isRunning():
+            self._case_worker.requestInterruption()
+        self._pending_case = None
+        self._queued_case = None
+        self.research.cancel_question()
+
+    def _on_research_shortlist(self, result, request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_research_request:
+            return
         self.research.set_results(result)
         if not result.candidates:
             self.research.set_answer("No matching indexed surgery records were found for this question.")
@@ -1535,15 +1602,21 @@ class MainWindow(QMainWindow):
         if preferred:
             self._load_research_case(preferred, False, False)
 
-    def _on_research_answer(self, response) -> None:
+    def _on_research_answer(self, response, request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_research_request:
+            return
         self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."))
 
-    def _on_research_fail(self, message: str) -> None:
+    def _on_research_fail(self, message: str, request_id: int | None = None) -> None:
+        if request_id is not None and request_id != self._active_research_request:
+            return
         self.research.set_status(f"Research request failed: {message}")
-        self.research.set_answer("The local model could not complete this answer. Retrieved cases remain available for manual inspection.")
+        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.")
 
-    def _on_research_done(self) -> None:
-        self.research.set_searching(False)
+    def _on_research_done(self, request_id: int) -> None:
+        self._research_workers.pop(request_id, None)
+        if request_id == self._active_research_request:
+            self.research.set_searching(False)
 
     def _load_research_case(self, pid: str, comparison: bool, open_detail: bool) -> None:
         if self._case_worker is not None and self._case_worker.isRunning():
@@ -1564,11 +1637,17 @@ class MainWindow(QMainWindow):
                 if not ts.empty:
                     self._on_research_case_data(ts, flags)
                     return
+        self._case_request_id += 1
+        request_id = self._case_request_id
         self.research.set_status(f"Loading this case: {pid}…")
         self._case_worker = CaseFetchWorker(pid, emr_dir(), parent=self)
-        self._case_worker.loaded.connect(self._on_research_case_loaded)
+        self._case_worker.loaded.connect(
+            lambda fetched: self._on_research_case_loaded(fetched)
+            if request_id == self._case_request_id else None
+        )
         self._case_worker.failed.connect(
             lambda message: self.research.show_case_unavailable(pid, message, comparison=comparison)
+            if request_id == self._case_request_id else None
         )
         self._case_worker.finished.connect(self._on_research_case_fetch_done)
         self._case_worker.start()

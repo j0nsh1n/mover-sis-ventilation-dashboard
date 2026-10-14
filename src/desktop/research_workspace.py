@@ -38,6 +38,18 @@ class CaseView:
     flags: pd.DataFrame
 
 
+@dataclass
+class QuestionState:
+    result: RetrievalResult | None
+    question: str
+    answer: str
+    selected_pid: str | None
+    primary_pid: str | None
+    comparison_pid: str | None
+    case_views: dict[str, CaseView]
+    labels: tuple[str, ...]
+
+
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
     card = QFrame()
     card.setFrameShape(QFrame.Shape.StyledPanel)
@@ -74,6 +86,7 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
 
 class ResearchWorkspace(QWidget):
     question_submitted = Signal(str)
+    cancel_requested = Signal()
     case_requested = Signal(str, bool, bool)
     setup_requested = Signal()
     model_start_requested = Signal()
@@ -84,6 +97,8 @@ class ResearchWorkspace(QWidget):
         super().__init__(parent)
         self.result: RetrievalResult | None = None
         self._question = ""
+        self._before_question: QuestionState | None = None
+        self._searching = False
         self._selected_pid: str | None = None
         self._primary_pid: str | None = None
         self._comparison_pid: str | None = None
@@ -119,6 +134,7 @@ class ResearchWorkspace(QWidget):
                 border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
             QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
                 border: 1px solid #8c739f; border-radius: 5px; }
+            QFrame#questionNode QPushButton#secondaryBtn:focus { border: 2px solid #fff9f4; }
             QFrame#findingNode { background: #f2e3d3; border-color: #ddc6af; }
             QFrame#sourceNode { background: #fffefa; }
             QFrame#comparisonNode { background: #e3e9e1; border-color: #b5c3b1; }
@@ -175,6 +191,7 @@ class ResearchWorkspace(QWidget):
         header_copy.addWidget(kicker)
         title = QLabel("An answer you can take apart.")
         title.setObjectName("evidenceTitle")
+        title.setWordWrap(True)
         header_copy.addWidget(title)
         header_layout.addLayout(header_copy, 1)
         self.add_comparison_button = _button("+ Add a comparison")
@@ -194,7 +211,7 @@ class ResearchWorkspace(QWidget):
         meta = QHBoxLayout()
         meta.addWidget(QLabel("●  EVIDENCE CONNECTIONS"))
         meta.addStretch(1)
-        meta.addWidget(QLabel("Links show source relationships. They do not imply causation."))
+        meta.addWidget(_wrap("Links show source relationships. They do not imply causation."))
         map_layout.addLayout(meta)
 
         content = QGridLayout()
@@ -215,6 +232,11 @@ class ResearchWorkspace(QWidget):
         self.ask_button = _button("Trace the evidence with AI  ↗", primary=True)
         self.ask_button.clicked.connect(self._submit_question)
         question_layout.addWidget(self.ask_button)
+        self.cancel_button = _button("Cancel")
+        self.cancel_button.setAccessibleName("Cancel research request")
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        self.cancel_button.hide()
+        question_layout.addWidget(self.cancel_button)
         question_layout.addWidget(_wrap("The local model reads at most three retrieved source extracts."))
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
@@ -315,6 +337,9 @@ class ResearchWorkspace(QWidget):
         content.setColumnStretch(0, 10)
         content.setColumnStretch(1, 11)
         content.setColumnStretch(2, 10)
+        self._evidence_grid = content
+        self._evidence_cards = (question_card, finding_card, source_card, self.comparison_card, limit_card)
+        self._narrow = False
         map_layout.addLayout(content)
         layout.addWidget(map_wrap)
 
@@ -456,11 +481,72 @@ class ResearchWorkspace(QWidget):
     def set_searching(self, active: bool) -> None:
         self.ask_button.setEnabled(not active)
         self.question_edit.setEnabled(not active)
-        self.reset_button.setEnabled(not active)
+        self._searching = active
+        self.cancel_button.setVisible(active)
         self.add_comparison_button.setEnabled(not active)
         self.hint_button.setEnabled(not active)
         self.inspect_button.setEnabled(not active and self._selected_pid is not None)
         self.compare_button.setEnabled(not active and self._selected_pid is not None)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        narrow = self.width() < 1100
+        if narrow == self._narrow:
+            return
+        self._narrow = narrow
+        positions = (
+            ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1))
+            if narrow else
+            ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1))
+        )
+        for card in self._evidence_cards:
+            self._evidence_grid.removeWidget(card)
+        for card, position in zip(self._evidence_cards, positions, strict=True):
+            self._evidence_grid.addWidget(card, *position)
+        for column, stretch in enumerate((10, 10, 0) if narrow else (10, 11, 10)):
+            self._evidence_grid.setColumnStretch(column, stretch)
+
+    def _board_labels(self) -> tuple[QLabel, ...]:
+        return (self.status_label, self.scope_label, self.finding_title, self.finding_copy,
+                self.source_title, self.source_label, self.selection_label)
+
+    def begin_question(self, question: str) -> None:
+        self._before_question = QuestionState(
+            self.result, self._question, self.answer_text.toPlainText(), self._selected_pid,
+            self._primary_pid, self._comparison_pid, dict(self._case_views),
+            tuple(label.text() for label in self._board_labels()),
+        )
+        self._question = question
+        self.question_edit.setText(question)
+        self.set_answer("")
+        self.set_searching(True)
+
+    def cancel_question(self) -> None:
+        state = self._before_question
+        self._before_question = None
+        self._searching = False
+        self._reset_canvas()
+        if state is not None:
+            self._question = state.question
+            self.question_edit.setText(state.question)
+            if state.result is not None:
+                self.set_results(state.result)
+                for pid in (state.primary_pid, state.comparison_pid):
+                    if pid is not None and pid in state.case_views:
+                        view = state.case_views[pid]
+                        self.set_case_data(pid, view.timeseries, view.flags, comparison=pid == state.comparison_pid)
+                self._case_views = state.case_views
+                self._primary_pid = state.primary_pid
+                self._comparison_pid = state.comparison_pid
+                self._selected_pid = state.selected_pid
+                if state.selected_pid is not None:
+                    row = next((i for i, candidate in enumerate(state.result.candidates) if candidate.pid == state.selected_pid), None)
+                    if row is not None:
+                        self.candidate_table.setCurrentCell(row, 0)
+            self.set_answer(state.answer)
+            for label, text in zip(self._board_labels(), state.labels, strict=True):
+                label.setText(text)
+        self.set_searching(False)
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -468,10 +554,12 @@ class ResearchWorkspace(QWidget):
     def _submit_question(self) -> None:
         question = self.question_edit.text().strip()
         if question:
-            self._question = question
             self.question_submitted.emit(question)
 
     def _reset_canvas(self) -> None:
+        if self._searching:
+            self.cancel_requested.emit()
+        self._before_question = None
         self.question_edit.clear()
         self.question_edit.setFocus()
         self.result = None

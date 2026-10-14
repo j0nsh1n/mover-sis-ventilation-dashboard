@@ -227,6 +227,106 @@ def ollama_ready(run: Run) -> dict[str, Any]:
     return {"status": run.win.research.status_label.text()}
 
 
+def start_slow_search(run: Run) -> dict[str, Any]:
+    from types import SimpleNamespace
+    from src.services.retrieval import RetrievalEngine
+
+    def search(self: Any, question: str, on_progress: Any) -> Any:
+        while True:
+            on_progress(SimpleNamespace(message="Searching synthetic records…"))
+            time.sleep(0.01)
+
+    RetrievalEngine.search = search
+    run.win.resize(900, 860)
+    run.win.research.question_edit.setText("A question to cancel")
+    run.win.research.ask_button.click()
+    run.win.research.cancel_button.setFocus()
+    run.wait(lambda: "Searching synthetic" in run.win.research.status_label.text(), "slow search progress")
+    assert run.win.research.reset_button.isEnabled()
+    assert run.win.width() == 900
+    return {"cancel_visible": run.win.research.cancel_button.isVisible(), "width": run.win.width()}
+
+
+def cancel_search(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    research = run.win.research
+    QTest.keyClick(research.cancel_button, Qt.Key.Key_Space)
+    run.wait(lambda: _research_idle(run.win), "cooperative search cancellation")
+    assert research.question_edit.text() == run.question
+    assert research.result is not None
+    return {"restored_question": research.question_edit.text(), "answer": research.answer_text.toPlainText()}
+
+
+def research_failure(run: Run) -> dict[str, Any]:
+    from src.services.retrieval import RetrievalEngine
+
+    def search(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Synthetic model connection timed out; retry the question after starting the local model.")
+
+    RetrievalEngine.search = search
+    run.win.resize(900, 860)
+    research = run.win.research
+    research.question_edit.setText(run.question)
+    research.ask_button.click()
+    run.wait(lambda: not run.win._research_worker.isRunning(), "research failure")
+    run.win.statusBar().showMessage("Another status update")
+    assert "Synthetic model connection timed out" in research.answer_text.toPlainText()
+    assert run.win.width() == 900
+    return {"answer": research.answer_text.toPlainText(), "width": run.win.width()}
+
+
+def corrupt_scan(run: Run) -> dict[str, Any]:
+    from src.runtime_paths import processed_dir
+
+    root = processed_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    cases = root / "corpus_cases.parquet"
+    meta = root / "corpus_meta.json"
+    cases.write_bytes(b"not parquet")
+    meta.write_text("{}")
+    try:
+        run.win._load_corpus_scan()
+        assert run.win.corpus_scan is None
+        assert str(cases) in run.dialogs[-1]["text"]
+        return {"message": run.dialogs[-1]["text"]}
+    finally:
+        cases.unlink()
+        meta.unlink()
+
+
+def missing_data(run: Run) -> dict[str, Any]:
+    from src.runtime_paths import processed_dir
+
+    run.win._autoload_processed()
+    assert str(processed_dir()) in run.dialogs[-1]["text"]
+    return {"message": run.dialogs[-1]["text"]}
+
+
+def start_scan(run: Run) -> dict[str, Any]:
+    import pandas as pd
+    from src.runtime_paths import emr_dir
+
+    assert len(pd.read_csv(emr_dir() / "patient_information.csv")) == 300
+    run.win.resize(900, 860)
+    run.win._run_corpus_scan()
+    run.wait(lambda: "Scoring" in run.win.statusBar().currentMessage(), "scan scoring")
+    run.win._scan_cancel_button.setFocus()
+    return {"cancel_visible": run.win._scan_cancel_button.isVisible(), "status": run.win.statusBar().currentMessage()}
+
+
+def cancel_scan(run: Run) -> dict[str, Any]:
+    run.win._scan_cancel_button.click()
+    started = time.monotonic()
+    run.wait(lambda: not run.win._worker.isRunning(), "full-EMR scan cancellation", timeout_s=2)
+    elapsed = time.monotonic() - started
+    message = "Full-EMR scan cancelled; the previous scan was kept."
+    assert not any(dialog["kind"] == "critical" for dialog in run.dialogs)
+    assert message in run.win.statusBar().currentMessage()
+    return {"status": run.win.statusBar().currentMessage(), "cancel_ms": round(elapsed * 1000)}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -239,6 +339,9 @@ TAB_STEPS = tuple(
 )
 
 SCENARIOS: dict[str, Scenario] = {
+    "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
+    "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),
+    "research-failure": Scenario((Step("failure", research_failure), Step("corrupt-scan", corrupt_scan, expects_alert=True), Step("missing-data", missing_data, expects_alert=True)), llm_modes=("off",)),
     "ollama-start": Scenario((Step("starting", slow_ollama_start), Step("ready", ollama_ready)), llm_modes=("off",)),
     "research-roundtrip": Scenario(
         (Step("ask", ask), Step("case", open_case), Step("return", return_to_question))
@@ -364,6 +467,15 @@ def record_dialogs(run: Run) -> None:
         return 0
 
     QDialog.exec = exec_dialog
+
+    kinds = {QMessageBox.Icon.Warning: "warning", QMessageBox.Icon.Critical: "critical"}
+
+    def open_box(box: Any) -> None:
+        kind = kinds.get(box.icon(), "information")
+        run.dialogs.append({"kind": kind, "title": box.windowTitle(), "text": box.text()})
+        box.close()
+
+    QMessageBox.open = open_box
 
 
 def _scrub(value: Any, replacements: Sequence[tuple[str, str]]) -> Any:
