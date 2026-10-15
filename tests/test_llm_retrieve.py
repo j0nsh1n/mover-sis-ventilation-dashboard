@@ -89,6 +89,28 @@ def _candidate() -> SearchCandidate:
     )
 
 
+@pytest.mark.parametrize("preset", ["strict", "lenient"])
+def test_research_answer_session_uses_engine_preset(monkeypatch, tmp_path, preset):
+    from src.desktop.research_workers import ResearchWorker
+    from src.services.retrieval import RetrievalEngine, RetrievalResult
+
+    engine = RetrievalEngine(emr=tmp_path, cache_path=tmp_path / "cache.sqlite3", preset=preset)
+    candidate = _candidate()
+    monkeypatch.setattr(engine, "search", lambda *a, **k: RetrievalResult(candidates=(candidate,)))
+    monkeypatch.setattr(engine, "fetch_extracts", lambda *a, **k: (["source extract"], [candidate.pid]))
+    monkeypatch.setattr("src.llm.retrieve.load_medications", lambda pids: pd.DataFrame())
+    sessions = []
+    monkeypatch.setattr("src.llm.retrieve.run_agent", lambda **kwargs: sessions.append(kwargs["session"]))
+    worker = ResearchWorker(engine, "pressure patterns", "fake", SessionState(preset="default"))
+    failures = []
+    worker.failed.connect(failures.append)
+    worker.run()
+    assert not failures
+    assert len(sessions) == 1
+    assert sessions[0].preset == engine.preset
+    assert sessions[0].cited_pids == [candidate.pid]
+
+
 def _session() -> SessionState:
     cases = pd.DataFrame(
         [

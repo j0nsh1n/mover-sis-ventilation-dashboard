@@ -57,6 +57,7 @@ class ResearchWorker(QThread):
                 candidates=candidates,
                 extracts=extracts,
                 client=OllamaClient(timeout_s=300.0),
+                preset=self.engine.preset,
                 on_progress=progress,
             )
             self.answer.emit(response)
@@ -70,13 +71,14 @@ class CaseFetchWorker(QThread):
     loaded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, pid: str, emr: Path, parent=None):
+    def __init__(self, pid: str, emr: Path, preset: str = "default", parent=None):
         super().__init__(parent)
         self.pid = pid
         self.emr = emr
+        self.preset = preset
 
     def run(self) -> None:
         try:
-            self.loaded.emit(fetch_cases([self.pid], emr=self.emr))
+            self.loaded.emit(fetch_cases([self.pid], emr=self.emr, preset=self.preset))
         except Exception as exc:
             self.failed.emit(str(exc))

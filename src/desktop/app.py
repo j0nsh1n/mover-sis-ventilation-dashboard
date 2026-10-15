@@ -8,6 +8,7 @@ Launch:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import traceback
@@ -94,6 +95,8 @@ class DataLoadWorker(QThread):
         try:
             from src.services.data import load_processed
 
+            if self.processed is None:
+                self.processed = processed_dir()
             data = load_processed(self.processed, validate=False)
             self.finished_ok.emit(data)
         except Exception as e:
@@ -303,6 +306,10 @@ class MainWindow(QMainWindow):
 
         apply_persisted_settings()
         apply_ollama_env_from_settings()
+        self._active_preset = str(load_settings().get("preset") or "default")
+        self._preset_recorded = True
+        # Bumped whenever loaded data or its preset changes; late answers from before are dropped.
+        self._data_generation = 0
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
@@ -335,6 +342,7 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_ui()
+        self._refresh_rule_reference()
         self.setStatusBar(QStatusBar())
         self._update_status_paths("Ready")
         self._updates = UpdateController(self._version, self)
@@ -1005,6 +1013,10 @@ class MainWindow(QMainWindow):
             apply_theme(QApplication.instance(), theme)
             self._charts_pending = True
             QTimer.singleShot(0, self._refresh_charts_if_needed)
+        if self.cases is None:
+            preset = str(vals.get("preset") or load_settings().get("preset") or "default")
+            if self._set_loaded_preset(preset, recorded=True):
+                self.research.invalidate_case_data()
         self._sync_path_fields_from_runtime()
 
     def _set_theme_quick(self, mode: str) -> None:
@@ -1019,7 +1031,11 @@ class MainWindow(QMainWindow):
 
     def _run_pipeline_menu(self) -> None:
         """File-menu pipeline run (sidebar pipeline controls removed)."""
-        self._run_pipeline(n_cases=50, preset="default")
+        self._run_pipeline(n_cases=50, preset=self._next_run_preset())
+
+    def _next_run_preset(self) -> str:
+        preset = str(load_settings().get("preset") or "default")
+        return preset if preset in ALLOWED_PRESETS else "default"
 
     def _run_pipeline(self, n_cases: int = 50, preset: str = "default") -> None:
         if self._worker and self._worker.isRunning():
@@ -1056,7 +1072,7 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._update_status_paths("Scanning full EMR…")
-        worker = CorpusScanWorker(emr_dir(), processed_dir(), parent=self)
+        worker = CorpusScanWorker(emr_dir(), processed_dir(), preset=self._next_run_preset(), parent=self)
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
         worker.finished_ok.connect(self._on_corpus_scan_ok)
         worker.failed.connect(self._on_corpus_scan_fail)
@@ -1113,8 +1129,27 @@ class MainWindow(QMainWindow):
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
+        preset, recorded = "default", False
+        if isinstance(self._worker, PipelineWorker):
+            preset, recorded = self._worker.preset, True
+        elif isinstance(self._worker, DataLoadWorker):
+            try:
+                root = self._worker.processed if self._worker.processed is not None else processed_dir()
+                meta = json.loads((root / "run_meta.json").read_text())
+            except (OSError, ValueError):
+                meta = {}
+            recorded_preset = meta.get("preset") if isinstance(meta, dict) else None
+            if isinstance(recorded_preset, str) and recorded_preset in ALLOWED_PRESETS:
+                preset, recorded = recorded_preset, True
+        preset_changed = self._set_loaded_preset(preset, recorded)
         self._load_corpus_scan()
-        self._research_engine = None
+        self._data_changed()
+        if self.research.invalidate_case_data():
+            self.research.set_status(
+                f"Data was reloaded with preset {self._active_preset}. Reopen the case to refresh its flags."
+            )
+        elif preset_changed:
+            self.research.set_status(f"Data was reloaded with preset {self._active_preset}.")
         self._update_status_paths(
             f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
         )
@@ -1122,7 +1157,6 @@ class MainWindow(QMainWindow):
         self._refresh_tables_and_selectors()
         self._charts_pending = True
         QTimer.singleShot(0, self._refresh_charts_if_needed)
-        self._refresh_rule_reference()
 
     def _on_pipeline_fail(self, msg: str) -> None:
         self._update_status_paths("Pipeline failed")
@@ -1523,6 +1557,7 @@ class MainWindow(QMainWindow):
         from src.llm.tools import SessionState
 
         return SessionState(
+            preset=self._active_preset,
             cases=self.cases,
             timeseries=self.ts,
             flags=self.flags,
@@ -1552,6 +1587,7 @@ class MainWindow(QMainWindow):
                 emr=source,
                 cache_path=settings_path().parent / "case_embeddings.sqlite3",
                 embedder=OllamaEmbedder(embed_model),
+                preset=self._active_preset,
                 analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
             )
         if self._research_worker is not None and self._research_worker.isRunning():
@@ -1579,7 +1615,21 @@ class MainWindow(QMainWindow):
         self._research_worker.finished.connect(lambda: self._on_research_done(request_id))
         self._research_worker.start()
 
-    def _cancel_research(self) -> None:
+    def _set_loaded_preset(self, preset: str, recorded: bool) -> bool:
+        """Make ``preset`` the one every reader uses; True when it changed."""
+        changed = (preset, recorded) != (self._active_preset, self._preset_recorded)
+        self._active_preset, self._preset_recorded = preset, recorded
+        self._refresh_rule_reference()
+        if changed:
+            self._data_changed()
+        return changed
+
+    def _data_changed(self) -> None:
+        self._data_generation += 1
+        self._research_engine = None
+        self._invalidate_research_requests()
+
+    def _invalidate_research_requests(self) -> None:
         self._active_research_request = None
         self._case_request_id += 1
         if self._research_worker is not None and self._research_worker.isRunning():
@@ -1588,6 +1638,9 @@ class MainWindow(QMainWindow):
             self._case_worker.requestInterruption()
         self._pending_case = None
         self._queued_case = None
+
+    def _cancel_research(self) -> None:
+        self._invalidate_research_requests()
         self.research.cancel_question()
 
     def _on_research_shortlist(self, result, request_id: int | None = None) -> None:
@@ -1640,7 +1693,7 @@ class MainWindow(QMainWindow):
         self._case_request_id += 1
         request_id = self._case_request_id
         self.research.set_status(f"Loading this case: {pid}…")
-        self._case_worker = CaseFetchWorker(pid, emr_dir(), parent=self)
+        self._case_worker = CaseFetchWorker(pid, emr_dir(), preset=self._active_preset, parent=self)
         self._case_worker.loaded.connect(
             lambda fetched: self._on_research_case_loaded(fetched)
             if request_id == self._case_request_id else None
@@ -1789,6 +1842,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Co-pilot ({model}) working…")
 
         session = self._make_session_snapshot()
+        generation = self._data_generation
         self._llm_worker = LLMChatWorker(
             model=model,
             question=question,
@@ -1799,8 +1853,14 @@ class MainWindow(QMainWindow):
         self._llm_worker.status.connect(
             lambda m: self.statusBar().showMessage(m)
         )
-        self._llm_worker.finished_ok.connect(self._on_llm_ok)
-        self._llm_worker.failed.connect(self._on_llm_fail)
+        self._llm_worker.finished_ok.connect(
+            lambda result: self._on_llm_ok(result) if generation == self._data_generation
+            else self._on_llm_stale()
+        )
+        self._llm_worker.failed.connect(
+            lambda msg: self._on_llm_fail(msg) if generation == self._data_generation
+            else self._on_llm_stale()
+        )
         self._llm_worker.finished.connect(lambda: self.btn_send_chat.setEnabled(True))
         self._llm_worker.start()
 
@@ -1824,6 +1884,15 @@ class MainWindow(QMainWindow):
         tools = getattr(result, "tool_trace", None) or []
         extra = f" · tools: {len(tools)}" if tools else ""
         self.statusBar().showMessage(f"Co-pilot answer ready{extra}")
+        self._streaming_answer = ""
+
+    def _on_llm_stale(self) -> None:
+        self._append_chat(
+            "assistant",
+            "The data was reloaded while this answer was being prepared, so it was "
+            "discarded. Ask again to answer from the current data.",
+        )
+        self.statusBar().showMessage("Co-pilot answer discarded after a data reload")
         self._streaming_answer = ""
 
     def _on_llm_fail(self, msg: str) -> None:
@@ -1901,22 +1970,23 @@ class MainWindow(QMainWindow):
     def _refresh_rule_reference(self) -> None:
         try:
             from src.config import load_thresholds
+            from src.rules import load_rule_catalog
 
-            preset = "default"
-            cfg = load_thresholds(preset, validate=True)
+            cfg = load_thresholds(self._active_preset, validate=True)
+            catalog = load_rule_catalog(self._active_preset)
         except GuardrailError as e:
             self.rules_text.setPlainText(f"Threshold config invalid: {e}")
             return
+        provenance = "" if self._preset_recorded else ", not recorded with this data"
         lines = [
-            f"Threshold rules (preset: {cfg.get('_preset', preset)})",
+            f"Threshold rules (preset: {catalog.preset}{provenance})",
             "",
             "Research/education only — not validated clinical alarms.",
             "",
         ]
-        for rid, spec in cfg.get("rules", {}).items():
-            lines.append(f"• {rid}: {spec.get('description', '')}")
-            details = {k: v for k, v in spec.items() if k != "description"}
-            lines.append(f"  {details}")
+        for spec in catalog.specs:
+            lines.append(f"• {spec.id}: {spec.description}")
+            lines.append(f"  {spec.details()}")
             lines.append("")
         lines.append("Scoring:")
         lines.append(f"  {cfg.get('scoring', {})}")

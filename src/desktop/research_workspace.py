@@ -551,6 +551,18 @@ class ResearchWorkspace(QWidget):
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
 
+    def invalidate_case_data(self) -> bool:
+        """Drop case views computed from the previous data; True when any were shown."""
+        had_cases = bool(self._case_views) or self._current_pid is not None
+        self._before_question = None
+        self._current_pid = None
+        self.set_searching(False)
+        self.stack.setCurrentIndex(0)
+        self._case_views.clear()
+        if self.result is not None:
+            self.set_results(self.result)
+        return had_cases
+
     def _submit_question(self) -> None:
         question = self.question_edit.text().strip()
         if question:

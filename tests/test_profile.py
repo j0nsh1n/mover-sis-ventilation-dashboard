@@ -205,7 +205,7 @@ def test_rare_rule_minutes_and_gap_runs_are_suppressed_in_large_cohort(tmp_path,
 def test_diff_limits_changes_to_changed_rule_and_reports_hashes(tmp_path, monkeypatch, capsys):
     import yaml
     import src.config as config
-    import src.pipeline.profile as profiler
+    import src.rules as rules
 
     root = _write_processed(tmp_path, 12, lambda c, m: 20 + m)
     ts = pd.read_parquet(root / "timeseries.parquet")
@@ -214,7 +214,7 @@ def test_diff_limits_changes_to_changed_rule_and_reports_hashes(tmp_path, monkey
     path = tmp_path / "thresholds.yaml"
     path.write_bytes(config.THRESHOLDS_PATH.read_bytes())
     monkeypatch.setattr(config, "_thresholds_file", lambda: path)
-    monkeypatch.setattr(profiler, "thresholds_path", lambda: path)
+    monkeypatch.setattr(rules, "thresholds_path", lambda: path)
     before = profile_processed(root, config.load_thresholds())
     data = yaml.safe_load(path.read_text())
     data["rules"]["pip_high"]["warn"] = 31
