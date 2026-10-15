@@ -213,6 +213,8 @@ Wave root (optional) ──► wave_decode                   │
   back to the surgery window when OR times do not enclose it); `t_min` is anchored at
   incision (`case_start`), so induction minutes are negative.
 - **`.streamlit/secrets.toml` gitignored** — fine for this project; no product SMTP.
+- **Real-data tests are opt-in:** the five real-wave tests in `tests/test_wave_decode.py`
+  run only with `MOVER_REAL_DATA_TESTS=1`, so agent and CI runs never read real rows.
 
 ## Session Handoff
 
