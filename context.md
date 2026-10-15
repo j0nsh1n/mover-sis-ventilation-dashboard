@@ -10,7 +10,8 @@
   desktop driver, Research answer check on cited cases, hedged-advice patterns,
   model-labeled advice check, roadmap phases 4 to 9) and `feat/v0.11-app` stacked
   on it (Ollama start off the GUI thread, Cancel controls and visible failure
-  reasons, frozen-app scan self-test in CI, Qt bundled in local Linux builds).
+  reasons, frozen-app scan self-test in CI, Qt bundled in local Linux builds,
+  partial-index retrieval labeling, the calibration wrapper).
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -19,8 +20,8 @@
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` passes on
   `feat/v0.11-answers` (396 passed, 1 skipped, 2026-10-15) with `ruff check .`
-  and `mypy` clean; the `feat/v0.11-app` tip is being re-verified after its
-  rebase. Rust updater and signer suites last passed 2026-09-28. v0.10.0 Linux
+  and `mypy` clean, and on `feat/v0.11-app` (452 passed, 2 skipped,
+  2026-10-15). Rust updater and signer suites last passed 2026-09-28. v0.10.0 Linux
   and Windows release jobs passed. The local frozen Linux app crashed in Qt
   XCB keyboard handling on this Nobara host in September; the v0.11 local
   build ran 10 s on both wayland and xcb without a crash (2026-10-14).
@@ -79,11 +80,11 @@
     are unknown. Until they are checked (profile report, "Procedure event names"),
     real cases may fall back to `phase_source = fallback`.
   - Thresholds not yet calibrated against real distributions (`src.pipeline.profile`
-    exists for that; needs a run on real data). The calibration wrapper, report
-    header, `--diff` and phase-aware percentages (plan item V7) are not built.
-  - Retrieval still labels a partially embedded index as "embedding" and skips
-    records without a vector; the cache key is the model name, not its digest
-    (plan item V5, not built).
+    exists for that; needs a run on real data). `scripts/calibrate.sh` samples
+    50 cases by default (`CALIBRATION_N_CASES` to change).
+  - No embedding model is installed in the local Ollama, so retrieval has only
+    been measured with keywords and a fake embedder. The `search_query:` /
+    `search_document:` prefix trial waits for a real model.
   - On this host, PyInstaller 6.22.3's Linux `ldd` parser truncates paths at the
     parentheses in the project folder name, so local builds bundled no Qt
     libraries and loaded the host's `libQt6Core` (`Qt_6_PRIVATE_API` crash).
@@ -235,11 +236,16 @@ Wave root (optional) ──► wave_decode                   │
   synthetic data; findings were fixed in a second round. The app branch's
   round-two fixes were re-verified by the suite and all six driver scenarios,
   not by a fresh full lane set. The local build ran 10 s on wayland and xcb.
-- **Not done:** V5 (honest partial-index retrieval) and V7 (calibration wrapper
-  and report header) were lost to a host reboot before any code landed.
-- **Next:** owner reviews and lands the two branches; then V5 and V7; then
+- **Done (app branch, later):** V5, partial-index search ranks unembedded
+  records by keywords with a share of the shortlist, labels the split in G, no
+  longer embeds PIDs, and keys vectors by model digest (keyword recall@5 0.90 on
+  20 synthetic questions). V7, `scripts/calibrate.sh`, a profile header with
+  the thresholds hash and seed, `--diff`, phase-aware shares and small-cell
+  suppression. Both were built by Codex and reviewed with one fix round.
+- **Next:** owner reviews and lands the two branches; then
   v0.12.0 (rules drawer, F flags and rule detail, Cases overview, side-panel
   conversation) per `roadmap.md` Phase 5. `spec.md` drift to approve: desktop
   scans always use the spawn pool; the Research answer check now covers cited
-  cases' ages, doses and PIDs plus a model advice label; Cancel controls exist.
+  cases' ages, doses and PIDs plus a model advice label; Cancel controls exist;
+  retrieval no longer embeds PIDs and G's scope label states embedding coverage.
   The 600-second Pages cache and the configured-but-missing `qwen3:14b` remain.
