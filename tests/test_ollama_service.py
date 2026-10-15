@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -225,3 +227,47 @@ def test_unload_client_sends_keep_alive_zero():
         OllamaClient().unload_model("gemma4:latest")
     assert captured["json"]["keep_alive"] == 0
     assert captured["json"]["model"] == "gemma4:latest"
+
+
+def test_start_and_ensure_stop_before_spawning(monkeypatch):
+    import src.llm.service as svc
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("cancelled start must not probe or spawn")
+
+    monkeypatch.setattr(svc, "probe_ollama", unexpected)
+    monkeypatch.setattr(svc, "_spawn_serve", unexpected)
+    for start in (svc.start_ollama, svc.ensure_ollama):
+        status = start(should_stop=lambda: True)
+        assert not status.available
+        assert "cancel" in status.message.lower()
+
+
+def test_start_wait_polls_stop_without_retry(monkeypatch):
+    import src.llm.service as svc
+    import time
+    from threading import Event, Timer
+
+    stopped = Event()
+    monkeypatch.setattr(svc, "find_ollama_binary", lambda: "/synthetic/ollama")
+    monkeypatch.setattr(svc, "_prepare_ollama_env", lambda: {})
+    monkeypatch.setattr(svc, "_port_in_use", lambda *a: False)
+    monkeypatch.setattr(svc, "probe_ollama", lambda **kw: svc.OllamaStatus(False, "down", [], svc.DEFAULT_BASE_URL))
+    proc = MagicMock()
+    proc.poll.return_value = None
+    spawned = []
+    monkeypatch.setattr(svc, "_spawn_serve", lambda *a: (spawned.append(proc), proc)[1])
+    client = MagicMock()
+    client.list_models.side_effect = OllamaError("synthetic down")
+    monkeypatch.setattr(svc, "OllamaClient", lambda **kw: client)
+    timer = Timer(0.05, stopped.set)
+    timer.start()
+    before = time.monotonic()
+    try:
+        status = svc.start_ollama(wait_s=35, should_stop=stopped.is_set)
+    finally:
+        timer.join()
+    assert not status.available
+    assert "cancel" in status.message.lower()
+    assert len(spawned) == 1
+    assert time.monotonic() - before < 0.5

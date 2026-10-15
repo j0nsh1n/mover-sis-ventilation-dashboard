@@ -3,21 +3,31 @@
 ## Current State
 
 - **Version:** 0.10.0 released 2026-09-30; installed v0.9.0 builds update through
-  the signed Pages manifest. `main` has unreleased phase context (#25).
-- **Branch:** `main` includes everything through v0.10.0 (#15–#24) and #25.
+  the signed Pages manifest. `main` has unreleased phase context (#25) and the
+  parallel scan (#26).
+- **Branch:** `main` includes everything through v0.10.0 (#15–#24), #25 and #26.
+  Two unmerged branches hold the v0.11.0 work: `feat/v0.11-answers` (offscreen
+  desktop driver, Research answer check on cited cases, hedged-advice patterns,
+  model-labeled advice check, roadmap phases 4 to 9) and `feat/v0.11-app` stacked
+  on it (Ollama start off the GUI thread, Cancel controls and visible failure
+  reasons, frozen-app scan self-test in CI, Qt bundled in local Linux builds,
+  partial-index retrieval labeling, the calibration wrapper).
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
   Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
   manifest are live.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q`, packaging,
-  and Rust updater and signer suites passed locally (2026-09-28). v0.9.0
-  Linux and Windows release jobs passed. Both archive hashes match the signed
-  Pages manifest. The local frozen Linux app later crashed in Qt XCB keyboard
-  handling on this Nobara host.
-  Real wave tree unavailable.
-  `ruff check .` and `mypy` both report 0 findings and run in CI (2026-09-30).
+- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` passes on
+  `feat/v0.11-answers` (396 passed, 1 skipped, 2026-10-15) with `ruff check .`
+  and `mypy` clean, and on `feat/v0.11-app` (452 passed, 2 skipped,
+  2026-10-15). Rust updater and signer suites last passed 2026-09-28. v0.10.0 Linux
+  and Windows release jobs passed. The local frozen Linux app crashed in Qt
+  XCB keyboard handling on this Nobara host in September; the v0.11 local
+  build ran 10 s on both wayland and xcb without a crash (2026-10-14).
+  Real EMR and wave data are on this machine; no test or lane reads them.
+  `tools/desktop_drive.py` drives the app offscreen on synthetic data and
+  saves a screenshot per step; every desktop check uses it.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
@@ -70,7 +80,25 @@
     are unknown. Until they are checked (profile report, "Procedure event names"),
     real cases may fall back to `phase_source = fallback`.
   - Thresholds not yet calibrated against real distributions (`src.pipeline.profile`
-    exists for that; needs a run on real data).
+    exists for that; needs a run on real data). `scripts/calibrate.sh` samples
+    50 cases by default (`CALIBRATION_N_CASES` to change).
+  - No embedding model is installed in the local Ollama, so retrieval has only
+    been measured with keywords and a fake embedder. The `search_query:` /
+    `search_document:` prefix trial waits for a real model.
+  - On this host, PyInstaller 6.22.3's Linux `ldd` parser truncates paths at the
+    parentheses in the project folder name, so local builds bundled no Qt
+    libraries and loaded the host's `libQt6Core` (`Qt_6_PRIVATE_API` crash).
+    `feat/v0.11-app` adds a Qt library fallback and a build check; CI builds on
+    Ubuntu were never affected.
+  - The model-labeled advice check uses the configured chat model. The configured
+    `qwen3:14b` is not installed on this host; the check was measured with
+    `holo9b-16k`. `qwen3-vl:2b` returns empty answers because its thinking uses
+    the whole output budget.
+  - Advice-check word patterns alone caught 1 of 20 held-out advice sentences;
+    the model label is what carries recall (20 of 20). Without a reachable model
+    the answer ships with the pattern check and says so.
+  - The Windows self-test scan step and the frozen Windows app after the Ollama
+    worker change have not run on Windows yet (the release workflow is the check).
 
 ## Repo Landmarks
 
@@ -129,8 +157,25 @@ Wave root (optional) ──► wave_decode                   │
   and Rule reference remain available as secondary tabs.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
   (compute-now vs full corpus precompute).
-- **Research answer gate:** rewrite round on directive phrasing / wrong asserted age
-  (live model drifts into “consider reducing TV”, wrong ages).
+- **Research answer gate:** one rewrite round on directive phrasing, a wrong age
+  or dose for a cited case, or a PID outside the cited set (live models drift into
+  "consider reducing TV" and restate the user's age as the record). The Research
+  session carries the cited cases' age, sex, procedure and medication rows; text
+  naming no case is checked against all cited cases, and group ages ("mean age
+  56", "aged 80 or older") do not count as a claimed age. A second check asks the
+  chat model to label each sentence as description or advice in one call, because
+  word patterns miss hedged advice; a sentence labeled advice is treated like a
+  pattern hit.
+- **PID shape:** the answer gate recognizes only 16 lowercase hex characters or
+  `SYN` plus 10 hex. Measured 2026-10-14 as an aggregate count: 19,098 of 19,114
+  real PIDs are 16 hex (the rest are 8 or 9 characters and are never checked as
+  PIDs). An 8-digit number is therefore not mistaken for an unknown PID.
+- **Dialogs never block startup:** load-failure and corrupt-scan boxes use
+  `QMessageBox.open()`, since a modal box during `_startup` held the window back
+  before it was shown and hung the offscreen suite.
+- **Desktop scans always use the spawn pool** when a `should_stop` is given, even
+  for one shard, so Cancel can terminate the worker; CLI scans with one worker
+  stay in-process.
 - **Research isolation:** G disables legacy agent tools and uses a session limited
   to retrieved PIDs, so prior Ask-tab selections cannot enter its prompt.
 - **Ollama local-only by default:** remote base URL needs explicit allow env.
@@ -171,24 +216,36 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-09-30
-- **Branch:** `perf/parallel-corpus-scan` (merges `main` after #25).
-- **Released:** v0.10.0 is published (Linux and Windows packages; signed Pages
-  manifest deployed). The Windows release job passed its smoke test on the
-  slimmer spec.
-- **Done since v0.10.0:** anesthesia phase context (#25): per-minute `phase` and
-  case-level `phase_source` from procedure events with a case-time fallback,
-  per-rule `skip_phases`, `phase` on flags and episodes, a procedure-event-name
-  table in the profile report, and `clean_ranges.RR` 1-40 so `rr_low` critical
-  fires across RR 1-4. On a 60-case synthetic set `agent_drift` went from 525 to
-  49 minute flags with every injected anomaly still flagged. This branch: the
-  full-EMR scan scores shards in a spawn process pool (`workers`, `--workers`);
-  output is identical for any worker count (26 s vs 75 s on 600 synthetic
-  surgeries with 4 cores).
-- **Unverified:** event-name patterns against real MOVER data; the parallel scan
-  on Windows; real-data scan time and per-worker memory.
-- **Next:** run the sample pipeline and profile on real MOVER data, read the
-  event-name table and adjust `phases.intubation_patterns` /
-  `extubation_patterns`; run the full-EMR scan; owner reviews the G/F prototype
-  and picks an AI placement before any desktop UI change. `spec.md` drift
-  (phases, `--workers`) awaits owner approval.
+- **Date:** 2026-10-15
+- **Branches:** `feat/v0.11-answers` on `main`, and `feat/v0.11-app` stacked on
+  it. Both are for the owner to review and land in that order. The plan and
+  decision trail live outside the repo under
+  `~/.claude/orchestrate/mover-overhaul/`.
+- **Done (answers branch):** `tools/desktop_drive.py` offscreen driver with
+  scenarios and screenshots; the Research answer check verifies cited cases'
+  ages, doses and PIDs; a 110-sentence directive corpus at 0 false results; the
+  model-labeled advice check (holdout 20 of 20 caught, 0 of 20 descriptions
+  flagged, 0.78 s per six sentences on `holo9b-16k`); roadmap phases 4 to 9
+  with the side panel chosen for the v0.12 conversation.
+- **Done (app branch):** Ollama start, stop and probe on a worker thread (GUI
+  stall 49 ms instead of 5 s in the test); Cancel for research and full-EMR
+  scans; failure reasons that stay visible; frozen `--selftest-scan` in the
+  Linux and Windows CI smoke steps; Qt bundled in local Linux builds
+  (394 MiB onedir); non-blocking startup dialogs.
+- **Verified:** every item ran a swarm of ten live lanes plus gates and audits on
+  synthetic data; findings were fixed in a second round. The app branch's
+  round-two fixes were re-verified by the suite and all six driver scenarios,
+  not by a fresh full lane set. The local build ran 10 s on wayland and xcb.
+- **Done (app branch, later):** V5, partial-index search ranks unembedded
+  records by keywords with a share of the shortlist, labels the split in G, no
+  longer embeds PIDs, and keys vectors by model digest (keyword recall@5 0.90 on
+  20 synthetic questions). V7, `scripts/calibrate.sh`, a profile header with
+  the thresholds hash and seed, `--diff`, phase-aware shares and small-cell
+  suppression. Both were built by Codex and reviewed with one fix round.
+- **Next:** owner reviews and lands the two branches; then
+  v0.12.0 (rules drawer, F flags and rule detail, Cases overview, side-panel
+  conversation) per `roadmap.md` Phase 5. `spec.md` drift to approve: desktop
+  scans always use the spawn pool; the Research answer check now covers cited
+  cases' ages, doses and PIDs plus a model advice label; Cancel controls exist;
+  retrieval no longer embeds PIDs and G's scope label states embedding coverage.
+  The 600-second Pages cache and the configured-but-missing `qwen3:14b` remain.

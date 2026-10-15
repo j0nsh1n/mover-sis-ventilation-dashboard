@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,11 @@ def _series_stats(s: pd.Series, name: str, unit: str = "") -> str:
 
 
 def load_case_medications(pid: str, emr: Path | str | None = None) -> pd.DataFrame:
+    return load_medications([pid], emr)
+
+
+def load_medications(pids: Sequence[str], emr: Path | str | None = None) -> pd.DataFrame:
+    """Medication rows of ``pids`` only, from one read of the EMR file."""
     from src.pipeline.load import read_csv, _default_emr_dir
 
     path = _default_emr_dir(emr) / "patient_medication.csv"
@@ -64,7 +70,7 @@ def load_case_medications(pid: str, emr: Path | str | None = None) -> pd.DataFra
     df.columns = [c.strip().strip('"') for c in df.columns]
     if "PID" not in df.columns:
         return pd.DataFrame()
-    return df[df["PID"].astype(str) == str(pid)].copy()
+    return df[df["PID"].astype(str).isin([str(p) for p in pids])].copy()
 
 
 def load_case_events(pid: str, emr: Path | str | None = None) -> pd.DataFrame:

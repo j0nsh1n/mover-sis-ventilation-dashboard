@@ -307,10 +307,11 @@ def scan_corpus(
 
     ``workers`` is the number of worker processes scoring shards at once;
     None picks ``default_workers`` (CPU cores minus one, at most
-    ``MAX_DEFAULT_WORKERS``). ``workers=1`` scores in this process with no
-    pool. The result does not depend on the worker count.
+    ``MAX_DEFAULT_WORKERS``). ``workers=1`` scores in this process unless
+    ``should_stop`` is supplied, which requires a cancellable process pool.
+    The result does not depend on the worker count.
 
-    With more than one worker, a script that calls this must be guarded by
+    With a process pool, a script that calls this must be guarded by
     ``if __name__ == "__main__":`` (the ``spawn`` start method re-imports it).
 
     ``on_progress`` and ``should_stop`` are only ever called from the calling
@@ -376,7 +377,7 @@ def scan_corpus(
             )
             for shard in range(n_shards)
         ]
-        if n_workers == 1:
+        if n_workers == 1 and should_stop is None:
             results = _run_serial(jobs, progress, should_stop)
         else:
             results = _run_parallel(jobs, n_workers, progress, should_stop)
@@ -423,6 +424,8 @@ def scan_corpus(
         "seconds_score": round(seconds_score, 1),
         "seconds": round(time.monotonic() - started, 1),
     }
+    if should_stop is not None and should_stop():
+        raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
     atomic_write_parquet(corpus_cases, out_path / CORPUS_CASES)
     atomic_write_parquet(corpus_episodes, out_path / CORPUS_EPISODES)
     atomic_write_json(meta, out_path / CORPUS_META)

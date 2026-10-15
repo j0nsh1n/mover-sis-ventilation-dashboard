@@ -25,7 +25,9 @@ use agreement before sharing even aggregate output.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,7 @@ import pandas as pd
 from src.config import load_thresholds
 from src.pipeline.features import OBSERVED_SIGNAL_COLS
 from src.pipeline.phases import PHASE_SOURCES, PHASES, classify_event_names
+from src.runtime_paths import thresholds_path
 
 PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
 
@@ -77,12 +80,12 @@ def _case_count(n: int, min_cell: int) -> int | str:
     return f"<{min_cell}" if 0 < n < min_cell else int(n)
 
 
-def _gap_runs(observed: pd.Series) -> list[int]:
+def _gap_runs(observed: Iterable[bool]) -> list[int]:
     """Lengths of runs of unobserved minutes between a stream's first and last sample."""
     runs: list[int] = []
     current = 0
     seen = False
-    for ok in observed.to_numpy():
+    for ok in observed:
         if ok:
             if current and seen:
                 runs.append(current)
@@ -100,17 +103,20 @@ def _stream_gaps(ts: pd.DataFrame, stream: str, cols: list[str], min_cell: int) 
     has = ts[present].notna().any(axis=1)
     runs: list[int] = []
     long_gap_cases = 0
+    gap_cases = 0
     span_minutes = 0
-    for _, idx in ts.groupby("PID", sort=False).groups.items():
-        case_runs = _gap_runs(has.loc[idx])
+    has_array = has.to_numpy()
+    for idx in ts.groupby("PID", sort=False).indices.values():
+        obs_idx = has_array[idx]
+        case_runs = _gap_runs(obs_idx)
         runs.extend(case_runs)
+        gap_cases += bool(case_runs)
         long_gap_cases += any(r >= 10 for r in case_runs)
-        obs_idx = has.loc[idx]
         if obs_idx.any():
-            pos = np.flatnonzero(obs_idx.to_numpy())
+            pos = np.flatnonzero(obs_idx)
             span_minutes += int(pos[-1] - pos[0] + 1)
     gap_total = sum(runs)
-    return {
+    result: dict[str, Any] = {
         f"{stream}_gap_minutes_pct": round(100 * gap_total / span_minutes, 2) if span_minutes else 0.0,
         f"{stream}_gap_runs": len(runs),
         f"{stream}_gap_run_p50_min": round(float(np.median(runs)), 1) if runs else 0.0,
@@ -118,6 +124,13 @@ def _stream_gaps(ts: pd.DataFrame, stream: str, cols: list[str], min_cell: int) 
         f"{stream}_gap_run_max_min": int(max(runs)) if runs else 0,
         f"{stream}_cases_with_gap_ge_10_min": _case_count(long_gap_cases, min_cell),
     }
+
+    stream_cases = int(ts.loc[has, "PID"].nunique())
+    if stream_cases < min_cell or 0 < gap_cases < min_cell:
+        for key in result:
+            if key != f"{stream}_cases_with_gap_ge_10_min":
+                result[key] = None
+    return result
 
 
 def _pctl(values: pd.Series) -> dict[str, float]:
@@ -129,6 +142,11 @@ def _event_profile(events: pd.DataFrame, thresholds: dict, n_cases: int, min_cel
     """Event-name counts, suppressed like the rest of the report."""
     ev = events.dropna(subset=["Event_name"]).copy()
     ev["Event_name"] = ev["Event_name"].astype(str).str.strip()
+    private = ev["Event_name"].str.contains(
+        r"\b(?:SYN[0-9a-f]+|[0-9a-f]{16})\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?\b",
+        case=False, regex=True,
+    )
+    ev.loc[private, "Event_name"] = "(identifier or timestamp omitted)"
     roles = classify_event_names(ev["Event_name"], thresholds.get("phases") or {})
     ev = ev.assign(_role=roles)
     per_name = (
@@ -161,7 +179,7 @@ def _event_profile(events: pd.DataFrame, thresholds: dict, n_cases: int, min_cel
         "names": names,
         "pooled_names": int(len(pooled)),
         "pooled_events": int(pooled["events"].sum()) if len(pooled) else 0,
-        "n_cases": n_cases,
+        "n_cases": _case_count(n_cases, min_cell),
     }
 
 
@@ -169,9 +187,17 @@ def profile_processed(
     processed_dir: Path | str,
     thresholds: dict | None = None,
     min_cell: int = 11,
+    *,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Build the aggregate profile dict for a processed directory."""
+    if min_cell < 1:
+        raise ValueError("min_cell must be at least 1")
     root = Path(processed_dir)
+    meta_path = root / "run_meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    if seed is None:
+        seed = meta.get("seed")
     ts = pd.read_parquet(root / "timeseries.parquet")
     flags_path = root / "flags.parquet"
     flags = pd.read_parquet(flags_path) if flags_path.exists() else pd.DataFrame()
@@ -186,9 +212,9 @@ def profile_processed(
     observed_minutes = int(observed.sum())
 
     coverage: dict[str, Any] = {
-        "n_cases": n_cases,
-        "grid_minutes": int(len(ts)),
-        "observed_minutes": observed_minutes,
+        "n_cases": _case_count(n_cases, min_cell),
+        "grid_minutes": int(len(ts)) if n_cases >= min_cell else None,
+        "observed_minutes": observed_minutes if int(ts.loc[observed, "PID"].nunique()) >= min_cell else None,
     }
     for stream, cols in STREAMS.items():
         coverage.update(_stream_gaps(ts, stream, cols, min_cell))
@@ -196,7 +222,8 @@ def profile_processed(
     if "phase" in ts.columns:
         phase_minutes = ts.loc[ts["_observed"], "phase"].value_counts()
         coverage["observed_minutes_by_phase"] = {
-            p: int(phase_minutes.get(p, 0)) for p in PHASES
+            p: (int(phase_minutes.get(p, 0)) if not 0 < ts.loc[ts["_observed"] & ts["phase"].eq(p), "PID"].nunique() < min_cell else None)
+            for p in PHASES
         }
     if "phase_source" in ts.columns:
         per_case = ts.drop_duplicates("PID")["phase_source"].value_counts()
@@ -222,41 +249,59 @@ def profile_processed(
             entry.update(_pctl(vals[present]))
         else:
             entry["suppressed"] = True
+            entry["n_minutes"] = None
+            entry["missing_pct"] = None
         signal_stats[col] = entry
 
     obs_hours = observed_minutes / 60.0
     rule_stats: dict[str, Any] = {}
+    case_codes = pd.factorize(obs["PID"])[0]
+    phase_groups = obs.groupby("phase", sort=False).indices if "phase" in obs.columns else {}
+    eligible_indices: dict[tuple[str, ...], np.ndarray] = {}
+    numeric_signals = {
+        col: pd.to_numeric(obs[col], errors="coerce").to_numpy(dtype=float)
+        for col in {rule[0] for rule in THRESHOLD_RULES.values()} if col in obs.columns
+    }
     for rule_id, spec in rules.items():
         f = flags[flags["rule_id"] == rule_id] if not flags.empty else flags
         n_minutes = int(f[["PID", "Obs_time"]].drop_duplicates().shape[0]) if len(f) else 0
         n_flagged = int(f["PID"].nunique()) if len(f) else 0
         entry = {
-            "flagged_minutes": n_minutes,
+            "flagged_minutes": n_minutes if not 0 < n_flagged < min_cell else None,
             "cases_flagged": _case_count(n_flagged, min_cell),
             "cases_flagged_pct": (
                 round(100 * n_flagged / n_cases, 1)
                 if n_cases and not 0 < n_flagged < min_cell
                 else None
             ),
-            "flagged_minutes_per_hour": round(n_minutes / obs_hours, 3) if obs_hours else None,
+            "flagged_minutes_per_hour": round(n_minutes / obs_hours, 3) if obs_hours and not 0 < n_flagged < min_cell else None,
         }
         if rule_id in THRESHOLD_RULES and rule_id in rules:
             col, higher, wkey, ckey = THRESHOLD_RULES[rule_id]
             if col in obs.columns:
-                vals = pd.to_numeric(obs[col], errors="coerce").dropna()
+                skipped = tuple(spec.get("skip_phases", []))
+                if skipped not in eligible_indices:
+                    eligible_indices[skipped] = (
+                        np.flatnonzero(~obs["phase"].isin(skipped).to_numpy())
+                        if skipped and phase_groups else np.arange(len(obs))
+                    )
+                positions = eligible_indices[skipped]
+                values = numeric_signals[col]
                 if rule_id == "etco2_low":
-                    vals = vals[vals > 0]  # the rule excludes zeros
+                    values = np.where(values > 0, values, np.nan)
                 warn, crit = spec.get(wkey), spec.get(ckey)
-                if len(vals) and warn is not None and crit is not None:
-                    beyond = (lambda v, vals=vals: vals >= v) if higher else (lambda v, vals=vals: vals <= v)
+                if warn is not None and crit is not None:
                     entry.update({
                         "signal": col,
                         "direction": "high" if higher else "low",
                         "warn": warn,
                         "critical": crit,
-                        "pct_minutes_beyond_warn": round(100 * beyond(warn).mean(), 3),
-                        "pct_minutes_beyond_critical": round(100 * beyond(crit).mean(), 3),
                     })
+                    entry.update(_threshold_shares(values[positions], case_codes[positions], higher, warn, crit, min_cell))
+                    entry["by_phase"] = {
+                        phase: _threshold_shares(values[idx], case_codes[idx], higher, warn, crit, min_cell)
+                        for phase, idx in phase_groups.items() if phase not in skipped
+                    }
         rule_stats[rule_id] = entry
 
     events_path = root / "events.parquet"
@@ -267,6 +312,11 @@ def profile_processed(
             events_profile = _event_profile(events, thresholds, n_cases, min_cell)
 
     return {
+        "metadata": {
+            "preset": thresholds.get("_preset", meta.get("preset", "unknown")),
+            "thresholds_sha256": hashlib.sha256(thresholds_path().read_bytes()).hexdigest(),
+            "seed": seed if seed is not None else "unknown",
+        },
         "min_cell": min_cell,
         "coverage": coverage,
         "signals": signal_stats,
@@ -275,14 +325,36 @@ def profile_processed(
     }
 
 
+def _threshold_shares(values: np.ndarray, cases: np.ndarray, higher: bool, warn: float, critical: float, min_cell: int) -> dict:
+    present = ~np.isnan(values)
+    values, cases = values[present], cases[present]
+    n_cases = len(np.unique(cases))
+    result: dict[str, Any] = {
+        "n_cases": _case_count(n_cases, min_cell),
+        "n_minutes": len(values) if n_cases >= min_cell or not len(values) else None,
+    }
+    for name, threshold in (("warn", warn), ("critical", critical)):
+        beyond = values >= threshold if higher else values <= threshold
+        cases_beyond = len(np.unique(cases[beyond]))
+        result[f"pct_minutes_beyond_{name}"] = (
+            round(float(100 * beyond.mean()), 3)
+            if n_cases >= min_cell and not 0 < cases_beyond < min_cell else None
+        )
+    return result
+
+
 def render_markdown(profile: dict[str, Any]) -> str:
     """Render a profile dict as a Markdown report."""
     c = profile["coverage"]
+    metadata = profile["metadata"]
     lines = [
         "# MOVER SIS pipeline profile (aggregate only)",
         "",
+        f"Preset: {metadata['preset']}. Thresholds SHA256: {metadata['thresholds_sha256']}.",
+        f"Cases: {c['n_cases']}. Seed: {metadata['seed']}.",
+        "",
         f"No PIDs or timestamps. Case counts under {profile['min_cell']} are shown "
-        f"as <{profile['min_cell']}; distributions from fewer cases are suppressed.",
+        f"as <{profile['min_cell']}; minutes, gaps, and distributions from fewer cases are suppressed.",
         "",
         "## Coverage",
         "",
@@ -291,9 +363,9 @@ def render_markdown(profile: dict[str, Any]) -> str:
     ]
     for k, v in c.items():
         if isinstance(v, dict):
-            lines += [f"| {k}.{sub} | {val} |" for sub, val in v.items()]
+            lines += [f"| {k}.{sub} | {_md_cell(val)} |" for sub, val in v.items()]
         else:
-            lines.append(f"| {k} | {v} |")
+            lines.append(f"| {k} | {_md_cell(v)} |")
 
     pcols = [f"p{p}" for p in PERCENTILES]
     lines += [
@@ -306,8 +378,8 @@ def render_markdown(profile: dict[str, Any]) -> str:
     for col, s in profile["signals"].items():
         pct = ["suppressed"] * len(pcols) if s.get("suppressed") else [str(s[p]) for p in pcols]
         lines.append(
-            f"| {col} | {s['unit']} | {s['n_minutes']} | {s['n_cases']} | "
-            f"{s['missing_pct']} | " + " | ".join(pct) + " |"
+            f"| {col} | {s['unit']} | {_md_cell(s['n_minutes'])} | {s['n_cases']} | "
+            f"{_md_cell(s['missing_pct'])} | " + " | ".join(pct) + " |"
         )
 
     lines += [
@@ -318,22 +390,36 @@ def render_markdown(profile: dict[str, Any]) -> str:
         "(before duration or ventilation gating), next to how often the rule fired.",
         "",
         "| Rule | Cases flagged | % cases | Flagged min | Per hour | Signal | Warn | "
-        "% min ≥ warn | Critical | % min ≥ critical |",
+        "% min beyond warn | Critical | % min beyond critical |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for rule_id, r in profile["rules"].items():
         pct_cases = "" if r["cases_flagged_pct"] is None else r["cases_flagged_pct"]
         lines.append(
-            f"| {rule_id} | {r['cases_flagged']} | {pct_cases} | {r['flagged_minutes']} | "
-            f"{r['flagged_minutes_per_hour']} | {r.get('signal', '')} | {r.get('warn', '')} | "
-            f"{r.get('pct_minutes_beyond_warn', '')} | {r.get('critical', '')} | "
-            f"{r.get('pct_minutes_beyond_critical', '')} |"
+            f"| {rule_id} | {r['cases_flagged']} | {pct_cases} | {_md_cell(r['flagged_minutes'])} | "
+            f"{_md_cell(r['flagged_minutes_per_hour'])} | {r.get('signal', '')} | {r.get('warn', '')} | "
+            f"{_md_cell(r.get('pct_minutes_beyond_warn', ''))} | {r.get('critical', '')} | "
+            f"{_md_cell(r.get('pct_minutes_beyond_critical', ''))} |"
         )
+    lines += [
+        "", "## Threshold shares by phase", "",
+        "Skipped phases are excluded. Percentages precede duration and ventilation gating.", "",
+        "| Rule | Phase | Minutes | Cases | % beyond warn | % beyond critical |",
+        "|---|---|---|---|---|---|",
+    ]
+    for rule_id, rule in profile["rules"].items():
+        for phase, share in rule.get("by_phase", {}).items():
+            lines.append(
+                f"| {rule_id} | {phase} | {_md_cell(share['n_minutes'])} | {share['n_cases']} | "
+                f"{_md_cell(share['pct_minutes_beyond_warn'])} | {_md_cell(share['pct_minutes_beyond_critical'])} |"
+            )
     lines += _render_events(profile)
     return "\n".join(lines) + "\n"
 
 
-def _md_cell(text: str) -> str:
+def _md_cell(text: Any) -> str:
+    if text is None:
+        return "suppressed"
     return " ".join(str(text).split()).replace("|", "\\|")
 
 
@@ -373,6 +459,36 @@ def _render_events(profile: dict[str, Any]) -> list[str]:
     return lines
 
 
+def render_diff(before: dict[str, Any], after: dict[str, Any]) -> str:
+    lines = ["# Profile changes", ""]
+    old_hash = before.get("metadata", {}).get("thresholds_sha256", "unknown")
+    new_hash = after.get("metadata", {}).get("thresholds_sha256", "unknown")
+    lines.append(f"Thresholds hashes {'differ' if old_hash != new_hash else 'match'}: {old_hash} -> {new_hash}.")
+    lines += ["", "| Rule | Phase | Measure | Before | After | Change |", "|---|---|---|---|---|---|"]
+    for rule_id in sorted(before["rules"].keys() | after["rules"].keys()):
+        old, new = before["rules"].get(rule_id, {}), after["rules"].get(rule_id, {})
+        rows = [("all eligible", old, new)]
+        old_phases, new_phases = old.get("by_phase", {}), new.get("by_phase", {})
+        rows += [(phase, old_phases.get(phase, {}), new_phases.get(phase, {})) for phase in sorted(old_phases.keys() | new_phases.keys())]
+        for phase, left, right in rows:
+            for key in sorted(left.keys() | right.keys()):
+                a, b = left.get(key), right.get(key)
+                if key == "by_phase" or a == b:
+                    continue
+                delta = round(b - a, 3) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else "unavailable"
+                lines.append(f"| {rule_id} | {phase} | {key} | {_md_cell(a)} | {_md_cell(b)} | {delta} |")
+    old_phases = before.get("coverage", {}).get("observed_minutes_by_phase", {})
+    new_phases = after.get("coverage", {}).get("observed_minutes_by_phase", {})
+    for phase in sorted(old_phases.keys() | new_phases.keys()):
+        a, b = old_phases.get(phase), new_phases.get(phase)
+        if a != b:
+            delta = b - a if isinstance(a, int) and isinstance(b, int) else "unavailable"
+            lines.append(f"| (coverage) | {phase} | observed_minutes | {_md_cell(a)} | {_md_cell(b)} | {delta} |")
+    if len(lines) == 6:
+        lines.append("No rule or phase changes.")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Aggregate-only profile of processed MOVER SIS output"
@@ -382,17 +498,24 @@ def main(argv: list[str] | None = None) -> None:
         "--preset", type=str, default="default", choices=["default", "strict", "lenient"]
     )
     parser.add_argument("--min-cell", type=int, default=11)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--diff", nargs=2, metavar=("BEFORE", "AFTER"))
     parser.add_argument("--out", type=str, default=None, help="Markdown path (default: stdout)")
     parser.add_argument("--json", type=str, default=None, help="Also write the profile as JSON")
     args = parser.parse_args(argv)
 
+    if args.diff:
+        print(render_diff(*(json.loads(Path(path).read_text()) for path in args.diff)))
+        return
+    if args.min_cell < 1:
+        parser.error("--min-cell must be at least 1")
     if args.processed_dir is None:
         from src.runtime_paths import processed_dir
 
         root = processed_dir()
     else:
         root = Path(args.processed_dir)
-    profile = profile_processed(root, load_thresholds(args.preset), min_cell=args.min_cell)
+    profile = profile_processed(root, load_thresholds(args.preset), min_cell=args.min_cell, seed=args.seed)
     md = render_markdown(profile)
     if args.out:
         Path(args.out).write_text(md, encoding="utf-8")

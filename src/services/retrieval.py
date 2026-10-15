@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import sqlite3
 import struct
 import threading
@@ -145,6 +146,7 @@ class RetrievalProgress:
 class RetrievalResult:
     candidates: tuple[SearchCandidate, ...] = ()
     indexed_count: int = 0
+    embedded_count: int = 0
     analyzed_count: int = 0
     rank_method: str = "keyword"
     model_available: bool = False
@@ -186,7 +188,7 @@ def build_case_search_text(
         else "indexed surgery, not yet analyzed"
     )
     return (
-        f"PID {pid}. Procedure: {proc}. Age: {age_s}. Sex: {sex}. "
+        f"Procedure: {proc}. Age: {age_s}. Sex: {sex}. "
         f"Ventilator rows: {vent}. Record scope: {scope}."
     )
 
@@ -325,6 +327,7 @@ class RetrievalEngine:
         self._cache = _EmbeddingCache(Path(cache_path))
         self._records: list[SearchRecord] = []
         self._vectors: dict[str, list[float]] = {}
+        self._vector_model_id: str | None = None
 
     def model_available(self) -> bool:
         if self.embedder is None:
@@ -394,6 +397,7 @@ class RetrievalEngine:
             return 0
 
         model_id = embedder.model_id
+        self._vector_model_id = model_id
         missing: list[SearchRecord] = []
         for rec in records:
             cached = self._cache.get(rec.source_text_hash, model_id)
@@ -466,6 +470,9 @@ class RetrievalEngine:
         indexed_count = len(self._records)
         analyzed_count = sum(1 for r in self._records if r.analyzed)
         available = self.model_available() and bool(self._vectors)
+        if available and self.embedder is not None and self.embedder.model_id != self._vector_model_id:
+            self.prepare(on_progress=on_progress)
+            available = bool(self._vectors)
 
         _emit(
             on_progress,
@@ -501,7 +508,7 @@ class RetrievalEngine:
                         model_available=True,
                     ),
                 )
-                ranked = self._rank_embedding(pool, q_vec, cap)
+                ranked = self._rank_embedding(pool, q_vec, cap, question)
                 method = "embedding"
                 model_ok = True
                 fallback = None
@@ -558,6 +565,7 @@ class RetrievalEngine:
         return RetrievalResult(
             candidates=tuple(ranked),
             indexed_count=indexed_count,
+            embedded_count=len(self._vectors),
             analyzed_count=analyzed_count,
             rank_method=method,
             model_available=model_ok,
@@ -678,26 +686,44 @@ class RetrievalEngine:
         pool: Sequence[SearchRecord],
         query: Sequence[float],
         limit: int,
+        question: str = "",
     ) -> list[SearchCandidate]:
         scored: list[tuple[float, SearchRecord]] = []
+        missing: list[SearchRecord] = []
+        direct: list[SearchRecord] = []
+        pid_terms = set(re.findall(r"\w+", question.lower()))
         for rec in pool:
+            if rec.pid.lower() in pid_terms:
+                direct.append(rec)
+                continue
             vec = self._vectors.get(rec.pid)
             if vec is None:
-                continue
-            scored.append((_cosine(query, vec), rec))
+                missing.append(rec)
+            else:
+                scored.append((_cosine(query, vec), rec))
         scored.sort(key=_rank_key, reverse=True)
-        return [
+        ranked = self._rank_keyword(direct, question, limit)
+        remaining = limit - len(ranked)
+        keyword = self._rank_keyword(missing, question, remaining)
+        # Reserve the unembedded share so keyword hits can compete with a full cosine shortlist.
+        keyword_slots = min(len(keyword), math.ceil(remaining * len(missing) / len(pool))) if pool else 0
+        ranked.extend(
             _candidate(rec, score=score, method="embedding")
-            for score, rec in scored[:limit]
-        ]
+            for score, rec in scored[:remaining - keyword_slots]
+        )
+        ranked.extend(keyword[:limit - len(ranked)])
+        return ranked
 
     def _rank_keyword(
         self, pool: Sequence[SearchRecord], question: str, limit: int
     ) -> list[SearchCandidate]:
-        scored = [(_keyword_score(question, rec.source_text), rec) for rec in pool]
-        has_terms = bool([t for t in str(question).lower().split() if len(t) > 2])
-        if has_terms:
-            scored = [(s, r) for s, r in scored if s > 0]
+        pid_terms = set(re.findall(r"\w+", question.lower()))
+        scored = [
+            (2.0 if rec.pid.lower() in pid_terms else _keyword_score(question, rec.source_text), rec)
+            for rec in pool
+        ]
+        if any(len(term) > 2 for term in question.split()):
+            scored = [(score, rec) for score, rec in scored if score > 0]
         # Short metadata texts tie often; ties must not fall to file order
         scored.sort(key=_rank_key, reverse=True)
         return [

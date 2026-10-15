@@ -9,6 +9,7 @@ import pytest
 
 from src.services.retrieval import (
     CaseFilters,
+    DEFAULT_CANDIDATE_LIMIT,
     RetrievalEngine,
     RetrievalPhase,
     SearchCandidate,
@@ -79,7 +80,7 @@ def test_search_record_is_short_and_hashed():
         has_vent=True,
         analyzed=True,
     )
-    assert "caseA" in text
+    assert "caseA" not in text
     assert "Cholecystectomy" in text
     assert "analyzed case" in text
     assert source_text_hash(text) == source_text_hash(text)
@@ -261,11 +262,121 @@ def test_retrieve_extracts_skip_cases_without_ventilator_data(
         extract_limit=1,
     )
     monkeypatch.setattr(engine, "_extract_for", lambda rec, frames: f"extract {rec.pid}")
-    # "caseN" alone scores higher here, yet the extract goes to a ventilated case
-    monkeypatch.setattr(
-        "src.services.retrieval._keyword_score",
-        lambda q, text: 1.0 if "caseN" in text else 0.5,
-    )
-    result = engine.retrieve("laparoscopic cholecystectomy")
+    result = engine.retrieve("caseN laparoscopic cholecystectomy")
     assert result.candidates[0].pid == "caseN"
     assert result.fetched_pids == ("caseA",)
+
+
+class PartialEmbedder(FakeEmbedder):
+    def __init__(self, fail_after=1):
+        super().__init__()
+        self.fail_after = fail_after
+
+    def embed(self, texts):
+        if len(self.texts) >= self.fail_after and texts[0].startswith("Procedure:"):
+            raise RuntimeError("synthetic interruption")
+        return super().embed(texts)
+
+
+def test_partial_index_keeps_every_filtered_record(synthetic_emr, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.services.retrieval.DEFAULT_EMBED_BATCH", 1)
+    engine = RetrievalEngine(emr=synthetic_emr, cache_path=tmp_path / "partial.sqlite", embedder=PartialEmbedder())
+    assert engine.prepare() == 1
+    result = engine.search("appendectomy", limit=100)
+    assert result.embedded_count == 1
+    assert result.indexed_count == 2
+    assert {c.pid for c in result.candidates} == {"caseA", "caseB"}
+    assert [c.rank_method for c in result.candidates] == ["embedding", "keyword"]
+    assert engine.search("caseB").candidates[0].pid == "caseB"
+    assert engine.search("caseB").candidates[0].rank_method == "keyword"
+
+
+@pytest.mark.parametrize("keyword_hits", [0, 1, 12])
+def test_partial_index_keyword_hits_compete_at_default_limit(tmp_path, monkeypatch, keyword_hits):
+    index = pd.DataFrame([
+        {"PID": f"SYN{i:010x}", "Procedure": "nephrectomy" if i >= 30 - keyword_hits else "appendectomy",
+         "Age": 20 + i, "Gender": "F", "has_vent": True}
+        for i in range(30)
+    ])
+    monkeypatch.setattr("src.services.retrieval.case_fetch.emr_index", lambda emr: index)
+    monkeypatch.setattr("src.services.retrieval.DEFAULT_EMBED_BATCH", 1)
+    engine = RetrievalEngine(emr=tmp_path, cache_path=tmp_path / "partial.sqlite", embedder=PartialEmbedder(18))
+    assert engine.prepare() == 18
+    result = engine.search("nephrectomy")
+    assert len(result.candidates) == DEFAULT_CANDIDATE_LIMIT
+    assert result.indexed_count == 30
+    assert result.embedded_count == 18
+    assert result.rank_method == "embedding"
+    keyword = [c for c in result.candidates if c.rank_method == "keyword"]
+    assert len(keyword) == min(keyword_hits, 4)
+    if keyword_hits:
+        assert all(c.procedure == "nephrectomy" for c in keyword)
+        assert f"SYN{30 - keyword_hits:010x}" in {c.pid for c in keyword}
+
+
+def test_keyword_search_excludes_unrelated_records_and_keeps_empty_queries(synthetic_emr, tmp_path):
+    engine = RetrievalEngine(emr=synthetic_emr, cache_path=tmp_path / "keyword.sqlite")
+    assert [c.pid for c in engine.search("appendectomy").candidates] == ["caseB"]
+    assert {c.pid for c in engine.search("").candidates} == {"caseA", "caseB"}
+    result = engine.retrieve("nephrectomy")
+    assert result.candidates == ()
+    assert result.extracts == ()
+    assert result.fetched_pids == ()
+    assert "0 candidate(s)" in result.progress.message
+
+
+@pytest.mark.parametrize("embedding", [True, False])
+def test_pid_query_ranks_first_without_embedding_pid(synthetic_emr, tmp_path, embedding):
+    embedder = FakeEmbedder() if embedding else None
+    engine = RetrievalEngine(emr=synthetic_emr, cache_path=tmp_path / "pid.sqlite", embedder=embedder)
+    result = engine.search("Find PID caseB, please")
+    assert result.candidates[0].pid == "caseB"
+    assert result.candidates[0].rank_method == "keyword"
+    if embedder:
+        assert all("caseA" not in t and "caseB" not in t for t in embedder.texts[0])
+
+
+def test_digest_change_rebuilds_cached_vectors(synthetic_emr, tmp_path, monkeypatch):
+    from src.llm.ollama_client import OllamaClient, OllamaEmbedder
+
+    digest = ["digest-one"]
+    client = OllamaClient()
+    monkeypatch.setattr(client, "_request_json", lambda *args: {"models": [{"name": "nomic-embed-text:latest", "digest": digest[0]}]})
+    calls = []
+    monkeypatch.setattr(client, "embed", lambda model, texts: calls.append(list(texts)) or [_bow(t) for t in texts])
+    embedder = OllamaEmbedder("nomic-embed-text", client=client)
+    engine = RetrievalEngine(emr=synthetic_emr, cache_path=tmp_path / "digest.sqlite", embedder=embedder)
+    assert engine.prepare() == 2
+    assert embedder.model_id == "nomic-embed-text@digest-one"
+    assert engine.prepare() == 0
+    digest[0] = "digest-two"
+    engine.search("appendectomy")
+    assert embedder.model_id == "nomic-embed-text@digest-two"
+    assert len(calls[-2]) == 2
+    assert engine.prepare() == 0
+    replacement = RetrievalEngine(emr=synthetic_emr, cache_path=tmp_path / "digest.sqlite", embedder=embedder)
+    assert replacement.prepare() == 0
+    digest[0] = ""
+    assert embedder.is_available()
+    assert embedder.model_id == "nomic-embed-text"
+
+
+def test_synthetic_metadata_recall_at_five(tmp_path):
+    import json
+    from src.pipeline.synthetic import generate_synthetic_emr
+
+    emr = generate_synthetic_emr(tmp_path / "EMR", n_cases=30, seed=517)
+    truth = json.loads((emr / "synthetic_truth.json").read_text())
+    info = pd.read_csv(emr / "patient_information.csv").set_index("PID")
+    engine = RetrievalEngine(emr=emr, cache_path=tmp_path / "recall.sqlite")
+    recalls = []
+    for pid in list(truth["cases"])[:20]:
+        row = info.loc[pid]
+        expected = {p for p in truth["cases"] if info.loc[p, "Procedure"] == row["Procedure"] and info.loc[p, "Age"] == row["Age"] and info.loc[p, "Gender"] == row["Gender"]}
+        question = f"Find {row['Procedure']} surgeries for age {row['Age']} sex {row['Gender']}"
+        result = engine.search(question, limit=5)
+        recalls.append(len(expected & {c.pid for c in result.candidates}) / len(expected))
+    assert len(recalls) == 20
+    recall = sum(recalls) / len(recalls)
+    print(f"Synthetic metadata recall@5 over {len(recalls)} unfiltered questions: {recall:.3f}")
+    assert recall >= 0.8

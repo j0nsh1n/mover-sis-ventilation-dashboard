@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `scripts/calibrate.sh <emr-dir> <name>` writes a profile into the ignored
+  `calibration/` folder. The profile header names the preset, thresholds hash,
+  case count and seed; `--diff` compares two profiles per rule and phase;
+  threshold shares respect `skip_phases`; minutes and gaps from fewer than
+  `--min-cell` cases are suppressed.
+- Research search stays complete on a partly built index: records without an
+  embedding rank by keywords and keep a share of the shortlist, and G's scope
+  label states how many records were embedded. PIDs are no longer embedded, and
+  cached vectors are keyed by the embedding model's digest.
+- Research and full-EMR scans have Cancel controls. Research cancellation restores
+  the previous board, and Reset remains usable. Scan cancellation keeps the previous scan.
 - Anesthesia phase for every minute: `pre_induction`, `induction`, `maintenance`,
   `emergence`, `post_emergence`. The boundaries come from each surgery's
   intubation and extubation procedure events, matched by the new `phases:` patterns
@@ -29,6 +40,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   plus observed minutes per phase and how many cases used events or the fallback.
 - Synthetic data gets a brief desaturation right after intubation in every sixth
   ventilated case (marked `"phase": "induction"` in `synthetic_truth.json`).
+- The local chat model now reads each answer sentence and labels it as a
+  description or as clinical advice, in one extra call per draft (a rewritten
+  draft is labeled again; about 0.8 s for six sentences on a 9B model). A
+  sentence labeled as advice sends the draft back for the same single rewrite as
+  the word-pattern check, and one still present afterwards is named in the
+  verification note. On 40 held-out sentences the
+  model caught 20 of 20 advice sentences and flagged none of 20 descriptions,
+  where the word patterns alone caught 1 of 20. When the model does not reply
+  with a label per sentence, the answer ships with the pattern check alone and
+  says so.
 
 ### Changed
 
@@ -51,18 +72,37 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - The full-EMR scan (File → Scan full EMR, or `python -m src.pipeline.corpus_scan`)
   now scores several batches at the same time on separate CPU cores. By default it
   uses your core count minus one, up to 6; `--workers N` on the command line sets it
-  (`--workers 1` runs everything in one process, as before). On 600 synthetic
+  (`--workers 1` runs CLI scans in one process). Desktop scans use a spawn pool
+  even for one shard so cancellation can stop that worker. On 600 synthetic
   surgeries with 4 cores it took 26 s instead of 75 s; the results are identical
   whatever the worker count. The progress text shows how many cores are in use, and
-  Cancel stops the worker processes right away and keeps the previous scan. Each
-  worker needs memory for one batch, so lower `--workers` on a small machine.
-- If a batch fails to score, the error now names the batch and suggests fewer
-  workers when a worker process was killed (for example, out of memory).
+  each worker needs memory for one batch, so lower `--workers` on a small machine.
+- Desktop scan status counts surgeries that could not be scored. Its tooltip
+  shows the first failed shard's error, capped at 300 characters.
+- The Research workspace reflows at 900 px, keeping its controls reachable.
 - Surgeries with the same anomaly score are now listed in PID order in the scan
   results, so repeated scans give the same order.
 
 ### Fixed
 
+- The answer check now catches hedged advice ("would likely be better", "worth
+  trying a higher PEEP", "I'd suggest", "Recommended:", "ought to have extubated")
+  and no longer flags record descriptions such as "Increase in PIP began at minute
+  40" or "Monitor alarms were not recorded".
+- Local Linux packages include the PySide6 wheel's Qt libraries when the build
+  path contains parentheses, preventing a crash from loading host Qt libraries.
+- The Research answer check now verifies ages, doses and case IDs of the cited
+  cases. A misstated age or dose, or a PID outside the cited set, sends the draft
+  back for one rewrite. A sentence naming several cases is checked against each of
+  them, and an age or dose that names no case must match one of the cited cases.
+  When the medication record cannot be read, the answer says doses were not checked.
+- Only 16-character hex IDs and synthetic `SYN` IDs count as PIDs in answers, so
+  synthetic PIDs are checked and long numbers such as sample counts are no longer
+  reported as unknown PIDs. A PID typed in a question must now be complete to open
+  that case.
+- Processed-data load errors and corrupt saved scans show dialogs naming the
+  affected paths. Missing processed folders are reported after setup completes.
+- Starting and probing Ollama run in the background so the desktop remains responsive.
 - `rr_low` critical (RR 4 or below) fired only at exactly RR 4 because the RR keep
   range blanked every rate under 4. The range is now 1 to 40, so critical fires across
   RR 1-4 while tidal volume is delivered. RR 0 is still treated as no rate recorded.

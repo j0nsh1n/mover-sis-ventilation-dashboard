@@ -211,3 +211,173 @@ def test_startup_budget_with_data(qapp, pipeline_result, monkeypatch, tmp_path):
     assert win.cases is not None
     assert total < 3.0, f"startup to data+charts {total:.2f}s exceeds 3s budget"
     win.close()
+
+
+@requires_qt
+def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
+    from PySide6.QtCore import QTimer
+    from src.desktop.app import MainWindow
+    from src.llm.service import OllamaStatus
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    calls = []
+
+    def slow_start(**kwargs):
+        calls.append(kwargs)
+        time.sleep(2)
+        return OllamaStatus(True, "Ready", ["synthetic-model"], "http://127.0.0.1:11434")
+
+    monkeypatch.setattr("src.llm.service.start_ollama", slow_start)
+    win = MainWindow()
+    ticks = []
+    timer = QTimer(win)
+    timer.setSingleShot(True)
+    timer.timeout.connect(lambda: ticks.append(time.perf_counter()))
+    started = time.perf_counter()
+    timer.start(10)
+    try:
+        win.btn_ollama_start.click()
+        first_worker = win._ollama_worker
+        win._ollama_start()
+        assert win._ollama_worker is first_worker
+        assert win.btn_ollama_start.text() == "Starting…"
+        assert not win.btn_ollama_start.isEnabled()
+        while not ticks and time.perf_counter() - started < 0.1:
+            qapp.processEvents()
+            time.sleep(0.001)
+        assert ticks and ticks[0] - started < 0.1
+        assert first_worker.wait(3000)
+        qapp.processEvents()
+        assert len(calls) == 1
+        assert win.btn_ollama_start.isEnabled()
+        assert "ready" in win.research.status_label.text().lower()
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_ollama_failure_names_reason(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    monkeypatch.setattr("src.llm.service.start_ollama", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("port busy")))
+    win = MainWindow()
+    try:
+        win._ollama_start()
+        assert win._ollama_worker.wait(1000)
+        qapp.processEvents()
+        assert "port busy" in win.research.status_label.text()
+        assert win.btn_ollama_start.isEnabled()
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_research_failure_reason_survives_status_updates(qapp, monkeypatch):
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    win = MainWindow()
+    try:
+        win._on_research_fail("connection timed out after 30 seconds")
+        win.statusBar().showMessage("Ready")
+        win.research.set_status("Another status update")
+        assert "connection timed out after 30 seconds" in win.research.answer_text.toPlainText()
+        win.research.begin_question("Next question")
+        assert win.research.answer_text.toPlainText() == ""
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_scan_partial_failures_report_case_counts(qapp, monkeypatch):
+    from types import SimpleNamespace
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_tables_and_selectors", lambda self: None)
+    win = MainWindow()
+    try:
+        win._on_corpus_scan_ok(SimpleNamespace(meta={
+            "n_scanned_cases": 12, "n_ventilated_surgeries": 20,
+            "failed_shards": [{"n_pids": 5}, {"n_pids": 3}],
+        }))
+        assert "12 of 20 surgeries scored; 8 could not be scored (see details)" in win.statusBar().currentMessage()
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
+    cases = tmp_path / "corpus_cases.parquet"
+    cases.write_bytes(b"not parquet")
+    (tmp_path / "corpus_meta.json").write_text("{}")
+    dialogs = []
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    win = MainWindow()
+    try:
+        win._load_corpus_scan()
+        assert win.corpus_scan is None
+        assert len(dialogs) == 1 and str(cases) in dialogs[0]
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "missing"))
+    dialogs = []
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    win = MainWindow()
+    try:
+        monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
+        win._autoload_processed()
+        assert str(tmp_path / "missing") in dialogs[0]
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_scan_cancel_requests_interruption_and_keeps_previous(qapp, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+    from src.pipeline.corpus_scan import ScanCancelled
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
+    dialogs = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: dialogs.append(args[2]))
+
+    def scan(*args, should_stop, **kwargs):
+        while not should_stop():
+            time.sleep(0.005)
+        raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
+
+    monkeypatch.setattr("src.pipeline.corpus_scan.scan_corpus", scan)
+    win = MainWindow()
+    previous = object()
+    win.corpus_scan = previous
+    try:
+        win._run_corpus_scan()
+        assert not win._scan_cancel_button.isHidden()
+        win._scan_cancel_button.click()
+        assert win._worker.wait(1000)
+        qapp.processEvents()
+        assert win.corpus_scan is previous
+        assert not dialogs
+        assert "Full-EMR scan cancelled; the previous scan was kept." in win.statusBar().currentMessage()
+        assert win._scan_cancel_button.isHidden()
+    finally:
+        win.close()

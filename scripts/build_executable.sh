@@ -58,6 +58,14 @@ if [[ -d "$INTERNAL/PySide6/Qt/lib" ]]; then
   shopt -u nullglob
 fi
 
+shopt -s nullglob
+qt_core=("$INTERNAL"/PySide6/Qt/lib/libQt6Core.so*)
+shopt -u nullglob
+if (( ${#qt_core[@]} == 0 )) || [[ ! -f "${qt_core[0]}" ]]; then
+  echo "ERROR: bundled PySide6 Qt libraries missing libQt6Core in $INTERNAL/PySide6/Qt/lib"
+  exit 1
+fi
+
 # Stamp version into the app bundle
 cp -f "$ROOT/VERSION" "$APP_DIR/VERSION"
 echo "v${VERSION}" > "$APP_DIR/BUILD_INFO.txt"
@@ -179,14 +187,16 @@ mkdir -p "$ROOT/build"
 echo "==> Smoke-test frozen binary (offscreen, 5s)"
 if QT_QPA_PLATFORM=offscreen \
   timeout 5 "$BIN" >"$ROOT/build/frozen_smoke.log" 2>&1; then
-  echo "WARNING: binary exited before timeout — see build/frozen_smoke.log"
+  echo "ERROR: binary exited before timeout — see build/frozen_smoke.log"
   tail -30 "$ROOT/build/frozen_smoke.log" || true
+  exit 1
 else
   code=$?
   if [[ $code -eq 124 ]]; then
     echo "Smoke OK: binary stayed running under offscreen Qt"
   else
-    echo "WARNING: smoke exit code $code — see build/frozen_smoke.log"
+    echo "ERROR: smoke exit code $code — see build/frozen_smoke.log"
     tail -40 "$ROOT/build/frozen_smoke.log" || true
+    exit 1
   fi
 fi

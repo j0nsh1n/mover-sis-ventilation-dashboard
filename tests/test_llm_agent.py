@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.llm.agent import parse_tool_calls, verify_answer
 from src.llm.prompts import SYSTEM_PROMPT, build_system_prompt, user_message
@@ -177,7 +178,7 @@ def test_verify_unknown_pid_and_footer():
     s = _sample_session()
     s.active_pid = "aabb0011"
     ans, notes = verify_answer(
-        "Case deadbeef99 had severe hypoxia requiring dopamine.",
+        "Case deadbeef99887766 had severe hypoxia requiring dopamine.",
         s,
     )
     assert "Verification note" in ans or "unknown" in ";".join(notes)
@@ -356,3 +357,207 @@ def test_prompt_forbids_computing_doses():
     prompt = build_system_prompt(mode="analyze")
     assert "do not compute them" in prompt.lower()
     assert "mg/kg" in prompt
+
+
+def _cited_session(medications: pd.DataFrame | None = None) -> SessionState:
+    """A Research session: the two cited cases only, no Ask selection."""
+    session = _sample_session()
+    session.cited_pids = ["aabb0011", "ccdd0022"]  # ages 50 and 60
+    session.medications = medications
+    return session
+
+
+def test_each_cited_case_age_is_checked_against_its_own_sentences():
+    from src.llm.agent import find_unstated_case_facts
+
+    session = _cited_session()
+    right = "aabb0011 is a 50-year-old woman. ccdd0022 is a 60-year-old man."
+    assert find_unstated_case_facts(right, session) == []
+
+    swapped = "aabb0011 is a 60-year-old woman. ccdd0022 is a 50-year-old man."
+    problems = find_unstated_case_facts(swapped, session)
+    assert len(problems) == 2
+    assert "aabb0011 is age 50" in problems[0]
+    assert "ccdd0022 is age 60" in problems[1]
+
+    # A Research answer need not state ages at all
+    assert find_unstated_case_facts("aabb0011 had a PIP median of 28.", session) == []
+
+
+def test_each_cited_case_dose_is_checked_against_its_own_medication_rows():
+    from src.llm.agent import find_medication_mismatches
+
+    med = pd.DataFrame(
+        [
+            {"PID": "aabb0011", "Drug_name": "Fentanyl", "Dose": "100", "Drug_units": "mcg"},
+            {"PID": "ccdd0022", "Drug_name": "Fentanyl", "Dose": "50", "Drug_units": "mcg"},
+        ]
+    )
+    session = _cited_session(med)
+    right = "aabb0011 received fentanyl 100 mcg. ccdd0022 received fentanyl 50 mcg."
+    assert find_medication_mismatches(right, session) == []
+
+    swapped = "aabb0011 received fentanyl 50 mcg. ccdd0022 received fentanyl 100 mcg."
+    problems = find_medication_mismatches(swapped, session)
+    assert len(problems) == 2
+    assert "(100 mcg)" in problems[0] and "(50 mcg)" in problems[1]
+
+
+def test_uncited_pid_is_a_rewrite_problem_on_research_but_not_on_ask():
+    from src.llm.agent import answer_problems
+
+    text = "aabb0011 resembled deadbeef99887766 in PIP."
+    research = _cited_session()
+    assert any("deadbeef99887766" in p for p in answer_problems(text, research))
+
+    ask = _sample_session()
+    ask.active_pid = "aabb0011"
+    assert not any("deadbeef99887766" in p for p in answer_problems(text, ask))
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["a 65 years old woman", "65 years of age", "a 65-year-old", "aged 65", "65 yo"],
+)
+def test_claimed_ages_reads_common_age_phrasings(phrase):
+    from src.llm.agent import _claimed_ages
+
+    assert _claimed_ages(phrase) == {65}
+
+
+def test_claimed_ages_ignores_durations():
+    from src.llm.agent import _claimed_ages
+
+    assert _claimed_ages("the record began 65 years ago") == set()
+
+
+@pytest.mark.parametrize(
+    "uncited",
+    ["SYN0a1b2c3d4e", "deadbeef99887766"],
+    ids=["synthetic", "real_shape"],
+)
+def test_uncited_pid_of_either_shape_is_named_by_both_checks(uncited):
+    from src.llm.agent import answer_problems
+
+    text = f"aabb0011 resembled {uncited} in PIP."
+    assert any(uncited in p for p in answer_problems(text, _cited_session()))
+
+    ask = _sample_session()
+    ask.active_pid = "aabb0011"
+    answer, notes = verify_answer(text, ask)
+    assert f"unknown_pids:{uncited}" in notes
+    assert uncited in answer.split("Verification note")[1]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "aabb0011 had 12345678 ventilator samples.",
+        "aabb0011 checksum 0123456789abcdef0123456789abcdef.",
+        "aabb0011 resembled SYN0a1b2c3d4e5 in PIP.",
+    ],
+    ids=["eight_digits", "md5_hash", "synthetic_too_long"],
+)
+def test_numbers_and_hashes_are_not_pids(text):
+    from src.llm.agent import answer_problems
+
+    assert answer_problems(text, _cited_session()) == []
+    ask = _sample_session()
+    ask.active_pid = "aabb0011"
+    _, notes = verify_answer(text, ask)
+    assert not any(n.startswith("unknown_pids") for n in notes)
+
+
+def test_a_full_pid_in_the_question_still_opens_that_case():
+    from src.llm.agent import _heuristic_prefetch
+
+    session = _sample_session()
+    session.cases.loc[1, "PID"] = "0123456789abcdef"
+    traces = _heuristic_prefetch("what happened in 0123456789abcdef?", session)
+    assert traces[0].startswith("[auto] summarize_management pid=0123456789abcdef")
+
+
+def test_a_clause_naming_several_cases_is_checked_against_each():
+    from src.llm.agent import find_unstated_case_facts
+
+    session = _cited_session()  # aabb0011 is 50, ccdd0022 is 60
+    problems = find_unstated_case_facts(
+        "Both aabb0011 and ccdd0022 were 60-year-olds.", session
+    )
+    assert len(problems) == 1 and "aabb0011 is age 50" in problems[0]
+
+    listed = "Cases aabb0011, ccdd0022 were 50-year-olds."
+    problems = find_unstated_case_facts(listed, session)
+    assert len(problems) == 1 and "ccdd0022 is age 60" in problems[0]
+
+    assert find_unstated_case_facts(
+        "aabb0011 was 50 years old and ccdd0022 was 60 years old.", session
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The cited cases were a 70-year-old and a 45-year-old.",
+        "A 70-year-old had the highest PIP. aabb0011 and ccdd0022 both received sevoflurane.",
+    ],
+    ids=["no_pid_named", "before_first_pid"],
+)
+def test_an_age_no_cited_case_has_is_a_problem_when_no_case_is_named(text):
+    from src.llm.agent import find_unstated_case_facts
+
+    problems = find_unstated_case_facts(text, _cited_session())
+    assert problems
+    assert "70" in problems[0] and "50" in problems[0] and "60" in problems[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The cited cases were a 60-year-old and a 50-year-old.",
+        "A 60-year-old had the highest PIP. ccdd0022 received desflurane.",
+    ],
+)
+def test_an_unattributed_age_that_one_cited_case_has_passes(text):
+    from src.llm.agent import find_unstated_case_facts
+
+    assert find_unstated_case_facts(text, _cited_session()) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "None of the cited cases involved patients aged 80 or older.",
+        "The cited patients had a mean age of 56.",
+        "Ages 50 to 60 were represented; the median age was 55.",
+        "Both were adults (age >= 18) with documented ventilator data.",
+    ],
+)
+def test_a_group_age_in_unattributed_text_is_not_a_claimed_age(text):
+    from src.llm.agent import find_unstated_case_facts
+
+    assert find_unstated_case_facts(text, _cited_session()) == []
+
+
+def test_a_group_age_phrase_does_not_hide_an_individual_age():
+    from src.llm.agent import find_unstated_case_facts
+
+    text = "The mean age was 56, and the first case was a 70-year-old."
+    problems = find_unstated_case_facts(text, _cited_session())
+    assert problems and "70" in problems[0] and "56" not in problems[0]
+
+
+def test_a_dose_before_the_first_pid_must_match_some_cited_case():
+    from src.llm.agent import find_medication_mismatches
+
+    med = pd.DataFrame(
+        [
+            {"PID": "aabb0011", "Drug_name": "Fentanyl", "Dose": "100", "Drug_units": "mcg"},
+            {"PID": "ccdd0022", "Drug_name": "Fentanyl", "Dose": "50", "Drug_units": "mcg"},
+        ]
+    )
+    session = _cited_session(med)
+    tail = " aabb0011 and ccdd0022 both received fentanyl."
+    problems = find_medication_mismatches("Fentanyl 75 mcg was given." + tail, session)
+    assert len(problems) == 1 and "75 mcg" in problems[0]
+    assert find_medication_mismatches("Fentanyl 50 mcg was given." + tail, session) == []

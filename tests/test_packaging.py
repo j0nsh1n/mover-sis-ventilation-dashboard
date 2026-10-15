@@ -73,11 +73,23 @@ def test_build_script_is_executable_and_sane():
     not (ROOT / "dist" / "MOVER-SIS-Monitor" / "MOVER-SIS-Monitor").exists(),
     reason="Frozen binary not built in this workspace",
 )
-def test_frozen_binary_smoke_offscreen():
+def test_frozen_binary_smoke_offscreen(tmp_path):
     """If a build exists, the binary should start and stay up briefly."""
     binary = ROOT / "dist" / "MOVER-SIS-Monitor" / "MOVER-SIS-Monitor"
+    build_version_path = binary.parent / "VERSION"
+    if not build_version_path.is_file():
+        build_version_path = binary.parent / "_internal" / "VERSION"
+    build_version = build_version_path.read_text().strip() if build_version_path.is_file() else "unknown"
+    expected_version = (ROOT / "VERSION").read_text().strip()
+    if build_version != expected_version:
+        pytest.skip(f"Frozen dist version {build_version} differs from VERSION {expected_version}; rebuild first")
     env = os.environ.copy()
-    env["QT_QPA_PLATFORM"] = "offscreen"
+    env.update({
+        "QT_QPA_PLATFORM": "offscreen", "MOVER_SKIP_SETUP": "1",
+        "MOVER_CONFIG_DIR": str(tmp_path / "config"), "OLLAMA_MODELS": str(tmp_path / "models"),
+        "MOVER_EMR_DIR": str(tmp_path / "EMR"), "MOVER_PROCESSED_DIR": str(tmp_path / "processed"),
+        "MOVER_UPDATE_MANIFEST_URL": "",
+    })
     proc = subprocess.Popen(
         [str(binary)],
         cwd=str(binary.parent),
@@ -108,6 +120,22 @@ def test_frozen_binary_smoke_offscreen():
 def test_spec_bundles_xcb_cursor():
     spec = (ROOT / "packaging" / "mover_sis_monitor.spec").read_text(encoding="utf-8")
     assert "libxcb-cursor.so.0" in spec
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux bundles use libQt6Core")
+def test_frozen_bundle_contains_qt_core():
+    app = ROOT / "dist" / "MOVER-SIS-Monitor"
+    if not app.is_dir():
+        pytest.skip("Frozen bundle not built in this workspace")
+    version_path = app / "VERSION"
+    if not version_path.is_file():
+        version_path = app / "_internal" / "VERSION"
+    if not version_path.is_file() or version_path.read_text().strip() != (ROOT / "VERSION").read_text().strip():
+        pytest.skip("Frozen bundle does not match VERSION; rebuild first")
+    qt_lib = app / "_internal" / "PySide6" / "Qt" / "lib"
+    assert any(path.is_file() for path in qt_lib.glob("libQt6Core.so*")), (
+        f"Bundled PySide6 Qt libraries missing libQt6Core in {qt_lib}"
+    )
 
 
 def _generated_launch_script() -> str:
@@ -155,3 +183,25 @@ def test_launcher_starts_app_when_libraries_present(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "started"
+
+
+def test_entrypoint_selftest_scan_from_source(tmp_path):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT)
+    env["TMPDIR"] = str(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "packaging" / "entrypoint.py"), "--selftest-scan"],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "selftest-scan ok 19 cases" in result.stdout
+    assert not list(tmp_path.glob("mover-selftest-scan-*"))
+
+
+def test_entrypoint_help_hides_selftest_scan():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "packaging" / "entrypoint.py"), "--help"],
+        cwd=ROOT, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert "--selftest-scan" not in result.stdout

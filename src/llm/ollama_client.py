@@ -106,14 +106,15 @@ class OllamaClient:
             return False
 
     def list_models(self) -> list[str]:
+        return sorted(self.model_digests())
+
+    def model_digests(self) -> dict[str, str]:
         data = self._request_json("GET", "/api/tags")
-        models = data.get("models") or []
-        names = []
-        for m in models:
-            name = m.get("name") or m.get("model")
-            if name:
-                names.append(str(name))
-        return sorted(names)
+        return {
+            str(m.get("name") or m["model"]): str(m.get("digest") or "")
+            for m in data.get("models") or []
+            if m.get("name") or m.get("model")
+        }
 
     def embed(
         self, model: str, texts: str | Sequence[str]
@@ -171,21 +172,37 @@ class OllamaClient:
         temperature: float = 0.15,
         stream: bool = False,
         tools: list[dict[str, Any]] | None = None,
+        format: dict[str, Any] | None = None,
+        think: bool | None = None,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
     ) -> ChatResult:
+        """
+        ``format`` is a JSON schema the reply must follow; ``think=False`` turns off
+        a reasoning model's thinking; ``timeout_s`` overrides the client timeout for
+        this call.
+        """
         payload_messages = self._normalize_messages(messages)
+        options: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
         body: dict[str, Any] = {
             "model": model,
             "messages": payload_messages,
             "stream": bool(stream),
-            "options": {"temperature": temperature},
+            "options": options,
         }
         if tools:
             body["tools"] = tools
+        if format is not None:
+            body["format"] = format
+        if think is not None:
+            body["think"] = think
 
         if stream:
             return self._chat_stream_collect(model, body)
 
-        data = self._request_json("POST", "/api/chat", body)
+        data = self._request_json("POST", "/api/chat", body, timeout_s=timeout_s)
         msg = data.get("message") or {}
         content = str(msg.get("content") or "")
         calls = msg.get("tool_calls") or []
@@ -280,6 +297,8 @@ class OllamaClient:
         method: str,
         path: str,
         body: dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> dict[str, Any]:
         data = None if body is None else json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
@@ -289,7 +308,7 @@ class OllamaClient:
             method=method,
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_s or self.timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.URLError as e:
             raise OllamaError(
@@ -312,16 +331,16 @@ class OllamaEmbedder:
 
     def is_available(self) -> bool:
         try:
-            names = self.client.list_models()
+            models = self.client.model_digests()
         except OllamaError:
             return False
         want = self.model.strip()
-        want_base = want.split(":")[0]
-        for name in names:
-            base = str(name).split(":")[0]
-            if name == want or str(name).startswith(want + ":") or base == want_base:
-                return True
-        return False
+        name = want if ":" in want else want + ":latest"
+        if name not in models and want not in models:
+            return False
+        digest = models.get(name) or models.get(want)
+        self.model_id = f"{self.model}@{digest}" if digest else self.model
+        return True
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         return self.client.embed(self.model, texts)

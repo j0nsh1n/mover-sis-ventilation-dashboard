@@ -9,6 +9,7 @@ import signal
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -102,20 +103,34 @@ def probe_ollama(
         )
 
 
-def _wait_until_down(*, base_url: str = DEFAULT_BASE_URL, timeout_s: float = 8.0) -> bool:
+def _cancelled_status(base_url: str) -> OllamaStatus:
+    return OllamaStatus(False, "Ollama start cancelled", [], base_url)
+
+
+def _pause(seconds: float, should_stop: Callable[[], bool] | None) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            return True
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    return should_stop is not None and should_stop()
+
+
+def _wait_until_down(
+    *, base_url: str = DEFAULT_BASE_URL, timeout_s: float = 8.0,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
     """Wait until API is unreachable (after stop)."""
     host, port = _api_host_port(base_url)
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            return False
         st = probe_ollama(base_url=base_url)
         if not st.available and not _port_in_use(host, port):
             return True
-        if not st.available:
-            # Port may still be in TIME_WAIT; give it a moment
-            time.sleep(0.25)
-            if not _port_in_use(host, port):
-                return True
-        time.sleep(0.25)
+        if _pause(0.25, should_stop):
+            return False
     return not probe_ollama(base_url=base_url).available
 
 
@@ -124,11 +139,14 @@ def _wait_until_up(
     base_url: str = DEFAULT_BASE_URL,
     timeout_s: float = 30.0,
     proc: subprocess.Popen | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> OllamaStatus:
-    deadline = time.time() + timeout_s
+    deadline = time.monotonic() + timeout_s
     last_err = "timeout"
     ollama_bin = find_ollama_binary()
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
+        if should_stop is not None and should_stop():
+            return _cancelled_status(base_url)
         if proc is not None and proc.poll() is not None:
             return OllamaStatus(
                 available=False,
@@ -136,31 +154,21 @@ def _wait_until_up(
                     f"ollama serve exited early (code={proc.returncode}). "
                     "Port may still be busy after Stop — wait a second and try Start again."
                 ),
-                models=[],
-                base_url=base_url,
-                ollama_path=ollama_bin,
-                started_by_app=True,
+                models=[], base_url=base_url, ollama_path=ollama_bin, started_by_app=True,
             )
         try:
             models = OllamaClient(base_url=base_url, timeout_s=3.0).list_models()
             return OllamaStatus(
-                available=True,
-                message="Ollama started by the app",
-                models=models,
-                base_url=base_url,
-                started_by_app=True,
-                ollama_path=ollama_bin,
+                available=True, message="Ollama started by the app", models=models,
+                base_url=base_url, started_by_app=True, ollama_path=ollama_bin,
             )
         except OllamaError as e:
             last_err = str(e)
-            time.sleep(0.35)
+            if _pause(0.35, should_stop):
+                return _cancelled_status(base_url)
     return OllamaStatus(
-        available=False,
-        message=f"Started ollama but API not ready: {last_err}",
-        models=[],
-        base_url=base_url,
-        started_by_app=True,
-        ollama_path=ollama_bin,
+        available=False, message=f"Started ollama but API not ready: {last_err}",
+        models=[], base_url=base_url, started_by_app=True, ollama_path=ollama_bin,
     )
 
 
@@ -190,12 +198,15 @@ def start_ollama(
     *,
     base_url: str = DEFAULT_BASE_URL,
     wait_s: float = 30.0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> OllamaStatus:
     """
     Start ``ollama serve`` if the API is down. Retries after a recent Stop.
     """
     global _started_proc, _app_started_server
 
+    if should_stop is not None and should_stop():
+        return _cancelled_status(base_url)
     already = probe_ollama(base_url=base_url)
     if already.available:
         return already
@@ -216,31 +227,38 @@ def start_ollama(
     host, port = _api_host_port(base_url)
     # After Stop the port can lag — wait briefly for it to free
     if _port_in_use(host, port):
-        _wait_until_down(base_url=base_url, timeout_s=5.0)
+        _wait_until_down(base_url=base_url, timeout_s=5.0, should_stop=should_stop)
 
     last_err = ""
     for attempt in range(1, 4):
+        if should_stop is not None and should_stop():
+            return _cancelled_status(base_url)
         already = probe_ollama(base_url=base_url)
         if already.available:
             return already
+        if should_stop is not None and should_stop():
+            return _cancelled_status(base_url)
         try:
             _started_proc = _spawn_serve(ollama_bin, env)
             _app_started_server = True
         except OSError as e:
             last_err = str(e)
-            time.sleep(0.6 * attempt)
+            if _pause(0.6 * attempt, should_stop):
+                return _cancelled_status(base_url)
             continue
 
         st = _wait_until_up(
             base_url=base_url,
             timeout_s=max(8.0, wait_s / 2),
             proc=_started_proc,
+            should_stop=should_stop,
         )
         if st.available:
             return st
         last_err = st.message
         # Early exit / port race — brief pause and retry
-        time.sleep(0.8 * attempt)
+        if _pause(0.8 * attempt, should_stop):
+            return _cancelled_status(base_url)
 
     return OllamaStatus(
         available=False,
@@ -258,13 +276,16 @@ def ensure_ollama(
     base_url: str = DEFAULT_BASE_URL,
     start_if_needed: bool = True,
     wait_s: float = 30.0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> OllamaStatus:
+    if should_stop is not None and should_stop():
+        return _cancelled_status(base_url)
     status = probe_ollama(base_url=base_url)
     if status.available:
         return status
     if not start_if_needed:
         return status
-    return start_ollama(base_url=base_url, wait_s=wait_s)
+    return start_ollama(base_url=base_url, wait_s=wait_s, should_stop=should_stop)
 
 
 # Anchored to the binary name on purpose. A bare "ollama" substring also matches

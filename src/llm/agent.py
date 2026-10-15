@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import json
 import re
+import string
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
+import pandas as pd
+
+from src.llm.advice_check import AdviceCheck, NotRun, check_advice
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     MODE_CHAT,
+    REWRITE_ASK,
     REWRITE_INSTRUCTION,
+    REWRITE_RESEARCH,
     VERIFICATION_FOOTER,
     build_system_prompt,
     session_header_text,
@@ -30,53 +37,66 @@ from src.llm.schemas import (
 )
 from src.llm.tools import SessionState, execute_tool, tool_select_case
 
-_PID_TOKEN = re.compile(r"\b([0-9a-f]{8,32})\b", re.IGNORECASE)
-_CLINICAL_DIRECTIVE = re.compile(
-    r"\b(you should|must administer|prescribe|increase the dose|"
-    r"extubate now|start dopamine|give bolus|clinical recommendation|"
-    r"treat the patient|order a)\b",
-    re.IGNORECASE,
-)
-
-# Recommendation framing the narrow list above misses entirely. Real rejected output
-# included "Consider reducing TV", "adjust ventilator settings", "require immediate
-# intervention" and "ensuring adequate neuromuscular blockade" — none matched.
-#
-# Each pattern targets advice *aimed at a reader*. Past-tense description of what the
+# MOVER PIDs are 16 hex characters; synthetic ones are SYN + 10 (src/pipeline/synthetic.py).
+# Anything looser reads counts and timestamps as PIDs.
+_PID_TOKEN = re.compile(r"\b(SYN[0-9a-f]{10}|[0-9a-f]{16})\b", re.IGNORECASE)
+# Each shape targets advice *aimed at a reader*. Past-tense description of what the
 # record shows ("PEEP was increased at t=40", "TV was reduced") must stay legal, so the
 # verbs are anchored to imperative/gerund/modal framing rather than matched bare.
+# tests/fixtures/gate_drafts.yaml holds the sentences each shape must catch or pass.
 _ADVICE_VERB = (
     r"consider|recommend|advise|ensure|optimi[sz]e|adjust|reduce|lower|increase|raise|"
     r"titrate|administer|initiate|address|correct|avoid|monitor|check|maintain|"
-    r"troubleshoot|manage|assess|evaluate|verify|confirm|escalate|intervene"
+    r"troubleshoot|manage|assess|evaluate|verify|confirm|escalate|intervene|"
+    r"extubate|switch|repeat|set|keep|use|try|give|start|stop|apply|wean|recruit|"
+    r"reverse|review|reassess|perform|obtain|prevent|continue|document|kept|"
+    r"do not|don't|make sure|be sure"
 )
-_DIRECTIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # modal advice: "should be reduced", "must be optimized", "needs to be adjusted"
-    re.compile(
-        rf"\b(should|must|need(?:s)? to|ought to|is indicated|are indicated)\b"
-        rf"(?:\s+\w+){{0,3}}\s+\b(?:be\s+)?(?:{_ADVICE_VERB})\w*",
-        re.IGNORECASE,
-    ),
-    # sentence-initial or bulleted imperative: "Consider reducing…", "- Adjust the…"
-    re.compile(
-        rf"(?:^\s*[-*•]?\s*|[.!?]\s+[-*•]?\s*|[\n\r]\s*[-*•]?\s*|:\s*)"
-        rf"\b(?:{_ADVICE_VERB})\b\s+\w+",
-        re.IGNORECASE,
-    ),
+_DIRECTIVE_SHAPES = (
+    # explicit orders
+    r"\b(?:you should|must administer|prescribe|increase the dose|extubate now|"
+    r"start dopamine|give bolus|treat the patient|order a)\b",
+    # obligation: "should be reduced", "ought to have extubated", "has to be kept"
+    rf"\b(?:should|must|needs? to|ought to|has to|have to)\b"
+    rf"(?:\s+\w+){{0,3}}\s+\b(?:be\s+)?(?:{_ADVICE_VERB})\w*",
+    # sentence-initial, bulleted or quoted imperative: "Consider reducing…",
+    # "- Adjust the…". A noun reading ("Increase in PIP", "Monitor alarms were")
+    # is description.
+    rf"(?:^|[.!?]\s+|[\n\r]|:|[\"“'‘(])\s*[-*•]?\s*(?:please\s+)?\b(?:{_ADVICE_VERB})\b"
+    r"(?!\s+(?:in|of)\b)(?!(?:\s+[\w-]+){1,2}\s+(?:was|were|occurred|resumed)\b)"
+    r"\s+\w+",
     # urgency framing: "requires immediate intervention", "warrants prompt…"
-    re.compile(
-        r"\b(require(?:s|d)?|warrant(?:s|ed)?|necessitat(?:e|es|ed))\s+"
-        r"(?:\w+\s+){0,2}(immediate|prompt|urgent|close|further)?\s*"
-        r"(intervention|attention|action|treatment|management|troubleshooting|monitoring)",
-        re.IGNORECASE,
-    ),
-    # goal framing: "focus on avoiding…", "with a view to optimising…"
-    re.compile(
-        rf"\b(focus(?:ing)? on|aim(?:ing)? to|in order to|so as to)\s+"
-        rf"(?:\w+\s+){{0,2}}\b(?:{_ADVICE_VERB})\w*",
-        re.IGNORECASE,
-    ),
+    r"\b(?:requires?|warrants?|necessitates?)\s+(?:\w+\s+){0,2}"
+    r"(?:intervention|attention|action|treatment|management|troubleshooting|monitoring)",
+    # goal framing: "focus on avoiding…"
+    rf"\b(?:focus(?:ing)? on|aim(?:ing)? to)\s+(?:\w+\s+){{0,2}}\b(?:{_ADVICE_VERB})\w*",
+    # the footer's own "not clinical recommendations" is a disclaimer
+    r"\brecommend(?:s|ed|ing)?\b|\b(?<!not clinical )recommendations?\b|"
+    r"\badvis(?:e|es|ed|able)\b|\b(?:is|are)\s+(?:the\s+)?preferred\b",
+    r"\b(?:i|we)(?:'d|’d|\s+would)?\s+(?:\w+\s+)?(?:suggest|propose)\b|"
+    r"\bmy\s+(?:suggestion|advice)\b",
+    # hedged advice: "would likely be better", "might help to"
+    r"\b(?:would|could|might|may)\s+(?:\w+\s+){0,2}(?:better|preferable|reasonable|"
+    r"prudent|sensible|wise|safer|beneficial|appropriate|help\s+to)\b",
+    # "It is best to keep…", "It is essential to confirm…"; "important to note" is not
+    r"\b(?:better|best|preferable|safer|wiser?|prudent|reasonable|sensible|important|"
+    r"essential|crucial|necessary)\s+to\s+(?!note\b|mention\b)\w+",
+    r"\bworth\s+(?:a\s+(?:trial|try)|(?!noting\b|mentioning\b)\w+ing)\b",
+    # "may be warranted"; "is indicated by" infers from the data
+    r"\b(?:is|are|be)\s+(?:\w+\s+)?(?:warranted|indicated)\b(?!\s+by\b)",
+    r"\b(?:clinicians?|providers?|team|anesthesiologists?)\s+"
+    r"(?:could|should|ought|must|need)\b",
+    r"\b(?:may|might|could)\s+(?:\w+\s+){0,2}(?:consider|benefit from|want to|wish to)\b",
+    # hindsight critique; "might have been caused" stays a reading of the data
+    rf"\b(?:could|should)\s+(?:\w+\s+)?have\s+(?:been\s+)?(?:{_ADVICE_VERB})\w*|"
+    r"\b(?:might|would)\s+(?:\w+\s+)?have\s+been\s+(?:avoided|prevented)\b",
+    r"\b(?:option|approach|alternative)\s+(?:would|could|might)\s+be\s+to\b",
+    r"\b(?:going forward|in future cases|next time|next step|ideally)\b",
 )
+# One alternation over ASCII-lowercased text runs about a third faster than the shapes
+# one by one with IGNORECASE, and the offsets still index the original casing.
+_DIRECTIVE = re.compile("|".join(f"(?:{shape})" for shape in _DIRECTIVE_SHAPES))
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 
 def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
@@ -88,47 +108,160 @@ def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
     """
     found: list[str] = []
     seen: set[str] = set()
-    for pattern in (_CLINICAL_DIRECTIVE, *_DIRECTIVE_PATTERNS):
-        for m in pattern.finditer(text or ""):
-            snippet = " ".join(m.group(0).split()).strip(" -*•:")
-            key = snippet.lower()
-            if snippet and key not in seen:
-                seen.add(key)
-                found.append(snippet)
-                if len(found) >= limit:
-                    return found
+    text = text or ""
+    for m in _DIRECTIVE.finditer(text.translate(_ASCII_LOWER)):
+        snippet = " ".join(text[m.start() : m.end()].split()).strip(" -*•:")
+        key = snippet.lower()
+        if snippet and key not in seen:
+            seen.add(key)
+            found.append(snippet)
+            if len(found) >= limit:
+                return found
     return found
 
 
-def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
-    """
-    Checks the answer actually reports the selected case's own demographics.
+def _advice_phrases(text: str, advice: Sequence[str]) -> list[str]:
+    """Pattern hits, then each model-flagged sentence that no pattern hit already quotes."""
+    found = find_directive_phrases(text)
+    quoted = [f.lower() for f in found]
+    found += [s for s in advice if s in text and not any(q in s.lower() for q in quoted)]
+    return found
 
-    The observed failure was an answer claiming "Age: 55 (aligned)" for a case that is
-    60 — restating the user's description as though it were the record. Requiring the
-    real value to appear catches that without guessing at sentence meaning.
-    """
-    problems: list[str] = []
-    pid = session.active_pid
-    if not pid or session.cases is None or session.cases.empty:
-        return problems
-    rows = session.cases[session.cases["PID"].astype(str) == str(pid)]
+
+@dataclass(frozen=True)
+class CaseFacts:
+    """One case the answer gate checks a draft against."""
+
+    pid: str
+    age: int | None
+    # Ask compares a described patient with the selected case, so its age must appear.
+    # A Research answer may leave ages out; it must only not misstate them.
+    age_required: bool
+    # None: not preloaded, so the dose check reads this case's rows from the EMR.
+    medications: pd.DataFrame | None
+
+
+def _record_age(session: SessionState, pid: str) -> int | None:
+    cases = session.cases
+    if cases is None or cases.empty:
+        return None
+    rows = cases[cases["PID"].astype(str) == pid]
     if rows.empty:
-        return problems
-    row = rows.iloc[0]
-    age = row.get("Age")
+        return None
     try:
-        age_int = int(float(age))
+        return int(float(rows.iloc[0].get("Age")))
     except (TypeError, ValueError):
-        return problems
+        return None
 
-    # Look for asserted ages, not for the digits anywhere in the text. Mere presence is
-    # useless: "60" turns up in flag times, counts, even the note this check appends —
-    # while the answer still calls a 60-year-old case "55-year-old".
-    claimed = {
+
+def _preloaded_medications(session: SessionState, pid: str) -> pd.DataFrame | None:
+    med = session.medications
+    if med is None:
+        return None
+    if med.empty or "PID" not in med.columns:
+        return pd.DataFrame()
+    return med[med["PID"].astype(str) == pid]
+
+
+def gate_cases(session: SessionState) -> list[CaseFacts]:
+    """The cases a draft is checked against: the cited cases, else the Ask selection."""
+    if session.cited_pids:
+        pids, required = [str(p) for p in session.cited_pids], False
+    elif session.active_pid:
+        pids, required = [str(session.active_pid)], True
+    else:
+        return []
+    return [
+        CaseFacts(
+            pid=pid,
+            age=_record_age(session, pid),
+            age_required=required,
+            medications=_preloaded_medications(session, pid),
+        )
+        for pid in pids
+    ]
+
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
+_CLAUSE_BREAK = re.compile(r"[;,]|\b(?:and|but|while|whereas)\b", re.IGNORECASE)
+
+
+# Words that may stand beside PIDs in a shared subject: "Both A and B were…".
+_SUBJECT_WORDS = frozenset({"both", "all", "the", "case", "cases", "pid", "pids", "patient", "patients"})
+
+
+class _Attribution(NamedTuple):
+    """The answer split by the cited cases each part describes."""
+
+    # Every clause about the case, including a clause naming it alongside others.
+    by_case: dict[str, str]
+    # Text naming no cited case; its facts must match at least one of them.
+    unattributed: str
+
+
+def _clause_owners(clauses: list[str], pids: list[str]) -> list[frozenset[str]]:
+    """
+    The cited PIDs each clause names. A clause that is only a subject ("Both A", "B,")
+    lends its PIDs to the next clause, so "A and B were 55" names both cases.
+    """
+    owners: list[frozenset[str]] = []
+    subject: frozenset[str] = frozenset()
+    for clause in clauses:
+        rest = clause.lower()
+        named = frozenset(p for p in pids if p.lower() in rest)
+        for pid in named:
+            rest = rest.replace(pid.lower(), " ")
+        words = re.findall(r"[a-z]+|\d", rest)
+        if named and _SUBJECT_WORDS.issuperset(words):
+            subject |= named
+            owners.append(subject)
+        elif words:
+            owners.append(subject | named if named else frozenset())
+            subject = frozenset()
+        else:
+            owners.append(frozenset())
+    return owners
+
+
+def _attribute(text: str, pids: list[str]) -> _Attribution:
+    """
+    Each case's share of the answer, so a fact is checked against its own case.
+
+    A single case owns the whole answer. With several, a clause belongs to the cited
+    PIDs it names, else to the nearest clause naming one in its sentence, else to the
+    last ones named before it. Text before any PID is named is unattributed.
+    """
+    if len(pids) == 1:
+        return _Attribution({pids[0]: text}, "")
+    owned: dict[str, list[str]] = {p: [] for p in pids}
+    loose: list[str] = []
+    last: frozenset[str] = frozenset()
+    for sentence in _SENTENCE_BREAK.split(text or ""):
+        clauses = _CLAUSE_BREAK.split(sentence)
+        named = _clause_owners(clauses, pids)
+        for i, clause in enumerate(clauses):
+            owners = (
+                named[i]
+                or next((n for n in reversed(named[:i]) if n), frozenset())
+                or next((n for n in named[i + 1 :] if n), frozenset())
+                or last
+            )
+            for pid in owners:
+                owned[pid].append(clause)
+            if not owners:
+                loose.append(clause)
+        last = next((n for n in reversed(named) if n), last)
+    return _Attribution({p: "\n".join(parts) for p, parts in owned.items()}, "\n".join(loose))
+
+
+def _claimed_ages(text: str) -> set[int]:
+    # Asserted ages, not the digits anywhere in the text. Mere presence is useless:
+    # "60" turns up in flag times, counts, even the note this check appends — while
+    # the answer still calls a 60-year-old case "55-year-old".
+    return {
         int(g)
         for m in re.finditer(
-            r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:year[- ]?old|y/?o\b|yr[s]?\b|[FM]\b)"
+            r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:years?[- ]?old|years?\s+of\s+age|y/?o\b|yr[s]?\b|[FM]\b)"
             r"|(?:\bage[d]?\s*[:=]?\s*)(\d{1,3})(?!\d)",
             text or "",
             re.IGNORECASE,
@@ -136,18 +269,73 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
         for g in [m.group(1) or m.group(2)]
         if g
     }
-    if not claimed:
-        problems.append(
-            f"the matched case {pid} is age {age_int}, but the answer never states it"
-        )
-    elif age_int not in claimed:
-        wrong = ", ".join(str(c) for c in sorted(claimed))
-        problems.append(
-            f"the answer describes the matched case as age {wrong}, but {pid} is "
-            f"age {age_int} — state the real age and note the difference from the "
-            f"described patient"
-        )
+
+
+# Ages that describe a group, not a person: a statistic, a bound, or a range.
+# "mean age 56" or "aged 80 or older" must not read as a claimed age of 56 or 80.
+_POPULATION_AGE = re.compile(
+    r"\b(?:mean|median|average|modal)\s+ages?\s*(?:of\s+)?[:=]?\s*\d{1,3}"
+    r"|\bage[sd]?\s*[:=]?\s*\d{1,3}\s*(?:or|and)\s+(?:older|younger|over|under|above|below)"
+    r"|\bages?\s*[:=]?\s*\d{1,3}\s*(?:to|through|and|-|\u2013)\s*\d{1,3}"
+    r"|\bages?\s*(?:>=|<=|>|<|\u2265|\u2264)\s*\d{1,3}",
+    re.IGNORECASE,
+)
+
+
+def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
+    """
+    Checks the answer reports each checked case's own age.
+
+    The observed failure was an answer claiming "Age: 55 (aligned)" for a case that is
+    60 — restating the user's description as though it were the record. Requiring the
+    real value to appear catches that without guessing at sentence meaning. A case
+    without a recorded age is never checked, so no age is ever supplied for it. An age
+    in text naming no cited case must be the age of one of them.
+    """
+    problems: list[str] = []
+    cases = gate_cases(session)
+    if not cases:
+        return []
+    parts = _attribute(text, [c.pid for c in cases])
+    for case in cases:
+        if case.age is None:
+            continue
+        claimed = _claimed_ages(parts.by_case[case.pid])
+        if not claimed:
+            if case.age_required:
+                problems.append(
+                    f"the matched case {case.pid} is age {case.age}, "
+                    f"but the answer never states it"
+                )
+        elif case.age not in claimed:
+            wrong = ", ".join(str(c) for c in sorted(claimed))
+            problems.append(
+                f"the answer describes {case.pid} as age {wrong}, but {case.pid} is "
+                f"age {case.age} — state the real age and note the difference from the "
+                f"described patient"
+            )
+    ages = {c.age for c in cases}
+    # A case without a recorded age could be any age, so loose ages are then unchecked.
+    if None not in ages:
+        known = sorted(a for a in ages if a is not None)
+        loose = _POPULATION_AGE.sub(" ", parts.unattributed)
+        stray = sorted(_claimed_ages(loose) - set(known))
+        if stray:
+            problems.append(
+                f"the answer states age {', '.join(map(str, stray))} without naming a "
+                f"case, but the cited cases are age {', '.join(map(str, known))} — "
+                f"attach each age to the case it belongs to"
+            )
     return problems
+
+
+def _unknown_pids(text: str, known: set[str]) -> list[str]:
+    """PID-like tokens in the answer that match none of ``known``."""
+    if not known:
+        return []
+    known_l = {p.lower() for p in known}
+    claimed = {m.group(1) for m in _PID_TOKEN.finditer(text)}
+    return sorted((c for c in claimed if c.lower() not in known_l), key=str.lower)
 
 ProgressCb = Callable[[str], None]
 
@@ -234,13 +422,12 @@ def _heuristic_prefetch(
         tool_verify_selection,
     )
 
-    pids = set(session.cases["PID"].astype(str))
+    pids = {p.lower(): p for p in session.cases["PID"].astype(str)}
     for m in _PID_TOKEN.finditer(q):
-        cand = m.group(1)
-        matches = [p for p in pids if p == cand or p.startswith(cand) or cand in p]
-        if len(matches) == 1:
-            out = tool_summarize_management(session, pid=matches[0])
-            traces.append(f"[auto] summarize_management pid={matches[0]}\n{out[:1200]}")
+        pid = pids.get(m.group(1).lower())
+        if pid:
+            out = tool_summarize_management(session, pid=pid)
+            traces.append(f"[auto] summarize_management pid={pid}\n{out[:1200]}")
             traces.append(f"[auto] verify_selection\n{tool_verify_selection(session)[:600]}")
             return traces
 
@@ -275,7 +462,14 @@ def _heuristic_prefetch(
     return traces
 
 
-def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
+def verify_answer(
+    answer: str, session: SessionState, *, advice: AdviceCheck | None = None
+) -> tuple[str, list[str]]:
+    """
+    Append a visible note for each problem the answer still has.
+
+    ``advice`` is the model check of this answer; None when the caller ran none.
+    """
     notes: list[str] = []
     text = strip_think((answer or "").strip())
     if not text:
@@ -297,15 +491,7 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
     if session.corpus is not None and session.has_corpus_scan():
         corpus |= set(session.corpus["PID"].astype(str))
 
-    claimed = {m.group(1).lower() for m in _PID_TOKEN.finditer(text)}
-    bad = []
-    for c in claimed:
-        if not corpus:
-            break
-        if not any(
-            p.lower() == c or p.lower().startswith(c) or c in p.lower() for p in corpus
-        ):
-            bad.append(c)
+    bad = _unknown_pids(text, corpus)
     if bad:
         notes.append("unknown_pids:" + ",".join(bad[:5]))
         text += (
@@ -313,13 +499,19 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
             f"{', '.join(bad[:5])}. Prefer PIDs from tool results only."
         )
 
-    directives = find_directive_phrases(text)
+    directives = _advice_phrases(text, advice.advice if advice else ())
     if directives:
         notes.append("clinical_directive_language:" + " | ".join(directives[:3]))
         text += (
             "\n\n**Verification note:** Directive clinical language was detected "
             f"({'; '.join(repr(d) for d in directives[:3])}). "
             "This co-pilot is research-only and must not be used for live care decisions."
+        )
+    if isinstance(advice, NotRun):
+        notes.append(f"advice_check_not_run:{advice.reason}")
+        text += (
+            "\n\n**Verification note:** the model advice check did not run, so only "
+            "the word-pattern check was applied."
         )
 
     for problem in find_unstated_case_facts(text, session):
@@ -333,6 +525,12 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
             "\n\n**Verification note:** reported doses disagree with the medication "
             "record — " + "; ".join(dose_problems[:3]) + "."
         )
+    if session.medications_unreadable:
+        notes.append(f"dose_check_skipped:{session.medications_unreadable}")
+        text += (
+            "\n\n**Verification note:** doses were not checked — the medication record "
+            "could not be read."
+        )
 
     if VERIFICATION_FOOTER.strip() not in text:
         text = text.rstrip() + VERIFICATION_FOOTER
@@ -342,11 +540,20 @@ def verify_answer(answer: str, session: SessionState) -> tuple[str, list[str]]:
 _DOSE_UNITS = r"mcg|µg|ug|mg|g|mL|ml|L|units?|IU"
 
 
+def _read_medications(pid: str) -> pd.DataFrame:
+    try:
+        from src.llm.case_context import load_case_medications
+
+        return load_case_medications(pid)
+    except Exception:
+        return pd.DataFrame()
+
+
 def find_medication_mismatches(
     text: str, session: SessionState, *, limit: int = 5
 ) -> list[str]:
     """
-    Doses in the answer that disagree with the medication record.
+    Doses in the answer that disagree with each checked case's medication record.
 
     Observed: an answer reported "Phenylephrine 50 mcg" for a case documenting 100 mcg,
     and "Vecuronium 0.15 mg/kg" where the record holds absolute mg. Altered doses are
@@ -354,16 +561,26 @@ def find_medication_mismatches(
 
     Best-effort: silent when the EMR is unreachable or the case has no medications.
     """
-    pid = session.active_pid
-    if not pid or not (text or "").strip():
+    if not (text or "").strip():
         return []
-    try:
-        from src.llm.case_context import load_case_medications
+    cases = gate_cases(session)
+    if not cases:
+        return []
+    parts = _attribute(text, [c.pid for c in cases])
+    records = {
+        c.pid: _read_medications(c.pid) if c.medications is None else c.medications
+        for c in cases
+    }
+    problems: list[str] = []
+    for pid, med in records.items():
+        problems += _dose_problems(parts.by_case[pid], med)
+    if parts.unattributed.strip():
+        problems += _dose_problems(parts.unattributed, pd.concat(records.values()))
+    return problems[:limit]
 
-        med = load_case_medications(str(pid))
-    except Exception:
-        return []
-    if med is None or med.empty or "Drug_name" not in med.columns:
+
+def _dose_problems(text: str, med: pd.DataFrame) -> list[str]:
+    if med.empty or "Drug_name" not in med.columns:
         return []
 
     documented: dict[str, set[tuple[str, str]]] = {}
@@ -403,21 +620,32 @@ def find_medication_mismatches(
                     f'"{head} {claimed} {unit}" does not match the record '
                     f"({documented_str})"
                 )
-            if len(problems) >= limit:
-                return problems
     return problems
 
 
-def answer_problems(text: str, session: SessionState) -> list[str]:
-    """Reasons a draft must be rewritten, phrased for the model to act on."""
+def answer_problems(
+    text: str, session: SessionState, *, advice: Sequence[str] = ()
+) -> list[str]:
+    """
+    Reasons a draft must be rewritten, phrased for the model to act on.
+
+    ``advice`` holds the sentences the model check labeled as advice.
+    """
     problems = [
         f'- prescriptive phrasing: "{d}" — describe what the record shows instead'
-        for d in find_directive_phrases(text)
+        for d in _advice_phrases(text, advice)
     ]
     problems += [f"- {p}" for p in find_unstated_case_facts(text, session)]
     problems += [
         f"- dose does not match the extract: {p}"
         for p in find_medication_mismatches(text, session)
+    ]
+    # Ask keeps an appended note for unknown PIDs; a Research answer may name only
+    # the cases it was given.
+    cited = ", ".join(session.cited_pids)
+    problems += [
+        f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
+        for pid in _unknown_pids(text, set(session.cited_pids))
     ]
     return problems
 
@@ -583,18 +811,23 @@ def run_agent(
             "Ask: 'Using the focus list, summarize management for the top case.'"
         )
 
-    # Safety rewrite: a draft that advises the reader is rejected and sent back once.
+    # Safety rewrite: a draft that advises the reader or misstates a checked case is
+    # rejected and sent back once.
     # Annotating prescriptive text with a disclaimer still ships the prescription.
-    problems = answer_problems(final_text, session)
+    advice = check_advice(final_text, client, model)
+    problems = answer_problems(final_text, session, advice=advice.advice)
     if problems:
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
         if on_status:
-            on_status("Rewriting to remove prescriptive language…")
+            on_status("Rewriting the draft to pass the answer check…")
         messages.append({"role": "assistant", "content": final_text})
         messages.append(
             {
                 "role": "user",
-                "content": REWRITE_INSTRUCTION.format(problems="\n".join(problems)),
+                "content": REWRITE_INSTRUCTION.format(
+                    problems="\n".join(problems),
+                    **(REWRITE_RESEARCH if session.cited_pids else REWRITE_ASK),
+                ),
             }
         )
         try:
@@ -602,18 +835,17 @@ def run_agent(
                 model, messages, temperature=0.0, stream=False, tools=None
             )
             rewritten = strip_think(retry.content or "").strip()
-            if rewritten and not answer_problems(rewritten, session):
-                final_text = rewritten
-                trace.append("rewrite:accepted")
-            elif rewritten:
+            if rewritten:
+                rewritten_advice = check_advice(rewritten, client, model)
+                left = answer_problems(rewritten, session, advice=rewritten_advice.advice)
                 # Keep whichever draft has fewer violations
-                if len(answer_problems(rewritten, session)) < len(problems):
-                    final_text = rewritten
-                trace.append("rewrite:still_flagged")
+                if len(left) < len(problems):
+                    final_text, advice = rewritten, rewritten_advice
+                trace.append("rewrite:still_flagged" if left else "rewrite:accepted")
         except Exception as e:  # keep the original answer if the retry fails
             trace.append(f"rewrite:failed:{e}")
 
-    verified, notes = verify_answer(final_text, session)
+    verified, notes = verify_answer(final_text, session, advice=advice)
     if notes:
         trace.append("verify:" + ";".join(notes))
 

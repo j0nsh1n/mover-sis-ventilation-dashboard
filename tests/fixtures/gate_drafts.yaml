@@ -1,0 +1,117 @@
+# Answer sentences for the Research answer gate (find_directive_phrases).
+# descriptive: what the record shows; the gate must let each one through.
+# directive: advice to a clinician; the gate must catch each one.
+
+descriptive:
+  - Increase in PIP began at minute 40.
+  - Monitor alarms were not recorded.
+  - Monitor data resumed at minute 93 after the gap.
+  - PEEP was increased to 8 cmH2O at minute 40.
+  - Tidal volume was reduced from 620 mL to 480 mL at minute 75.
+  - Lower tidal volumes were recorded after minute 60.
+  - Lower PIP occurred after the bronchodilator at minute 70.
+  - Correct ETT position was documented after the chest film at minute 30.
+  - Repeat desaturation occurred at minute 140, lasting 3 minutes.
+  - Increase of FiO2 to 1.0 was charted at minute 96 during the desaturation.
+  - Use of a recruitment maneuver is not documented in this case.
+  - Start of the maintenance phase was derived from the intubation event at minute 12.
+  - Raised PIP coincided with the 3 minutes of desaturation.
+  - Adjusted tidal volume values are not available; only set values were exported.
+  - Assessment of lung compliance is limited because plateau pressure was not recorded.
+  - The pip_high flag fired on 35 minutes, all during maintenance.
+  - Median PEEP was 7.9 cmH2O across the case.
+  - The rising PIP trend after minute 40 suggests decreasing compliance.
+  - The flag counts suggest that PIP was elevated mostly in the first hour.
+  - The desaturation episode at minute 95 required no documented intervention.
+  - Management descriptions reflect documented SIS fields and rule screens, not clinical recommendations.
+  - It is worth noting that SpO2 stayed above 94% throughout emergence.
+  - It is also worth mentioning that two cases lack an extubation event.
+  - Reduced compliance is indicated by the rise in PIP after minute 40.
+  - The anesthesia note states PEEP was raised to 10 cmH2O at minute 55 in order to reduce atelectasis.
+  - The anesthesia team adjusted FiO2 twice during maintenance, at minutes 48 and 112.
+  - Extubation was recorded at minute 182, 9 minutes after surgery end.
+  - Documented management included vecuronium 6 mg and fentanyl 100 mcg at induction.
+  - Phenylephrine 100 mcg was given at minute 33 after MAP fell to 58 mmHg.
+  - The extract does not record why FiO2 was lowered to 0.4.
+  - The rule screens tidal volume above 8 mL/kg of ideal body weight.
+  - Tidal volume averaged 10.9 mL/kg IBW, above the 8 mL/kg screen threshold.
+  - The record shows the patient was reintubated at minute 210 after a failed extubation.
+  - SpO2 recovered to 97% within 4 minutes of the FiO2 change.
+  - Of the 30 cases retrieved, 12 had at least one tv_high flag.
+  - Case 3f2a91c0 had the longest desaturation, 7 minutes during induction.
+  - Neither case documents a recruitment maneuver or a change in PEEP.
+  - The gap from minute 80 to 92 has no ventilator rows, so the flags there are blank.
+  - The two cases differ mainly in PEEP, 5 versus 10 cmH2O during maintenance.
+  - FiO2 was 0.6 during induction and 0.4 for the rest of maintenance.
+  - This case was flagged because PIP stayed above 30 cmH2O for 6 consecutive minutes.
+  - The anesthesiologist documented a cuff leak at minute 64.
+  - No neuromuscular reversal agent appears in the medication rows.
+  - Set tidal volume was 500 mL throughout maintenance.
+  - Review of the chart shows no cuff pressure entries.
+  - It is important to note that the flags are screens, not diagnoses.
+  - These flags should be interpreted with caution because of the 12-minute gap.
+  - PIP must stay above the limit for 3 consecutive minutes before pip_high fires.
+  - The rise in PIP might have been caused by a kinked circuit, but the record does not say.
+  - FiO2 may have been increased before the first charted value at minute 6.
+  - The record suggests the team chose pressure control after minute 90.
+  - Recruitment would have shown as a brief PIP plateau, and none appears.
+
+directive:
+  - A lower tidal volume would likely be better for this patient.
+  - It may be worth trying a higher PEEP to improve oxygenation.
+  - A recruitment maneuver is advisable before raising FiO2 further.
+  - I'd suggest lowering the tidal volume to 6 mL/kg IBW.
+  - "Recommended: reduce tidal volume to 6-8 mL/kg IBW."
+  - The team ought to have extubated earlier given the stable gas exchange.
+  - The team should have extubated after the TOF ratio reached 0.9.
+  - Consider reducing tidal volume toward 6 mL/kg IBW.
+  - Tidal volume should be reduced to 6 mL/kg.
+  - Clinicians should titrate PEEP to compliance.
+  - Increase PEEP to 10 cmH2O.
+  - Monitor SpO2 closely during emergence.
+  - Repeat the blood gas after each PEEP change.
+  - The team could have used a lower FiO2 once SpO2 was stable.
+  - FiO2 could have been reduced after minute 50.
+  - A trial of higher PEEP may be warranted in this patient.
+  - A recruitment maneuver is indicated after intubation.
+  - It would be reasonable to wean FiO2 below 0.5.
+  - It might help to recruit the lung before increasing PEEP.
+  - Earlier reversal of neuromuscular blockade would have been preferable.
+  - Going forward, keep plateau pressure under 30 cmH2O.
+  - In future cases, avoid tidal volumes above 8 mL/kg.
+  - This desaturation requires immediate intervention.
+  - The case cites "Recommendations for Lung-Protective Ventilation in Surgical Patients".
+  - Per the guideline "Avoid Hyperoxia in the Operating Room", FiO2 here was high.
+  - Do not extubate until the train-of-four ratio exceeds 0.9.
+  - Make sure the cuff pressure is checked after repositioning.
+  - Be sure to reassess compliance after each PEEP change.
+  - You may want to consider a lower driving pressure.
+  - The anesthesia team could consider a recruitment maneuver at minute 60.
+  - The patient may benefit from a higher PEEP during laparoscopy.
+  - Better to start with 5 cmH2O of PEEP and titrate upward.
+  - It is best to keep driving pressure below 15 cmH2O.
+  - We recommend lung-protective settings for this patient.
+  - Lung-protective ventilation is recommended for every case like this one.
+  - Clinicians are advised to verify ETT position after any desaturation.
+  - PEEP needs to be optimized for the patient's BMI.
+  - My suggestion is to lower FiO2 once SpO2 exceeds 96%.
+  - Switch to pressure-controlled ventilation if PIP stays above 35.
+  - One option would be to increase the respiratory rate rather than tidal volume.
+  - "- Adjust FiO2 to keep SpO2 between 92% and 96%."
+  - "Ventilation: titrate PEEP to the best compliance."
+  - Ideally, tidal volume would be set at 6 mL/kg IBW.
+  - Please document the cuff pressure after every position change.
+  - Set the PEEP to at least 8 cmH2O after induction.
+  - Use pressure control for the remainder of the laparoscopy.
+  - Give a fluid bolus before deepening the anesthetic.
+  - It is essential to confirm bilateral breath sounds after intubation.
+  - It is crucial to keep plateau pressure low in this patient.
+  - Plateau pressure has to be kept below 30 cmH2O.
+  - The ventilator settings should be reviewed before emergence.
+  - A train-of-four count must be obtained before reversal.
+  - The desaturation might have been prevented by earlier recruitment.
+  - Clinicians might want to wean FiO2 sooner.
+  - A pressure-controlled mode would be appropriate here.
+  - Pressure control is the preferred mode for this patient.
+  - The next step is to recruit the lung.
+  - The note quotes "Use Lung-Protective Settings" as the reason for the change.

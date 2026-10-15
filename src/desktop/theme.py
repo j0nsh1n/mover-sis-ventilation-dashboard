@@ -197,6 +197,10 @@ QPushButton#primaryBtn:pressed {{
     background: {accent_pressed};
 }}
 
+QPushButton:focus, QPushButton#primaryBtn:focus, QPushButton#secondaryBtn:focus {{
+    border: 2px solid #8c739f;
+}}
+
 /* —— tabs —— */
 QTabWidget::pane {{
     border: 1px solid {border};
