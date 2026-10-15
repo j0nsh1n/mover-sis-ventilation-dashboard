@@ -30,10 +30,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Synthetic data gets a brief desaturation right after intubation in every sixth
   ventilated case (marked `"phase": "induction"` in `synthetic_truth.json`).
 - The local chat model now reads each answer sentence and labels it as a
-  description or as clinical advice, in one extra call per answer (about 0.8 s for
-  six sentences on a 9B model). A sentence labeled as advice sends the draft back
-  for the same single rewrite as the word-pattern check, and one still present
-  afterwards is named in the verification note. On 40 held-out sentences the
+  description or as clinical advice, in one extra call per draft (a rewritten
+  draft is labeled again; about 0.8 s for six sentences on a 9B model). A
+  sentence labeled as advice sends the draft back for the same single rewrite as
+  the word-pattern check, and one still present afterwards is named in the
+  verification note. On 40 held-out sentences the
   model caught 20 of 20 advice sentences and flagged none of 20 descriptions,
   where the word patterns alone caught 1 of 20. When the model does not reply
   with a label per sentence, the answer ships with the pattern check alone and
