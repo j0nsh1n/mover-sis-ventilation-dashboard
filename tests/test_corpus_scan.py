@@ -155,6 +155,28 @@ def test_parallel_cancel_keeps_previous_scan_and_stops_workers(emr, tmp_path, al
     assert not (tmp_path / "_corpus_scan_tmp").exists()
 
 
+@pytest.mark.parametrize("workers", [1, None])
+def test_single_shard_cancel_during_scoring_keeps_previous_files(emr, tmp_path, allow_external, workers):
+    scan_corpus(emr, tmp_path, workers=1)
+    before = {name: (tmp_path / name).read_bytes() for name in (CORPUS_META, CORPUS_CASES, CORPUS_EPISODES)}
+    scoring_started = None
+
+    def on_progress(message, _done, _total):
+        nonlocal scoring_started
+        if "CPU cores" in message:
+            scoring_started = time.monotonic()
+
+    def should_stop():
+        return scoring_started is not None and time.monotonic() - scoring_started >= 0.2
+
+    with pytest.raises(ScanCancelled, match="previous scan was kept"):
+        scan_corpus(emr, tmp_path, workers=workers, on_progress=on_progress, should_stop=should_stop)
+    assert scoring_started is not None
+    assert time.monotonic() - scoring_started < 2
+    assert {name: (tmp_path / name).read_bytes() for name in before} == before
+    assert not (tmp_path / "_corpus_scan_tmp").exists()
+
+
 def test_worker_error_names_the_shard(emr, tmp_path, allow_external, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("synthetic failure")
@@ -236,3 +258,21 @@ def test_desktop_scan_action_feeds_copilot_session(emr, tmp_path, monkeypatch, a
     assert session.has_corpus_scan()
     assert session.corpus_meta["n_scanned_cases"] == len(session.corpus)
     win.close()
+
+
+def test_cancel_after_scoring_before_outputs_keeps_previous(emr, tmp_path, allow_external, monkeypatch):
+    scan_corpus(emr, tmp_path, workers=1)
+    before = {name: (tmp_path / name).read_bytes() for name in (CORPUS_META, CORPUS_CASES, CORPUS_EPISODES)}
+    finished = False
+    run_parallel = corpus_scan_module._run_parallel
+
+    def finish_scoring(*args, **kwargs):
+        nonlocal finished
+        result = run_parallel(*args, **kwargs)
+        finished = True
+        return result
+
+    monkeypatch.setattr(corpus_scan_module, "_run_parallel", finish_scoring)
+    with pytest.raises(ScanCancelled, match="previous scan was kept"):
+        scan_corpus(emr, tmp_path, workers=1, should_stop=lambda: finished)
+    assert {name: (tmp_path / name).read_bytes() for name in before} == before

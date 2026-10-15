@@ -82,6 +82,9 @@ jobs:
           chmod +x scripts/build_executable.sh
           ./scripts/build_executable.sh
 
+      - name: Smoke test frozen Linux scan
+        run: dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor --selftest-scan
+
       - name: Create draft release with Linux archive
         uses: softprops/action-gh-release@v2
         with:
@@ -200,7 +203,10 @@ jobs:
           Start-Sleep -Seconds 15
           if ($p.HasExited) { throw "binary exited early with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
-          Write-Host "Windows binary started and stayed up"
+          $scan = Start-Process -FilePath "dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor.exe" `
+                                -ArgumentList "--selftest-scan" -PassThru -Wait -WindowStyle Hidden
+          if ($scan.ExitCode -ne 0) { throw "selftest-scan failed with code $($scan.ExitCode)" }
+          Write-Host "Windows binary started and completed selftest-scan"
 
       - name: Create zip
         shell: pwsh
