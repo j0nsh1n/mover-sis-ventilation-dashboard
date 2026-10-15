@@ -1976,7 +1976,9 @@ class MainWindow(QMainWindow):
             catalog = load_rule_catalog(self._active_preset)
         except GuardrailError as e:
             self.rules_text.setPlainText(f"Threshold config invalid: {e}")
+            self.research.set_rule_catalog(None, recorded=self._preset_recorded, error=str(e))
             return
+        self.research.set_rule_catalog(catalog, recorded=self._preset_recorded)
         provenance = "" if self._preset_recorded else ", not recorded with this data"
         lines = [
             f"Threshold rules (preset: {catalog.preset}{provenance})",

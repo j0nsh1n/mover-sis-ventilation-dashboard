@@ -5,14 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -28,6 +30,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.charts import ChartView, focused_signals_figure
+from src.desktop.rules_drawer import RulesDrawer
+from src.rules import RuleCatalog
 from src.services.retrieval import RetrievalResult, SearchCandidate
 
 
@@ -48,6 +52,10 @@ class QuestionState:
     comparison_pid: str | None
     case_views: dict[str, CaseView]
     labels: tuple[str, ...]
+
+
+RULES_DRAWER_MAX_WIDTH = 420
+RULES_DRAWER_SHARE = 0.42
 
 
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -84,6 +92,19 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
     return button
 
 
+class _ShortlistTable(QTableWidget):
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.fit_columns()
+
+    def fit_columns(self) -> None:
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.resizeColumnsToContents()
+        if header.length() > self.viewport().width():
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+
 class ResearchWorkspace(QWidget):
     question_submitted = Signal(str)
     cancel_requested = Signal()
@@ -105,12 +126,16 @@ class ResearchWorkspace(QWidget):
         self._current_pid: str | None = None
         self._case_views: dict[str, CaseView] = {}
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         self.stack = QStackedWidget()
-        root.addWidget(self.stack)
+        root.addWidget(self.stack, 1)
         self._build_canvas()
         self._build_signal_detail()
+        self.rules_drawer = RulesDrawer(self, fallback_focus=self._rules_fallback_focus)
+        self.rules_drawer.closed.connect(self._apply_board_layout)
+        root.addWidget(self.rules_drawer)
         self.setStyleSheet("""
             QWidget#evidencePage, QScrollArea#evidenceScroll { background: #ebe9e3; color: #2c2930; }
             QWidget#evidenceHeader { background: #f8f7f3; border-bottom: 1px solid #d5d0d4; }
@@ -130,6 +155,7 @@ class ResearchWorkspace(QWidget):
             QFrame#questionNode QTextEdit { background: #493956; color: #fff9f4;
                 border: 1px solid #8c739f; border-radius: 5px; padding: 8px; }
             QFrame#questionNode QLineEdit:disabled { color: #d3c6d9; }
+            QFrame#questionNode QLineEdit:focus { border: 2px solid #fff9f4; padding: 7px; }
             QFrame#questionNode QPushButton#primaryBtn { background: #f5e2cb; color: #332941;
                 border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
             QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
@@ -183,8 +209,10 @@ class ResearchWorkspace(QWidget):
         layout.setSpacing(0)
         header = QWidget()
         header.setObjectName("evidenceHeader")
-        header_layout = QHBoxLayout(header)
+        header_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, header)
         header_layout.setContentsMargins(34, 21, 34, 21)
+        self._header_layout = header_layout
+        header_actions = QHBoxLayout()
         header_copy = QVBoxLayout()
         kicker = QLabel("G  /  PRIMARY RESEARCH WORKSPACE")
         kicker.setObjectName("evidenceKicker")
@@ -197,11 +225,18 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button = _button("+ Add a comparison")
         self.add_comparison_button.setObjectName("outlineAction")
         self.add_comparison_button.clicked.connect(self._add_comparison)
-        header_layout.addWidget(self.add_comparison_button)
+        header_actions.addWidget(self.add_comparison_button)
         self.reset_button = _button("New question")
         self.reset_button.setObjectName("outlineAction")
         self.reset_button.clicked.connect(self._reset_canvas)
-        header_layout.addWidget(self.reset_button)
+        header_actions.addWidget(self.reset_button)
+        self.rules_button = _button("Rules")
+        self.rules_button.setObjectName("outlineAction")
+        self.rules_button.setAccessibleName("Open rules drawer")
+        self.rules_button.setToolTip("Search the rules (Ctrl+R)")
+        self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
+        header_actions.addWidget(self.rules_button)
+        header_layout.addLayout(header_actions)
         layout.addWidget(header)
 
         map_wrap = QWidget()
@@ -339,15 +374,17 @@ class ResearchWorkspace(QWidget):
         content.setColumnStretch(2, 10)
         self._evidence_grid = content
         self._evidence_cards = (question_card, finding_card, source_card, self.comparison_card, limit_card)
-        self._narrow = False
+        self._layout_mode = "wide"
         map_layout.addLayout(content)
         layout.addWidget(map_wrap)
 
         candidate_card, candidate_layout = _card("RETRIEVED CASES / SOURCE SHORTLIST")
         candidate_card.setObjectName("shortlistNode")
         _name_kicker(candidate_layout)
-        self.candidate_table = QTableWidget(0, 3)
+        self.candidate_table = _ShortlistTable(0, 3)
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
+        self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.candidate_table.setWordWrap(False)
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.candidate_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.candidate_table.setMinimumHeight(160)
@@ -378,9 +415,9 @@ class ResearchWorkspace(QWidget):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 14, 34, 14)
         layout.setSpacing(10)
-        back = _button("← Back to evidence workspace")
-        back.clicked.connect(self.return_to_canvas)
-        layout.addWidget(back, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.back_button = _button("← Back to evidence workspace")
+        self.back_button.clicked.connect(self.return_to_canvas)
+        layout.addWidget(self.back_button, alignment=Qt.AlignmentFlag.AlignLeft)
         header = QHBoxLayout()
         heading = QVBoxLayout()
         kicker = QLabel("F  /  SIGNAL DETAIL")
@@ -388,6 +425,7 @@ class ResearchWorkspace(QWidget):
         heading.addWidget(kicker)
         title = QLabel("Go straight to the moment.")
         title.setObjectName("signalTitle")
+        title.setWordWrap(True)
         heading.addWidget(title)
         heading.addWidget(_wrap("Inspect the observation from G. Scrub the case and check its exact sample."))
         header.addLayout(heading, 1)
@@ -441,7 +479,9 @@ class ResearchWorkspace(QWidget):
         mark.setStyleSheet("font-size: 26px; color: #c4ed93;")
         assistant.addWidget(mark)
         copy = QVBoxLayout()
-        copy.addWidget(QLabel("SOURCE SAMPLE / SELECTED MINUTE"))
+        sample_kicker = QLabel("SOURCE SAMPLE / SELECTED MINUTE")
+        sample_kicker.setWordWrap(True)
+        copy.addWidget(sample_kicker)
         self.sample_label = _wrap()
         copy.addWidget(self.sample_label)
         assistant.addLayout(copy, 1)
@@ -490,21 +530,67 @@ class ResearchWorkspace(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        narrow = self.width() < 1100
-        if narrow == self._narrow:
+        self.rules_drawer.setFixedWidth(min(RULES_DRAWER_MAX_WIDTH, int(self.width() * RULES_DRAWER_SHARE)))
+        self._apply_board_layout()
+
+    def _apply_board_layout(self) -> None:
+        """Re-flow the evidence grid for the width left beside the rules drawer."""
+        board_width = self.width() - (self.rules_drawer.width() if self.rules_drawer.is_open else 0)
+        mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
+        if mode == self._layout_mode:
             return
-        self._narrow = narrow
-        positions = (
-            ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1))
-            if narrow else
-            ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1))
-        )
-        for card in self._evidence_cards:
+        self._layout_mode = mode
+        positions = {
+            "wide": ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1)),
+            "narrow": ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)),
+            "single": ((0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 1, 1), (3, 0, 1, 1), (4, 0, 1, 1)),
+        }[mode]
+        for card in (*self._evidence_cards, self.comparison_hint):
             self._evidence_grid.removeWidget(card)
         for card, position in zip(self._evidence_cards, positions, strict=True):
             self._evidence_grid.addWidget(card, *position)
-        for column, stretch in enumerate((10, 10, 0) if narrow else (10, 11, 10)):
+        # The hint stands in for the comparison card until one is added.
+        self._evidence_grid.addWidget(self.comparison_hint, *positions[3])
+        stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
+        for column, stretch in enumerate(stretches):
             self._evidence_grid.setColumnStretch(column, stretch)
+        self._header_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if mode == "single" else QBoxLayout.Direction.LeftToRight
+        )
+
+    def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True, error: str = "") -> None:
+        """Hand the drawer the loaded preset's rules; None with an error means the config is invalid."""
+        self.rules_drawer.set_catalog(catalog, recorded=recorded, error=error)
+
+    def open_rules(self, opener: QWidget | None = None) -> None:
+        self.rules_drawer.open(opener)
+        self._apply_board_layout()
+
+    def show_rule(self, rule_id: str) -> None:
+        self.rules_drawer.show_rule(rule_id)
+        self._apply_board_layout()
+
+    def _rules_fallback_focus(self) -> QWidget:
+        return self.rules_button if self.rules_button.isVisible() else self.back_button
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # File > Reload data also uses Ctrl+R. event() claims the key while focus is
+        # inside the workspace so the menu action does not fire there.
+        if event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            event.accept()
+            self.open_rules()
+            return
+        super().keyPressEvent(event)
+
+    def event(self, event) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and event.key() == Qt.Key.Key_R
+            and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+        ):
+            event.accept()
+            return True
+        return super().event(event)
 
     def _board_labels(self) -> tuple[QLabel, ...]:
         return (self.status_label, self.scope_label, self.finding_title, self.finding_copy,
@@ -662,8 +748,10 @@ class ResearchWorkspace(QWidget):
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):
             for column, value in enumerate((candidate.pid, candidate.procedure, candidate.source_label)):
-                self.candidate_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.candidate_table.resizeColumnsToContents()
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                self.candidate_table.setItem(row, column, item)
+        self.candidate_table.fit_columns()
         self._selected_pid = None
         if result.candidates:
             row = self._preferred_row()

@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Research has a Rules button (Ctrl+R) that opens a searchable list of the loaded
+  preset's rules beside the evidence board; Escape closes it. Outside the
+  workspace Ctrl+R still reloads processed data.
 - The Rule reference, the co-pilot's rule lookup, the dashboard rule table and the
   calibration profile read one rule catalog. The reference lists phase skips and
   follows the active preset instead of always showing `default`.

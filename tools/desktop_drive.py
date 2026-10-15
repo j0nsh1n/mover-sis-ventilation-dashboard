@@ -361,6 +361,181 @@ def partial_index(run: Run) -> dict[str, Any]:
     return {**details, "scope": label}
 
 
+def _focus_name(run: Run) -> str:
+    from PySide6.QtWidgets import QApplication
+
+    widget = QApplication.focusWidget() or run.win.focusWidget()
+    if widget is None:
+        return "none"
+    label = widget.objectName() or getattr(widget, "text", lambda: "")()
+    return f"{type(widget).__name__}:{label}"
+
+
+def _drawer_facts(run: Run) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    return {
+        "open": drawer.is_open,
+        "header": drawer.header_label.text(),
+        "search": drawer.search_text(),
+        "count": drawer.count_label.text(),
+        "visible_ids": drawer.visible_rule_ids(),
+        "empty_state": drawer.empty_label.text() if drawer.empty_state.isVisible() else "",
+        "notice": drawer.notice_label.text() if drawer.notice_label.isVisible() else "",
+        "focus": _focus_name(run),
+    }
+
+
+def open_rules_from_button(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.tabs.setCurrentWidget(research)
+    run.win.activateWindow()
+    run.settle()
+    research.rules_button.click()
+    run.settle()
+    assert research.rules_drawer.is_open
+    return _drawer_facts(run)
+
+
+def search_rules(run: Run, *, text: str) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    drawer.search_edit.setText(text)
+    run.settle()
+    return _drawer_facts(run)
+
+
+def clear_rule_search(run: Run) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    assert drawer.clear_button.isVisible()
+    drawer.clear_button.click()
+    run.settle()
+    return _drawer_facts(run)
+
+
+def show_rule(run: Run, *, rule_id: str) -> dict[str, Any]:
+    research = run.win.research
+    research.show_rule(rule_id)
+    run.settle()
+    drawer = research.rules_drawer
+    row = drawer._rows[rule_id]
+    assert row.property("highlight") is True
+    return {**_drawer_facts(run), "highlighted": rule_id, "scroll": drawer.rule_scroll.verticalScrollBar().value()}
+
+
+def escape_rules(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    drawer = run.win.research.rules_drawer
+    QTest.keyClick(drawer.search_edit, Qt.Key.Key_Escape)
+    run.settle()
+    assert not drawer.is_open
+    return _drawer_facts(run)
+
+
+def escape_rules_from_question(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    research = run.win.research
+    research.question_edit.setFocus()
+    QTest.keyClick(research.question_edit, Qt.Key.Key_Escape)
+    run.settle()
+    assert not research.rules_drawer.is_open
+    assert research.question_edit.hasFocus()
+    return _drawer_facts(run)
+
+
+def _has_no_horizontal_scroll(view: Any) -> bool:
+    bar = view.horizontalScrollBar()
+    return not bar.isVisible() or bar.maximum() == 0
+
+
+def _wait_layout_settled(run: Run, scroll: Any, table: Any, quiet_s: float = 0.3) -> None:
+    """Wait until the narrow layout stops changing, so a transient scrollbar is not read."""
+
+    def layout() -> tuple[Any, ...]:
+        return (
+            run.win.width(),
+            run.win.research.rules_drawer.width(),
+            scroll.horizontalScrollBar().maximum(),
+            scroll.horizontalScrollBar().isVisible(),
+            table.horizontalScrollBar().maximum(),
+            table.horizontalScrollBar().isVisible(),
+            tuple(table.columnWidth(i) for i in range(table.columnCount())),
+        )
+
+    state = {"seen": layout(), "since": time.monotonic()}
+
+    def stable() -> bool:
+        now = layout()
+        if now != state["seen"]:
+            state["seen"], state["since"] = now, time.monotonic()
+        return time.monotonic() - state["since"] >= quiet_s
+
+    run.wait(stable, "the narrow layout to stop changing", timeout_s=10.0)
+
+
+def open_rules_narrow(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.resize(900, 860)
+    run.settle()
+    facts = open_rules_from_button(run)
+    scroll = research.stack.widget(0)
+    table = research.candidate_table
+    _wait_layout_settled(run, scroll, table)
+    assert run.win.width() == 900, f"the open drawer widened the window to {run.win.width()}"
+    # A bar can show for a moment with nothing to scroll; only a bar that scrolls is a failure.
+    assert _has_no_horizontal_scroll(scroll), "the board scrolls horizontally"
+    assert _has_no_horizontal_scroll(table), "the shortlist scrolls horizontally"
+    assert sum(table.columnWidth(i) for i in range(table.columnCount())) <= table.viewport().width()
+    assert all(table.item(row, col).toolTip() == table.item(row, col).text()
+               for row in range(table.rowCount()) for col in range(table.columnCount()))
+    return {
+        **facts,
+        "window_width": run.win.width(),
+        "drawer_width": research.rules_drawer.width(),
+        "board_h_scroll": not _has_no_horizontal_scroll(scroll),
+        "shortlist_h_scroll": not _has_no_horizontal_scroll(table),
+        "shortlist_columns": [table.columnWidth(i) for i in range(table.columnCount())],
+    }
+
+
+def focus_question(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.tabs.setCurrentWidget(research)
+    run.win.activateWindow()
+    research.question_edit.setFocus()
+    run.settle()
+    return {"focus": _focus_name(run)}
+
+
+def show_narrow_shortlist(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    table = research.candidate_table
+    research.stack.widget(0).ensureWidgetVisible(table)
+    run.settle()
+    assert not table.horizontalScrollBar().isVisible()
+    return {"shortlist_columns": [table.columnWidth(i) for i in range(table.columnCount())]}
+
+
+def ctrl_r(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.keyClick(run.win.research.question_edit, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    run.settle()
+    assert run.win.research.rules_drawer.is_open
+    return _drawer_facts(run)
+
+
+def type_rule_search(run: Run, *, text: str) -> dict[str, Any]:
+    from PySide6.QtTest import QTest
+
+    QTest.keyClicks(run.win.research.rules_drawer.search_edit, text)
+    run.settle()
+    return _drawer_facts(run)
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -383,6 +558,24 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "open-each-tab": Scenario((Step("pipeline", run_pipeline), *TAB_STEPS)),
     "no-model": Scenario((Step("no-model", ask),), llm_modes=("off",)),
+    "rules-drawer": Scenario((
+        Step("data", run_pipeline),
+        Step("open", open_rules_from_button),
+        Step("search-etco2", partial(search_rules, text="etco2")),
+        Step("search-empty", partial(search_rules, text="zzz")),
+        Step("cleared", clear_rule_search),
+        Step("show-rule", partial(show_rule, rule_id="spo2_low")),
+        Step("escape", escape_rules),
+    )),
+    "rules-drawer-narrow": Scenario((
+        Step("ask", ask), Step("narrow-open", open_rules_narrow), Step("shortlist", show_narrow_shortlist),
+    )),
+    "rules-drawer-keyboard": Scenario((
+        Step("focus-question", focus_question),
+        Step("ctrl-r", ctrl_r),
+        Step("typed", partial(type_rule_search, text="peep")),
+        Step("escape", escape_rules_from_question),
+    )),
 }
 
 

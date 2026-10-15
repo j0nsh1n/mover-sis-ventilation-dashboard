@@ -56,6 +56,16 @@ def test_catalog_matches_yaml_in_both_directions(preset):
     assert {spec.id for spec in catalog.specs if spec.kind == "composite"} == COMPOSITE_RULES
 
 
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_every_numeric_parameter_has_public_unit_metadata(preset):
+    for spec in load_rule_catalog(preset).specs:
+        for name in spec.params:
+            metadata = rules.PARAMETER_METADATA[name]
+            assert metadata.label
+            assert isinstance(metadata.unit, str) or metadata.unit is None
+            assert isinstance(metadata.unit if metadata.unit is not None else spec.unit, str)
+
+
 def test_presets_apply_exactly_the_yaml_overlays():
     yaml_cfg = yaml.safe_load(THRESHOLDS_PATH.read_text())
     baseline = load_rule_catalog("default")
@@ -264,6 +274,49 @@ _OPTIONAL_INPUTS = {
     ("agent_low_maint", "ETN2O"): "Missing N2O defaults to zero; high N2O exempts the row.",
     ("compliance_concern", "TV"): "Blank TV slope defaults to stable; the column must exist.",
 }
+
+
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_only_composites_carry_composition_text(preset):
+    for spec in load_rule_catalog(preset).specs:
+        assert bool(spec.composition.strip()) == (spec.id in COMPOSITE_RULES), spec.id
+        assert (spec.kind == "composite") == (spec.id in COMPOSITE_RULES), spec.id
+
+
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_composition_names_every_rule_the_engine_combines(preset):
+    catalog = load_rule_catalog(preset)
+    combined = {
+        "compliance_concern": {"pip_rising"},
+        "hypoventilation_pattern": {"etco2_high", "tv_low_mlkg", "rr_low"},
+        "desat_with_vent_issue": {"spo2_low", "pip_high", "etco2_zero_vent", "tv_low_mlkg"},
+    }
+    for rule_id, parts in combined.items():
+        text = catalog.get(rule_id).composition
+        assert all(f"({part})" in text for part in parts), rule_id
+        assert all(catalog.get(part) for part in parts)
+    assert "5 mL/min" in catalog.get("compliance_concern").composition
+    assert "10-min" in catalog.get("compliance_concern").composition
+
+
+def _tv_slope_frame(slope: float):
+    frame = _frame().assign(PIP_slope=2., PIP=25.)
+    frame["TV"] = 400. + slope * pd.Series(range(len(frame)), dtype=float)
+    return frame
+
+
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_compliance_concern_tv_slope_cutoff_matches_its_composition_text(preset):
+    cfg = load_thresholds(preset)
+    under = flag_anomalies(_tv_slope_frame(4.9), cfg)
+    over = flag_anomalies(_tv_slope_frame(5.1), cfg)
+    # The first minutes have no TV slope yet (fewer than 5 readings) and count as flat.
+    assert "pip_rising" in set(over["rule_id"])
+    assert len(under[under["rule_id"] == "compliance_concern"]) == 40
+    fired = over[over["rule_id"] == "compliance_concern"]
+    assert len(fired) == 4
+    assert fired["t_min"].max() < 20 + 4
+    assert "at most 5 mL/min" in load_rule_catalog(preset).get("compliance_concern").composition
 
 
 @pytest.mark.parametrize("rule_id", _SIGNAL_SCENARIOS)
