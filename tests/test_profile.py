@@ -140,3 +140,118 @@ def test_profile_reports_phase_minutes_and_sources(tmp_path, thresholds):
     assert cov["observed_minutes_by_phase"]["induction"] == 12 * 5
     assert cov["observed_minutes_by_phase"]["maintenance"] == 12 * 15
     assert cov["cases_by_phase_source"] == {"events": 12, "mixed": 0, "fallback": 0}
+
+
+def test_header_records_preset_file_hash_case_count_and_seed(tmp_path, thresholds):
+    import hashlib
+    from src.runtime_paths import thresholds_path
+
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    profile = profile_processed(root, thresholds, seed=42)
+    header = render_markdown(profile).split("## Coverage")[0]
+    assert "Preset: default" in header
+    assert hashlib.sha256(thresholds_path().read_bytes()).hexdigest() in header
+    assert "Cases: 12. Seed: 42." in header
+    assert profile_processed(root, thresholds)["metadata"]["seed"] == "unknown"
+    (root / "run_meta.json").write_text(json.dumps({"seed": 517}))
+    assert profile_processed(root, thresholds)["metadata"]["seed"] == 517
+
+
+def test_threshold_percentages_respect_skipped_phases(tmp_path, thresholds):
+    import copy
+
+    root = _write_processed(tmp_path, 12, lambda c, m: 40 if m < 5 else 20)
+    ts = pd.read_parquet(root / "timeseries.parquet")
+    ts["phase"] = np.where(ts["t_min"] < 5, "induction", "maintenance")
+    ts.to_parquet(root / "timeseries.parquet")
+    before = profile_processed(root, thresholds)["rules"]["pip_high"]
+    assert before["pct_minutes_beyond_warn"] == 25.0
+    assert before["by_phase"]["induction"]["pct_minutes_beyond_warn"] == 100.0
+    assert before["by_phase"]["maintenance"]["pct_minutes_beyond_warn"] == 0.0
+    config = copy.deepcopy(thresholds)
+    config["rules"]["pip_high"]["skip_phases"] = ["induction"]
+    after = profile_processed(root, config)["rules"]["pip_high"]
+    assert after["pct_minutes_beyond_warn"] == 0.0
+    assert after["n_minutes"] == 180
+    assert set(after["by_phase"]) == {"maintenance"}
+
+
+def test_minutes_and_gap_runs_are_suppressed_below_eleven_cases(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 10, lambda c, m: 35, vent_gap=True)
+    profile = profile_processed(root, thresholds)
+    assert profile["coverage"]["n_cases"] == "<11"
+    assert profile["coverage"]["grid_minutes"] is None
+    assert profile["coverage"]["observed_minutes"] is None
+    assert profile["coverage"]["vent_gap_runs"] is None
+    assert profile["coverage"]["vent_gap_run_max_min"] is None
+    assert profile["signals"]["PIP"]["n_minutes"] is None
+    assert profile["rules"]["pip_high"]["flagged_minutes"] is None
+    assert profile["rules"]["pip_high"]["flagged_minutes_per_hour"] is None
+    assert profile["rules"]["pip_high"]["pct_minutes_beyond_warn"] is None
+
+
+def test_rare_rule_minutes_and_gap_runs_are_suppressed_in_large_cohort(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 35 if c == 0 else 20)
+    ts = pd.read_parquet(root / "timeseries.parquet")
+    ts.loc[ts["PID"].eq("PID000") & ts["t_min"].between(5, 16), ["PIP", "TV"]] = np.nan
+    ts.to_parquet(root / "timeseries.parquet")
+    profile = profile_processed(root, thresholds)
+    assert profile["coverage"]["grid_minutes"] == 240
+    assert profile["coverage"]["vent_gap_runs"] is None
+    assert profile["rules"]["pip_high"]["flagged_minutes"] is None
+    assert profile["rules"]["pip_high"]["pct_minutes_beyond_warn"] is None
+
+
+def test_diff_limits_changes_to_changed_rule_and_reports_hashes(tmp_path, monkeypatch, capsys):
+    import yaml
+    import src.config as config
+    import src.pipeline.profile as profiler
+
+    root = _write_processed(tmp_path, 12, lambda c, m: 20 + m)
+    ts = pd.read_parquet(root / "timeseries.parquet")
+    ts["phase"] = np.where(ts["t_min"] < 5, "induction", "maintenance")
+    ts.to_parquet(root / "timeseries.parquet")
+    path = tmp_path / "thresholds.yaml"
+    path.write_bytes(config.THRESHOLDS_PATH.read_bytes())
+    monkeypatch.setattr(config, "_thresholds_file", lambda: path)
+    monkeypatch.setattr(profiler, "thresholds_path", lambda: path)
+    before = profile_processed(root, config.load_thresholds())
+    data = yaml.safe_load(path.read_text())
+    data["rules"]["pip_high"]["warn"] = 31
+    path.write_text(yaml.safe_dump(data))
+    after = profile_processed(root, config.load_thresholds())
+    for rule in before["rules"]:
+        assert (before["rules"][rule] != after["rules"][rule]) == (rule == "pip_high")
+    left, right = tmp_path / "before.json", tmp_path / "after.json"
+    left.write_text(json.dumps(before))
+    right.write_text(json.dumps(after))
+    main(["--diff", str(left), str(right)])
+    output = capsys.readouterr().out
+    assert "Thresholds hashes differ" in output
+    assert "| pip_high | maintenance | pct_minutes_beyond_warn |" in output
+    assert "| pip_high | all eligible | warn | 30 | 31 | 1 |" in output
+    assert "| hr_high |" not in output
+
+
+def test_event_names_cannot_leak_synthetic_identifiers_or_timestamps(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    pd.DataFrame([
+        {"PID": f"PID{c:03d}", "Event_name": "SYN0000000001 at 2016-01-01 08:30:00"}
+        for c in range(12)
+    ]).to_parquet(root / "events.parquet")
+    profile = profile_processed(root, thresholds)
+    output = json.dumps(profile) + render_markdown(profile)
+    assert "SYN0000000001" not in output
+    assert "2016-01-01" not in output
+    assert "08:30:00" not in output
+
+
+def test_calibrate_names_missing_emr_path(tmp_path):
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "calibrate.sh"
+    missing = tmp_path / "missing EMR"
+    run = subprocess.run(["bash", str(script), str(missing), "missing-test"], text=True, capture_output=True)
+    assert run.returncode != 0
+    assert str(missing) in run.stderr

@@ -34,3 +34,6 @@ data/synthetic/
 
 # Local multi-model handoff notes (not part of the repo)
 .handoff/
+
+# Local aggregate calibration runs
+calibration/

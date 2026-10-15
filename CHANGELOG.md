@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `scripts/calibrate.sh <emr-dir> <name>` writes a profile into the ignored
+  `calibration/` folder. The profile header names the preset, thresholds hash,
+  case count and seed; `--diff` compares two profiles per rule and phase;
+  threshold shares respect `skip_phases`; minutes and gaps from fewer than
+  `--min-cell` cases are suppressed.
 - Research search stays complete on a partly built index: records without an
   embedding rank by keywords and keep a share of the shortlist, and G's scope
   label states how many records were embedded. PIDs are no longer embedded, and
