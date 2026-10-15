@@ -98,3 +98,29 @@ def test_refuses_an_out_folder_it_did_not_write(tmp_path):
     assert proc.returncode == 2
     assert "not written by this driver" in proc.stderr
     assert keep.read_text() == "not the driver's"
+
+
+def test_cases_overview_runs_with_a_scripted_model_and_frames_every_step(tmp_path):
+    emr = tmp_path / "EMR"
+    write_synthetic_emr(["--out", str(emr), "--n-cases", "12", "--seed", "3"])
+    out = tmp_path / "run"
+
+    proc = _drive("--emr", str(emr), "--out", str(out), "--scenario", "cases-overview",
+                  "--llm", "scripted", "--frames")
+
+    assert proc.returncode == 0, proc.stderr
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    assert [e["step"] for e in events] == ["load-data", "open-cases", "sorted-by-score", "top-case-in-f"]
+    # A step's frame is held long enough to see at the video's frame rate, and the sort and the
+    # row click each add their own
+    assert len(list((out / "frames").glob("*.png"))) >= 30
+
+
+def test_empty_overview_scenario_accepts_a_scripted_model(tmp_path):
+    emr = tmp_path / "EMR"
+    write_synthetic_emr(["--out", str(emr), "--n-cases", "10", "--seed", "3"])
+
+    proc = _drive("--emr", str(emr), "--out", str(tmp_path / "run"), "--scenario", "cases-overview-empty",
+                  "--llm", "scripted")
+
+    assert proc.returncode == 0, proc.stderr

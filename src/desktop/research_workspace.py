@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -31,12 +32,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.cases_overview import CasesOverview
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
 from src.pipeline.flags import collapse_episodes
 from src.services.case_fetch import FetchResult
 from src.rules import RuleCatalog
 from src.services.retrieval import RetrievalResult, SearchCandidate
+
+CASES_PAGE = 2
 
 
 @dataclass
@@ -138,6 +142,11 @@ class ResearchWorkspace(QWidget):
         self.selected_rule_id: str | None = None
         self.signal_statistics: dict[str, dict[str, float | int | None]] = {}
         self.chart_track_names = ["PIP", "ETCO2", "HR"]
+        self._cases_data: tuple | None = None
+        self._cases_overview: CasesOverview | None = None
+        self._overview_candidates: dict[str, SearchCandidate] = {}
+        self._case_origins: dict[str, deque[bool]] = {}
+        self._detail_from_overview = False
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -245,6 +254,11 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button.setObjectName("outlineAction")
         self.add_comparison_button.clicked.connect(self._add_comparison)
         header_actions.addWidget(self.add_comparison_button)
+        self.cases_button = _button("Cases")
+        self.cases_button.setObjectName("outlineAction")
+        self.cases_button.setAccessibleName("Open the cases overview")
+        self.cases_button.clicked.connect(self.show_cases)
+        header_actions.addWidget(self.cases_button)
         self.reset_button = _button("New question")
         self.reset_button.setObjectName("outlineAction")
         self.reset_button.clicked.connect(self._reset_canvas)
@@ -623,6 +637,12 @@ class ResearchWorkspace(QWidget):
         return self.rules_button if self.rules_button.isVisible() else self.back_button
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # The open rules drawer owns Escape; a second Escape shortcut here would make Qt drop both as ambiguous.
+        if (event.key() == Qt.Key.Key_Escape and self.stack.currentIndex() == 1
+                and not self.rules_drawer.isVisible()):
+            event.accept()
+            self.return_to_canvas()
+            return
         # File > Reload data also uses Ctrl+R. event() claims the key while focus is
         # inside the workspace so the menu action does not fire there.
         if event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
@@ -687,14 +707,19 @@ class ResearchWorkspace(QWidget):
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
+        if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
+            self._cases_overview.set_message(message)
 
     def invalidate_case_data(self) -> bool:
         """Drop case views computed from the previous data; True when any were shown."""
         had_cases = bool(self._case_views) or self._current_pid is not None
         self._before_question = None
         self._current_pid = None
+        self._overview_candidates.clear()
+        self._case_origins.clear()
         self.set_searching(False)
-        self.stack.setCurrentIndex(0)
+        if self.stack.currentIndex() != CASES_PAGE:
+            self.stack.setCurrentIndex(0)
         self._case_views.clear()
         if self.result is not None:
             self.set_results(self.result)
@@ -717,6 +742,7 @@ class ResearchWorkspace(QWidget):
         self._primary_pid = None
         self._comparison_pid = None
         self._case_views.clear()
+        self._case_origins.clear()
         self.candidate_table.setRowCount(0)
         self.finding_title.setText("Select a retrieved case")
         self.finding_copy.setText("Detailed measurements load when you inspect a case.")
@@ -831,7 +857,10 @@ class ResearchWorkspace(QWidget):
         fetched: FetchResult | None = None,
         comparison: bool = False,
         open_detail: bool = False,
+        from_overview: bool | None = None,
     ) -> None:
+        if from_overview is None:
+            from_overview = self.take_case_origin(pid)
         candidate = self._candidate(pid)
         if candidate is None:
             return
@@ -849,6 +878,10 @@ class ResearchWorkspace(QWidget):
             fetched.events if fetched is not None else pd.DataFrame(),
         )
         self._case_views[pid] = view
+        if from_overview:
+            if open_detail:
+                self.open_detail(pid, from_overview=True)
+            return
         if comparison:
             self._comparison_pid = pid
             self.comparison_card.show()
@@ -864,10 +897,13 @@ class ResearchWorkspace(QWidget):
         if open_detail:
             self.open_detail(pid)
 
-    def _candidate(self, pid: str) -> SearchCandidate | None:
+    def _result_candidate(self, pid: str) -> SearchCandidate | None:
         if self.result is None:
             return None
         return next((candidate for candidate in self.result.candidates if candidate.pid == pid), None)
+
+    def _candidate(self, pid: str) -> SearchCandidate | None:
+        return self._result_candidate(pid) or self._overview_candidates.get(pid)
 
     def candidate_for(self, pid: str) -> SearchCandidate | None:
         return self._candidate(pid)
@@ -887,9 +923,16 @@ class ResearchWorkspace(QWidget):
             return None
         return self.result.candidates[self._preferred_row()].pid
 
-    def show_case_unavailable(self, pid: str, message: str, *, comparison: bool = False) -> None:
-        """Say why a case cannot be shown, in the source card and status line."""
-        if not comparison:
+    def show_case_unavailable(
+        self, pid: str, message: str, *, comparison: bool = False,
+        from_overview: bool | None = None,
+    ) -> None:
+        """Show a failure on the page that requested the case and in the status line."""
+        if from_overview is None:
+            from_overview = self.take_case_origin(pid)
+        if from_overview and self._cases_overview is not None:
+            self._cases_overview.set_message(f"Source unavailable for {pid}: {message}")
+        if not from_overview and not comparison:
             self.source_title.setText(pid)
             self.source_label.setText(message)
         self.set_status(f"Source unavailable for {pid}: {message}")
@@ -931,16 +974,29 @@ class ResearchWorkspace(QWidget):
         if self._comparison_pid:
             self._open_or_request(self._comparison_pid, comparison=True)
 
-    def _open_or_request(self, pid: str, *, comparison: bool, open_detail: bool = True) -> None:
+    def take_case_origin(self, pid: str) -> bool:
+        origins = self._case_origins.get(pid)
+        if not origins:
+            return False
+        from_overview = origins.popleft()
+        if not origins:
+            del self._case_origins[pid]
+        return from_overview
+
+    def _open_or_request(
+        self, pid: str, *, comparison: bool, open_detail: bool = True,
+        from_overview: bool = False,
+    ) -> None:
         if pid in self._case_views:
             if open_detail:
-                self.open_detail(pid)
+                self.open_detail(pid, from_overview=from_overview)
             elif comparison:
                 self._comparison_pid = pid
                 self.comparison_card.show()
                 self.comparison_hint.hide()
                 self.comparison_label.setText(self._case_summary(self._case_views[pid]))
         else:
+            self._case_origins.setdefault(pid, deque()).append(from_overview)
             self.case_requested.emit(pid, comparison, open_detail)
 
     def _observation(self, view: CaseView) -> tuple[str, str, int]:
@@ -978,7 +1034,7 @@ class ResearchWorkspace(QWidget):
             f"{view.candidate.source_label} · {len(ts)} minute rows · PIP {pip}/{len(ts)} · ETCO₂ {etco2}/{len(ts)} observed"
         )
 
-    def open_detail(self, pid: str) -> None:
+    def open_detail(self, pid: str, *, from_overview: bool = False) -> None:
         view = self._case_views.get(pid)
         if view is None or view.timeseries.empty:
             self.set_status("Source unavailable: this case has no time series to inspect.")
@@ -993,14 +1049,20 @@ class ResearchWorkspace(QWidget):
         self._episodes = view.episodes.sort_values(["t_start_min", "rule_id"]).reset_index(drop=True) if not view.episodes.empty else pd.DataFrame()
         self._build_episode_list()
         self.detail_chart.set_case(view.timeseries, view.flags)
+        self._detail_from_overview = from_overview
+        origin = "the Cases overview" if self._detail_from_overview else "the evidence workspace"
+        self.back_button.setText(
+            "← Back to cases" if self._detail_from_overview else "← Back to evidence workspace"
+        )
         self.detail_title.setText(f"{pid} · {view.candidate.procedure or 'procedure not recorded'}")
-        self.detail_context.setText(f"Opened from the evidence workspace · {view.candidate.source_label}")
+        self.detail_context.setText(f"Opened from {origin} · {view.candidate.source_label}")
         self.minute_slider.blockSignals(True)
         self.minute_slider.setRange(0, len(self._minute_rows) - 1)
         peak = float(view.timeseries.iloc[self._observation(view)[2]]["t_min"])
         self.minute_slider.setValue(int((self._minute_rows["t_min"] - peak).abs().argmin()))
         self.minute_slider.blockSignals(False)
         self.stack.setCurrentIndex(1)
+        self.back_button.setFocus()
         self._render_minute(self.minute_slider.value())
 
     def _render_minute(self, index: int) -> None:
@@ -1130,8 +1192,59 @@ class ResearchWorkspace(QWidget):
 
     def return_to_canvas(self) -> None:
         self.clear_episode_selection()
+        if self._detail_from_overview and self._cases_overview is not None:
+            self.stack.setCurrentIndex(CASES_PAGE)
+            self._cases_overview.set_message("")
+            self._cases_overview.focus_table()
+            return
         self.stack.setCurrentIndex(0)
         self.set_status("Returned to the same question and comparison.")
+
+    def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog) -> None:
+        """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
+        self._cases_data = (cases, scan, catalog)
+        if self._cases_overview is not None:
+            self._cases_overview.set_data(cases, scan, catalog)
+
+    def show_cases(self) -> None:
+        if self._cases_overview is None:
+            # Built on first open so the workspace's first paint does not pay for it
+            overview = CasesOverview()
+            overview.case_requested.connect(self._open_overview_case)
+            overview.back_requested.connect(self.close_cases)
+            self.stack.addWidget(overview)
+            self._cases_overview = overview
+            if self._cases_data is not None:
+                overview.set_data(*self._cases_data)
+        overview = self._cases_overview
+        overview.set_message("")
+        self.stack.setCurrentIndex(CASES_PAGE)
+        overview.focus_table()
+
+    def close_cases(self) -> None:
+        self.stack.setCurrentIndex(0)
+        self.cases_button.setFocus()
+
+    def _open_overview_case(self, pid: str) -> None:
+        overview = self._cases_overview
+        row = overview.row_for(pid) if overview is not None else None
+        if overview is None or row is None:
+            return
+        age, sex = row.get("Age"), row.get("Gender")
+        scan = overview.scope() == "scan"
+        procedure = row.get("Procedure_short") or ""
+        self._overview_candidates[pid] = SearchCandidate(
+            pid=pid,
+            source_label="full-EMR scan case" if scan else "analyzed case",
+            analyzed=True,
+            procedure=procedure,
+            age=age,
+            gender=sex or None,
+            source_text=f"PID {pid}. Procedure: {procedure or 'not recorded'}.",
+            rank_method="overview",
+            score=0.0,
+        )
+        self._open_or_request(pid, comparison=False, from_overview=True)
 
     def _show_primary_source(self) -> None:
         pid = self._primary_pid or self._selected_pid

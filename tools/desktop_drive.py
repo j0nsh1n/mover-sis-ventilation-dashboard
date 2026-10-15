@@ -43,6 +43,7 @@ DEFAULT_DRAFTS = (
 )
 FRAME_INTERVAL_S = 0.2
 FRAME_RATE = 5
+STEP_HOLD_FRAMES = 5
 STEP_TIMEOUT_S = 90.0
 OUT_MARKER = ".desktop_drive"
 
@@ -64,11 +65,14 @@ class Run:
         for _ in range(3):
             self.app.processEvents()
 
-    def frame(self) -> None:
+    def frame(self, hold: int = 1) -> None:
+        """Write the window as it is now; ``hold`` repeats it so a brief state stays visible in the video."""
         if self.frames_dir is None:
             return
-        self.frame_count += 1
-        self.win.grab().save(str(self.frames_dir / f"{self.frame_count:06d}.png"))
+        image = self.win.grab()
+        for _ in range(hold):
+            self.frame_count += 1
+            image.save(str(self.frames_dir / f"{self.frame_count:06d}.png"))
 
     def wait(self, ready: Callable[[], bool], what: str, timeout_s: float = STEP_TIMEOUT_S) -> None:
         deadline = time.monotonic() + timeout_s
@@ -172,11 +176,13 @@ def return_to_question(run: Run) -> dict[str, Any]:
     }
 
 
-def run_pipeline(run: Run) -> dict[str, Any]:
+def run_pipeline(run: Run, *, limit: int | None = None) -> dict[str, Any]:
     from src.runtime_paths import emr_dir
 
     with open(emr_dir() / "patient_information.csv", encoding="utf-8") as f:
         n_cases = max(1, sum(1 for _ in f) - 1)
+    if limit is not None:
+        n_cases = min(n_cases, limit)
     run.win._run_pipeline(n_cases=n_cases)
     run.wait(lambda: not run.win._worker.isRunning(), "the pipeline")
     run.settle()
@@ -629,6 +635,158 @@ def f_drawer_link(run: Run) -> dict[str, Any]:
     assert research.rules_drawer.is_open
     assert research.rules_drawer._rows[research.selected_rule_id].property("highlight") is True
     return {**f_facts(run), **_drawer_facts(run)}
+def _case_loaded(win: Any) -> bool:
+    worker = win._case_worker
+    return win._pending_case is None and win._queued_case is None and (worker is None or not worker.isRunning())
+
+
+def _overview_facts(run: Run, rows: int = 3) -> dict[str, Any]:
+    research = run.win.research
+    overview = research._cases_overview
+    if overview is None:
+        raise RuntimeError("the Cases overview was never opened")
+    return {
+        "page": research.stack.currentIndex(),
+        "scope": overview.scope_label.text(),
+        "scope_switch_visible": overview.scope_combo.isVisibleTo(overview),
+        "scope_choices": [overview.scope_combo.itemText(i) for i in range(overview.scope_combo.count())],
+        "table_visible": overview.table.isVisibleTo(overview),
+        "empty_message": overview.empty_label.text() if overview.empty_label.isVisibleTo(overview) else "",
+        "rows": overview._proxy.rowCount(),
+        "first_rows": [
+            {"pid": row["PID"], "score": row["anomaly_score"]} for row in overview.visible_rows(rows)
+        ],
+        "message": overview.status_label.text(),
+    }
+
+
+def open_cases(run: Run) -> dict[str, Any]:
+    run.win.resize(900, 860)
+    run.win.tabs.setCurrentWidget(run.win.research)
+    run.settle()
+    research = run.win.research
+    research.cases_button.click()
+    run.settle()
+    if research.stack.currentIndex() != 2:
+        raise RuntimeError("one click on Cases did not open the overview")
+    return _overview_facts(run)
+
+
+def _click_header(run: Run, column: int) -> None:
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    header = run.win.research._cases_overview.table.horizontalHeader()
+    x = header.sectionViewportPosition(column) + header.sectionSize(column) // 2
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, header.height() // 2))
+    run.settle()
+    run.frame(STEP_HOLD_FRAMES)
+
+
+def _click_row(run: Run, row: int) -> str:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    table = run.win.research._cases_overview.table
+    pid = table.model().index(row, 0).data()
+    center = table.visualRect(table.model().index(row, 0)).center()
+    run.frame(STEP_HOLD_FRAMES)
+    QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
+    return str(pid)
+
+
+def sort_cases_by_score(run: Run) -> dict[str, Any]:
+    from src.desktop.cases_overview import COLUMNS
+
+    score = next(i for i, c in enumerate(COLUMNS) if c.key == "anomaly_score")
+    _click_header(run, 0)
+    by_pid = [row["PID"] for row in run.win.research._cases_overview.visible_rows(5)]
+    if by_pid != sorted(by_pid):
+        raise RuntimeError(f"clicking PID did not sort by PID: {by_pid}")
+    _click_header(run, score)
+    facts = {**_overview_facts(run, rows=5), "first_pids_when_sorted_by_pid": by_pid}
+    scores = [row["score"] for row in facts["first_rows"]]
+    if scores != sorted(scores, reverse=True) or len(set(scores)) < 2:
+        raise RuntimeError(f"rows are not sorted by score: {scores}")
+    return facts
+
+
+def open_top_case(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    pid = _click_row(run, 0)
+    run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the signal detail view")
+    if pid not in research.detail_title.text():
+        raise RuntimeError(f"F opened {research.detail_title.text()!r}, not {pid}")
+    return {"pid": pid, "detail": research.detail_title.text(), "back": research.back_button.text()}
+
+
+def sample_pipeline(run: Run) -> dict[str, Any]:
+    return run_pipeline(run, limit=30)
+
+
+def full_scan(run: Run) -> dict[str, Any]:
+    run.win.resize(900, 860)
+    run.win._run_corpus_scan()
+    run.wait(lambda: not run.win._worker.isRunning() and run.win.corpus_scan is not None, "the full-EMR scan", timeout_s=300)
+    scan = run.win.corpus_scan
+    return {"scored": len(scan.cases), "meta": {k: scan.meta.get(k) for k in ("n_indexed_surgeries", "n_ventilated_surgeries", "n_scanned_cases")}}
+
+
+def switch_to_scan_scope(run: Run) -> dict[str, Any]:
+    run.win.tabs.setCurrentWidget(run.win.research)
+    run.win.research.cases_button.click()
+    run.settle()
+    overview = run.win.research._cases_overview
+    if overview.scope_combo.count() < 2:
+        raise RuntimeError("the scope switch does not offer the scan")
+    overview.scope_combo.setCurrentIndex(1)
+    run.settle()
+    return _overview_facts(run)
+
+
+def request_scan_only_case(run: Run) -> dict[str, Any]:
+    win = run.win
+    overview = win.research._cases_overview
+    sample = set(win.cases["PID"].astype(str))
+    row = next(
+        (r for r in range(overview._proxy.rowCount()) if overview.cell_text(r, 0) not in sample), None
+    )
+    if row is None:
+        raise RuntimeError("every scanned case is also in the loaded sample")
+    pid = _click_row(run, row)
+    facts = {
+        "pid": pid,
+        "in_sample": pid in sample,
+        "progress": win.research.status_label.text(),
+        "overview_message": overview.status_label.text(),
+    }
+    if facts["progress"] != f"Loading this case: {pid}…" or facts["overview_message"] != facts["progress"]:
+        raise RuntimeError(f"progress text not shown: {facts}")
+    return facts
+
+
+def scan_case_detail(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the scan-only case in F")
+    return {"detail": research.detail_title.text(), "context": research.detail_context.text()}
+
+
+def back_to_cases(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.back_button.click()
+    run.settle()
+    if research.stack.currentIndex() != 2:
+        raise RuntimeError("Back from F did not return to the overview")
+    return _overview_facts(run)
+
+
+def empty_overview(run: Run) -> dict[str, Any]:
+    if run.win.cases is not None:
+        raise RuntimeError("this scenario needs a window with no processed data")
+    facts = open_cases(run)
+    if not facts["empty_message"] or facts["table_visible"]:
+        raise RuntimeError(f"the empty overview does not say why: {facts}")
+    return facts
 
 
 TAB_STEPS = tuple(
@@ -641,6 +799,9 @@ TAB_STEPS = tuple(
         ("tab-rules", "5 · Rule reference"),
     )
 )
+
+# The overview never asks the model anything, so a scripted client cannot mislabel its screenshots
+OVERVIEW_LLM_MODES = ("off", "scripted")
 
 SCENARIOS: dict[str, Scenario] = {
     "f-episodes": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
@@ -678,6 +839,27 @@ SCENARIOS: dict[str, Scenario] = {
         Step("typed", partial(type_rule_search, text="peep")),
         Step("escape", escape_rules_from_question),
     )),
+    "cases-overview": Scenario(
+        (
+            Step("load-data", run_pipeline),
+            Step("open-cases", open_cases),
+            Step("sorted-by-score", sort_cases_by_score),
+            Step("top-case-in-f", open_top_case),
+        ),
+        llm_modes=OVERVIEW_LLM_MODES,
+    ),
+    "cases-overview-scan": Scenario(
+        (
+            Step("sample", sample_pipeline),
+            Step("scan", full_scan),
+            Step("scan-scope", switch_to_scan_scope),
+            Step("scan-only-case-loading", request_scan_only_case),
+            Step("scan-only-case-in-f", scan_case_detail),
+            Step("back-to-cases", back_to_cases),
+        ),
+        llm_modes=OVERVIEW_LLM_MODES,
+    ),
+    "cases-overview-empty": Scenario((Step("empty", empty_overview),), llm_modes=OVERVIEW_LLM_MODES),
 }
 
 
@@ -927,7 +1109,7 @@ def drive(args: argparse.Namespace) -> int:
             run.settle()
             png = out / f"{step.name}.png"
             win.grab().save(str(png))
-            run.frame()
+            run.frame(STEP_HOLD_FRAMES)
             event.update(
                 status_bar=win.statusBar().currentMessage(),
                 dialogs=run.dialogs[dialogs_before:],

@@ -583,7 +583,7 @@ def test_mainwindow_retains_full_case_fetch(qapp, episode_view, monkeypatch, rou
 
     view, fetched = episode_view
     fetched.episodes = view._case_views["caseA"].episodes
-    fake = SimpleNamespace(research=view, _pending_case=("caseA", False, False),
+    fake = SimpleNamespace(research=view, _pending_case=("caseA", False, False, False),
                            _case_worker=None, cases=fetched.cases, ts=fetched.timeseries,
                            flags=fetched.flags, episodes=fetched.episodes, events=fetched.events)
     fake._on_research_case_data = lambda value: MainWindow._on_research_case_data(fake, value)
@@ -661,3 +661,21 @@ def test_unknown_rule_phase_and_extra_track_limit(episode_view):
     assert "unknown_synthetic_rule" in view.episode_list.item(1).text()
     view.episode_list.setCurrentRow(1)
     assert "Current thresholds unavailable" in view.rule_detail.text()
+
+
+def test_escape_on_signal_detail_closes_open_drawer_before_leaving(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _fetched = episode_view
+    view.show()
+    view.open_detail("caseA")
+    view.open_rules()
+    view.back_button.setFocus()
+    QTest.keyClick(view.back_button, Qt.Key.Key_Escape)
+    assert not view.rules_drawer.isVisible()
+    assert view.stack.currentIndex() == 1
+    view.back_button.setFocus()
+    QTest.keyClick(view.back_button, Qt.Key.Key_Escape)
+    assert view.stack.currentIndex() == 0
+    view.close()
