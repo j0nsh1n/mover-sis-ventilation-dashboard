@@ -637,8 +637,15 @@ class ResearchWorkspace(QWidget):
         self.comparison_hint.show()
         self.spark_label.setPixmap(QPixmap())
         self.spark_label.setText("PIP / source samples load on demand")
+        ranking = result.rank_method
+        if ranking == "embedding":
+            ranking += f", {result.embedded_count:,} of {result.indexed_count:,} records indexed"
+            if result.embedded_count < result.indexed_count:
+                ranking += "; the rest ranked by keywords"
+        else:
+            ranking = "keywords"
         self.scope_label.setText(
-            f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {result.rank_method}"
+            f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {ranking}"
         )
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):

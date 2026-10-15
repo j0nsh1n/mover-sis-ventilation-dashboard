@@ -116,6 +116,21 @@ def test_mainwindow_retrieval_keyword_fallback(qapp, synthetic_emr, tmp_path, mo
     win.research.inspect_button.click()
     qapp.processEvents()
     assert win.research.stack.currentIndex() == 1
+    win.research.return_to_canvas()
+    win.research.question_edit.setText("nephrectomy")
+    win.research.ask_button.click()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if win.research.ask_button.isEnabled() and not win.research.result.candidates:
+            break
+        time.sleep(0.01)
+    assert win.research.result.candidates == ()
+    assert win.research.candidate_table.rowCount() == 0
+    assert win.research.finding_title.text() == "No matching cases"
+    assert win.research.source_label.text() == "No source record matched this question."
+    assert "No matching indexed surgery records" in win.research.answer_text.toPlainText()
+    assert not win.research.inspect_button.isEnabled()
     win.close()
 
 
@@ -265,4 +280,18 @@ def test_cancel_handles_selected_pid_missing_from_restored_candidates(qapp):
     view.cancel_question()
     assert view.result is original
     assert view.ask_button.isEnabled()
+    view.close()
+
+
+@pytest.mark.parametrize("method,embedded,expected", [
+    ("embedding", 18, "embedding, 18 of 30 records indexed; the rest ranked by keywords"),
+    ("embedding", 30, "embedding, 30 of 30 records indexed"),
+    ("keyword", 18, "ranking: keywords"),
+])
+def test_scope_label_states_embedding_coverage(qapp, method, embedded, expected):
+    view = ResearchWorkspace()
+    view.set_results(RetrievalResult(indexed_count=30, embedded_count=embedded, rank_method=method))
+    assert expected in view.scope_label.text()
+    if method == "keyword" or embedded == 30:
+        assert "the rest" not in view.scope_label.text()
     view.close()

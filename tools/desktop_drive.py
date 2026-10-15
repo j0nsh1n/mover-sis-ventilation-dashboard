@@ -327,6 +327,40 @@ def cancel_scan(run: Run) -> dict[str, Any]:
     return {"status": run.win.statusBar().currentMessage(), "cancel_ms": round(elapsed * 1000)}
 
 
+def partial_index(run: Run) -> dict[str, Any]:
+    import src.services.retrieval as retrieval
+    from src.runtime_paths import emr_dir
+    from src.user_settings import settings_path
+
+    class InterruptedEmbedder:
+        model_id = "driver-partial"
+
+        def __init__(self) -> None:
+            self.documents = 0
+
+        def is_available(self) -> bool:
+            return True
+
+        def embed(self, texts: Sequence[str]) -> list[list[float]]:
+            if texts and texts[0].startswith("Procedure:"):
+                if self.documents >= 18:
+                    raise RuntimeError("synthetic interruption after 18 records")
+                self.documents += len(texts)
+            return [[1.0, 0.0] for _ in texts]
+
+    retrieval.DEFAULT_EMBED_BATCH = 1
+    engine = retrieval.RetrievalEngine(
+        emr=emr_dir(), cache_path=settings_path().parent / "partial.sqlite",
+        embedder=InterruptedEmbedder(),
+    )
+    assert engine.prepare() == 18
+    run.win._research_engine = engine
+    details = ask(run)
+    label = run.win.research.scope_label.text()
+    assert "embedding, 18 of 30 records indexed; the rest ranked by keywords" in label
+    return {**details, "scope": label}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -339,6 +373,7 @@ TAB_STEPS = tuple(
 )
 
 SCENARIOS: dict[str, Scenario] = {
+    "partial-index": Scenario((Step("partial-index", partial_index),), llm_modes=("off",)),
     "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
     "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),
     "research-failure": Scenario((Step("failure", research_failure), Step("corrupt-scan", corrupt_scan, expects_alert=True), Step("missing-data", missing_data, expects_alert=True)), llm_modes=("off",)),

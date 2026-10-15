@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Research search stays complete on a partly built index: records without an
+  embedding rank by keywords and keep a share of the shortlist, and G's scope
+  label states how many records were embedded. PIDs are no longer embedded, and
+  cached vectors are keyed by the embedding model's digest.
 - Research and full-EMR scans have Cancel controls. Research cancellation restores
   the previous board, and Reset remains usable. Scan cancellation keeps the previous scan.
 - Anesthesia phase for every minute: `pre_induction`, `induction`, `maintenance`,

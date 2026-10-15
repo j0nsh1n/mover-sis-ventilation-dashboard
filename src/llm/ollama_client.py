@@ -106,14 +106,15 @@ class OllamaClient:
             return False
 
     def list_models(self) -> list[str]:
+        return sorted(self.model_digests())
+
+    def model_digests(self) -> dict[str, str]:
         data = self._request_json("GET", "/api/tags")
-        models = data.get("models") or []
-        names = []
-        for m in models:
-            name = m.get("name") or m.get("model")
-            if name:
-                names.append(str(name))
-        return sorted(names)
+        return {
+            str(m.get("name") or m["model"]): str(m.get("digest") or "")
+            for m in data.get("models") or []
+            if m.get("name") or m.get("model")
+        }
 
     def embed(
         self, model: str, texts: str | Sequence[str]
@@ -330,16 +331,16 @@ class OllamaEmbedder:
 
     def is_available(self) -> bool:
         try:
-            names = self.client.list_models()
+            models = self.client.model_digests()
         except OllamaError:
             return False
         want = self.model.strip()
-        want_base = want.split(":")[0]
-        for name in names:
-            base = str(name).split(":")[0]
-            if name == want or str(name).startswith(want + ":") or base == want_base:
-                return True
-        return False
+        name = want if ":" in want else want + ":latest"
+        if name not in models and want not in models:
+            return False
+        digest = models.get(name) or models.get(want)
+        self.model_id = f"{self.model}@{digest}" if digest else self.model
+        return True
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         return self.client.embed(self.model, texts)
