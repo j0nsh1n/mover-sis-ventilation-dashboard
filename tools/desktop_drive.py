@@ -1003,6 +1003,42 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
     return {**facts, "board_restored": True}
 
 
+def import_articles(run: Run) -> dict[str, Any]:
+    from PySide6.QtWidgets import QFileDialog
+
+    original = QFileDialog.getOpenFileName
+    QFileDialog.getOpenFileName = lambda *args, **kwargs: (str(ROOT / "tests/fixtures/articles_sample.jsonl"), "")
+    try:
+        menu = next(a.menu() for a in run.win.menuBar().actions() if a.text() == "&File")
+        next(a for a in menu.actions() if a.text() == "Import articles…").trigger()
+    finally:
+        QFileDialog.getOpenFileName = original
+    research = run.win.research
+    research.scope_combo.setCurrentText("Articles")
+    assert run.win._article_catalog.count == 12
+    assert research.scope_label.text() == "Articles: 12 in the local catalog"
+    return {"scope": research.scope_label.text(), "imported": 12}
+
+
+def ask_articles(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.question_edit.setText("pressure")
+    research.ask_button.click()
+    run.wait(lambda: _research_idle(run.win), "the article search and answer")
+    result = research.article_result
+    assert result is not None and result.articles
+    assert research.result is None and run.win._case_worker is None
+    turn = research.conversation.turns[-1]
+    assert turn.scope == "Articles"
+    if research.selected_model():
+        assert turn.state == "answered" and "[A1]" in turn.answer
+    else:
+        assert turn.state == "no_model"
+    research.board_scroll.verticalScrollBar().setValue(research.board_scroll.verticalScrollBar().maximum())
+    return {"scope": research.scope_label.text(), "articles": len(result.articles),
+            "titles": [a.title for a in result.articles], "answer": turn.answer, "state": turn.state}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -1018,6 +1054,8 @@ TAB_STEPS = tuple(
 OVERVIEW_LLM_MODES = ("off", "scripted")
 
 SCENARIOS: dict[str, Scenario] = {
+    "articles": Scenario((Step("import-articles", import_articles), Step("article-answer", ask_articles)),
+                         llm_modes=("scripted", "off")),
     "proto-peak": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
                              Step("proto-peak", partial(prototype_open, signal="PIP"))), llm_modes=("scripted", "off")),
     "proto-scenario": Scenario((Step("load-data", run_pipeline), Step("proto-scenario", prototype_ask)),
@@ -1311,6 +1349,8 @@ def drive(args: argparse.Namespace) -> int:
     if llm == "scripted":
         drafts = load_drafts(args.drafts or (fixture if prototype else None),
                              scenario=args.scenario if prototype and args.drafts is None else None)
+    if args.scenario == "articles" and llm == "scripted" and args.drafts is None:
+        drafts = ("The fictional abstract described pressure observations [A1].",)
     steps = scenario.steps
     if prototype and llm == "off":
         steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))

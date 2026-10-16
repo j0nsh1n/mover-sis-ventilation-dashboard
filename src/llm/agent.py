@@ -12,7 +12,7 @@ import re
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, Literal, NamedTuple
 
 import pandas as pd
 
@@ -25,6 +25,8 @@ from src.llm.grounding import (
 )
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
+    ARTICLE_SYSTEM_PROMPT,
+    ARTICLE_VERIFICATION_FOOTER,
     MODE_CHAT,
     REWRITE_ASK,
     REWRITE_INSTRUCTION,
@@ -473,6 +475,8 @@ def verify_answer(
     advice: AdviceCheck | None = None,
     sources: Sequence[str] | None = None,
     question: str = "",
+    footer: str = VERIFICATION_FOOTER,
+    source_scope: Literal["cases", "articles"] = "cases",
 ) -> tuple[str, list[str]]:
     """
     Append a visible note for each problem the answer still has.
@@ -502,7 +506,14 @@ def verify_answer(
     if session.corpus is not None and session.has_corpus_scan():
         corpus |= set(session.corpus["PID"].astype(str))
 
+    # The substitution edits the model's text; its note is app text, appended after body_end.
+    article_pid_removed = source_scope == "articles" and bool(_PID_TOKEN.search(text))
+    if article_pid_removed:
+        text = _PID_TOKEN.sub("[case ID removed]", text)
+        notes.append("unknown_pids:removed")
     body_end = len(text)
+    if article_pid_removed:
+        text += "\n\n**Verification note:** a case-ID-like token was removed; article answers cannot cite cases."
     bad = _unknown_pids(text, corpus)
     if bad:
         notes.append("unknown_pids:" + ",".join(bad[:5]))
@@ -553,8 +564,8 @@ def verify_answer(
             notes.append(f"ungrounded_numbers:{removed}")
             text += f"\n\n**Verification note:** {REMOVED_NOTE}"
 
-    if VERIFICATION_FOOTER.strip() not in text:
-        text = text.rstrip() + VERIFICATION_FOOTER
+    if footer.strip() not in text:
+        text = text.rstrip() + footer
     return text, notes
 
 
@@ -651,6 +662,7 @@ def answer_problems(
     advice: Sequence[str] = (),
     sources: Sequence[str] | None = None,
     question: str = "",
+    source_scope: Literal["cases", "articles"] = "cases",
 ) -> list[str]:
     """
     Reasons a draft must be rewritten, phrased for the model to act on.
@@ -670,10 +682,15 @@ def answer_problems(
     # Ask keeps an appended note for unknown PIDs; a Research answer may name only
     # the cases it was given.
     cited = ", ".join(session.cited_pids)
-    problems += [
-        f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
-        for pid in _unknown_pids(text, set(session.cited_pids))
-    ]
+    if source_scope == "articles":
+        # No case is cited in this scope, so every PID-shaped token is fabricated.
+        if _PID_TOKEN.search(text):
+            problems.append("- the answer contains a case-ID-like token — articles have no case IDs, remove it")
+    else:
+        problems += [
+            f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
+            for pid in _unknown_pids(text, set(session.cited_pids))
+        ]
     if sources is not None:
         problems += [
             f"- the number {number} is not in the source extracts or the question — "
@@ -697,6 +714,7 @@ def run_agent(
     extra_prefetched: str = "",
     allow_tools: bool = True,
     sources: Sequence[str] | None = None,
+    source_scope: Literal["cases", "articles"] = "cases",
 ) -> AgentResult:
     client = client or OllamaClient()
     mode = (mode or MODE_CHAT).lower()
@@ -705,6 +723,8 @@ def run_agent(
         temperature = 0.25 if mode == "analyze" else 0.12
 
     system = build_system_prompt(mode=mode, model=model)
+    if source_scope == "articles":
+        system = ARTICLE_SYSTEM_PROMPT
     if not allow_tools:
         system += "\nTools are unavailable for this answer. Use only the supplied source extracts."
     n_cases = 0 if session.cases is None else len(session.cases)
@@ -736,13 +756,13 @@ def run_agent(
         {"role": "system", "content": system},
         {
             "role": "user",
-            "content": user_message(
+            "content": (f"Question: {question}\n\n{prefetched}" if source_scope == "articles" else user_message(
                 question,
                 session_header=header,
                 active_briefing=active_brief if session.active_pid else "",
                 mode=mode,
                 prefetched=prefetched,
-            ),
+            )),
         },
     ]
 
@@ -850,7 +870,8 @@ def run_agent(
     # Annotating prescriptive text with a disclaimer still ships the prescription.
     advice = check_advice(final_text, client, model)
     problems = answer_problems(
-        final_text, session, advice=advice.advice, sources=sources, question=question
+        final_text, session, advice=advice.advice, sources=sources, question=question,
+        source_scope=source_scope,
     )
     if problems:
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
@@ -860,7 +881,12 @@ def run_agent(
         messages.append(
             {
                 "role": "user",
-                "content": REWRITE_INSTRUCTION.format(
+                "content": (
+                    "Rewrite the draft using only the supplied article abstracts. "
+                    "Cite their [A1] to [A5] labels. Describe what the papers reported, "
+                    "without clinical instructions or patient claims. Fix these problems:\n"
+                    + "\n".join(problems)
+                ) if source_scope == "articles" else REWRITE_INSTRUCTION.format(
                     problems="\n".join(problems),
                     **(REWRITE_RESEARCH if session.cited_pids else REWRITE_ASK),
                 ),
@@ -879,6 +905,7 @@ def run_agent(
                     advice=rewritten_advice.advice,
                     sources=sources,
                     question=question,
+                    source_scope=source_scope,
                 )
                 introduced_advice = (
                     _advice_phrases(rewritten, rewritten_advice.advice)
@@ -891,7 +918,9 @@ def run_agent(
             trace.append(f"rewrite:failed:{e}")
 
     verified, notes = verify_answer(
-        final_text, session, advice=advice, sources=sources, question=question
+        final_text, session, advice=advice, sources=sources, question=question,
+        source_scope=source_scope,
+        footer=ARTICLE_VERIFICATION_FOOTER if source_scope == "articles" else VERIFICATION_FOOTER,
     )
     if notes:
         trace.append("verify:" + ";".join(notes))

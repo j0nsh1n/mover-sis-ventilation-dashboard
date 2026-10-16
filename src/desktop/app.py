@@ -64,6 +64,7 @@ from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.answer_markdown import MarkdownAnswer
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
+from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
 from src.desktop.theme import apply_theme, chat_role_color
 from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
@@ -377,6 +378,9 @@ class MainWindow(QMainWindow):
         open_wave.setShortcut("Ctrl+Shift+O")
         open_wave.triggered.connect(self._browse_wave_folder)
         file_menu.addAction(open_wave)
+        import_articles = QAction("Import articles…", self)
+        import_articles.triggered.connect(self._import_articles)
+        file_menu.addAction(import_articles)
         reload_act = QAction("Reload processed data", self)
         reload_act.setShortcut("Ctrl+R")
         reload_act.triggered.connect(self._autoload_processed)
@@ -623,6 +627,13 @@ class MainWindow(QMainWindow):
         # ---- Research workspace and existing views ----
         self.tabs = QTabWidget()
         self.research = ResearchWorkspace()
+        self._article_catalog = None
+        try:
+            self._article_catalog = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3")
+            self.research.set_article_catalog(self._article_catalog.count)
+        except ArticleCatalogError as exc:
+            self.research.set_article_catalog(0, str(exc))
+            self.statusBar().showMessage(str(exc))
         self._research_start_button = self.research.start_button
         self.research.question_submitted.connect(self._start_research_search)
         self.research.cancel_requested.connect(self._cancel_research)
@@ -1586,27 +1597,53 @@ class MainWindow(QMainWindow):
             corpus_meta=self.corpus_scan.meta if self.corpus_scan is not None else None,
         )
 
+    def _import_articles(self) -> None:
+        if self._article_catalog is None:
+            QMessageBox.warning(self, "Article import unavailable", self.research._article_error)
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Import articles", "", "Article files (*.csv *.jsonl)")
+        if not path:
+            return
+        try:
+            report = self._article_catalog.import_file(Path(path))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Article import failed", str(exc))
+            return
+        self.research.set_article_catalog(self._article_catalog.count)
+        message = f"Imported {report.imported:,} articles. {len(report.errors):,} rows skipped."
+        if report.errors:
+            message += "\n\n" + "\n".join(report.errors)
+        QMessageBox.information(self, "Article import", message)
+
     def _start_research_search(self, question: str) -> None:
         from src.guardrails.validate_io import validate_emr_dir
         from src.llm.ollama_client import OllamaEmbedder
         from src.services.retrieval import RetrievalEngine
 
-        try:
-            source = validate_emr_dir(emr_dir())
-        except Exception as exc:
-            self.research.set_status(f"EMR setup required: {exc}")
-            return
-        if (self._research_engine is None or self._research_engine.emr != source
-                or any(worker.isRunning() for worker in self._research_workers.values())):
+        articles = self.research.scope == "Articles"
+        if articles:
+            if self._article_catalog is None:
+                return
             embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
-            self._research_engine = RetrievalEngine(
-                emr=source,
-                cache_path=settings_path().parent / "case_embeddings.sqlite3",
-                embedder=OllamaEmbedder(embed_model),
-                preset=self._active_preset,
-                analysis_facts=self._analysis_facts,
-                analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
-            )
+            engine = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3", OllamaEmbedder(embed_model))
+        else:
+            try:
+                source = validate_emr_dir(emr_dir())
+            except Exception as exc:
+                self.research.set_status(f"EMR setup required: {exc}")
+                return
+            if (self._research_engine is None or self._research_engine.emr != source
+                    or any(worker.isRunning() for worker in self._research_workers.values())):
+                embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
+                self._research_engine = RetrievalEngine(
+                    emr=source,
+                    cache_path=settings_path().parent / "case_embeddings.sqlite3",
+                    embedder=OllamaEmbedder(embed_model),
+                    preset=self._active_preset,
+                    analysis_facts=self._analysis_facts,
+                    analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
+                )
+            engine = self._research_engine
         if self.research._searching:
             self._cancel_research()
         self._invalidate_research_requests()
@@ -1614,12 +1651,12 @@ class MainWindow(QMainWindow):
         request_id = self._research_request_id
         self._active_research_request = request_id
         self.research.begin_question(question, request_id)
-        self.research.set_status("Preparing indexed surgery search…")
+        self.research.set_status("Searching the local article catalog…" if articles else "Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
-            self._research_engine,
+            engine,
             question,
             self.research.selected_model(),
-            self._make_session_snapshot(),
+            None if articles else self._make_session_snapshot(),
             parent=self,
         )
         self._research_workers[request_id] = self._research_worker
@@ -1676,6 +1713,14 @@ class MainWindow(QMainWindow):
     def _on_research_shortlist(self, result, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
+        if isinstance(result, ArticleSearchResult):
+            self.research.set_article_results(result)
+            turn = self.research.conversation.turn(request_id)
+            if not result.articles:
+                self.research.set_answer(result.message, request_id)
+            elif turn is not None and turn.model is None:
+                self.research.set_answer(NO_MODEL_ANSWER, request_id, state="no_model")
+            return
         self.research.set_results(result)
         turn = self.research.conversation.turn(request_id)
         if turn is not None and turn.model is None:
@@ -1698,7 +1743,7 @@ class MainWindow(QMainWindow):
         if request_id is not None and request_id != self._active_research_request:
             return
         self.research.set_status(f"Research request failed: {message}")
-        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.", request_id, state="failed", failure=message)
+        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved sources remain available for manual inspection.", request_id, state="failed", failure=message)
 
     def _on_research_done(self, request_id: int) -> None:
         self._research_workers.pop(request_id, None)

@@ -40,6 +40,7 @@ from src.desktop.conversation_panel import ConversationPanel, Turn, TurnState
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
 from src.pipeline.flags import collapse_episodes
 from src.rules import RuleCatalog
+from src.services.articles import ABSTRACT_LIMIT, ArticleSearchResult, NO_CATALOG
 from src.services.case_fetch import FetchResult
 from src.services.retrieval import RetrievalResult, SearchCandidate
 
@@ -68,6 +69,8 @@ class QuestionState:
     comparison_pid: str | None
     case_views: dict[str, CaseView]
     labels: tuple[str, ...]
+    scope: str = "Cases"
+    article_result: ArticleSearchResult | None = None
 
 
 RULES_DRAWER_MAX_WIDTH = 420
@@ -135,6 +138,11 @@ class ResearchWorkspace(QWidget):
         super().__init__(parent)
         self.result: RetrievalResult | None = None
         self._question = ""
+        self._scope = "Cases"
+        self.article_result: ArticleSearchResult | None = None
+        self._catalog_count = 0
+        self._article_error = ""
+        self._setup_required = False
         self._before_question: QuestionState | None = None
         self._searching = False
         self._active_turn_request: int | None = None
@@ -319,6 +327,11 @@ class ResearchWorkspace(QWidget):
         question_title = _wrap("Start with what you want to know.")
         question_title.setObjectName("nodeTitle")
         question_layout.addWidget(question_title)
+        self.scope_combo = QComboBox()
+        self.scope_combo.addItems(["Cases", "Articles"])
+        self.scope_combo.setAccessibleName("Question scope: Cases or Articles")
+        self.scope_combo.currentTextChanged.connect(self._change_scope)
+        question_layout.addWidget(self.scope_combo)
         question_layout.addWidget(QLabel("Research question"))
         self.question_edit = QLineEdit()
         self.question_edit.setPlaceholderText("Try: Where does pressure peak in laparoscopic cases?")
@@ -333,7 +346,8 @@ class ResearchWorkspace(QWidget):
         self.cancel_button.clicked.connect(self.cancel_requested)
         self.cancel_button.hide()
         question_layout.addWidget(self.cancel_button)
-        question_layout.addWidget(_wrap("The local model reads at most three retrieved source extracts."))
+        self.extract_budget_label = _wrap("The local model reads at most three retrieved source extracts.")
+        question_layout.addWidget(self.extract_budget_label)
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
         self.model_combo = QComboBox()
@@ -438,6 +452,7 @@ class ResearchWorkspace(QWidget):
 
         candidate_card, candidate_layout = _card("RETRIEVED CASES / SOURCE SHORTLIST")
         candidate_card.setObjectName("shortlistNode")
+        self.case_shortlist_card = candidate_card
         _name_kicker(candidate_layout)
         self.candidate_table = _ShortlistTable(0, 3)
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
@@ -462,6 +477,14 @@ class ResearchWorkspace(QWidget):
         candidate_layout.addLayout(actions)
         self.selection_label = _wrap("Choose a case with one click or Enter.")
         candidate_layout.addWidget(self.selection_label)
+        self.article_card, article_layout = _card("LOCAL ARTICLES / SOURCE SHORTLIST")
+        self.article_list = QListWidget()
+        self.article_list.setAccessibleName("Matching local articles")
+        self.article_list.setWordWrap(True)
+        self.article_list.setMinimumHeight(260)
+        article_layout.addWidget(self.article_list)
+        layout.addWidget(self.article_card)
+        self.article_card.hide()
         layout.addWidget(candidate_card)
         layout.setStretchFactor(candidate_card, 0)
         scroll.setWidget(page)
@@ -469,7 +492,7 @@ class ResearchWorkspace(QWidget):
         self.conversation = ConversationPanel()
         self.conversation.case_requested.connect(self._open_cited_case)
         self.conversation.show_requested.connect(self.show_turn)
-        self.conversation.ask_requested.connect(self.question_submitted)
+        self.conversation.ask_scoped_requested.connect(self._ask_again)
         self.board_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.board_splitter.addWidget(scroll)
         self.board_splitter.addWidget(self.conversation)
@@ -604,7 +627,59 @@ class ResearchWorkspace(QWidget):
             self.model_combo.addItem("(AI unavailable · search still works)")
         self.model_combo.blockSignals(False)
 
+    @property
+    def scope(self) -> str:
+        return self._scope
+
+    def set_article_catalog(self, count: int, error: str = "") -> None:
+        self._catalog_count, self._article_error = count, error
+        if self.scope == "Articles":
+            self._render_scope()
+
+    def _ask_again(self, question: str, scope: str) -> None:
+        self.scope_combo.setCurrentText(scope)
+        self.question_submitted.emit(question)
+
+    def _change_scope(self, scope: str) -> None:
+        self._stop_running_question()
+        self.board_restore_requested.emit()
+        self._detach_board()
+        self._scope = scope
+        self.scope_combo.blockSignals(True)
+        self.scope_combo.setCurrentText(scope)
+        self.scope_combo.blockSignals(False)
+        self._clear_board()
+
+    def _render_scope(self) -> None:
+        articles = self.scope == "Articles"
+        self.article_card.setVisible(articles)
+        self.case_shortlist_card.setVisible(not articles)
+        for card in self._evidence_cards[1:]:
+            card.setVisible(not articles and card is not self.comparison_card)
+        self.comparison_hint.setVisible(not articles)
+        self.add_comparison_button.setVisible(not articles)
+        self.extract_budget_label.setText(
+            "The local model reads at most five article abstracts."
+            if articles else "The local model reads at most three retrieved source extracts."
+        )
+        self.question_edit.setPlaceholderText(
+            "Search titles and abstracts in the local catalog" if articles
+            else "Try: Where does pressure peak in laparoscopic cases?"
+        )
+        if articles:
+            self.scope_label.setText(f"Articles: {self._catalog_count:,} in the local catalog")
+            self.status_label.setText(self._article_error or (NO_CATALOG if not self._catalog_count else "Ready to search local articles."))
+        ready = not self._searching and (articles or not self._setup_required)
+        self.ask_button.setEnabled(ready and not (articles and self._article_error))
+        self.question_edit.setEnabled(ready)
+        self._layout_mode = ""
+        self._apply_board_layout()
+
     def set_setup_required(self, required: bool) -> None:
+        self._setup_required = required
+        if self.scope == "Articles":
+            self._render_scope()
+            return
         self.ask_button.setEnabled(not required)
         self.question_edit.setEnabled(not required)
         self.status_label.setText(
@@ -613,8 +688,9 @@ class ResearchWorkspace(QWidget):
         )
 
     def set_searching(self, active: bool) -> None:
-        self.ask_button.setEnabled(not active)
-        self.question_edit.setEnabled(not active)
+        ready = not active and (self.scope == "Articles" or not self._setup_required)
+        self.ask_button.setEnabled(ready)
+        self.question_edit.setEnabled(ready)
         self._searching = active
         self.cancel_button.setVisible(active)
         self.add_comparison_button.setEnabled(not active)
@@ -660,6 +736,9 @@ class ResearchWorkspace(QWidget):
         self._header_layout.setContentsMargins(*((16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)))
         # One row of five buttons is wider than a one-column board beside the drawer.
         self._place_header_actions(3 if mode == "single" else len(self._header_buttons))
+        if self.scope == "Articles":
+            self._evidence_grid.removeWidget(self._evidence_cards[0])
+            self._evidence_grid.addWidget(self._evidence_cards[0], 0, 0, 1, 3)
 
     def _place_header_actions(self, columns: int) -> None:
         for button in self._header_buttons:
@@ -727,7 +806,7 @@ class ResearchWorkspace(QWidget):
         return QuestionState(
             self.result, self._question, self.answer_text.toPlainText(), self._selected_pid,
             self._primary_pid, self._comparison_pid, dict(self._case_views),
-            tuple(label.text() for label in self._board_labels()),
+            tuple(label.text() for label in self._board_labels()), self.scope, self.article_result,
         )
 
     def _save_board(self) -> None:
@@ -747,7 +826,7 @@ class ResearchWorkspace(QWidget):
         self._board_request = self._active_turn_request
         self._question = question
         self.question_edit.setText(question)
-        turn = Turn(self._active_turn_request, question, self.selected_model())
+        turn = Turn(self._active_turn_request, question, self.selected_model(), scope=self.scope)
         turn.board = self._snapshot_board()
         self.conversation.append_turn(turn)
         self.set_searching(True)
@@ -755,7 +834,13 @@ class ResearchWorkspace(QWidget):
     def _restore_board(self, state: QuestionState) -> None:
         self._restoring_board = True
         try:
+            self._scope = state.scope
+            self.scope_combo.blockSignals(True)
+            self.scope_combo.setCurrentText(state.scope)
+            self.scope_combo.blockSignals(False)
             self._clear_board()
+            if state.article_result is not None:
+                self.set_article_results(state.article_result)
             self._question = state.question
             self.question_edit.setText(state.question)
             if state.result is not None:
@@ -923,6 +1008,8 @@ class ResearchWorkspace(QWidget):
         self.question_edit.clear()
         self.question_edit.setFocus()
         self.result = None
+        self.article_result = None
+        self.article_list.clear()
         self._question = ""
         self._selected_pid = None
         self._primary_pid = None
@@ -943,6 +1030,7 @@ class ResearchWorkspace(QWidget):
         self.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
         self._set_case_actions(False)
         self.set_status("Enter a research question to trace its evidence.")
+        self._render_scope()
 
     def _add_comparison(self) -> None:
         if self.result is None:
@@ -989,6 +1077,26 @@ class ResearchWorkspace(QWidget):
         painter.drawPath(path)
         painter.end()
         self.spark_label.setPixmap(pixmap)
+
+    def set_article_results(self, result: ArticleSearchResult) -> None:
+        self.article_result = result
+        self._catalog_count = result.catalog_count
+        self.result = None
+        self.article_list.clear()
+        self.scope_label.setText(f"Articles: {result.catalog_count:,} in the local catalog")
+        self.set_status(result.message)
+        for i, article in enumerate(result.articles, 1):
+            citation = f"[A{i}] " if i <= ABSTRACT_LIMIT else ""
+            snippet = article.abstract[:320] + ("…" if len(article.abstract) > 320 else "")
+            item = QListWidgetItem(
+                f"{citation}{article.title} ({article.year})\n{article.authors}\n"
+                f"{article.doi_or_url}\n{snippet}"
+            )
+            item.setToolTip(f"Source: {article.source}\nRights: {article.rights_note}\nImported: {article.imported_at}")
+            self.article_list.addItem(item)
+        if not result.articles:
+            self.article_list.addItem(result.message)
+        self._save_board()
 
     def set_results(self, result: RetrievalResult) -> None:
         self.result = result

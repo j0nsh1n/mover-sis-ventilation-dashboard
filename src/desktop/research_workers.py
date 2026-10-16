@@ -7,7 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from src.llm.ollama_client import OllamaClient
-from src.llm.retrieve import answer_from_retrieval
+from src.llm.retrieve import answer_from_articles, answer_from_retrieval
+from src.services.articles import ArticleCatalog
 from src.services.case_fetch import fetch_cases
 from src.services.retrieval import RetrievalEngine
 
@@ -18,7 +19,7 @@ class ResearchWorker(QThread):
     answer = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, engine: RetrievalEngine, question: str, model: str | None, session, parent=None):
+    def __init__(self, engine: RetrievalEngine | ArticleCatalog, question: str, model: str | None, session, parent=None):
         super().__init__(parent)
         self.engine = engine
         self.question = question
@@ -27,6 +28,20 @@ class ResearchWorker(QThread):
 
     def run(self) -> None:
         try:
+            if isinstance(self.engine, ArticleCatalog):
+                article_result = self.engine.search(self.question)
+                if self.isInterruptionRequested():
+                    return
+                self.shortlist.emit(article_result)
+                if self.model and article_result.articles:
+                    response = answer_from_articles(
+                        question=self.question, model=self.model, articles=article_result.articles,
+                        client=OllamaClient(timeout_s=300.0),
+                    )
+                    if not self.isInterruptionRequested():
+                        self.answer.emit(response)
+                return
+
             def progress(item) -> None:
                 if self.isInterruptionRequested():
                     raise InterruptedError("Search was cancelled.")

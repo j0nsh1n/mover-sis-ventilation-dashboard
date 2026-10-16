@@ -22,8 +22,28 @@ from src.services.retrieval import (
     RetrievalProgress,
     SearchCandidate,
 )
+from src.services.articles import ABSTRACT_LIMIT, Article, NO_MATCHES
 
 RetrieveProgressCb = Callable[[RetrievalProgress], None]
+
+
+def answer_from_articles(
+    *, question: str, model: str, articles: Sequence[Article], client: OllamaClient,
+    on_status: ProgressCb | None = None,
+) -> AgentResult:
+    cited = articles[:ABSTRACT_LIMIT]
+    if not cited:
+        return AgentResult(answer=NO_MATCHES)
+    extracts = "\n\n".join(
+        f"[A{i}] {a.title} ({a.year}). {a.authors}.\n"
+        f"DOI/URL: {a.doi_or_url}\nSource: {a.source}\nRights: {a.rights_note}\nAbstract: {a.abstract}"
+        for i, a in enumerate(cited, 1)
+    )
+    return run_agent(
+        model=model, question=question, session=SessionState(), client=client,
+        mode=MODE_ANALYZE, skip_prefetch=True, extra_prefetched=extracts,
+        allow_tools=False, source_scope="articles", on_status=on_status,
+    )
 
 
 def format_grounded_extracts(

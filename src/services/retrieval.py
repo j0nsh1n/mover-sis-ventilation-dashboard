@@ -38,7 +38,7 @@ Vectors choose records. They are never returned on ``SearchCandidate`` and
 must not be passed to the chat model. Use ``src.llm.retrieve.answer_from_retrieval``
 to hand source extracts to the existing Ollama agent.
 
-This module does not index articles. That source is undecided.
+Article retrieval uses these shared embedding helpers from src.services.articles.
 """
 
 from __future__ import annotations
@@ -279,16 +279,16 @@ def _emit(cb: ProgressCb | None, progress: RetrievalProgress) -> RetrievalProgre
     return progress
 
 
-def _pack_vector(values: Sequence[float]) -> bytes:
+def pack_vector(values: Sequence[float]) -> bytes:
     return struct.pack(f"<{len(values)}f", *[float(v) for v in values])
 
 
-def _unpack_vector(blob: bytes) -> list[float]:
+def unpack_vector(blob: bytes) -> list[float]:
     n = len(blob) // 4
     return list(struct.unpack(f"<{n}f", blob))
 
 
-def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     va = np.asarray(a, dtype=np.float32)
     vb = np.asarray(b, dtype=np.float32)
     if va.size == 0 or vb.size == 0 or va.size != vb.size:
@@ -389,7 +389,7 @@ def _normalize_gender(value: str | None) -> str | None:
     return g if g in {"M", "F"} else None
 
 
-class _EmbeddingCache:
+class EmbeddingCache:
     """SQLite store keyed by source-text hash and embedding-model identity."""
 
     def __init__(self, path: Path):
@@ -422,12 +422,12 @@ class _EmbeddingCache:
             ).fetchone()
         if row is None:
             return None
-        return _unpack_vector(row[0])
+        return unpack_vector(row[0])
 
     def put(
         self, text_hash: str, model_id: str, vector: Sequence[float]
     ) -> None:
-        blob = _pack_vector(vector)
+        blob = pack_vector(vector)
         with self._lock, self._connect() as con:
             con.execute(
                 """
@@ -462,7 +462,7 @@ class RetrievalEngine:
         self.extract_limit = max(1, int(extract_limit))
         self.preset = preset
         self.analysis_facts = dict(analysis_facts or {})
-        self._cache = _EmbeddingCache(Path(cache_path))
+        self._cache = EmbeddingCache(Path(cache_path))
         self._records: list[SearchRecord] = []
         self._keyword_index: tuple[list[SearchRecord], _KeywordIndex, dict[str, int]] | None = None
         self._vectors: dict[str, list[float]] = {}
@@ -840,7 +840,7 @@ class RetrievalEngine:
             if vec is None:
                 missing.append(rec)
             else:
-                scored.append((_cosine(query, vec), rec))
+                scored.append((cosine(query, vec), rec))
         scored.sort(key=_rank_key, reverse=True)
         ranked = self._rank_keyword(direct, question, limit)
         remaining = limit - len(ranked)

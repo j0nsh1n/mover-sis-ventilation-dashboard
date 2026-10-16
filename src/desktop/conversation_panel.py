@@ -33,6 +33,7 @@ class Turn:
     failure: str = ""
     note: str = ""
     board: QuestionState | None = None
+    scope: str = "Cases"
 
     @property
     def badge(self) -> str:
@@ -158,6 +159,7 @@ class ConversationPanel(QScrollArea):
     case_requested = Signal(int, str)
     show_requested = Signal(int)
     ask_requested = Signal(str)
+    ask_scoped_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -189,6 +191,7 @@ class ConversationPanel(QScrollArea):
         widget.case_requested.connect(self.case_requested)
         widget.show_requested.connect(self.show_requested)
         widget.ask_requested.connect(self.ask_requested)
+        widget.ask_requested.connect(lambda question: self.ask_scoped_requested.emit(question, turn.scope))
         self._layout.insertWidget(self._layout.count() - 1, widget)
         self.empty_label.hide()
         QTimer.singleShot(0, lambda: self._scroll_to_turn(turn.request_id))
