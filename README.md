@@ -1,6 +1,6 @@
 # MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
 
-**Version 0.10.0**
+**Version 0.12.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine; OR dates largely **2015–2018**). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -169,7 +169,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 
 ## Versioning and releases
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.10.0`, semver `x.y.z`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.12.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On a `VERSION` change merged to `main`** (or a manual run): GitHub Actions workflow
@@ -214,14 +214,14 @@ Or build only:
 
 ```bash
 ./scripts/build_executable.sh
-# → dist/MOVER-SIS-Monitor-v0.10.0-linux-x86_64.tar.gz
+# → dist/MOVER-SIS-Monitor-v0.12.0-linux-x86_64.tar.gz
 ```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
-| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.10.0` |
-| `dist/MOVER-SIS-Monitor-v0.10.0-linux-x86_64.tar.gz` | Portable archive |
+| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.12.0` |
+| `dist/MOVER-SIS-Monitor-v0.12.0-linux-x86_64.tar.gz` | Portable archive |
 | `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
 
 If the binary fails to start on a minimal install:

@@ -7,6 +7,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-16
+
+This release also carries the 0.11 work (#27, #28); 0.11.0 was not published separately.
+
 ### Added
 
 - Research and Ask answers render Markdown formatting with inert links and image alt text; model HTML is displayed as text.
