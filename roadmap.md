@@ -62,7 +62,7 @@ to publish.
   scenarios (#30); Settings preset selector and Markdown answers (#31). Released in
   v0.12.1 (2026-10-16); the v0.12.0 build failed on Windows and was not published.
 
-## Phase 6 — Calibrate on real MOVER data (v0.13.0)
+## Phase 6 — Calibrate on real MOVER data (v0.13.0, engineering)
 - Tasks:
   - Run `scripts/calibrate.sh` on the real EMR on this machine
   - The operator reads the aggregate report before any model sees it
@@ -73,9 +73,13 @@ to publish.
     peak memory
 - Complete when: synthetic anomalies still flag, a before-and-after flag table is
   recorded, and `phase_source = events` dominates on real data
-- Status: [ ]
+- Status: [~] 2026-10-16 — engineering released in v0.13.0 (#34): thresholds version
+  recorded with each run and shown in F, scan memory and phase-source counts,
+  `scripts/bench_scan.sh`, the merged full-EMR profile, and
+  `docs/CALIBRATION_RUNBOOK.md`. The real-data steps (run, read, patterns,
+  percentiles, before-and-after table, timing) are open for the operator.
 
-## Phase 7 — One workspace, step 2 (v0.14.0)
+## Phase 7 — One workspace, step 2 (v0.13.0)
 - Tasks:
   - Scenario analysis and comparison become question intents in G, answered from
     bounded extracts and never from the Ask session
@@ -84,9 +88,10 @@ to publish.
     pass in G and F
 - Complete when: no legacy tab remains, every scenario test passes, and the
   isolation test covers the new intents
-- Status: [ ]
+- Status: [x] 2026-10-16 — legacy tabs retired into G/F, scenario and comparison intents,
+  ask about a minute in F (#35). Released in v0.13.0.
 
-## Phase 8 — Grounded numbers and measured answer quality (v0.15.0)
+## Phase 8 — Grounded numbers and measured answer quality (v0.13.0)
 - Tasks:
   - Check every number in an answer against its extracts
   - A recorded-answer eval of about 20 synthetic questions in CI, with a live-model
@@ -95,14 +100,17 @@ to publish.
   - Sanitized scan failure messages
 - Complete when: the eval reports grounding and gate rates per release, and no
   answer number lacks a source
-- Status: [ ]
+- Status: [x] 2026-10-16 — number grounding with one rewrite, recorded-answer eval in CI,
+  merged full-EMR profile, sanitized scan failures (#34). Released in v0.13.0.
+  Known limit: coincidental matches with unrelated source numbers pass.
 
-## Phase 9 — Article search (v0.16.0)
+## Phase 9 — Article search (v0.13.0)
 - Tasks:
   - A local SQLite article catalog with full-text search and title-plus-abstract
     vectors, shown in G as its own labeled scope, per `docs/MONITORING_CONCEPTS.md`
 - Complete when: article results carry citations and an empty result says so
-- Status: [ ]
+- Status: [x] 2026-10-16 — local article catalog (CSV/JSONL import, FTS5, optional
+  vectors) as its own scope in G, at most five cited abstracts (#35). Released in v0.13.0.
 
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference

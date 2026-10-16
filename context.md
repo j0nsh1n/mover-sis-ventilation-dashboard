@@ -2,15 +2,11 @@
 
 ## Current State
 
-- **Version:** 0.12.1 released 2026-10-16. It carries the v0.11 and v0.12
-  work (#27 to #31); neither v0.11.0 nor v0.12.0 was published (the v0.12.0
-  Windows build failed on cp1252 pipeline output, fixed in 0.12.1). Installed
-  apps update through the signed Pages manifest.
-- **Branch:** `main` includes everything through v0.12.1: #29 (one rule
-  catalog, Rules drawer, real-wave tests opt-in, F flag episodes and rule
-  detail), #30 (Cases overview, flag-aware search, side-panel conversation,
-  prototype driver scenarios) and #31 (spec.md, Settings preset selector,
-  Markdown answers). No working branches are open.
+- **Version:** 0.13.0 released 2026-10-16 (roadmap Phases 7, 8 and 9, and Phase 6
+  engineering). 0.12.1 before it carried the v0.11 and v0.12 work. Installed apps
+  update through the signed Pages manifest.
+- **Branch:** `main` includes everything through v0.13.0 (#34, #35 and the release
+  PR). No working branches are open.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -220,19 +216,19 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-10-16
-- **Released:** v0.12.1 from `main` (#29, #30, #31, #32 and the 0.12.1 fix). The
-  plan and decision trail live outside the repo under
-  `~/.claude/orchestrate/mover-overhaul/` (`docs/v012/plan.md`,
-  `decisions.tsv`).
-- **Verified:** every commit ran gates, live lanes on synthetic data, a perf
-  lane and audit lanes; #31's Markdown renderer had an adversarial audit. A
-  local frozen build passed the smoke test and `--selftest-scan` before the
-  release.
-- **Next:** roadmap Phase 6 (calibrate on real MOVER data, v0.13.0). Open
-  follow-ups are listed in the #29, #30 and #31 bodies: late full-EMR scan
-  under the old preset, unguarded processed-folder change during a run, a
-  scan surviving a reload of a different EMR, Enter on the Cases button, the
-  descending sort arrow, the stale progress line after an answer, the
-  per-size chart image cache, a 1 MB single-word answer stalling layout, and
-  on Windows a minimum window width of about 1,060 px (the 900 px layout tests
-  skip there).
+- **Released:** v0.13.0. The plan and decision trail are under
+  `~/.claude/orchestrate/mover-overhaul/` (`docs/v013/plan.md`, `decisions.tsv`).
+- **Done:** one Research workspace with the legacy tabs retired; scenario and
+  comparison intents; ask about a minute in F; local article search; number
+  grounding with an eval in CI; thresholds version shown in F; scan memory,
+  bench script, merged full-EMR profile and sanitized scan failures; the
+  calibration runbook. PR CI now runs the test suite on Windows too.
+- **Verified:** every item had an owner gate, an independent audit (Codex or
+  Sonnet) and fixes in a second round; the stacked gate passed 1164 tests.
+- **Next:** the operator runs Phase 6 on the real data per
+  `docs/CALIBRATION_RUNBOOK.md` and approves the spec.md wording proposed in #34
+  and #35. Follow-ups: signal- and unit-aware number grounding (coincidental
+  matches), the stale progress line after an answer, the Windows minimum window
+  width, Enter on the Cases button, the descending sort arrow, a scan surviving a
+  reload of a different EMR, the per-size chart image cache, and the agent filter
+  matching analyzed cases only.
