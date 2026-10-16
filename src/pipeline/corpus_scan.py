@@ -19,6 +19,10 @@ Outputs in the processed directory (the sample's files are left untouched):
 - ``corpus_cases.parquet``   one row per scanned surgery (scores, top rules)
 - ``corpus_episodes.parquet`` contiguous flag runs for every scanned surgery
 - ``corpus_meta.json``       scope counts, preset, thresholds hash, timing
+- ``corpus_profile.json`` / ``corpus_profile.md``
+                             aggregate profile (percentiles, rule and phase
+                             counts) merged from per-shard histograms; no PIDs
+                             or timestamps
 - ``scan-errors.log``        only after a shard fails: full exception text and
                              traceback, which can hold paths and patient data
                              and never leave this file
@@ -62,6 +66,7 @@ from src.guardrails.exceptions import GuardrailError, PipelineError
 from src.guardrails.validate_io import (
     atomic_write_json,
     atomic_write_parquet,
+    atomic_write_text,
     resolve_emr_dir,
     resolve_output_dir,
     validate_emr_dir,
@@ -69,12 +74,20 @@ from src.guardrails.validate_io import (
 from src.pipeline.load import NA_VALUES, VENT_RENAME, VITALS_RENAME, load_case_info
 from src.pipeline.phases import PHASE_SOURCES
 from src.pipeline.run import process_frames
+from src.pipeline.scan_profile import (
+    build_corpus_profile,
+    merge_histograms,
+    render_corpus_profile_md,
+    shard_histogram,
+)
 
 logger = logging.getLogger(__name__)
 
 CORPUS_CASES = "corpus_cases.parquet"
 CORPUS_EPISODES = "corpus_episodes.parquet"
 CORPUS_META = "corpus_meta.json"
+CORPUS_PROFILE_JSON = "corpus_profile.json"
+CORPUS_PROFILE_MD = "corpus_profile.md"
 SCAN_ERROR_LOG = "scan-errors.log"
 
 # Surgeries per shard: large enough to amortize pandas overhead, small enough
@@ -113,6 +126,7 @@ _STAGE_BY_MODULE = {
     "phases": "features",
     "features": "features",
     "flags": "flags",
+    "scan_profile": "profile",
 }
 _STAGE_BY_SHARD_FUNCTION = {"_read_shard": "load", "_split_csv": "load"}
 _TRACEBACK_FRAME = re.compile(r'File "([^"]+)", line \d+, in (\w+)')
@@ -251,8 +265,8 @@ def _score_shard(
     """Score one shard; runs in the parent (workers=1) or in a worker process.
 
     Top-level and given only picklable arguments so a spawned process can
-    import and call it. Returns the small per-case and episode tables, never
-    the minute-level frames. A shard that cannot be scored for data reasons
+    import and call it. Returns the small per-case and episode tables and the
+    mergeable histogram of the shard, never the minute-level frames. A shard that cannot be scored for data reasons
     comes back with ``error`` (a fixed code message) and ``detail`` (full text,
     for the log only) set; any other exception propagates.
     """
@@ -261,6 +275,7 @@ def _score_shard(
         "shard": shard,
         "cases": None,
         "episodes": None,
+        "histogram": None,
         "error": None,
         "detail": None,
         "n_pids": 0,
@@ -291,6 +306,9 @@ def _score_shard(
             validate=False,
             verbose=False,
         )
+        histogram = shard_histogram(
+            frames["timeseries"], frames["flags"], frames["episodes"], thresholds
+        )
     except (GuardrailError, PipelineError, ValueError, KeyError) as exc:
         trace = "".join(traceback.format_exception(exc))
         return {
@@ -304,6 +322,7 @@ def _score_shard(
         **empty,
         "cases": frames["cases"],
         "episodes": None if episodes.empty else episodes,
+        "histogram": histogram,
     }
 
 
@@ -501,6 +520,7 @@ def scan_corpus(
     episode_frames: list[pd.DataFrame] = []
     failed: list[dict] = []
     failure_log: list[tuple[str, str]] = []
+    histograms: list[dict] = []
     for shard in range(n_shards):
         res = results[shard]
         if res["error"] is not None:
@@ -511,6 +531,8 @@ def scan_corpus(
             case_frames.append(res["cases"])
         if res["episodes"] is not None:
             episode_frames.append(res["episodes"])
+        if res["histogram"] is not None:
+            histograms.append(res["histogram"])
 
     if failure_log:
         append_scan_error_log(out_path, failure_log)
@@ -527,6 +549,13 @@ def scan_corpus(
     corpus_episodes = (
         pd.concat(episode_frames, ignore_index=True) if episode_frames else pd.DataFrame()
     )
+    cases_left_out = sum(f["n_pids"] for f in failed)
+    profile = build_corpus_profile(
+        merge_histograms(histograms),
+        thresholds,
+        n_cases_left_out=cases_left_out,
+        n_failed_shards=len(failed),
+    )
     meta = {
         "scope": "full_emr_scan",
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -538,6 +567,7 @@ def scan_corpus(
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),
         "n_shards": n_shards,
         "failed_shards": failed,
+        "cases_left_out_by_failed_shards": cases_left_out,
         "workers_requested": workers,
         "workers": n_workers,
         "cases_by_phase_source": {
@@ -552,6 +582,8 @@ def scan_corpus(
         raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
     atomic_write_parquet(corpus_cases, out_path / CORPUS_CASES)
     atomic_write_parquet(corpus_episodes, out_path / CORPUS_EPISODES)
+    atomic_write_json(profile, out_path / CORPUS_PROFILE_JSON)
+    atomic_write_text(render_corpus_profile_md(profile, file_hash), out_path / CORPUS_PROFILE_MD)
     meta["peak_rss_mb"] = _peak_rss_mb()
     atomic_write_json(meta, out_path / CORPUS_META)
     progress(
