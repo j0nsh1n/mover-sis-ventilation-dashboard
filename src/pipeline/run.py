@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config import load_thresholds
+from src.config import load_thresholds, thresholds_preset_hash
+from src.rules import thresholds_sha256
 from src.guardrails.exceptions import GuardrailError, PipelineError
 from src.guardrails.limits import MAX_VENT_SCAN_ROWS
 from src.guardrails.validate_data import (
@@ -200,6 +201,7 @@ def run_pipeline(
     out_path = resolve_output_dir(output_dir, create=True)
 
     thresholds = load_thresholds(preset, validate=validate)
+    file_hash = thresholds_sha256()
     logger.info("pipeline start preset=%s emr=%s out=%s", preset, emr_path, out_path)
     print(f"[pipeline] preset={preset} emr_dir={emr_path}")
 
@@ -287,6 +289,8 @@ def run_pipeline(
         "n_timeseries_rows": int(len(ts)),
         "n_flag_rows": int(len(flags)),
         "preset": preset,
+        "thresholds_sha256": file_hash,
+        "thresholds_preset_hash": thresholds_preset_hash(thresholds),
         "pids": pids,
         "emr_dir": str(emr_path),
         "guardrails_validated": bool(validate),

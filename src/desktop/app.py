@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
         apply_ollama_env_from_settings()
         self._active_preset = str(load_settings().get("preset") or "default")
         self._preset_recorded = True
+        self._thresholds_sha256: str | None = None
         # Bumped whenever loaded data or its preset changes; late answers from before are dropped.
         self._data_generation = 0
 
@@ -1137,17 +1138,24 @@ class MainWindow(QMainWindow):
 
         self._analysis_facts = build_analysis_facts(self.ts, self.flags)
         preset, recorded = "default", False
-        if isinstance(self._worker, PipelineWorker):
-            preset, recorded = self._worker.preset, True
-        elif isinstance(self._worker, DataLoadWorker):
+        recorded_hash = None
+        if isinstance(self._worker, (PipelineWorker, DataLoadWorker)):
+            root = self._worker.processed if self._worker.processed is not None else processed_dir()
             try:
-                root = self._worker.processed if self._worker.processed is not None else processed_dir()
                 meta = json.loads((root / "run_meta.json").read_text())
             except (OSError, ValueError):
                 meta = {}
+            if isinstance(meta, dict):
+                value = meta.get("thresholds_sha256")
+                if isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value):
+                    recorded_hash = value
+        if isinstance(self._worker, PipelineWorker):
+            preset, recorded = self._worker.preset, True
+        elif isinstance(self._worker, DataLoadWorker):
             recorded_preset = meta.get("preset") if isinstance(meta, dict) else None
             if isinstance(recorded_preset, str) and recorded_preset in ALLOWED_PRESETS:
                 preset, recorded = recorded_preset, True
+        self._thresholds_sha256 = recorded_hash
         preset_changed = self._set_loaded_preset(preset, recorded)
         self._load_corpus_scan()
         self._data_changed()
@@ -1727,7 +1735,7 @@ class MainWindow(QMainWindow):
                     self._on_research_case_data(FetchResult(
                         cases=cases.copy(), timeseries=ts, flags=flags,
                         episodes=case_frame(self.episodes), events=case_frame(self.events),
-                    ))
+                    ), thresholds_sha256=self._thresholds_sha256)
                     return
         self._case_request_id += 1
         request_id = self._case_request_id
@@ -1760,9 +1768,11 @@ class MainWindow(QMainWindow):
         )
 
     def _on_research_case_loaded(self, fetched) -> None:
-        self._on_research_case_data(fetched)
+        if self._pending_case is not None:
+            pid = self._pending_case[0]
+            self._on_research_case_data(fetched, thresholds_sha256=fetched.thresholds_sha256_by_pid.get(pid))
 
-    def _on_research_case_data(self, fetched) -> None:
+    def _on_research_case_data(self, fetched, *, thresholds_sha256: str | None = None) -> None:
         timeseries, flags = fetched.timeseries, fetched.flags
         if self._pending_case is None:
             return
@@ -1779,6 +1789,7 @@ class MainWindow(QMainWindow):
             timeseries,
             flags if flags is not None else pd.DataFrame(),
             fetched=fetched,
+            thresholds_sha256=thresholds_sha256,
             comparison=comparison,
             open_detail=open_detail,
             from_overview=from_overview,
@@ -2034,7 +2045,8 @@ class MainWindow(QMainWindow):
             self.rules_text.setPlainText(f"Threshold config invalid: {e}")
             self.research.set_rule_catalog(None, recorded=self._preset_recorded, error=str(e))
             return
-        self.research.set_rule_catalog(catalog, recorded=self._preset_recorded)
+        self.research.set_rule_catalog(catalog, recorded=self._preset_recorded,
+                                       thresholds_sha256=self._thresholds_sha256)
         provenance = "" if self._preset_recorded else ", not recorded with this data"
         lines = [
             f"Threshold rules (preset: {catalog.preset}{provenance})",

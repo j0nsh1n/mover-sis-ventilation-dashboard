@@ -55,6 +55,7 @@ class CaseView:
     cases: pd.DataFrame = field(default_factory=pd.DataFrame)
     episodes: pd.DataFrame = field(default_factory=pd.DataFrame)
     events: pd.DataFrame = field(default_factory=pd.DataFrame)
+    thresholds_sha256: str | None = None
 
 
 @dataclass
@@ -146,6 +147,7 @@ class ResearchWorkspace(QWidget):
         self._current_pid: str | None = None
         self._case_views: dict[str, CaseView] = {}
         self._rule_catalog: RuleCatalog | None = None
+        self._thresholds_sha256: str | None = None
         self._episodes = pd.DataFrame()
         self._minute_rows = pd.DataFrame()
         self.selected_rule_id: str | None = None
@@ -665,10 +667,16 @@ class ResearchWorkspace(QWidget):
         for index, button in enumerate(self._header_buttons):
             self._header_actions.addWidget(button, index // columns, index % columns)
 
-    def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True, error: str = "") -> None:
+    def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True,
+                         thresholds_sha256: str | None = None, error: str = "") -> None:
         """Hand the drawer the loaded preset's rules; None with an error means the config is invalid."""
         self._rule_catalog = catalog
-        self.rules_drawer.set_catalog(catalog, recorded=recorded, error=error)
+        self._thresholds_sha256 = thresholds_sha256
+        case = self._case_views.get(self._current_pid) if self._current_pid is not None and self.stack.currentIndex() == 1 else None
+        self.rules_drawer.set_catalog(
+            catalog, recorded=recorded, error=error,
+            thresholds_sha256=case.thresholds_sha256 if case else thresholds_sha256,
+        )
         if self._current_pid is not None:
             selected = self.episode_list.currentRow() if self.selected_rule_id is not None else -1
             self._build_episode_list()
@@ -757,6 +765,7 @@ class ResearchWorkspace(QWidget):
                         view = state.case_views[pid]
                         self.set_case_data(pid, view.timeseries, view.flags,
                                            fetched=FetchResult(view.cases, view.timeseries, view.flags, view.episodes, view.events),
+                                           thresholds_sha256=view.thresholds_sha256,
                                            comparison=pid == state.comparison_pid)
                 self._case_views = dict(state.case_views)
                 self._primary_pid = state.primary_pid
@@ -835,6 +844,7 @@ class ResearchWorkspace(QWidget):
             self._drop_turn_case_data(turn, shown=turn.request_id == self._board_request)
         self._before_question = None
         self._current_pid = None
+        self.rules_drawer.set_thresholds_sha256(self._thresholds_sha256)
         self._overview_candidates.clear()
         self._case_origins.clear()
         self.set_searching(False)
@@ -1046,6 +1056,7 @@ class ResearchWorkspace(QWidget):
         flags: pd.DataFrame,
         *,
         fetched: FetchResult | None = None,
+        thresholds_sha256: str | None = None,
         comparison: bool = False,
         open_detail: bool = False,
         from_overview: bool | None = None,
@@ -1067,6 +1078,7 @@ class ResearchWorkspace(QWidget):
             candidate, ordered, flags,
             fetched.cases if fetched is not None else pd.DataFrame(), episodes,
             fetched.events if fetched is not None else pd.DataFrame(),
+            thresholds_sha256,
         )
         self._case_views[pid] = view
         if from_overview:
@@ -1234,6 +1246,7 @@ class ResearchWorkspace(QWidget):
             self.set_status("Source unavailable: this case has no time series to inspect.")
             return
         self._current_pid = pid
+        self.rules_drawer.set_thresholds_sha256(view.thresholds_sha256)
         self._minute_rows = focused_minute_rows(view.timeseries).reset_index()
         self.selected_rule_id = None
         self.chart_track_names = ["PIP", "ETCO2", "HR"]
@@ -1277,6 +1290,7 @@ class ResearchWorkspace(QWidget):
 
     def _rule_spec(self, rule_id: str):
         if self._rule_catalog is not None:
+            self._rule_catalog = self._rule_catalog.refreshed()
             try:
                 return self._rule_catalog.get(rule_id)
             except KeyError:
@@ -1325,7 +1339,9 @@ class ResearchWorkspace(QWidget):
         self.signal_statistics = {}
         lines = [f"{spec.label if spec else self.selected_rule_id} ({self.selected_rule_id})"]
         if spec and self._rule_catalog:
-            lines.append(f"Current thresholds ({self._rule_catalog.preset}, {self._rule_catalog.thresholds_sha256[:12]})")
+            lines.extend(self._rule_catalog.thresholds_provenance(
+                self._case_views[self._current_pid].thresholds_sha256
+            ))
             lines.extend(threshold_parts(spec))
             if spec.composition:
                 lines.append(spec.composition)
@@ -1386,6 +1402,7 @@ class ResearchWorkspace(QWidget):
 
     def return_to_canvas(self) -> None:
         self.clear_episode_selection()
+        self.rules_drawer.set_thresholds_sha256(self._thresholds_sha256)
         if self._detail_from_overview and self._cases_overview is not None:
             self.stack.setCurrentIndex(CASES_PAGE)
             self._cases_overview.set_message("")

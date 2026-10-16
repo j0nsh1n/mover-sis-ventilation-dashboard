@@ -35,7 +35,6 @@ under about 12 GB in that pessimistic case; lower ``workers`` or
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import multiprocessing
@@ -51,7 +50,8 @@ from typing import Callable
 
 import pandas as pd
 
-from src.config import load_thresholds
+from src.config import load_thresholds, thresholds_preset_hash
+from src.rules import thresholds_sha256
 from src.guardrails.exceptions import GuardrailError, PipelineError
 from src.guardrails.validate_io import (
     atomic_write_json,
@@ -139,11 +139,6 @@ def _read_shard(path: Path, rename: dict[str, str] | None = None) -> pd.DataFram
     df = df.rename(columns=rename or {})
     df["PID"] = df["PID"].astype(str)
     return df
-
-
-def _thresholds_hash(thresholds: dict) -> str:
-    blob = json.dumps(thresholds, sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def default_workers(n_shards: int = MAX_DEFAULT_WORKERS) -> int:
@@ -330,6 +325,7 @@ def scan_corpus(
     emr_path = validate_emr_dir(emr_dir if emr_dir is not None else resolve_emr_dir(None))
     out_path = resolve_output_dir(output_dir, create=True)
     thresholds = load_thresholds(preset, validate=True)
+    file_hash = thresholds_sha256()
 
     info = load_case_info(emr_path)
     info["PID"] = info["PID"].astype(str)
@@ -413,7 +409,8 @@ def scan_corpus(
         "scope": "full_emr_scan",
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "preset": preset,
-        "thresholds_hash": _thresholds_hash(thresholds),
+        "thresholds_hash": thresholds_preset_hash(thresholds),
+        "thresholds_sha256": file_hash,
         "n_indexed_surgeries": n_indexed,
         "n_ventilated_surgeries": n_ventilated,
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),

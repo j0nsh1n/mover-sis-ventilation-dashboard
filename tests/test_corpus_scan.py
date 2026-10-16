@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import time
@@ -25,6 +26,16 @@ from src.pipeline.corpus_scan import (
 )
 from src.pipeline.run import run_pipeline
 from src.pipeline.synthetic import generate_synthetic_emr
+from src.config import load_thresholds
+from src.runtime_paths import thresholds_path
+
+
+def test_scan_records_file_hash_and_keeps_merged_hash(emr, tmp_path, allow_external):
+    scan_corpus(emr, tmp_path, preset="strict", workers=1)
+    meta = json.loads((tmp_path / CORPUS_META).read_text())
+    assert meta["thresholds_sha256"] == hashlib.sha256(thresholds_path().read_bytes()).hexdigest()
+    merged = json.dumps(load_thresholds("strict"), sort_keys=True, default=str)
+    assert meta["thresholds_hash"] == hashlib.sha256(merged.encode()).hexdigest()[:16]
 
 
 @pytest.fixture(scope="module")

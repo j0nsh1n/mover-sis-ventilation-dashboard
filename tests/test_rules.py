@@ -709,3 +709,16 @@ def test_repeat_reload_without_open_case_updates_preset_notice(preset_window):
     window._worker = PipelineWorker(50, "strict", True, parent=window)
     window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
     assert window.research.status_label.text() == "Data was reloaded with preset strict."
+
+
+def test_refreshed_keeps_the_catalog_when_the_edited_file_is_invalid(monkeypatch, tmp_path):
+    import src.config
+
+    path = tmp_path / "thresholds.yaml"
+    path.write_text(rules.thresholds_path().read_text())
+    monkeypatch.setattr(src.config, "_thresholds_file", lambda: path)
+    monkeypatch.setattr(rules, "thresholds_path", lambda: path)
+    catalog = load_rule_catalog()
+    assert catalog.refreshed() is catalog
+    path.write_text("rules: [unterminated")
+    assert catalog.refreshed() is catalog

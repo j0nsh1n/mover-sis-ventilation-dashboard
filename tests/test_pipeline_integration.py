@@ -4,10 +4,25 @@ from __future__ import annotations
 
 
 import pytest
+import hashlib
+import json
 
 from src.guardrails.exceptions import GuardrailError, PipelineError, SafetyLimitError
 from src.guardrails.validate_data import validate_pipeline_outputs
 from src.pipeline.run import run_pipeline
+from src.config import load_thresholds
+from src.runtime_paths import thresholds_path
+
+
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_pipeline_records_threshold_versions(synthetic_emr, tmp_path, monkeypatch, preset):
+    monkeypatch.setenv("MOVER_ALLOW_EXTERNAL_OUTPUT", "1")
+    run_pipeline(emr_dir=synthetic_emr, output_dir=tmp_path, pids=["caseA"],
+                 preset=preset, write_sample_csv=False)
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["thresholds_sha256"] == hashlib.sha256(thresholds_path().read_bytes()).hexdigest()
+    merged = json.dumps(load_thresholds(preset), sort_keys=True, default=str)
+    assert meta["thresholds_preset_hash"] == hashlib.sha256(merged.encode()).hexdigest()[:16]
 
 
 def test_full_pipeline_synthetic(pipeline_result, tmp_path):

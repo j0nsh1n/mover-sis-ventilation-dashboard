@@ -178,6 +178,31 @@ class RuleCatalog:
         )
         return cls(specs, thresholds["_preset"], thresholds_sha256())
 
+    def refreshed(self) -> RuleCatalog:
+        """The catalog for the file on disk now; an unreadable or invalid edit keeps this one."""
+        from src.guardrails.exceptions import GuardrailError
+
+        try:
+            if thresholds_sha256() != self.thresholds_sha256:
+                return load_rule_catalog(self.preset)
+        except (OSError, GuardrailError):
+            pass
+        return self
+
+    def thresholds_provenance(self, recorded_sha256: str | None) -> tuple[str, ...]:
+        current = f"Current thresholds ({self.preset}, {self.thresholds_sha256[:12]})"
+        if not recorded_sha256:
+            return ("Thresholds when flagged: not recorded with this data", current)
+        flagged = f"Thresholds when flagged ({self.preset}, {recorded_sha256[:12]})"
+        if recorded_sha256 == self.thresholds_sha256:
+            return (flagged,)
+        # The values listed after these lines come from the current file, so "current" goes last.
+        return (
+            flagged,
+            "The thresholds changed since these flags were computed. Run the pipeline again to refresh them.",
+            current,
+        )
+
     def get(self, rule_id: str) -> RuleSpec:
         for spec in self.specs:
             if spec.id == rule_id:

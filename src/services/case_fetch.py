@@ -33,7 +33,7 @@ _FRAME_KEYS = ("cases", "timeseries", "flags", "episodes", "events")
 # per-(pid, preset) pipeline output. Cheap to rebuild, expensive to redo per query.
 _index_cache: dict[str, pd.DataFrame] = {}
 _vent_pid_cache: dict[str, set[str]] = {}
-_case_cache: dict[tuple[str, str], dict[str, pd.DataFrame]] = {}
+_case_cache: dict[tuple[str, str], tuple[dict[str, pd.DataFrame], str]] = {}
 
 
 @dataclass
@@ -48,6 +48,7 @@ class FetchResult:
     computed: list[str] = field(default_factory=list)
     reused: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    thresholds_sha256_by_pid: dict[str, str] = field(default_factory=dict)
 
     @property
     def pids(self) -> list[str]:
@@ -264,6 +265,9 @@ def fetch_cases(
         todo = todo[:MAX_N_CASES]
 
     if todo:
+        from src.rules import thresholds_sha256
+
+        computed_hash = thresholds_sha256()
         frames = _run_for(todo, preset, emr)
         produced = set()
         cases = frames.get("cases")
@@ -271,17 +275,18 @@ def fetch_cases(
             produced = {str(p) for p in cases["PID"]}
         for pid in todo:
             if pid in produced:
-                _case_cache[(pid, preset)] = _split_by_pid(frames, pid)
+                _case_cache[(pid, preset)] = (_split_by_pid(frames, pid), computed_hash)
                 result.computed.append(pid)
             else:
                 result.skipped.append(pid)
 
     collected = result.reused + result.computed
+    result.thresholds_sha256_by_pid = {pid: _case_cache[(pid, preset)][1] for pid in collected}
     for key in _FRAME_KEYS:
         parts = [
-            _case_cache[(pid, preset)][key]
+            _case_cache[(pid, preset)][0][key]
             for pid in collected
-            if (pid, preset) in _case_cache and not _case_cache[(pid, preset)][key].empty
+            if (pid, preset) in _case_cache and not _case_cache[(pid, preset)][0][key].empty
         ]
         setattr(result, key, pd.concat(parts, ignore_index=True) if parts else pd.DataFrame())
 
