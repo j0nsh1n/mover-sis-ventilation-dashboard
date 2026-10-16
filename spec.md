@@ -22,18 +22,59 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   the data tabs disabled until setup is completed.
 - The first desktop tab is the **Research** evidence workspace (G). The existing Ask,
   Summary, Case timeline, and Rule reference tabs remain available.
-- A research question searches one short metadata record per indexed surgery. A local
-  embedding model ranks records when available; SQLite caches vectors by source-text
-  hash and embedding-model ID. Search falls back to keywords when embeddings are
-  unavailable. The cache stores vectors derived from surgery metadata, not
-  article text. Search remains available without a processed parquet cache.
+- The Rule reference tab, the co-pilot rule lookup, the Streamlit rule table and the
+  calibration profile read one rule catalog (`src/rules.py`) built from
+  `thresholds.yaml`. They show the preset the loaded flags were computed with, list
+  each rule's skipped phases, and say when the data did not record its preset (it is
+  then treated as `default`).
+- A research question searches one short record per indexed surgery: procedure, age,
+  sex, ventilator rows and record scope. Records for analyzed cases also carry short
+  facts from the loaded processed data: the signals present, the rules flagged, and
+  the signals with gaps inside their recorded span. A local embedding model ranks
+  records when available; SQLite caches vectors by source-text hash and
+  embedding-model ID. Search falls back to keywords when embeddings are unavailable.
+  Keyword matching uses whole words, ignores case, punctuation and question words,
+  treats "CO₂" as "CO2" and ignores a trailing plural "s". A record scores by the
+  share of question terms it contains, counting terms in its best single fact twice,
+  so three terms in one fact can outrank four terms spread across facts. The cache
+  stores vectors derived from surgery metadata and, for analyzed cases, the short
+  analysis facts, not article text. Search remains available without a processed
+  parquet cache.
 - The selected local chat model receives source extracts for at most three retrieved
-  cases. Embedding vectors and ranking scores are not passed to the model. Without a
+  cases. An extract begins with the case's search record, including its analysis
+  facts. Embedding vectors and ranking scores are not passed to the model. Without a
   chat model, users can still search and inspect cases.
-- The Research workspace opens a retrieved case in the focused signal view (F).
-  F shows PIP, ETCO₂, and heart rate at a selected minute, plus source rows.
-  Returning to G preserves the question and comparison. Missing samples remain
-  marked as missing.
+- Research answers stay in a conversation panel beside the evidence board. Each turn
+  keeps the question, the model badge, the answer, links to the cases it names, and a
+  saved board that "Show on board" restores. "Ask again" repeats a question. Each
+  question is answered from its own source extracts; earlier questions and answers are
+  never sent to the model. New question clears the board and keeps the conversation.
+  Reset asks before clearing both. Answers render Markdown formatting; links and
+  images stay inert text and raw HTML is not interpreted.
+- The Research workspace opens a retrieved case, or a case chosen in the Cases list,
+  in the focused signal view (F). F shows PIP, ETCO₂, and heart rate at a selected
+  minute, plus source rows, and the case's flag episodes. Episodes are listed in time
+  order and marked on a flag lane under the traces. Selecting an episode, or a mark on
+  the lane, shows its rule, the loaded preset's current thresholds for that rule, and
+  each of the rule's signals over the episode (min, max, mean, missing minutes), adds
+  the rule's other signals as extra tracks, and can open the rule in the Rules drawer.
+  Traces break at missing minutes. A case with no flags says so. Returning to G
+  preserves the question and comparison. Missing samples remain marked as missing.
+- The Research workspace has a Rules button (Ctrl+R) that opens a searchable drawer of
+  the loaded preset's rules, on G and on F. It shows each rule's signals, thresholds
+  with units and skipped phases, and names the preset and the first 12 characters of
+  the thresholds hash. Escape closes it.
+- The Research workspace has a Cases button. It opens a sortable list of the analyzed
+  cases with PID, procedure, age, sex, duration, anomaly score, warn and critical
+  counts, and top rules by name. The list states its scope: the loaded sample, with
+  the indexed-surgery count when a full-EMR scan knows it. When a full-EMR scan
+  exists, a switch lists the scan's scored cases instead. A click or Enter opens the
+  case in F; Back or Escape returns to the list. Opening a case from the Cases list
+  does not change the question's evidence board.
+- Reloading processed data, or loading data with a different preset, closes any open
+  case, cancels pending searches and case fetches, and discards a late Ask answer with
+  a note. The question and the conversation stay; saved cases must be reopened for
+  current data.
 - Ask tab case analysis: user describes a patient or scenario; the app pre-fetches
   tools, then a local model answers from **grounded** extracts only.
 - Ollama lifecycle: Start / Stop / Unload / Refresh; models dir via settings → `OLLAMA_MODELS`.
@@ -92,7 +133,14 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   then run the pipeline with `--emr-dir data/synthetic/EMR --output-dir data/synthetic/processed`
 - **Streamlit (optional):** `PYTHONPATH=. streamlit run src/dashboard/app.py`
 - Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
-  theme). Setup opens before the app loads data on first run or for an invalid EMR path.
+  rule preset for new runs, theme). Setup opens before the app loads data on first run
+  or for an invalid EMR path.
+- File > Run pipeline and File > Scan full EMR use the saved rule preset (`default`
+  when unset). Rule reference, Ask, Research and case fetches use the preset recorded
+  with the loaded data, or the saved preset when no data is loaded; run the pipeline
+  again to apply a new preset to loaded data.
+- Ctrl+R reloads processed data, except inside the Research workspace, where it opens
+  the Rules drawer.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
 - A verified update appears as a **Restart to update** control. Builds older
   than v0.9.0 need one manual update to enable the default manifest URL.
@@ -119,11 +167,13 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - `src/pipeline/synthetic.py` — fictional SIS EMR generator; `profile.py` — aggregate report
   - `src/pipeline/corpus_scan.py` — full-EMR scan in PID shards (bounded memory)
   - `src/services/` — `ensure_data` / `load_processed`; `case_fetch.py` on-demand
-    case data; `retrieval.py` metadata search and embedding cache
+    case data; `retrieval.py` metadata and analysis-fact search and embedding cache
   - `src/desktop/` — PySide6 app, G research workspace, F signal view, charts,
     theme, settings UI
   - `src/llm/` — Ollama client, retrieved-source handoff, tools, agent loop,
     prompts, service lifecycle
+  - `src/rules.py` — one rule catalog (labels, signals, units, phase skips,
+    thresholds hash) per preset
   - `src/guardrails/` — limits, config/data/IO validation
   - `src/wave_decode.py` — Bernoulli/GE S5 cpcArchive decode (research waveforms)
   - `src/runtime_paths.py`, `search.py`, `user_settings.py`
@@ -179,6 +229,9 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q
   ```
   CI equivalent: `PYTHONPATH=. pytest --cov=src` with `QT_QPA_PLATFORM=offscreen`.
+  Five tests in `tests/test_wave_decode.py` decode the real MOVER wave tree. They are
+  skipped unless `MOVER_REAL_DATA_TESTS=1`, so default and CI runs never read real
+  patient data.
 - Thresholds smoke:  
   `PYTHONPATH=. python -c "from src.config import load_thresholds; load_thresholds('default')"`
 - Packaging checks: `PYTHONPATH=. pytest tests/test_packaging.py -q`
@@ -215,12 +268,23 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - [ ] Desktop opens Setup before data loading when the EMR folder is unconfigured or
       invalid, then opens Research (G) with Ask, Summary, Case timeline, and Rule
       reference available.
-- [ ] A research question searches indexed surgery metadata with cached embeddings
-      when available and keyword fallback otherwise, including when processed
-      parquet is absent. It loads at most three case extracts for a selected local
-      chat model; vectors and ranking scores do not enter the answer context.
-- [ ] A retrieved case opens in F with source signal rows and missing values visible;
-      returning to G preserves the question and comparison.
+- [ ] A research question searches indexed surgery metadata, plus analysis facts for
+      analyzed cases, with cached embeddings when available and whole-word keyword
+      fallback otherwise, including when processed parquet is absent (then without
+      facts). Questions such as "Which cases have ETCO2 flags?" find analyzed cases
+      without an embedding model. It loads at most three case extracts for a selected
+      local chat model; vectors and ranking scores do not enter the answer context.
+- [ ] A retrieved case opens in F with source signal rows and missing values visible,
+      and its flag episodes are listed; selecting one shows its thresholds and
+      per-signal measurements with missing-minute counts. Returning to G preserves the
+      question and comparison.
+- [ ] The Rules drawer (Ctrl+R) lists the loaded preset's rules on G and F, and Escape
+      closes it.
+- [ ] The Cases list opens a case in F and Back or Escape returns to it.
+- [ ] Each research question adds a turn to the conversation panel; "Show on board"
+      restores that turn's board, and earlier turns never reach the model.
+- [ ] The five prototype questions pass as driver scenarios with a scripted model and
+      without one (`tests/test_desktop_drive.py`).
 - [ ] Pipeline produces parquet under processed dir for a small `--n-cases` sample.
 - [ ] On synthetic data every injected anomaly raises its expected rules and clean cases
       raise no warn/critical flags (`tests/test_synthetic.py`).
