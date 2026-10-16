@@ -126,6 +126,55 @@ def test_empty_overview_scenario_accepts_a_scripted_model(tmp_path):
     assert proc.returncode == 0, proc.stderr
 
 
+@pytest.fixture(scope="module")
+def prototype_emr(tmp_path_factory):
+    emr = tmp_path_factory.mktemp("prototype") / "EMR"
+    write_synthetic_emr(["--out", str(emr), "--n-cases", "30", "--seed", "7"])
+    return emr
+
+
+@pytest.mark.parametrize("llm", ["scripted", "off"])
+@pytest.mark.parametrize("scenario", ["proto-peak", "proto-scenario", "proto-missing", "proto-flags", "proto-cause"])
+def test_prototype_questions(prototype_emr, tmp_path, scenario, llm):
+    out = tmp_path / "run"
+    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", scenario, "--llm", llm)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"{scenario}: ok" in proc.stdout
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    assert events[0]["step"] == "load-data" and events[0]["requested_cases"] == 30
+    assert 0 < events[0]["loaded_cases"] <= 30
+    assert all(event["ok"] for event in events)
+    board = events[1]
+    assert board["shortlist_pids"] and board["source_labels"]
+    assert board["turns"][-1]["state"] == ("answered" if llm == "scripted" else "no_model")
+    if llm == "off":
+        assert board["turns"][-1]["badge"] == "No AI answer"
+    final = events[-1]
+    if scenario == "proto-peak" and llm == "scripted":
+        assert final["selected_pip"] == final["max_pip"]
+    elif scenario == "proto-missing" and llm == "scripted":
+        assert final["cursor_minute"] == final["first_missing_minute"]
+        assert "internal_etco2_gaps" in final
+    elif scenario == "proto-flags" and llm == "scripted":
+        assert "etco2" in final["selected_rule_id"]
+        assert final["selected_rule_id"] in final["rule_detail"]
+    elif scenario == "proto-cause" and llm == "scripted":
+        assert "record cannot establish cause" in final["answer"].lower()
+        assert "bronchodilator" not in final["answer"].lower()
+    for event in events:
+        image = QImage(str(out / event["png"]))
+        assert not image.isNull() and _distinct_colors(image) > 1
+
+
+def test_open_each_tab_stays_in_the_suite(prototype_emr, tmp_path):
+    out = tmp_path / "run"
+    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", "open-each-tab", "--llm", "off")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    assert all(event["ok"] for event in events)
+    assert {event.get("tab") for event in events} >= {"1 · Research", "2 · Ask", "3 · Summary", "4 · Case timeline", "5 · Rule reference"}
+
+
 @pytest.mark.parametrize("scenario,llm,counts", [
     ("conversation-thread", "scripted", [0, 1, 2, 3, 4, 4]),
     ("conversation-thread", "off", [0, 1, 2, 3, 4, 4]),

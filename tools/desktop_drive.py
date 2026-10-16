@@ -551,6 +551,7 @@ def f_facts(run: Run) -> dict[str, Any]:
         "episode_rows_shown": research._episodes.to_dict("records"),
         "selected_rule_id": research.selected_rule_id,
         "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
+        "chart_minute": research.detail_chart._minute,
         "rule_detail": research.rule_detail.text(),
         "signal_statistics": research.signal_statistics,
         "chart_track_names": research.chart_track_names,
@@ -880,6 +881,82 @@ def conversation_no_model(run: Run) -> dict[str, Any]:
     return facts
 
 
+def prototype_ask(run: Run) -> dict[str, Any]:
+    from src.desktop.conversation_panel import NO_MODEL_ANSWER
+    from src.llm.agent import find_directive_phrases
+
+    facts = conversation_ask(run, question=run.question)
+    research = run.win.research
+    candidates = research.result.candidates
+    labels = [candidate.source_label for candidate in candidates]
+    analyzed = set(run.win.cases["PID"].astype(str)) if run.win.cases is not None else set()
+    assert labels
+    for candidate, label in zip(candidates, labels, strict=True):
+        expected = ({"analyzed case"} if candidate.pid in analyzed
+                    else {"indexed surgery", "indexed surgery · no ventilator data"})
+        assert label in expected, (candidate.pid, label)
+    assert [research.candidate_table.item(row, 2).text() for row in range(len(candidates))] == labels
+    research.candidate_table.setCurrentCell(0, 0)
+    research._select_candidate(0)
+    run.wait(lambda: _case_loaded(run.win), "the top prototype candidate")
+    turn = research.conversation.turns[-1]
+    if turn.model:
+        assert not find_directive_phrases(turn.answer), turn.answer
+        if run.question == "Why did pressure rise?":
+            assert "record cannot establish cause" in turn.answer.lower(), turn.answer
+    else:
+        assert turn.badge == "No AI answer" and turn.answer == NO_MODEL_ANSWER
+    return {**facts, "source_labels": labels, "top_pid": candidates[0].pid,
+            "answer": turn.answer, "window_width": run.win.width()}
+
+
+def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
+    open_case(run)
+    research = run.win.research
+    top_pid = research.result.candidates[0].pid
+    assert research._current_pid == top_pid
+    ts = run.win.ts[run.win.ts.PID.astype(str).eq(top_pid)].sort_values("t_min")
+    facts = f_facts(run)
+    minute = facts["cursor_minute"]
+    assert facts["chart_minute"] == minute, (facts["chart_minute"], minute)
+    selected = ts[ts.t_min.eq(minute)]
+    assert not selected.empty, f"F selected minute {minute} absent from the timeseries"
+    if signal == "PIP":
+        maximum = ts.PIP.max()
+        assert selected.PIP.eq(maximum).any(), (minute, maximum)
+        facts.update(max_pip=float(maximum), selected_pip=float(selected.PIP.iloc[0]))
+    else:
+        first_missing = float(ts.loc[ts.ETCO2.isna(), "t_min"].iloc[0])
+        assert minute == first_missing and selected.ETCO2.isna().all()
+        assert research.metric_values["ETCO2"].text() == "missing"
+        gaps = {}
+        for pid, rows in run.win.ts.groupby("PID"):
+            rows = rows.sort_values("t_min")
+            seen = rows.ETCO2.notna()
+            inside = rows.loc[~seen & seen.cummax() & seen.iloc[::-1].cummax().iloc[::-1], "t_min"]
+            if not inside.empty:
+                gaps[str(pid)] = [float(value) for value in inside]
+        facts.update(first_missing_minute=first_missing, internal_etco2_gaps=gaps)
+    research.signal_scroll.ensureWidgetVisible(research.minute_label)
+    return facts
+
+
+def prototype_flags(run: Run) -> dict[str, Any]:
+    open_case(run)
+    research = run.win.research
+    assert research._current_pid == research.result.candidates[0].pid
+    matches = research._episodes[research._episodes.rule_id.str.contains("etco2")]
+    assert not matches.empty, "the top candidate has no ETCO2 episode"
+    rule_id = str(matches.iloc[0].rule_id)
+    facts = f_select(run, rule=rule_id)
+    rule = research._rule_catalog.get(rule_id)
+    assert "ETCO2" in rule.signals
+    assert rule_id in facts["rule_detail"] and rule.label in facts["rule_detail"]
+    run.settle()
+    assert not research.rule_detail.visibleRegion().isEmpty()
+    return facts
+
+
 def conversation_start_cancel(run: Run) -> dict[str, Any]:
     import threading
     from types import SimpleNamespace
@@ -941,6 +1018,16 @@ TAB_STEPS = tuple(
 OVERVIEW_LLM_MODES = ("off", "scripted")
 
 SCENARIOS: dict[str, Scenario] = {
+    "proto-peak": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                             Step("proto-peak", partial(prototype_open, signal="PIP"))), llm_modes=("scripted", "off")),
+    "proto-scenario": Scenario((Step("load-data", run_pipeline), Step("proto-scenario", prototype_ask)),
+                                llm_modes=("scripted", "off")),
+    "proto-missing": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                                Step("proto-missing", partial(prototype_open, signal="ETCO2"))), llm_modes=("scripted", "off")),
+    "proto-flags": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                              Step("proto-flags", prototype_flags)), llm_modes=("scripted", "off")),
+    "proto-cause": Scenario((Step("load-data", run_pipeline), Step("proto-cause", prototype_ask)),
+                             llm_modes=("scripted", "off")),
     "f-episodes": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                              Step("episode", f_select))),
     "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
@@ -1040,7 +1127,7 @@ class ScriptedChatClient:
         return self.chat_turn(model, messages, **kwargs).content
 
 
-def load_drafts(path: Path | None) -> tuple[str, ...]:
+def load_drafts(path: Path | None, *, scenario: str | None = None) -> tuple[str, ...]:
     if path is None:
         return DEFAULT_DRAFTS
     import yaml
@@ -1049,6 +1136,8 @@ def load_drafts(path: Path | None) -> tuple[str, ...]:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise InputError(f"drafts file {path} could not be read: {exc}") from exc
+    if scenario is not None:
+        data = data.get(scenario) if isinstance(data, dict) else None
     drafts = data.get("drafts") if isinstance(data, dict) else None
     if not drafts or not isinstance(drafts, list) or not all(isinstance(d, str) and d.strip() for d in drafts):
         raise InputError(f"drafts file {path} needs a non-empty 'drafts' list of strings")
@@ -1211,7 +1300,20 @@ def drive(args: argparse.Namespace) -> int:
     llm = args.llm or scenario.llm_modes[0]
     if llm not in scenario.llm_modes:
         raise InputError(f"scenario {args.scenario} runs only with --llm {'/'.join(scenario.llm_modes)}")
-    drafts = load_drafts(args.drafts) if llm == "scripted" else ()
+    prototype = args.scenario.startswith("proto-")
+    fixture = ROOT / "tests" / "fixtures" / "drive_prototype.yaml"
+    if prototype:
+        import yaml
+
+        example = yaml.safe_load(fixture.read_text(encoding="utf-8"))[args.scenario]
+        args.question = example["question"]
+    drafts = ()
+    if llm == "scripted":
+        drafts = load_drafts(args.drafts or (fixture if prototype else None),
+                             scenario=args.scenario if prototype and args.drafts is None else None)
+    steps = scenario.steps
+    if prototype and llm == "off":
+        steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))
 
     emr = args.emr.expanduser().resolve()
     out = args.out.expanduser().resolve()
@@ -1244,6 +1346,8 @@ def drive(args: argparse.Namespace) -> int:
     from src.desktop.app import MainWindow
 
     win = MainWindow()
+    if args.width is not None:
+        win.resize(args.width, 1000)
     run = Run(app=app, win=win, question=args.question, frames_dir=frames_dir)
     record_dialogs(run)
     win.show()
@@ -1253,7 +1357,7 @@ def drive(args: argparse.Namespace) -> int:
     failed = False
     started = time.monotonic()
     with open(out / "events.jsonl", "w", encoding="utf-8") as events:
-        for step in scenario.steps:
+        for step in steps:
             dialogs_before = len(run.dialogs)
             event: dict[str, Any] = {"step": step.name}
             try:
@@ -1296,6 +1400,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--llm", choices=LLM_MODES, default=None, help="default: the scenario's first mode")
     parser.add_argument("--drafts", type=Path, default=None, help="YAML with a 'drafts' list for --llm scripted")
     parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument("--width", type=int, default=None, help="window width in pixels")
     parser.add_argument("--frames", action="store_true", help="write numbered frames under <out>/frames")
     parser.add_argument("--video", action="store_true", help="also join the frames into <out>/run.mp4")
     return parser.parse_args(argv)
