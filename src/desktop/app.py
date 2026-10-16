@@ -1688,7 +1688,15 @@ class MainWindow(QMainWindow):
                 ts = self.ts[self.ts["PID"].astype(str) == pid].copy()
                 flags = self.flags[self.flags["PID"].astype(str) == pid].copy() if self.flags is not None and "PID" in self.flags else pd.DataFrame()
                 if not ts.empty:
-                    self._on_research_case_data(ts, flags)
+                    from src.services.case_fetch import FetchResult
+
+                    def case_frame(frame):
+                        return frame[frame["PID"].astype(str) == pid].copy() if frame is not None and "PID" in frame else pd.DataFrame()
+
+                    self._on_research_case_data(FetchResult(
+                        cases=cases.copy(), timeseries=ts, flags=flags,
+                        episodes=case_frame(self.episodes), events=case_frame(self.events),
+                    ))
                     return
         self._case_request_id += 1
         request_id = self._case_request_id
@@ -1712,9 +1720,10 @@ class MainWindow(QMainWindow):
             self._load_research_case(*request)
 
     def _on_research_case_loaded(self, fetched) -> None:
-        self._on_research_case_data(fetched.timeseries, fetched.flags)
+        self._on_research_case_data(fetched)
 
-    def _on_research_case_data(self, timeseries: pd.DataFrame, flags: pd.DataFrame) -> None:
+    def _on_research_case_data(self, fetched) -> None:
+        timeseries, flags = fetched.timeseries, fetched.flags
         if self._pending_case is None:
             return
         pid, comparison, open_detail = self._pending_case
@@ -1728,6 +1737,7 @@ class MainWindow(QMainWindow):
             pid,
             timeseries,
             flags if flags is not None else pd.DataFrame(),
+            fetched=fetched,
             comparison=comparison,
             open_detail=open_detail,
         )

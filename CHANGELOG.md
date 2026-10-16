@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Signal detail shows flag episodes, a minute-aligned flag lane, current rule thresholds, and episode measurements with missing-minute counts. Traces retain fractional minutes and stay readable when the window is resized; empty lane clicks leave the selection unchanged.
+
 - Research has a Rules button (Ctrl+R) that opens a searchable list of the loaded
   preset's rules beside the evidence board; Escape closes it. Outside the
   workspace Ctrl+R still reloads processed data.

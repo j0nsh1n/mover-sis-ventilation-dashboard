@@ -536,6 +536,101 @@ def type_rule_search(run: Run, *, text: str) -> dict[str, Any]:
     return _drawer_facts(run)
 
 
+def f_facts(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.wait(lambda: not research.detail_chart._resize_timer.isActive(), "F chart resize")
+    pid = research._current_pid
+    return {
+        "pid": pid,
+        "episode_rows_shown": research._episodes.to_dict("records"),
+        "selected_rule_id": research.selected_rule_id,
+        "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
+        "rule_detail": research.rule_detail.text(),
+        "signal_statistics": research.signal_statistics,
+        "chart_track_names": research.chart_track_names,
+        "lane_marks": len(research.detail_chart.lane_marks),
+        "window_width": run.win.width(),
+    }
+
+
+def f_load(run: Run) -> dict[str, Any]:
+    facts = run_pipeline(run)
+    return {**facts, **f_facts(run)}
+
+
+def f_open(run: Run, *, kind: str) -> dict[str, Any]:
+    from src.services.retrieval import RetrievalResult, SearchCandidate
+
+    win, research = run.win, run.win.research
+    if kind == "spo2":
+        matches = win.episodes[win.episodes["rule_id"].eq("spo2_low")]
+        assert not matches.empty, "no spo2_low episode in this synthetic EMR"
+        pid = str(matches.iloc[0]["PID"])
+    elif kind == "clean":
+        flagged = set(win.flags["PID"].astype(str))
+        pid = next(str(pid) for pid in win.ts["PID"].unique() if str(pid) not in flagged)
+    else:
+        pid = str(win.flags.groupby("PID").size().idxmax())
+    candidate = SearchCandidate(pid=pid, source_label="analyzed case", analyzed=True,
+                                procedure="Synthetic research case", age=None, gender="",
+                                source_text="Synthetic source", rank_method="keyword", score=1.)
+    research.set_results(RetrievalResult(candidates=(candidate,)))
+    win.tabs.setCurrentWidget(research)
+    if kind == "spo2":
+        win.resize(900, 860)
+    win._load_research_case(pid, False, True)
+    run.wait(lambda: research.stack.currentIndex() == 1, "F with full case data")
+    research.signal_scroll.verticalScrollBar().setValue(0)
+    if kind == "clean":
+        assert research.episode_list.item(0).text() == "No flags in this case"
+        assert not research.detail_chart.lane_marks
+    return f_facts(run)
+
+
+def f_select(run: Run, *, rule: str = "") -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    research = run.win.research
+    episodes = research._episodes
+    matches = episodes[episodes.rule_id.eq(rule)] if rule else episodes[episodes.rule_id.str.contains("etco2")]
+    index = int(matches.index[0]) if not matches.empty else 0
+    item = research.episode_list.item(index)
+    research.signal_scroll.ensureWidgetVisible(research.episode_list)
+    research.episode_list.scrollToItem(item)
+    run.settle()
+    QTest.mouseClick(research.episode_list.viewport(), Qt.MouseButton.LeftButton,
+                     pos=research.episode_list.visualItemRect(item).center())
+    run.settle()
+    assert research.selected_rule_id == episodes.iloc[index].rule_id
+    facts = f_facts(run)
+    assert facts["cursor_minute"] == episodes.iloc[index].t_start_min
+    assert facts["signal_statistics"]
+    if rule == "spo2_low":
+        assert "SPO2" in facts["chart_track_names"]
+    research.signal_scroll.ensureWidgetVisible(research.rule_detail)
+    return facts
+
+
+def f_clear(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.clear_episode_button.click()
+    run.settle()
+    assert research.selected_rule_id is None
+    assert "SPO2" not in research.chart_track_names
+    research.signal_scroll.ensureWidgetVisible(research.detail_chart)
+    return f_facts(run)
+
+
+def f_drawer_link(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.rule_link.click()
+    run.settle()
+    assert research.rules_drawer.is_open
+    assert research.rules_drawer._rows[research.selected_rule_id].property("highlight") is True
+    return {**f_facts(run), **_drawer_facts(run)}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -548,6 +643,13 @@ TAB_STEPS = tuple(
 )
 
 SCENARIOS: dict[str, Scenario] = {
+    "f-episodes": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                             Step("episode", f_select))),
+    "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
+                                 Step("spo2", partial(f_select, rule="spo2_low")), Step("cleared", f_clear))),
+    "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                                Step("episode", f_select), Step("drawer", f_drawer_link))),
+    "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
     "partial-index": Scenario((Step("partial-index", partial_index),), llm_modes=("off",)),
     "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
     "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),

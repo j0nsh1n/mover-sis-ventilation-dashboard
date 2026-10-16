@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 from typing import Any
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import to_hex  # noqa: E402
 import pandas as pd  # noqa: E402
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QPointF, Qt, QRectF, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 
@@ -304,40 +306,204 @@ def case_timeline_figure(
     return fig
 
 
-def focused_signals_figure(ts: pd.DataFrame, selected_minute: float) -> plt.Figure:
-    """Three source signal tracks with the selected minute marked."""
+def focused_minute_rows(ts: pd.DataFrame) -> pd.DataFrame:
+    rows = ts.drop_duplicates("t_min", keep="last").sort_values("t_min").set_index("t_min")
+    if rows.empty:
+        return rows
+    first = float(rows.index[0])
+    # Seconds in the incision anchor can give equivalent minute steps different float tails.
+    rows.index = (rows.index - first).round(9)
+    minutes = pd.RangeIndex(int(round(float(rows.index[-1]))) + 1)
+    rows = rows.reindex(rows.index.union(minutes)).sort_index()
+    return rows.set_axis(rows.index + first).rename_axis("t_min")
+
+
+def focused_signals_figure(
+    ts: pd.DataFrame, selected_minute: float | None, *,
+    flags: pd.DataFrame | None = None, extra_signals: tuple[str, ...] = (),
+    figsize: tuple[float, float] | None = None, dpi: float = 110,
+) -> plt.Figure:
+    """Minute-aligned signal tracks and a severity lane; missing minutes break lines."""
     style = {
-        "figure_facecolor": "#142124",
-        "axes_facecolor": "#142124",
-        "text": "#dce8dd",
-        "muted": "#a3b8b2",
-        "grid": "#3b5755",
-        "spine": "#35484a",
+        "figure_facecolor": "#142124", "axes_facecolor": "#142124",
+        "text": "#dce8dd", "muted": "#a3b8b2", "grid": "#3b5755", "spine": "#35484a",
     }
-    fig, axes = plt.subplots(3, 1, figsize=(11, 2.2), sharex=True)
+    tracks = [("PIP", "PIP", "cmH₂O", "#f2b173"),
+              ("ETCO2", "ETCO₂", "mmHg", "#8fd8c8"),
+              ("HR", "Heart rate", "bpm", "#c7ace0")]
+    tracks.extend((signal, signal, "", "#c4ed93") for signal in extra_signals[:3])
+    fig, axes = plt.subplots(len(tracks) + 1, 1, figsize=figsize or (11, 2.8 + .65 * len(extra_signals[:3])), dpi=dpi,
+                             sharex=True, gridspec_kw={"height_ratios": [1] * len(tracks) + [.5]})
     fig.patch.set_facecolor(style["figure_facecolor"])
-    x = pd.to_numeric(ts["t_min"], errors="coerce")
-    for ax, (column, label, unit, color) in zip(
-        axes,
-        (
-            ("PIP", "PIP", "cmH₂O", "#f2b173"),
-            ("ETCO2", "ETCO₂", "mmHg", "#8fd8c8"),
-            ("HR", "Heart rate", "bpm", "#c7ace0"),
-        ),
-        strict=True,
-    ):
+    grid = focused_minute_rows(ts)
+    for ax, (column, label, unit, color) in zip(axes[:-1], tracks, strict=True):
         _style_axes(ax, style)
-        if column in ts:
-            y = pd.to_numeric(ts[column], errors="coerce")
-            ax.plot(x, y, color=color, lw=2)
-            selected = y[x == selected_minute]
-            if not selected.empty and pd.notna(selected.iloc[0]):
-                ax.scatter([selected_minute], [selected.iloc[0]], color=color, s=38, zorder=3)
-        ax.axvline(selected_minute, color="#c4ed93", alpha=0.8, lw=1, ls="--")
-        ax.set_ylabel(f"{label}\n{unit}", fontsize=8)
-    axes[-1].set_xlabel("Minutes from incision", fontsize=9)
-    fig.tight_layout()
+        ax.set_label(column)
+        if column in grid:
+            ax.plot(grid.index, pd.to_numeric(grid[column], errors="coerce"), color=color, lw=1.5)
+        if selected_minute is not None:
+            ax.axvline(selected_minute, color="#c4ed93", alpha=.8, lw=1, ls="--")
+        ax.set_ylabel(f"{label}\n{unit}".strip(), fontsize=8)
+    lane = axes[-1]
+    _style_axes(lane, style)
+    lane.set_label("flags")
+    lane.set_yticks([])
+    lane.set_ylim(-1, 1)
+    lane.set_ylabel("Flags", fontsize=8)
+    marks = flag_minutes(flags)
+    if marks:
+        colors = _style()
+        lane.scatter(list(marks), [0] * len(marks), marker="|", s=65,
+                     c=[colors[severity] for severity in marks.values()])
+    else:
+        lane.text(.5, .5, "No flags in this case", transform=lane.transAxes,
+                  color=style["text"], ha="center", va="center", fontsize=8)
+    if not grid.empty:
+        low, high = float(grid.index.min()), float(grid.index.max())
+        lane.set_xlim(low - .5, high + .5)
+    lane.set_xlabel("Minutes from incision", fontsize=9)
+    fig.subplots_adjust(left=max(.10, .72 / fig.get_figwidth()), right=.99, top=.98,
+                        bottom=max(.14, .48 / fig.get_figheight()), hspace=.25)
     return fig
+
+
+def flag_minutes(flags: pd.DataFrame | None) -> dict[float, str]:
+    if flags is None or flags.empty or "t_min" not in flags:
+        return {}
+    ranks = {"critical": 0, "warn": 1, "info": 2}
+    ranked = flags.assign(_rank=flags["severity"].map(ranks).fillna(2))
+    worst = ranked.sort_values(["t_min", "_rank"]).drop_duplicates("t_min")
+    return {float(row.t_min): str(row.severity) for row in worst.itertuples() if pd.notna(row.t_min)}
+
+
+@dataclass
+class _FocusedChartImage:
+    pixmap: QPixmap
+    xlim: tuple[float, float]
+    axes: tuple[QRectF, ...]
+    tracks: tuple[tuple[str, tuple[float, float], str], ...]
+
+
+class FocusedSignalChart(QWidget):
+    """Keep the source image stable while the minute cursor moves."""
+
+    minute_clicked = Signal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("chartView")
+        self._ts = pd.DataFrame()
+        self._rows = pd.DataFrame()
+        self._flags = pd.DataFrame()
+        self._extras: tuple[str, ...] = ()
+        self._images: dict[tuple[tuple[str, ...], int, int, float], _FocusedChartImage] = {}
+        self._pixmap = QPixmap()
+        self._minute: float | None = None
+        self.lane_marks: dict[float, str] = {}
+        self._xlim = (0., 1.)
+        self._axes_rects: tuple[QRectF, ...] = ()
+        self._tracks: tuple[tuple[str, tuple[float, float], str], ...] = ()
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(120)
+        self._resize_timer.timeout.connect(self._render_tracks)
+
+    def set_case(self, ts: pd.DataFrame, flags: pd.DataFrame) -> None:
+        self._ts, self._flags = ts, flags
+        self._rows = focused_minute_rows(ts) if "t_min" in ts else pd.DataFrame()
+        self._images.clear()
+        self._extras = ()
+        self.lane_marks = flag_minutes(flags)
+        self._render_tracks()
+
+    def set_tracks(self, extras: list[str]) -> None:
+        chosen = tuple(extras[:3])
+        if chosen != self._extras and not self._ts.empty:
+            self._extras = chosen
+            self._render_tracks()
+
+    def _render_tracks(self) -> None:
+        self._resize_timer.stop()
+        self.setMinimumHeight(250 + 65 * len(self._extras))
+        width, height, dpr = self.width(), self.height(), self.devicePixelRatioF()
+        key = (self._extras, width, height, dpr)
+        if key not in self._images:
+            fig = focused_signals_figure(self._ts, None, flags=self._flags, extra_signals=self._extras,
+                                        figsize=(width / 110, height / 110), dpi=110 * dpr)
+            axes = tuple(QRectF(box.x0 * width, (1 - box.y1) * height, box.width * width, box.height * height)
+                         for ax in fig.axes for box in [ax.get_position()])
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=fig.dpi, facecolor=fig.get_facecolor())
+            xlim = fig.axes[-1].get_xlim()
+            tracks = tuple((str(ax.get_label()), ax.get_ylim(), to_hex(ax.lines[0].get_color()) if ax.lines else "")
+                           for ax in fig.axes[:-1])
+            plt.close(fig)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.getvalue())
+            pixmap.setDevicePixelRatio(dpr)
+            self._images[key] = _FocusedChartImage(pixmap, xlim, axes, tracks)
+        rendered = self._images[key]
+        self._pixmap, self._xlim, self._axes_rects = rendered.pixmap, rendered.xlim, rendered.axes
+        self._tracks = rendered.tracks
+        self.update()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._ts.empty:
+            self._resize_timer.start()
+
+    def set_minute(self, minute: float) -> None:
+        self._minute = minute
+        self.update()
+
+    def cursor_points(self) -> list[tuple[str, QPointF, str]]:
+        """Each track's value at the cursor minute; a missing value has no point."""
+        if self._minute is None or self._rows.empty or not self._tracks:
+            return []
+        hit = self._rows.index.get_indexer([self._minute], method="nearest", tolerance=1e-6)[0]
+        if hit < 0:
+            return []
+        row = self._rows.iloc[hit]
+        low, high = self._xlim
+        points = []
+        for axis, (column, (y_low, y_high), color) in zip(self._axes_rects, self._tracks, strict=False):
+            value = pd.to_numeric(row.get(column), errors="coerce")
+            if pd.isna(value) or not color or y_high == y_low:
+                continue
+            x = axis.left() + axis.width() * (self._minute - low) / (high - low)
+            y = axis.bottom() - axis.height() * (float(value) - y_low) / (y_high - y_low)
+            points.append((column, QPointF(x, y), color))
+        return points
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#142124"))
+        if self._pixmap.isNull():
+            return
+        painter.drawPixmap(QPointF(0, 0), self._pixmap)
+        if self._minute is not None:
+            low, high = self._xlim
+            painter.setPen(QPen(QColor("#c4ed93"), 1, Qt.PenStyle.DashLine))
+            for axis in self._axes_rects:
+                x = axis.left() + axis.width() * (self._minute - low) / (high - low)
+                painter.drawLine(QPointF(x, axis.top()), QPointF(x, axis.bottom()))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor("#142124"), 1.5))
+            for _column, point, color in self.cursor_points():
+                painter.setBrush(QColor(color))
+                painter.drawEllipse(point, 4, 4)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        point = event.position()
+        if self.lane_marks and self._axes_rects and self._axes_rects[-1].contains(point):
+            lane = self._axes_rects[-1]
+            low, high = self._xlim
+            minute = low + (point.x() - lane.left()) / lane.width() * (high - low)
+            nearest = min(self.lane_marks, key=lambda marked: abs(marked - minute))
+            mark_x = lane.left() + lane.width() * (nearest - low) / (high - low)
+            if abs(point.x() - mark_x) <= 6:
+                self.minute_clicked.emit(nearest)
+        super().mousePressEvent(event)
 
 
 def _legend(ax, style: dict[str, str] | None = None) -> None:
