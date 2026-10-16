@@ -9,9 +9,11 @@ from math import ceil
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QTextEdit,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
+
+from src.desktop.answer_markdown import MarkdownAnswer
 
 if TYPE_CHECKING:
     from src.desktop.research_workspace import QuestionState
@@ -37,12 +39,11 @@ class Turn:
         return self.model or "No AI answer"
 
 
-class AnswerText(QTextEdit):
+class AnswerText(MarkdownAnswer):
     """Read-only answer that grows to its text, so only the conversation panel scrolls."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setReadOnly(True)
         self.setTabChangesFocus(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -104,6 +105,7 @@ class TurnWidget(QFrame):
         self.note_label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.note_label)
         self.answer_text = AnswerText()
+        self._answer_source = ""
         self.answer_text.setAccessibleName(f"Answer to {turn.question}")
         layout.addWidget(self.answer_text)
         self.citations = QVBoxLayout()
@@ -128,8 +130,10 @@ class TurnWidget(QFrame):
             "cancelled": "Cancelled",
             "failed": f"Failed: {turn.failure}",
         }[turn.state])
-        if self.answer_text.toPlainText() != turn.answer:
-            self.answer_text.setPlainText(turn.answer)
+        if self._answer_source != turn.answer:
+            self.answer_text.clear()
+            self.answer_text.append_markdown(turn.answer)
+            self._answer_source = turn.answer
         self.answer_text.setVisible(bool(turn.answer))
         self.note_label.setText(turn.note)
         self.note_label.setVisible(bool(turn.note))

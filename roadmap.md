@@ -44,7 +44,8 @@ to publish.
   - Frozen-app scan self-test in CI (V6)
   - Repeatable, safer calibration tooling (V7)
 - Complete when: V0 to V7 are verified and landed, and v0.11.0 is released
-- Status: [ ]
+- Status: [x] 2026-10-15 — V0 to V7 landed (#27, #28). Ships in v0.12.0; the owner
+  chose not to publish v0.11.0 separately.
 
 ## Phase 5 — One workspace, step 1 (v0.12.0)
 - Tasks:
@@ -56,7 +57,9 @@ to publish.
     2026-10-14), with an explicit no-model state
 - Complete when: all five prototype scenarios pass as driver scenarios on the
   desktop app, and the old tabs still work
-- Status: [ ]
+- Status: [x] 2026-10-16 — rules drawer, F episodes and rule detail (#29); Cases
+  overview, flag-aware search, side-panel conversation and the five prototype
+  scenarios (#30); Settings preset selector and Markdown answers follow. Ships in v0.12.0.
 
 ## Phase 6 — Calibrate on real MOVER data (v0.13.0)
 - Tasks:

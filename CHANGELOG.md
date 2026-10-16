@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Research and Ask answers render Markdown formatting with inert links and image alt text; model HTML is displayed as text.
+
+- Settings and Setup let you choose Default, Lenient or Strict rules for the next pipeline run or full-EMR scan; loaded data keeps its recorded preset.
+
 - Research search finds cases for questions about flags and signals, such as "Which cases have ETCO2 flags?" or "Which cases have missing ETCO2?", even without an embedding model: analyzed cases carry their signals, raised rules and signal gaps in the search text, and keyword matching ignores question words and punctuation and matches whole words.
 
 - Signal detail shows flag episodes, a minute-aligned flag lane, current rule thresholds, and episode measurements with missing-minute counts. Traces retain fractional minutes and stay readable when the window is resized; empty lane clicks leave the selection unchanged.
