@@ -25,3 +25,13 @@ proto-cause:
     - '{"1": "description", "2": "advice"}'
     - The record cannot establish cause. The recorded pressure rise is an observation in the retrieved extracts.
     - '{"1": "description", "2": "description"}'
+intent-scenario:
+  question: The driver writes this from a loaded case - age, sex, procedure word, agent
+  drafts:
+    - The matched cases are labeled by their source. Each one matches the described age, sex, procedure and agent, and the extracts do not establish why pressure rose.
+    - '{"1": "description", "2": "description"}'
+intent-compare:
+  question: The driver writes this from two loaded PIDs
+  drafts:
+    - The two cases differ in their recorded pressure signals and flags, as the extracts show. The extracts do not establish why either differed.
+    - '{"1": "description", "2": "description"}'

@@ -166,13 +166,30 @@ def test_prototype_questions(prototype_emr, tmp_path, scenario, llm):
         assert not image.isNull() and _distinct_colors(image) > 1
 
 
-def test_open_each_tab_stays_in_the_suite(prototype_emr, tmp_path):
+@pytest.mark.parametrize("llm", ["scripted", "off"])
+@pytest.mark.parametrize(("scenario", "scope"), [("intent-scenario", "Scenario: "), ("intent-compare", "Comparing ")])
+def test_intent_questions_show_their_scope_line(prototype_emr, tmp_path, scenario, scope, llm):
     out = tmp_path / "run"
-    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", "open-each-tab", "--llm", "off")
+    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", scenario, "--llm", llm)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    final = events[-1]
+    assert final["ok"] and final["scope_line"].startswith(scope) and final["shortlist"]
+    assert final["turns"][-1]["state"] == ("answered" if llm == "scripted" else "no_model")
+    image = QImage(str(out / final["png"]))
+    assert not image.isNull() and _distinct_colors(image) > 1
+
+
+def test_workspace_walk_covers_the_moved_outputs(prototype_emr, tmp_path):
+    out = tmp_path / "run"
+    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", "workspace-walk", "--llm", "scripted")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
     assert all(event["ok"] for event in events)
-    assert {event.get("tab") for event in events} >= {"1 · Research", "2 · Ask", "3 · Summary", "4 · Case timeline", "5 · Rule reference"}
+    assert [event["step"] for event in events] == ["load-data", "question", "charts", "extra-signal", "scoring"]
+    assert events[2]["charts_expanded"]
+    assert events[3]["chart_track_names"] == ["PIP", "ETCO2", "HR", "SPO2"]
+    assert events[4]["scoring_expanded"]
 
 
 @pytest.mark.parametrize("scenario,llm,counts", [

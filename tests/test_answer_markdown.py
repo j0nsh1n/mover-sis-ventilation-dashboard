@@ -1,4 +1,4 @@
-"""Both answer views format Markdown without navigation or image resources."""
+"""Research answers format Markdown without navigation or image resources."""
 
 from math import ceil
 from unittest.mock import Mock
@@ -10,7 +10,6 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
 
 from src.desktop.answer_markdown import MarkdownAnswer, _TextOnlyDocument
-from src.desktop.app import MainWindow
 from src.desktop.conversation_panel import AnswerText, Turn, TurnWidget
 
 
@@ -19,31 +18,15 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture(params=["research", "ask"])
-def answer_view(request, qapp, monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
-    models = tmp_path / "models"
-    models.mkdir()
-    monkeypatch.setenv("OLLAMA_MODELS", str(models))
-    if request.param == "research":
-        turn = Turn(1, "Synthetic question", "test-model", state="answered")
-        root = TurnWidget(turn)
-        browser = root.answer_text
+@pytest.fixture
+def answer_view(qapp):
+    turn = Turn(1, "Synthetic question", "test-model", state="answered")
+    root = TurnWidget(turn)
+    browser = root.answer_text
 
-        def render(text):
-            turn.answer = text
-            root.update_turn(turn)
-    else:
-        monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-        root = MainWindow()
-        browser = root.chat_history
-        root.tabs.setCurrentWidget(browser.parentWidget())
-
-        def render(text):
-            browser.clear()
-            root._append_chat("assistant", text)
+    def render(text):
+        turn.answer = text
+        root.update_turn(turn)
 
     root.resize(900, 800)
     root.show()

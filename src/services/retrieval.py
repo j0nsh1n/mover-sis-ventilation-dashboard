@@ -38,7 +38,7 @@ Vectors choose records. They are never returned on ``SearchCandidate`` and
 must not be passed to the chat model. Use ``src.llm.retrieve.answer_from_retrieval``
 to hand source extracts to the existing Ollama agent.
 
-This module does not index articles. That source is undecided.
+Article retrieval uses these shared embedding helpers from src.services.articles.
 """
 
 from __future__ import annotations
@@ -97,9 +97,21 @@ class CaseFilters:
 
     age: float | None = None
     age_tolerance: float = 10.0
+    age_min: float | None = None
+    age_max: float | None = None
     gender: str | None = None
+    procedures: tuple[str, ...] = ()
+    agent: str | None = None
     require_vent: bool = False
     analyzed: bool | None = None
+
+    @property
+    def describes_cases(self) -> bool:
+        """True when the filters name a kind of case, as a scenario question does."""
+        return any(
+            (self.age is not None, self.age_min is not None, self.age_max is not None,
+             self.gender, self.procedures, self.agent)
+        )
 
 
 @dataclass(frozen=True)
@@ -114,6 +126,8 @@ class SearchRecord:
     gender: str | None
     has_vent: bool
     analyzed: bool
+    # Known only for analyzed cases, where the pipeline derives the primary agent
+    agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +173,12 @@ class RetrievalResult:
     )
     extracts: tuple[str, ...] = ()
     fetched_pids: tuple[str, ...] = ()
+    # Cases passing the filters, before the shortlist cap
+    filtered_count: int = 0
+    # Set for scenario and comparison questions: the board's scope line, and why a scenario matched nothing
+    scope_note: str = ""
+    empty_reason: str = ""
+    compare: bool = False
 
 
 def source_text_hash(text: str) -> str:
@@ -279,16 +299,16 @@ def _emit(cb: ProgressCb | None, progress: RetrievalProgress) -> RetrievalProgre
     return progress
 
 
-def _pack_vector(values: Sequence[float]) -> bytes:
+def pack_vector(values: Sequence[float]) -> bytes:
     return struct.pack(f"<{len(values)}f", *[float(v) for v in values])
 
 
-def _unpack_vector(blob: bytes) -> list[float]:
+def unpack_vector(blob: bytes) -> list[float]:
     n = len(blob) // 4
     return list(struct.unpack(f"<{n}f", blob))
 
 
-def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     va = np.asarray(a, dtype=np.float32)
     vb = np.asarray(b, dtype=np.float32)
     if va.size == 0 or vb.size == 0 or va.size != vb.size:
@@ -389,7 +409,7 @@ def _normalize_gender(value: str | None) -> str | None:
     return g if g in {"M", "F"} else None
 
 
-class _EmbeddingCache:
+class EmbeddingCache:
     """SQLite store keyed by source-text hash and embedding-model identity."""
 
     def __init__(self, path: Path):
@@ -422,12 +442,12 @@ class _EmbeddingCache:
             ).fetchone()
         if row is None:
             return None
-        return _unpack_vector(row[0])
+        return unpack_vector(row[0])
 
     def put(
         self, text_hash: str, model_id: str, vector: Sequence[float]
     ) -> None:
-        blob = _pack_vector(vector)
+        blob = pack_vector(vector)
         with self._lock, self._connect() as con:
             con.execute(
                 """
@@ -454,6 +474,7 @@ class RetrievalEngine:
         extract_limit: int = DEFAULT_EXTRACT_LIMIT,
         preset: str = "default",
         analysis_facts: Mapping[str, str] | None = None,
+        case_agents: Mapping[str, str] | None = None,
     ):
         self.emr = Path(emr)
         self.embedder = embedder
@@ -462,7 +483,8 @@ class RetrievalEngine:
         self.extract_limit = max(1, int(extract_limit))
         self.preset = preset
         self.analysis_facts = dict(analysis_facts or {})
-        self._cache = _EmbeddingCache(Path(cache_path))
+        self.case_agents = {str(pid): str(agent) for pid, agent in (case_agents or {}).items()}
+        self._cache = EmbeddingCache(Path(cache_path))
         self._records: list[SearchRecord] = []
         self._keyword_index: tuple[list[SearchRecord], _KeywordIndex, dict[str, int]] | None = None
         self._vectors: dict[str, list[float]] = {}
@@ -623,6 +645,9 @@ class RetrievalEngine:
             ),
         )
         pool = [r for r in self._records if _record_matches(r, filters)]
+        # A scenario names the cases it wants, so a case passing every filter stays
+        # on the shortlist even when no question word appears in its text.
+        describes = filters.describes_cases
 
         embedder = self.embedder
         if available and embedder is not None:
@@ -647,12 +672,12 @@ class RetrievalEngine:
                         model_available=True,
                     ),
                 )
-                ranked = self._rank_embedding(pool, q_vec, cap, question)
+                ranked = self._rank_embedding(pool, q_vec, cap, question, keep_unscored=describes)
                 method = "embedding"
                 model_ok = True
                 fallback = None
             except Exception:
-                ranked = self._rank_keyword(pool, question, cap)
+                ranked = self._rank_keyword(pool, question, cap, keep_unscored=describes)
                 method = "keyword"
                 model_ok = False
                 fallback = "keyword"
@@ -684,7 +709,7 @@ class RetrievalEngine:
                     fallback="keyword",
                 ),
             )
-            ranked = self._rank_keyword(pool, question, cap)
+            ranked = self._rank_keyword(pool, question, cap, keep_unscored=describes)
             method = "keyword"
             model_ok = False
             fallback = "keyword"
@@ -710,7 +735,43 @@ class RetrievalEngine:
             model_available=model_ok,
             embedding_model=self.embedder.model_id if self.embedder else None,
             progress=done,
+            filtered_count=len(pool),
         )
+
+    def filter_counts(self, filters: CaseFilters) -> list[tuple[str, int]]:
+        """Cases left after each filter in turn, so an empty scenario can name the filter that emptied it."""
+        steps = (
+            ("age", CaseFilters(age=filters.age, age_tolerance=filters.age_tolerance,
+                                age_min=filters.age_min, age_max=filters.age_max)),
+            ("sex", CaseFilters(gender=filters.gender)),
+            ("procedure", CaseFilters(procedures=filters.procedures)),
+            ("agent", CaseFilters(agent=filters.agent)),
+        )
+        pool = list(self._records)
+        counts: list[tuple[str, int]] = []
+        for name, step in steps:
+            if not step.describes_cases:
+                continue
+            pool = [r for r in pool if _record_matches(r, step)]
+            counts.append((name, len(pool)))
+        return counts
+
+    def resolve_pids(self, names: Sequence[str]) -> tuple[list[str], list[str]]:
+        """Indexed PIDs for the names given (any letter case), and the names not indexed."""
+        by_lower = {r.pid.lower(): r.pid for r in self._records}
+        found, missing = [], []
+        for name in names:
+            pid = by_lower.get(str(name).strip().lower())
+            if pid is None:
+                missing.append(name)
+            elif pid not in found:
+                found.append(pid)
+        return found, missing
+
+    def candidates_for(self, pids: Sequence[str]) -> list[SearchCandidate]:
+        """Shortlist rows for named PIDs, in the order given."""
+        by_pid = {r.pid: r for r in self._records}
+        return [_candidate(by_pid[pid], score=1.0, method="pid") for pid in pids if pid in by_pid]
 
     def fetch_extracts(
         self,
@@ -817,6 +878,7 @@ class RetrievalEngine:
                     gender=gender,
                     has_vent=has_vent,
                     analyzed=analyzed,
+                    agent=self.case_agents.get(pid),
                 )
             )
         return out
@@ -827,6 +889,8 @@ class RetrievalEngine:
         query: Sequence[float],
         limit: int,
         question: str = "",
+        *,
+        keep_unscored: bool = False,
     ) -> list[SearchCandidate]:
         scored: list[tuple[float, SearchRecord]] = []
         missing: list[SearchRecord] = []
@@ -840,11 +904,11 @@ class RetrievalEngine:
             if vec is None:
                 missing.append(rec)
             else:
-                scored.append((_cosine(query, vec), rec))
+                scored.append((cosine(query, vec), rec))
         scored.sort(key=_rank_key, reverse=True)
-        ranked = self._rank_keyword(direct, question, limit)
+        ranked = self._rank_keyword(direct, question, limit, keep_unscored=keep_unscored)
         remaining = limit - len(ranked)
-        keyword = self._rank_keyword(missing, question, remaining)
+        keyword = self._rank_keyword(missing, question, remaining, keep_unscored=keep_unscored)
         # Reserve the unembedded share so keyword hits can compete with a full cosine shortlist.
         keyword_slots = min(len(keyword), math.ceil(remaining * len(missing) / len(pool))) if pool else 0
         ranked.extend(
@@ -855,7 +919,7 @@ class RetrievalEngine:
         return ranked
 
     def _rank_keyword(
-        self, pool: Sequence[SearchRecord], question: str, limit: int
+        self, pool: Sequence[SearchRecord], question: str, limit: int, *, keep_unscored: bool = False
     ) -> list[SearchCandidate]:
         pid_terms = set(re.findall(r"\w+", question.lower()))
         values, positions = self._keyword_scores(question)
@@ -864,7 +928,7 @@ class RetrievalEngine:
             pos = positions.get(rec.pid)
             score = float(values[pos]) if pos is not None else _keyword_score(question, rec.source_text)
             scored.append((2.0 if rec.pid.lower() in pid_terms else score, rec))
-        if tokenize_search_text(question):
+        if tokenize_search_text(question) and not keep_unscored:
             scored = [(score, rec) for score, rec in scored if score > 0]
         # Short metadata texts tie often; ties must not fall to file order
         scored.sort(key=_rank_key, reverse=True)
@@ -951,6 +1015,18 @@ def _record_matches(rec: SearchRecord, filters: CaseFilters) -> bool:
             return False
         if abs(rec.age - float(filters.age)) > float(filters.age_tolerance):
             return False
+    if filters.age_min is not None or filters.age_max is not None:
+        if rec.age is None:
+            return False
+        if filters.age_min is not None and rec.age < filters.age_min:
+            return False
+        if filters.age_max is not None and rec.age > filters.age_max:
+            return False
+    procedure = rec.procedure.lower()
+    if any(term.lower() not in procedure for term in filters.procedures):
+        return False
+    if filters.agent and (rec.agent or "").lower() != filters.agent.lower():
+        return False
     return True
 
 

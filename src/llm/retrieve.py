@@ -8,6 +8,7 @@ answer gate, research footer).
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import pandas as pd
 
@@ -22,8 +23,29 @@ from src.services.retrieval import (
     RetrievalProgress,
     SearchCandidate,
 )
+from src.services.articles import ABSTRACT_LIMIT, Article, NO_MATCHES
 
 RetrieveProgressCb = Callable[[RetrievalProgress], None]
+
+
+def answer_from_articles(
+    *, question: str, model: str, articles: Sequence[Article], client: OllamaClient,
+    on_status: ProgressCb | None = None,
+) -> AgentResult:
+    cited = articles[:ABSTRACT_LIMIT]
+    if not cited:
+        return AgentResult(answer=NO_MATCHES)
+    blocks = [
+        f"[A{i}] {a.title} ({a.year}). {a.authors}.\n"
+        f"DOI/URL: {a.doi_or_url}\nSource: {a.source}\nRights: {a.rights_note}\nAbstract: {a.abstract}"
+        for i, a in enumerate(cited, 1)
+    ]
+    extracts = "\n\n".join(blocks)
+    return run_agent(
+        model=model, question=question, session=SessionState(), client=client,
+        mode=MODE_ANALYZE, skip_prefetch=True, extra_prefetched=extracts,
+        allow_tools=False, source_scope="articles", sources=blocks, on_status=on_status,
+    )
 
 
 def format_grounded_extracts(
@@ -89,6 +111,7 @@ def answer_from_retrieval(
     client: OllamaClient,
     preset: str = "default",
     mode: str = MODE_ANALYZE,
+    kind: Literal["question", "scenario", "compare"] = "question",
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
 ) -> AgentResult:
@@ -135,4 +158,30 @@ def answer_from_retrieval(
         extra_prefetched=prefetched,
         allow_tools=False,
         sources=sources,
+        answer_kind=kind,
+    )
+
+
+def answer_from_minute(
+    *,
+    question: str,
+    model: str,
+    candidate: SearchCandidate,
+    extract: str,
+    client: OllamaClient,
+    preset: str = "default",
+    on_status: ProgressCb | None = None,
+) -> AgentResult:
+    """Answer a question about one minute of one case from that minute's extract alone."""
+    return run_agent(
+        model=model,
+        question=question,
+        session=_research_session([candidate], preset),
+        client=client,
+        mode=MODE_ANALYZE,
+        on_status=on_status,
+        skip_prefetch=True,
+        extra_prefetched=format_grounded_extracts(candidates=[candidate], extracts=[extract]),
+        allow_tools=False,
+        sources=[f"{extract}\n{_case_facts(candidate)}"],
     )

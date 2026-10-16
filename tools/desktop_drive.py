@@ -6,9 +6,9 @@ with config, data, cache, temp files, processed output, and Ollama models redire
 ``<out>/state``. Each step writes ``<out>/<step>.png`` and one line of
 ``<out>/events.jsonl``.
 
-    PYTHONPATH=. python -m src.pipeline.synthetic --out /tmp/drive/EMR --n-cases 10
+    PYTHONPATH=. python -m src.pipeline.synthetic --out ~/mover-scratch/drive/EMR --n-cases 10
     PYTHONPATH=. QT_QPA_PLATFORM=offscreen python tools/desktop_drive.py \\
-        --emr /tmp/drive/EMR --out /tmp/drive/run --scenario research-roundtrip
+        --emr ~/mover-scratch/drive/EMR --out ~/mover-scratch/drive/run --scenario research-roundtrip
 
 Exit codes: 0 every step passed, 1 a step raised, 2 the inputs were rejected.
 """
@@ -121,7 +121,6 @@ def _research_idle(win: Any) -> bool:
 
 def ask(run: Run) -> dict[str, Any]:
     research = run.win.research
-    run.win.tabs.setCurrentWidget(research)
     research.question_edit.setText(run.question)
     research.ask_button.click()
     run.wait(lambda: _research_idle(run.win), "the research answer and first case")
@@ -191,22 +190,6 @@ def run_pipeline(run: Run, *, limit: int | None = None) -> dict[str, Any]:
     return {"requested_cases": n_cases, "loaded_cases": len(run.win.cases)}
 
 
-def open_tab(run: Run, *, label: str) -> dict[str, Any]:
-    from PySide6.QtWidgets import QTableWidget
-
-    tabs = run.win.tabs
-    index = next((i for i in range(tabs.count()) if tabs.tabText(i) == label), -1)
-    if index < 0:
-        raise RuntimeError(f"no tab labelled {label!r}")
-    tabs.setCurrentIndex(index)
-    run.settle()
-    page = tabs.widget(index)
-    return {
-        "tab": label,
-        "table_rows": [t.rowCount() for t in page.findChildren(QTableWidget)],
-    }
-
-
 def slow_ollama_start(run: Run) -> dict[str, Any]:
     import src.llm.service as service
     from PySide6.QtCore import QTimer
@@ -219,17 +202,17 @@ def slow_ollama_start(run: Run) -> dict[str, Any]:
     ticks: list[float] = []
     QTimer.singleShot(10, lambda: ticks.append(time.monotonic()))
     started = time.monotonic()
-    run.win.btn_ollama_start.click()
+    run.win.research.start_button.click()
     run.win._ollama_start()
     run.wait(lambda: bool(ticks), "a GUI timer tick", timeout_s=0.1)
     assert ticks[0] - started < 0.1
-    assert not run.win.btn_ollama_start.isEnabled()
+    assert not run.win.research.start_button.isEnabled()
     return {"timer_ms": round((ticks[0] - started) * 1000), "status": run.win.research.status_label.text()}
 
 
 def ollama_ready(run: Run) -> dict[str, Any]:
     run.wait(lambda: not run.win._ollama_worker.isRunning(), "the fake Ollama start")
-    assert run.win.btn_ollama_start.isEnabled()
+    assert run.win.research.start_button.isEnabled()
     return {"status": run.win.research.status_label.text()}
 
 
@@ -393,7 +376,6 @@ def _drawer_facts(run: Run) -> dict[str, Any]:
 
 def open_rules_from_button(run: Run) -> dict[str, Any]:
     research = run.win.research
-    run.win.tabs.setCurrentWidget(research)
     run.win.activateWindow()
     run.settle()
     research.rules_button.click()
@@ -508,7 +490,6 @@ def open_rules_narrow(run: Run) -> dict[str, Any]:
 
 def focus_question(run: Run) -> dict[str, Any]:
     research = run.win.research
-    run.win.tabs.setCurrentWidget(research)
     run.win.activateWindow()
     research.question_edit.setFocus()
     run.settle()
@@ -582,7 +563,6 @@ def f_open(run: Run, *, kind: str) -> dict[str, Any]:
                                 procedure="Synthetic research case", age=None, gender="",
                                 source_text="Synthetic source", rank_method="keyword", score=1.)
     research.set_results(RetrievalResult(candidates=(candidate,)))
-    win.tabs.setCurrentWidget(research)
     if kind == "spo2":
         win.resize(900, 860)
     win._load_research_case(pid, False, True)
@@ -629,6 +609,34 @@ def f_clear(run: Run) -> dict[str, Any]:
     return f_facts(run)
 
 
+def f_follow_up(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from src.desktop.research_workspace import FOLLOW_UP_NO_MODEL
+
+    research = run.win.research
+    turns = len(research.conversation.turns)
+    pid, minute = research._current_pid, f_facts(run)["cursor_minute"]
+    research.follow_up_edit.setFocus()
+    QTest.keyClicks(research.follow_up_edit, "What do the rows show at this minute?")
+    QTest.keyClick(research.follow_up_edit, Qt.Key.Key_Return)
+    run.wait(lambda: research._follow_up_active is None and research.follow_up_answer.isVisible(),
+             "the follow-up answer")
+    answer = research.follow_up_answer.toPlainText()
+    label = research.follow_up_label.text()
+    assert label == f"Minute {minute:g} · {pid}", label
+    if research.selected_model():
+        assert answer and "Asking" not in answer, answer
+    else:
+        assert answer == FOLLOW_UP_NO_MODEL, answer
+    assert len(research.conversation.turns) == turns
+    research.signal_scroll.ensureWidgetVisible(research.follow_up_answer)
+    run.settle()
+    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer,
+            "conversation_turns": len(research.conversation.turns)}
+
+
 def f_drawer_link(run: Run) -> dict[str, Any]:
     research = run.win.research
     research.rule_link.click()
@@ -663,7 +671,6 @@ def _overview_facts(run: Run, rows: int = 3) -> dict[str, Any]:
 
 def open_cases(run: Run) -> dict[str, Any]:
     run.win.resize(900, 860)
-    run.win.tabs.setCurrentWidget(run.win.research)
     run.settle()
     research = run.win.research
     research.cases_button.click()
@@ -734,7 +741,6 @@ def full_scan(run: Run) -> dict[str, Any]:
 
 
 def switch_to_scan_scope(run: Run) -> dict[str, Any]:
-    run.win.tabs.setCurrentWidget(run.win.research)
     run.win.research.cases_button.click()
     run.settle()
     overview = run.win.research._cases_overview
@@ -910,6 +916,49 @@ def prototype_ask(run: Run) -> dict[str, Any]:
             "answer": turn.answer, "window_width": run.win.width()}
 
 
+def intent_ask(run: Run, *, kind: str) -> dict[str, Any]:
+    """Ask a scenario or comparison question built from the loaded cases and check the board's scope line."""
+    from src.llm.intent import AGE_TOLERANCE, classify
+
+    cases = run.win.cases.copy()
+    cases["PID"] = cases["PID"].astype(str)
+    research = run.win.research
+    if kind == "scenario":
+        for row in cases.itertuples():
+            words = classify(f"55y {row.Procedure_short}").procedures
+            if words and row.primary_agent_name in ("sevoflurane", "desflurane", "isoflurane") and row.Gender in ("F", "M"):
+                break
+        else:
+            raise RuntimeError("no loaded case has a procedure word and an agent")
+        sex = "woman" if row.Gender == "F" else "man"
+        question = f"{int(row.Age)}-year-old {sex}, {words[0]}, {row.primary_agent_name}, elevated PIP"
+        intent = classify(question)
+        assert intent.kind == "scenario" and intent.age == float(int(row.Age)), intent
+        facts = conversation_ask(run, question=question)
+        candidates = research.result.candidates
+        assert candidates and research.scope_label.text().startswith("Scenario: "), research.scope_label.text()
+        assert "matching case" in research.scope_label.text()
+        for candidate in candidates:
+            assert abs(candidate.age - row.Age) <= AGE_TOLERANCE and candidate.gender == row.Gender, candidate
+            assert words[0] in candidate.procedure.lower() and candidate.pid in set(cases.PID), candidate
+            agent = cases.loc[cases.PID.eq(candidate.pid), "primary_agent_name"].iloc[0]
+            assert agent == row.primary_agent_name, (candidate.pid, agent)
+        research.board_scroll.ensureWidgetVisible(research.scope_label)
+        run.settle()
+        return {**facts, "question": question, "scope_line": research.scope_label.text(),
+                "shortlist": [candidate.pid for candidate in candidates]}
+    first, second = cases.PID.iloc[0], cases.PID.iloc[1]
+    question = f"Compare {first} and {second.lower()} on pressure"
+    assert classify(question).kind == "compare"
+    facts = conversation_ask(run, question=question)
+    assert [candidate.pid for candidate in research.result.candidates] == [first, second]
+    assert research.scope_label.text() == f"Comparing {first} and {second}", research.scope_label.text()
+    research.board_scroll.ensureWidgetVisible(research.scope_label)
+    run.settle()
+    return {**facts, "question": question, "scope_line": research.scope_label.text(),
+            "shortlist": [first, second]}
+
+
 def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
     open_case(run)
     research = run.win.research
@@ -1003,24 +1052,97 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
     return {**facts, "board_restored": True}
 
 
-TAB_STEPS = tuple(
-    Step(name, partial(open_tab, label=label))
-    for name, label in (
-        ("tab-research", "1 · Research"),
-        ("tab-ask", "2 · Ask"),
-        ("tab-summary", "3 · Summary"),
-        ("tab-timeline", "4 · Case timeline"),
-        ("tab-rules", "5 · Rule reference"),
-    )
-)
+def import_articles(run: Run) -> dict[str, Any]:
+    from PySide6.QtWidgets import QFileDialog
+
+    original = QFileDialog.getOpenFileName
+    QFileDialog.getOpenFileName = lambda *args, **kwargs: (str(ROOT / "tests/fixtures/articles_sample.jsonl"), "")
+    try:
+        menu = next(a.menu() for a in run.win.menuBar().actions() if a.text() == "&File")
+        next(a for a in menu.actions() if a.text() == "Import articles…").trigger()
+    finally:
+        QFileDialog.getOpenFileName = original
+    research = run.win.research
+    research.scope_combo.setCurrentText("Articles")
+    assert run.win._article_catalog.count == 12
+    assert research.scope_label.text() == "Articles: 12 in the local catalog"
+    return {"scope": research.scope_label.text(), "imported": 12}
+
+
+def ask_articles(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.question_edit.setText("pressure")
+    research.ask_button.click()
+    run.wait(lambda: _research_idle(run.win), "the article search and answer")
+    result = research.article_result
+    assert result is not None and result.articles
+    assert research.result is None and run.win._case_worker is None
+    turn = research.conversation.turns[-1]
+    assert turn.scope == "Articles"
+    if research.selected_model():
+        assert turn.state == "answered" and "[A1]" in turn.answer
+    else:
+        assert turn.state == "no_model"
+    research.board_scroll.verticalScrollBar().setValue(research.board_scroll.verticalScrollBar().maximum())
+    return {"scope": research.scope_label.text(), "articles": len(result.articles),
+            "titles": [a.title for a in result.articles], "answer": turn.answer, "state": turn.state}
+
+
+def workspace_charts(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.show_cases()
+    overview = research._cases_overview
+    assert not overview.charts_button.isChecked()
+    overview.charts_button.click()
+    run.settle()
+    assert overview.charts_panel.isVisible() and not overview._charts_dirty
+    return {"view": "cases", "charts_expanded": True, "scope": overview.scope_label.text()}
+
+
+def workspace_signal(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
+
+    research = run.win.research
+    research.close_cases()
+    open_case(run)
+
+    def choose() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QDialog)
+        next(box for box in dialog.findChildren(QCheckBox) if box.text() == "SPO2").setChecked(True)
+        dialog.accept()
+
+    QTimer.singleShot(0, choose)
+    research.more_signals_button.click()
+    assert research.chart_track_names == ["PIP", "ETCO2", "HR", "SPO2"]
+    return {"view": "detail", **f_facts(run)}
+
+
+def workspace_scoring(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.open_rules()
+    drawer = research.rules_drawer
+    drawer.scoring_button.click()
+    run.settle()
+    drawer.rule_scroll.ensureWidgetVisible(drawer.scoring_text)
+    assert drawer.scoring_text.isVisible() and "warn_minute_weight" in drawer.scoring_text.text()
+    return {"view": "rules", "scoring_expanded": True, "scoring": drawer.scoring_text.text()}
+
 
 # The overview never asks the model anything, so a scripted client cannot mislabel its screenshots
 OVERVIEW_LLM_MODES = ("off", "scripted")
 
 SCENARIOS: dict[str, Scenario] = {
+    "articles": Scenario((Step("import-articles", import_articles), Step("article-answer", ask_articles)),
+                         llm_modes=("scripted", "off")),
     "proto-peak": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
                              Step("proto-peak", partial(prototype_open, signal="PIP"))), llm_modes=("scripted", "off")),
     "proto-scenario": Scenario((Step("load-data", run_pipeline), Step("proto-scenario", prototype_ask)),
+                                llm_modes=("scripted", "off")),
+    "intent-scenario": Scenario((Step("load-data", run_pipeline), Step("intent-scenario", partial(intent_ask, kind="scenario"))),
+                                 llm_modes=("scripted", "off")),
+    "intent-compare": Scenario((Step("load-data", run_pipeline), Step("intent-compare", partial(intent_ask, kind="compare"))),
                                 llm_modes=("scripted", "off")),
     "proto-missing": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
                                 Step("proto-missing", partial(prototype_open, signal="ETCO2"))), llm_modes=("scripted", "off")),
@@ -1032,6 +1154,9 @@ SCENARIOS: dict[str, Scenario] = {
                              Step("episode", f_select))),
     "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
                                  Step("spo2", partial(f_select, rule="spo2_low")), Step("cleared", f_clear))),
+    "f-follow-up": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                              Step("episode", f_select), Step("follow-up", f_follow_up)),
+                             llm_modes=("scripted", "off")),
     "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                                 Step("episode", f_select), Step("drawer", f_drawer_link))),
     "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
@@ -1065,7 +1190,9 @@ SCENARIOS: dict[str, Scenario] = {
     "research-roundtrip": Scenario(
         (Step("ask", ask), Step("case", open_case), Step("return", return_to_question))
     ),
-    "open-each-tab": Scenario((Step("pipeline", run_pipeline), *TAB_STEPS)),
+    "workspace-walk": Scenario((Step("load-data", run_pipeline), Step("question", ask),
+                                  Step("charts", workspace_charts), Step("extra-signal", workspace_signal),
+                                  Step("scoring", workspace_scoring))),
     "no-model": Scenario((Step("no-model", ask),), llm_modes=("off",)),
     "rules-drawer": Scenario((
         Step("data", run_pipeline),
@@ -1192,9 +1319,9 @@ def install_llm(mode: str, drafts: Sequence[str]) -> None:
     models = [SCRIPTED_MODEL] if mode == "scripted" else []
 
     def refresh_models(self: Any, **_kwargs: Any) -> None:
-        self.combo_llm_model.clear()
-        self.combo_llm_model.addItems(models or ["(Ollama stopped — click Start)"])
-        self.lbl_ollama_status.setText(f"Ollama: replaced by the driver (--llm {mode})")
+        self.research.model_combo.clear()
+        self.research.model_combo.addItems(models or ["(Ollama stopped — click Start)"])
+        self.research.model_status.setText(f"Ollama: replaced by the driver (--llm {mode})")
         self.research.set_models(models, models[0] if models else None)
 
     def client_factory(*_args: Any, **_kwargs: Any) -> ScriptedChatClient:
@@ -1222,8 +1349,12 @@ def record_dialogs(run: Run) -> None:
     QMessageBox.critical = static("critical", QMessageBox.StandardButton.Ok)
     QMessageBox.question = static("question", QMessageBox.StandardButton.Yes)
 
+    real_exec = QDialog.exec
+
     def exec_dialog(dialog: Any) -> int:
         run.dialogs.append({"kind": "dialog", "title": dialog.windowTitle(), "text": ""})
+        if dialog.windowTitle() == "More signals":
+            return real_exec(dialog)
         return 0
 
     QDialog.exec = exec_dialog
@@ -1300,19 +1431,24 @@ def drive(args: argparse.Namespace) -> int:
     llm = args.llm or scenario.llm_modes[0]
     if llm not in scenario.llm_modes:
         raise InputError(f"scenario {args.scenario} runs only with --llm {'/'.join(scenario.llm_modes)}")
-    prototype = args.scenario.startswith("proto-")
+    prototype = args.scenario.startswith(("proto-", "intent-"))
     fixture = ROOT / "tests" / "fixtures" / "drive_prototype.yaml"
     if prototype:
         import yaml
 
         example = yaml.safe_load(fixture.read_text(encoding="utf-8"))[args.scenario]
-        args.question = example["question"]
+        args.question = example.get("question", args.question)
     drafts = ()
     if llm == "scripted":
         drafts = load_drafts(args.drafts or (fixture if prototype else None),
                              scenario=args.scenario if prototype and args.drafts is None else None)
+    if args.scenario == "articles" and llm == "scripted" and args.drafts is None:
+        drafts = ("The fictional abstract described pressure observations [A1].",)
+    if args.scenario == "f-follow-up" and llm == "scripted" and args.drafts is None:
+        drafts = ("The source rows list the signal values around the selected minute. "
+                  "The record does not establish a cause.",)
     steps = scenario.steps
-    if prototype and llm == "off":
+    if args.scenario.startswith("proto-") and llm == "off":
         steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))
 
     emr = args.emr.expanduser().resolve()

@@ -10,7 +10,7 @@ Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics
 
 1. **Data pipeline** — load/clean SIS tables, time-align ventilator + vitals per surgery (`PID`), derive TV mL/kg & MAC, write parquet caches  
 2. **Anomaly flags** — rising PIP, ETCO₂ out of range, agent drift/high MAC, SpO₂, composite patterns (see `docs/DESIGN.md` and `src/config/thresholds.yaml`)  
-3. **Desktop app (primary)** — native PySide6 window with setup-first entry, AI research search, focused signal inspection, summary charts, case timeline, and rule reference
+3. **Desktop app (primary)** — native PySide6 research workspace with setup, local AI search, focused signal inspection, Cases charts, and a Rules drawer
 4. **Streamlit UI (optional)** — browser views for the existing pipeline
 
 ## Data location
@@ -161,7 +161,9 @@ The desktop app:
 - Opens **Setup** before loading data if the EMR folder is missing or invalid
 - Starts in **Research**, where a question retrieves indexed surgeries using local embeddings or keyword fallback. A selected local chat model can answer from bounded case extracts.
 - Lets you select a retrieved case and open **F signal detail** with PIP, ETCO₂, heart rate, and source rows. Returning preserves the question and comparison.
-- Keeps the **Ask** co-pilot for case analysis, plus Summary, Case timeline, and Rule reference
+- Opens **Cases** for sortable case metrics and a **Charts** section, collapsed until you expand it
+- Offers **More signals** in F for up to three extra tracks, including tidal volume, PEEP, agent concentrations, MAC, SpO₂, and mean arterial pressure
+- Opens the searchable **Rules** drawer with `Ctrl+R`, including collapsible **Scoring** and **Age-40 MAC** sections below the rules
 - Provides **Settings** (`Ctrl+,`) for EMR, Wave, Processed, chat and embedding models, and theme
 - **Theme:** light, dark, or system  
 - Loads processed caches after setup; **File → Run pipeline** for rebuilds
@@ -189,7 +191,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 
 ### Local LLM (Ollama)
 
-The **Research** and **Ask** tabs use Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. Select a local chat model to generate an answer from retrieved case extracts. The Ask tab keeps the existing case-analysis tools. Models stay on the host, outside the executable.
+The **Research** workspace uses Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. Select **Local AI** to generate an answer from retrieved case extracts. **Start AI**, **Stop AI**, **Unload model**, and **Refresh** are in the question card. Models stay on the host, outside the executable.
 
 Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via the **⚙ Settings** icon (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 
@@ -202,7 +204,7 @@ ollama pull gemma4
 Then in the app:
 1. Complete Setup with a valid EMR folder.
 2. In **Research**, ask a question and inspect a retrieved case. Start and select a local chat model for an answer.
-3. For the older case-analysis flow, open **2 · Ask** and ask about a selected surgery.
+3. Open a case in **F** to choose extra signals, inspect source rows, or **Show grounded context**. Open **Cases** for summary charts and **Rules** for thresholds and scoring.
 
 Answers are grounded in a structured case briefing. Research use only — not for clinical care.
 

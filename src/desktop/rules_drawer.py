@@ -212,6 +212,8 @@ class RulesDrawer(QFrame):
         self._list_layout = QVBoxLayout(self._list)
         self._list_layout.setContentsMargins(0, 0, 4, 0)
         self._list_layout.setSpacing(8)
+        self.scoring_button, self.scoring_text = self._explanation("Scoring")
+        self.mac_button, self.mac_text = self._explanation("Age-40 MAC (vol %)")
         self._list_layout.addStretch(1)
         self.rule_scroll.setWidget(self._list)
         layout.addWidget(self.rule_scroll, 1)
@@ -224,6 +226,25 @@ class RulesDrawer(QFrame):
         self.hide()
         self._refresh_header()
         self._apply_search()
+
+    def _explanation(self, title: str) -> tuple[QPushButton, QLabel]:
+        button = QPushButton(title + " ▸")
+        button.setCheckable(True)
+        button.setAccessibleName(title)
+        label = QLabel()
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.hide()
+        button.toggled.connect(label.setVisible)
+        button.toggled.connect(lambda expanded: button.setText(title + (" ▾" if expanded else " ▸")))
+        self._list_layout.addWidget(button)
+        self._list_layout.addWidget(label)
+        return button, label
+
+    def set_explanations(self, thresholds: dict) -> None:
+        for label, key in ((self.scoring_text, "scoring"), (self.mac_text, "mac_age40")):
+            label.setText("\n".join(f"{name}: {value}" for name, value in thresholds.get(key, {}).items()))
 
     @property
     def is_open(self) -> bool:

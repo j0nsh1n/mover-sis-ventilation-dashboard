@@ -335,7 +335,9 @@ def test_desktop_scan_action_feeds_copilot_session(emr, tmp_path, monkeypatch, a
         app.processEvents()
         time.sleep(0.05)
     assert win.corpus_scan is not None
-    assert "full-EMR scan:" in win.lbl_corpus.text()
+    win.research.show_cases()
+    scopes = win.research._cases_overview.scope_combo
+    assert any(scopes.itemText(i).startswith("Full-EMR scan,") for i in range(scopes.count()))
     session = win._make_session_snapshot()
     assert session.has_corpus_scan()
     assert session.corpus_meta["n_scanned_cases"] == len(session.corpus)
