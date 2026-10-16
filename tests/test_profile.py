@@ -144,6 +144,30 @@ def test_profile_reports_phase_minutes_and_sources(tmp_path, thresholds):
     assert cov["cases_by_phase_source"] == {"events": 12, "mixed": 0, "fallback": 0}
 
 
+@pytest.mark.parametrize("total, events, expected", [
+    (24, 12, 50.0), (12, 12, 100.0), (12, 0, 0.0),
+    (24, 3, None), (24, 21, None), (10, 10, None),
+])
+def test_phase_source_headline_respects_small_cells(tmp_path, total, events, expected):
+    root = _write_processed(tmp_path, total, lambda c, m: 20)
+    ts = pd.read_parquet(root / "timeseries.parquet")
+    event_pids = set(ts["PID"].drop_duplicates().iloc[:events])
+    ts["phase_source"] = np.where(ts["PID"].isin(event_pids), "events", "fallback")
+    ts.to_parquet(root / "timeseries.parquet")
+    md, js = root / "profile.md", root / "profile.json"
+    main(["--processed-dir", str(root), "--out", str(md), "--json", str(js)])
+    assert json.loads(js.read_text())["coverage"]["phase_source_events_pct"] == expected
+    headline = "suppressed" if expected is None else f"{expected}%"
+    assert f"phase_source events: {headline} of cases" in md.read_text().split("## Coverage")[0]
+
+
+def test_phase_source_headline_without_source_data_is_unavailable(tmp_path, thresholds):
+    root = _write_processed(tmp_path, 12, lambda c, m: 20)
+    profile = profile_processed(root, thresholds)
+    assert profile["coverage"]["phase_source_events_pct"] is None
+    assert "phase_source events: unavailable" in render_markdown(profile)
+
+
 def test_header_records_preset_file_hash_case_count_and_seed(tmp_path, thresholds):
     import hashlib
     from src.runtime_paths import thresholds_path

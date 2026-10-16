@@ -40,6 +40,7 @@ import logging
 import multiprocessing
 import os
 import shutil
+import sys
 import time
 import zlib
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
@@ -61,6 +62,7 @@ from src.guardrails.validate_io import (
     validate_emr_dir,
 )
 from src.pipeline.load import NA_VALUES, VENT_RENAME, VITALS_RENAME, load_case_info
+from src.pipeline.phases import PHASE_SOURCES
 from src.pipeline.run import process_frames
 
 logger = logging.getLogger(__name__)
@@ -145,6 +147,23 @@ def default_workers(n_shards: int = MAX_DEFAULT_WORKERS) -> int:
     """One core is left for the desktop / OS; never more workers than shards."""
     cores = os.cpu_count() or 1
     return max(1, min(cores - 1, n_shards, MAX_DEFAULT_WORKERS))
+
+
+def _peak_rss_mb() -> dict[str, float | None]:
+    """Process-lifetime high-water RSS; children reports the largest reaped child.
+
+    A serial CLI scan runs in the parent, so its worker RSS is zero. Repeated
+    scans in one process can retain peaks from earlier work.
+    """
+    try:
+        import resource
+    except ImportError:
+        return {"parent": None, "largest_worker": None}
+    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return {
+        "parent": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale, 1),
+        "largest_worker": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / scale, 1),
+    }
 
 
 def _score_shard(
@@ -341,6 +360,8 @@ def scan_corpus(
     if workers is not None and workers < 1:
         raise PipelineError(f"workers must be at least 1 (got {workers}).")
     n_workers = min(workers, n_shards) if workers is not None else default_workers(n_shards)
+    if workers is not None and workers > n_shards:
+        progress(f"Requested {workers} workers; using {n_workers} for {n_shards} shard(s).")
 
     def check_stop() -> None:
         if should_stop is not None and should_stop():
@@ -416,7 +437,12 @@ def scan_corpus(
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),
         "n_shards": n_shards,
         "failed_shards": failed,
+        "workers_requested": workers,
         "workers": n_workers,
+        "cases_by_phase_source": {
+            source: int(corpus_cases["phase_source"].eq(source).sum())
+            for source in PHASE_SOURCES
+        },
         "seconds_split": round(seconds_split, 1),
         "seconds_score": round(seconds_score, 1),
         "seconds": round(time.monotonic() - started, 1),
@@ -425,6 +451,7 @@ def scan_corpus(
         raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
     atomic_write_parquet(corpus_cases, out_path / CORPUS_CASES)
     atomic_write_parquet(corpus_episodes, out_path / CORPUS_EPISODES)
+    meta["peak_rss_mb"] = _peak_rss_mb()
     atomic_write_json(meta, out_path / CORPUS_META)
     progress(
         f"Full-EMR scan done: {meta['n_scanned_cases']} of {n_ventilated} ventilated "

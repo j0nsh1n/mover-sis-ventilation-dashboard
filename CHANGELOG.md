@@ -7,6 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Full-EMR scans record peak memory, requested and used workers, and phase-source counts; profiles show the events percentage, and `scripts/bench_scan.sh` compares worker counts in separate calibration outputs.
 - Runs and full-EMR scans record their thresholds version; signal detail and the Rules drawer show the recorded version and say when thresholds have changed or were not recorded.
 
 ## [0.12.1] — 2026-10-16

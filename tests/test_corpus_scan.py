@@ -101,7 +101,70 @@ def test_cancel_keeps_previous_scan(emr, tmp_path, allow_external):
     assert isinstance(pd.read_parquet(tmp_path / CORPUS_CASES), pd.DataFrame)
 
 
-TIMING_KEYS = {"created_at", "seconds", "seconds_split", "seconds_score", "workers"}
+TIMING_KEYS = {"created_at", "seconds", "seconds_split", "seconds_score", "workers", "workers_requested", "peak_rss_mb"}
+
+
+@pytest.mark.parametrize("requested, used", [(1, 1), (4, 1), (None, 1)])
+def test_scan_measurements_and_phase_source_counts(emr, tmp_path, allow_external, requested, used):
+    progress = []
+    result = scan_corpus(emr, tmp_path, workers=requested, on_progress=lambda msg, *_: progress.append(msg))
+    meta = json.loads((tmp_path / CORPUS_META).read_text())
+    assert meta == result.meta
+    assert meta["workers_requested"] == requested
+    assert meta["workers"] == used
+    assert meta["n_shards"] == 1
+    assert meta["seconds"] >= meta["seconds_score"] >= 0
+    assert set(meta["peak_rss_mb"]) == {"parent", "largest_worker"}
+    if sys.platform == "win32":
+        assert meta["peak_rss_mb"] == {"parent": None, "largest_worker": None}
+    else:
+        assert meta["peak_rss_mb"]["parent"] > 0
+        assert meta["peak_rss_mb"]["largest_worker"] >= 0
+    counts = meta["cases_by_phase_source"]
+    assert set(counts) == {"events", "mixed", "fallback"}
+    assert sum(counts.values()) == meta["n_scanned_cases"]
+    assert counts["events"] == len(result.cases)
+    assert not any(pid in json.dumps(counts) for pid in result.cases["PID"])
+    if requested == 4:
+        assert any("Requested 4 workers; using 1" in msg for msg in progress)
+
+
+@pytest.mark.parametrize("source", ["events", "mixed"])
+def test_scan_counts_event_mixed_and_fallback_cases(synthetic_emr, tmp_path, allow_external, source):
+    path = synthetic_emr / "patient_procedure_events.csv"
+    events = pd.read_csv(path)
+    events.loc[events["Event_name"].eq("Extubation"), "Event_time"] = "2016-06-01 08:38:00"
+    if source == "mixed":
+        events = events[events["Event_name"].eq("Intubation")]
+    events.to_csv(path, index=False)
+    result = scan_corpus(synthetic_emr, tmp_path / "scan", workers=1)
+    expected = {"events": 0, "mixed": 0, "fallback": 1}
+    expected[source] = 1
+    assert result.meta["cases_by_phase_source"] == expected
+    assert sum(expected.values()) == result.meta["n_scanned_cases"]
+
+
+@pytest.mark.parametrize("platform, scale", [("linux", 1024), ("darwin", 1024 * 1024)])
+def test_peak_rss_units(monkeypatch, platform, scale):
+    from types import SimpleNamespace
+
+    calls = []
+
+    def usage(who):
+        calls.append(who)
+        return SimpleNamespace(ru_maxrss=(12 if who == 0 else 34) * scale)
+
+    monkeypatch.setitem(sys.modules, "resource", SimpleNamespace(
+        RUSAGE_SELF=0, RUSAGE_CHILDREN=-1, getrusage=usage,
+    ))
+    monkeypatch.setattr(sys, "platform", platform)
+    assert corpus_scan_module._peak_rss_mb() == {"parent": 12.0, "largest_worker": 34.0}
+    assert calls == [0, -1]
+
+
+def test_peak_rss_without_resource(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    assert corpus_scan_module._peak_rss_mb() == {"parent": None, "largest_worker": None}
 
 
 def test_parallel_scan_matches_serial_scan(emr, tmp_path, allow_external):
@@ -109,6 +172,9 @@ def test_parallel_scan_matches_serial_scan(emr, tmp_path, allow_external):
     parallel = scan_corpus(emr, tmp_path / "parallel", cases_per_shard=7, workers=2)
     assert serial.meta["workers"] == 1
     assert parallel.meta["workers"] == 2
+    assert parallel.meta["workers_requested"] == 2
+    if sys.platform != "win32":
+        assert parallel.meta["peak_rss_mb"]["largest_worker"] > 0
     pd.testing.assert_frame_equal(serial.cases, parallel.cases)
     pd.testing.assert_frame_equal(serial.episodes, parallel.episodes)
     assert {k: v for k, v in serial.meta.items() if k not in TIMING_KEYS} == {
