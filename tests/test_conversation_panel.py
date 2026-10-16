@@ -89,7 +89,8 @@ def test_turn_states_and_exact_gated_text(view, state, answer, failure):
     assert turn.state == state
     assert turn.model == "test-model"
     assert widget.badge_label.text() == "test-model"
-    assert widget.answer_text.toPlainText() == answer
+    assert turn.answer == answer
+    assert view.answer_text.toPlainText() == answer
     if failure:
         view.set_status("Unrelated status update")
         assert turn.failure == failure

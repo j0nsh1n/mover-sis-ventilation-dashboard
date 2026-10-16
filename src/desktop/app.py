@@ -62,6 +62,7 @@ from src.desktop.charts import (
 )
 from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
+from src.desktop.answer_markdown import MarkdownAnswer
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.desktop.theme import apply_theme, chat_role_color
 from src.desktop.updates import UpdateController
@@ -668,8 +669,7 @@ class MainWindow(QMainWindow):
         mode_row.addStretch(1)
         chat_l.addLayout(mode_row)
 
-        self.chat_history = QTextEdit()
-        self.chat_history.setReadOnly(True)
+        self.chat_history = MarkdownAnswer()
         self.chat_history.setPlaceholderText(
             "Just describe the patient / case — the co-pilot runs the full workflow.\n\n"
             "Examples:\n"
@@ -1840,14 +1840,18 @@ class MainWindow(QMainWindow):
     def _append_chat(self, role: str, text: str) -> None:
         who = "You" if role == "user" else "Assistant"
         color = chat_role_color(role)
-        # Escape HTML-ish but keep simple newlines via pre-wrap
+        heading = f'<p style="margin:8px 0 2px 0;"><b style="color:{color};">{who}</b></p>'
+        if role != "user":
+            self.chat_history.append(heading)
+            self.chat_history.append_markdown(text)
+            return
         safe = (
             text.replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
         )
         self.chat_history.append(
-            f'<p style="margin:8px 0 2px 0;"><b style="color:{color};">{who}</b></p>'
+            heading +
             f'<p style="margin:0 0 10px 0; white-space:pre-wrap;">{safe}</p>'
         )
 
