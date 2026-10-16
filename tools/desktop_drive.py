@@ -609,6 +609,34 @@ def f_clear(run: Run) -> dict[str, Any]:
     return f_facts(run)
 
 
+def f_follow_up(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from src.desktop.research_workspace import FOLLOW_UP_NO_MODEL
+
+    research = run.win.research
+    turns = len(research.conversation.turns)
+    pid, minute = research._current_pid, f_facts(run)["cursor_minute"]
+    research.follow_up_edit.setFocus()
+    QTest.keyClicks(research.follow_up_edit, "What do the rows show at this minute?")
+    QTest.keyClick(research.follow_up_edit, Qt.Key.Key_Return)
+    run.wait(lambda: research._follow_up_active is None and research.follow_up_answer.isVisible(),
+             "the follow-up answer")
+    answer = research.follow_up_answer.toPlainText()
+    label = research.follow_up_label.text()
+    assert label == f"Minute {minute:g} · {pid}", label
+    if research.selected_model():
+        assert answer and "Asking" not in answer, answer
+    else:
+        assert answer == FOLLOW_UP_NO_MODEL, answer
+    assert len(research.conversation.turns) == turns
+    research.signal_scroll.ensureWidgetVisible(research.follow_up_answer)
+    run.settle()
+    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer,
+            "conversation_turns": len(research.conversation.turns)}
+
+
 def f_drawer_link(run: Run) -> dict[str, Any]:
     research = run.win.research
     research.rule_link.click()
@@ -1126,6 +1154,9 @@ SCENARIOS: dict[str, Scenario] = {
                              Step("episode", f_select))),
     "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
                                  Step("spo2", partial(f_select, rule="spo2_low")), Step("cleared", f_clear))),
+    "f-follow-up": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                              Step("episode", f_select), Step("follow-up", f_follow_up)),
+                             llm_modes=("scripted", "off")),
     "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                                 Step("episode", f_select), Step("drawer", f_drawer_link))),
     "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
@@ -1413,6 +1444,9 @@ def drive(args: argparse.Namespace) -> int:
                              scenario=args.scenario if prototype and args.drafts is None else None)
     if args.scenario == "articles" and llm == "scripted" and args.drafts is None:
         drafts = ("The fictional abstract described pressure observations [A1].",)
+    if args.scenario == "f-follow-up" and llm == "scripted" and args.drafts is None:
+        drafts = ("The source rows list the signal values around the selected minute. "
+                  "The record does not establish a cause.",)
     steps = scenario.steps
     if args.scenario.startswith("proto-") and llm == "off":
         steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))

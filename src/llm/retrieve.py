@@ -160,3 +160,28 @@ def answer_from_retrieval(
         sources=sources,
         answer_kind=kind,
     )
+
+
+def answer_from_minute(
+    *,
+    question: str,
+    model: str,
+    candidate: SearchCandidate,
+    extract: str,
+    client: OllamaClient,
+    preset: str = "default",
+    on_status: ProgressCb | None = None,
+) -> AgentResult:
+    """Answer a question about one minute of one case from that minute's extract alone."""
+    return run_agent(
+        model=model,
+        question=question,
+        session=_research_session([candidate], preset),
+        client=client,
+        mode=MODE_ANALYZE,
+        on_status=on_status,
+        skip_prefetch=True,
+        extra_prefetched=format_grounded_extracts(candidates=[candidate], extracts=[extract]),
+        allow_tools=False,
+        sources=[f"{extract}\n{_case_facts(candidate)}"],
+    )

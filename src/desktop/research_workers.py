@@ -10,7 +10,7 @@ from PySide6.QtCore import QThread, Signal
 
 from src.llm.intent import Intent, classify
 from src.llm.ollama_client import OllamaClient
-from src.llm.retrieve import answer_from_articles, answer_from_retrieval
+from src.llm.retrieve import answer_from_articles, answer_from_minute, answer_from_retrieval
 from src.services.articles import ArticleCatalog
 from src.services.case_fetch import fetch_cases
 from src.services.retrieval import (
@@ -186,3 +186,29 @@ class CaseFetchWorker(QThread):
             self.loaded.emit(fetch_cases([self.pid], emr=self.emr, preset=self.preset))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class MinuteQuestionWorker(QThread):
+    answer = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, candidate: SearchCandidate, extract: str, question: str, model: str,
+                 preset: str = "default", parent=None):
+        super().__init__(parent)
+        self.candidate = candidate
+        self.extract = extract
+        self.question = question
+        self.model = model
+        self.preset = preset
+
+    def run(self) -> None:
+        try:
+            response = answer_from_minute(
+                question=self.question, model=self.model, candidate=self.candidate,
+                extract=self.extract, client=OllamaClient(timeout_s=300.0), preset=self.preset,
+            )
+            if not self.isInterruptionRequested():
+                self.answer.emit(response)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))

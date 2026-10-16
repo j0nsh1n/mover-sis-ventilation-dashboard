@@ -36,8 +36,10 @@ from PySide6.QtWidgets import (
 
 from src.desktop.cases_overview import CasesOverview
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
-from src.desktop.conversation_panel import ConversationPanel, Turn, TurnState
+from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
+from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
+from src.llm.minute_context import build_minute_extract
 from src.pipeline.flags import collapse_episodes
 from src.rules import RuleCatalog
 from src.services.articles import ABSTRACT_LIMIT, ArticleSearchResult, NO_CATALOG
@@ -73,6 +75,7 @@ class QuestionState:
     article_result: ArticleSearchResult | None = None
 
 
+FOLLOW_UP_NO_MODEL = "No AI answer. The minute's source rows are above."
 RULES_DRAWER_MAX_WIDTH = 420
 RULES_DRAWER_SHARE = 0.42
 
@@ -172,6 +175,11 @@ class ResearchWorkspace(QWidget):
         self._overview_candidates: dict[str, SearchCandidate] = {}
         self._case_origins: dict[str, deque[bool]] = {}
         self._detail_from_overview = False
+        # The F follow-up answers one (case, minute); it is never part of the G conversation
+        self._follow_up_key: tuple[str, float] | None = None
+        self._follow_up_request = 0
+        self._follow_up_active: int | None = None
+        self._follow_up_workers: dict[int, MinuteQuestionWorker] = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -250,6 +258,13 @@ class ResearchWorkspace(QWidget):
             QWidget#signalPage QListWidget::item { padding: 8px; }
             QWidget#signalPage QListWidget::item:selected { background: #344d40; color: #ffffff; }
             QWidget#signalPage QListWidget:focus { border: 2px solid #8c739f; }
+            QWidget#signalPage QLineEdit { background: #142124; color: #edf3eb;
+                border: 1px solid #5b775e; border-radius: 5px; padding: 8px; }
+            QWidget#signalPage QLineEdit:disabled { color: #a3b8b2; }
+            QWidget#signalPage QLineEdit:focus { border: 2px solid #8c739f; padding: 7px; }
+            QWidget#signalPage QTextBrowser { background: #142124; color: #edf3eb; border: 0;
+                selection-background-color: #344d40; selection-color: #ffffff; }
+            QWidget#signalPage QPushButton:disabled { color: #a3b8b2; background: #1b2b2d; }
             QScrollArea#signalScroll { background: #111a1c; border: 0; }
             QWidget#signalPage QSlider::groove:horizontal { height: 5px; background: #3a534e; }
             QWidget#signalPage QSlider::handle:horizontal { background: #c4ed93; width: 16px;
@@ -593,6 +608,29 @@ class ResearchWorkspace(QWidget):
         self.minute_slider.setAccessibleName("Selected minute in case")
         self.minute_slider.valueChanged.connect(self._render_minute)
         shell_layout.addWidget(self.minute_slider)
+        ask_row = QHBoxLayout()
+        self.follow_up_edit = QLineEdit()
+        self.follow_up_edit.setPlaceholderText("Ask about this minute")
+        self.follow_up_edit.setAccessibleName("Ask about this minute")
+        self.follow_up_edit.returnPressed.connect(self._ask_about_minute)
+        ask_row.addWidget(self.follow_up_edit, 1)
+        self.follow_up_button = _button("Ask")
+        self.follow_up_button.clicked.connect(self._ask_about_minute)
+        ask_row.addWidget(self.follow_up_button)
+        self.follow_up_cancel = _button("Cancel")
+        self.follow_up_cancel.clicked.connect(lambda: self._reset_follow_up())
+        self.follow_up_cancel.hide()
+        ask_row.addWidget(self.follow_up_cancel)
+        shell_layout.addLayout(ask_row)
+        self.follow_up_label = _wrap()
+        self.follow_up_label.setObjectName("mutedText")
+        self.follow_up_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.follow_up_label.hide()
+        shell_layout.addWidget(self.follow_up_label)
+        self.follow_up_answer = AnswerText()
+        self.follow_up_answer.setAccessibleName("Answer about the selected minute")
+        self.follow_up_answer.hide()
+        shell_layout.addWidget(self.follow_up_answer)
         shell.setMinimumHeight(445)
         layout.addWidget(shell, 1)
         self.episode_list = QListWidget()
@@ -643,6 +681,7 @@ class ResearchWorkspace(QWidget):
         self.signal_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.signal_scroll.setWidget(page)
         self.stack.addWidget(self.signal_scroll)
+        self.stack.currentChanged.connect(lambda _index: self._reset_follow_up(clear_question=True))
 
     def selected_model(self) -> str | None:
         value = self.model_combo.currentText().strip()
@@ -1388,6 +1427,7 @@ class ResearchWorkspace(QWidget):
             self.set_status("Source unavailable: this case has no time series to inspect.")
             return
         self._current_pid = pid
+        self._reset_follow_up(clear_question=True)
         self.rules_drawer.set_thresholds_sha256(view.thresholds_sha256)
         self._minute_rows = focused_minute_rows(view.timeseries).reset_index()
         self.selected_rule_id = None
@@ -1509,6 +1549,8 @@ class ResearchWorkspace(QWidget):
             return
         row = self._minute_rows.iloc[index]
         minute = float(row["t_min"])
+        if self._follow_up_key not in (None, (self._current_pid, minute)):
+            self._reset_follow_up()
         self.minute_slider.setAccessibleDescription(f"{minute:g} minutes relative to incision")
         self.minute_stamp.setText(f"{minute:g} min")
         self.minute_label.setText(f"Selected moment: {minute:g} minutes relative to incision")
@@ -1519,6 +1561,102 @@ class ResearchWorkspace(QWidget):
             self.metric_values[column].setText("missing" if pd.isna(value) else f"{float(value):g}")
         self.sample_label.setText(" · ".join(values))
         self.detail_chart.set_minute(minute)
+
+    def _covering_episode(self, minute: float) -> pd.Series | None:
+        if self._episodes.empty:
+            return None
+        covering = self._episodes[self._episodes["t_start_min"].le(minute) & self._episodes["t_end_min"].ge(minute)]
+        if covering.empty:
+            return None
+        chosen = covering[covering["rule_id"].eq(self.selected_rule_id)]
+        if chosen.empty:
+            ranked = covering.assign(_severity=covering["severity"].map({"critical": 0, "warn": 1, "info": 2}).fillna(3))
+            chosen = ranked.sort_values(["_severity", "t_start_min", "rule_id"])
+        return chosen.iloc[0]
+
+    def _minute_extract(self, pid: str, minute: float) -> str:
+        view = self._case_views[pid]
+        episode = self._covering_episode(minute)
+        label, signals, thresholds = "", [], []
+        if episode is not None:
+            spec = self._rule_spec(str(episode["rule_id"]))
+            if spec is not None and self._rule_catalog is not None:
+                label = spec.label
+                signals = [signal for signal in spec.signals if signal not in
+                           {"t_min", "case_frac", "likely_mech_vent", "Age", "Agent"}]
+                thresholds = [*self._rule_catalog.thresholds_provenance(view.thresholds_sha256),
+                              *threshold_parts(spec), *([spec.composition] if spec.composition else [])]
+            else:
+                thresholds = ["Current thresholds unavailable for this rule."]
+        return build_minute_extract(
+            candidate=view.candidate, rows=focused_minute_rows(view.timeseries), minute=minute,
+            signals=["PIP", "ETCO2", "HR", *self._wanted_extras()],
+            episode=episode.to_dict() if episode is not None else None,
+            episode_label=label, episode_signals=signals, threshold_lines=thresholds,
+        )
+
+    def _ask_about_minute(self) -> None:
+        question = self.follow_up_edit.text().strip()
+        if not question or self._current_pid is None or self._follow_up_active is not None:
+            return
+        minute = float(self._minute_rows.iloc[self.minute_slider.value()]["t_min"])
+        self._reset_follow_up()
+        self._follow_up_key = (self._current_pid, minute)
+        self.follow_up_label.setText(f"Minute {minute:g} · {self._current_pid}")
+        self.follow_up_label.show()
+        model = self.selected_model()
+        if not model:
+            self._show_follow_up(FOLLOW_UP_NO_MODEL)
+            return
+        self._follow_up_request += 1
+        request_id = self._follow_up_active = self._follow_up_request
+        worker = MinuteQuestionWorker(
+            self._case_views[self._current_pid].candidate, self._minute_extract(self._current_pid, minute), question, model,
+            self._rule_catalog.preset if self._rule_catalog is not None else "default", parent=self,
+        )
+        self._follow_up_workers[request_id] = worker
+        worker.answer.connect(lambda response: self._on_follow_up(request_id, str(getattr(response, "answer", "") or "No answer was returned.")))
+        worker.failed.connect(lambda message: self._on_follow_up(request_id, f"The question could not be answered: {message}"))
+        worker.finished.connect(lambda: self._follow_up_workers.pop(request_id, None))
+        self.follow_up_button.setEnabled(False)
+        self.follow_up_cancel.show()
+        self.follow_up_edit.setEnabled(False)
+        self._show_follow_up("Asking the local model…")
+        worker.start()
+
+    def _on_follow_up(self, request_id: int, text: str) -> None:
+        if request_id != self._follow_up_active:
+            return
+        self._follow_up_active = None
+        self._set_follow_up_running(False)
+        self._show_follow_up(text)
+
+    def _show_follow_up(self, text: str) -> None:
+        self.follow_up_answer.clear()
+        self.follow_up_answer.append_markdown(text)
+        self.follow_up_answer.show()
+
+    def _set_follow_up_running(self, running: bool) -> None:
+        self.follow_up_edit.setEnabled(not running)
+        self.follow_up_button.setEnabled(not running)
+        self.follow_up_cancel.setVisible(running)
+
+    def _reset_follow_up(self, *, clear_question: bool = False) -> None:
+        """Drop the answer and any running question; a late answer for it is then ignored."""
+        worker = self._follow_up_workers.get(self._follow_up_active) if self._follow_up_active is not None else None
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        self._follow_up_active = None
+        self._follow_up_key = None
+        self._set_follow_up_running(False)
+        self.follow_up_label.hide()
+        self.follow_up_answer.clear()
+        self.follow_up_answer.hide()
+        if clear_question:
+            self.follow_up_edit.clear()
+
+    def follow_up_workers(self) -> list[MinuteQuestionWorker]:
+        return list(self._follow_up_workers.values())
 
     def _rule_spec(self, rule_id: str):
         if self._rule_catalog is not None:

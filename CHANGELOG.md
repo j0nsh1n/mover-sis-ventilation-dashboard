@@ -7,6 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Signal detail has an "Ask about this minute" field under the slider: the local model answers from that case's rows within 10 minutes of the cursor, the flagged episode covering it and its thresholds, with the same checks as research answers. The answer is labeled with the minute and case, stays out of the conversation panel and later questions, and clears when the minute or case changes or signal detail is left.
 - Research answer checks preserve signed range endpoints and supported calculations, catch disguised numbers and model-written verification markers, and reject rewrites that introduce advice even when no extracts were loaded.
 - Research answers are checked number by number against the source extracts and the question: a number found in neither is sent back for one rewrite, and any still unsupported is replaced with "[number not in sources]" and a note, so a fabricated measurement no longer reads as a record value.
 - Full-EMR scans write `corpus_profile.json` and `corpus_profile.md`: percentiles per signal, rule and phase counts and the phase-source share, merged from small per-shard histograms (precision is one bin width; counts under 11 are shown as `<11`; no PIDs or timestamps). Shards that fail are left out and counted.

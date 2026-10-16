@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
         running = [w for w in (
             self._worker, self._research_worker,
             self._case_worker, self._ollama_worker, *self._research_workers.values(),
+            *self.research.follow_up_workers(),
         ) if w is not None and w.isRunning()]
         if running:
             self._closing = True

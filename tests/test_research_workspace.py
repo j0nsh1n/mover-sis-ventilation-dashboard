@@ -727,6 +727,10 @@ def test_tab_reaches_episode_list_and_rule_link(episode_view, qapp):
     view, _ = episode_view
     view.minute_slider.setFocus()
     QTest.keyClick(view.minute_slider, Qt.Key.Key_Tab)
+    assert view.follow_up_edit.hasFocus()
+    QTest.keyClick(view.follow_up_edit, Qt.Key.Key_Tab)
+    assert view.follow_up_button.hasFocus()
+    QTest.keyClick(view.follow_up_button, Qt.Key.Key_Tab)
     assert view.episode_list.hasFocus()
     QTest.keyClick(view.episode_list, Qt.Key.Key_Home)
     QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
