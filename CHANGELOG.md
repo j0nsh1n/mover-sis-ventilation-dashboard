@@ -7,6 +7,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A saved full-EMR scan records which EMR folder it scored (as a hash, not a path). Pointing the app at a different EMR no longer shows the old scan's cases, scan scope or indexed count; scan again for the new EMR. Scans saved by earlier versions still load.
+
 ## [0.13.0] — 2026-10-16
 
 - Signal detail has an "Ask about this minute" field under the slider: the local model answers from that case's rows within 10 minutes of the cursor, the flagged episode covering it and its thresholds, with the same checks as research answers. The answer is labeled with the minute and case, stays out of the conversation panel and later questions, and clears when the minute or case changes or signal detail is left.

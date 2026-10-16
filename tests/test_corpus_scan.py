@@ -95,6 +95,55 @@ def test_saved_scan_round_trips(emr, tmp_path, allow_external):
     assert load_corpus_scan(tmp_path / "missing") is None
 
 
+def test_saved_scan_for_another_emr_is_not_loaded(emr, tmp_path, allow_external):
+    scan_corpus(emr, tmp_path / "out", cases_per_shard=20)
+    other = generate_synthetic_emr(tmp_path / "other" / "EMR", n_cases=6, seed=11)
+    meta_text = (tmp_path / "out" / CORPUS_META).read_text()
+    assert str(emr) not in meta_text
+    assert load_corpus_scan(tmp_path / "out", emr) is not None
+    assert load_corpus_scan(tmp_path / "out", other) is None
+    # An EMR that cannot be read right now does not count as a different one
+    assert load_corpus_scan(tmp_path / "out", tmp_path / "unmounted") is not None
+    # Scans written before the fingerprint existed still load
+    meta = json.loads(meta_text)
+    del meta["emr_fingerprint"]
+    (tmp_path / "out" / CORPUS_META).write_text(json.dumps(meta))
+    assert load_corpus_scan(tmp_path / "out", other) is not None
+
+
+def test_desktop_reload_of_another_emr_drops_the_old_scan(emr, tmp_path, monkeypatch, allow_external):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    from src.desktop.app import MainWindow
+
+    QApplication.instance() or QApplication([])
+    processed = tmp_path / "processed"
+    scan_corpus(emr, processed, cases_per_shard=20)
+    other = generate_synthetic_emr(tmp_path / "other" / "EMR", n_cases=6, seed=11)
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("MOVER_SKIP_SETUP", "1")
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(processed))
+    monkeypatch.setenv("MOVER_EMR_DIR", str(emr))
+    win = MainWindow()
+    try:
+        win._load_corpus_scan()
+        assert win.corpus_scan is not None
+        monkeypatch.setenv("MOVER_EMR_DIR", str(other))
+        win._autoload_processed()  # no analyzed sample here: the early-return path
+        assert win.corpus_scan is None
+        win.research.show_cases()
+        scopes = win.research._cases_overview.scope_combo
+        labels = [scopes.itemText(i) for i in range(scopes.count())]
+        assert not any(label.startswith("Full-EMR scan") for label in labels)
+        assert not any("indexed" in label for label in labels)
+    finally:
+        win.close()
+
+
 def test_cancel_keeps_previous_scan(emr, tmp_path, allow_external):
     scan_corpus(emr, tmp_path, cases_per_shard=20)
     before = (tmp_path / CORPUS_META).read_text()

@@ -438,6 +438,8 @@ class MainWindow(QMainWindow):
                 "No processed cache — run the pipeline or pick another folder"
             )
             self.research.set_status("No analyzed case cache. Indexed surgery search is available after setup.")
+            self._load_corpus_scan()
+            self._push_cases_overview()
             if not needs_first_run_setup():
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
@@ -712,11 +714,14 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
 
     def _load_corpus_scan(self) -> None:
-        """Pick up a previous full-EMR scan saved next to the processed sample."""
+        """Pick up a previous full-EMR scan saved next to the processed sample.
+
+        A scan recorded for a different EMR folder is set aside, not shown.
+        """
         from src.pipeline.corpus_scan import load_corpus_scan
 
         try:
-            self.corpus_scan = load_corpus_scan(processed_dir())
+            self.corpus_scan = load_corpus_scan(processed_dir(), emr_dir())
         except Exception as exc:
             self.corpus_scan = None
             root = processed_dir()

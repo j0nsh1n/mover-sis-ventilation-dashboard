@@ -42,6 +42,7 @@ under about 12 GB in that pessimistic case; lower ``workers`` or
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import multiprocessing
@@ -562,6 +563,7 @@ def scan_corpus(
         "preset": preset,
         "thresholds_hash": thresholds_preset_hash(thresholds),
         "thresholds_sha256": file_hash,
+        "emr_fingerprint": emr_fingerprint(emr_path),
         "n_indexed_surgeries": n_indexed,
         "n_ventilated_surgeries": n_ventilated,
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),
@@ -595,10 +597,45 @@ def scan_corpus(
     return ScanResult(corpus_cases, corpus_episodes, meta)
 
 
-def load_corpus_scan(processed_dir: Path | str) -> ScanResult | None:
-    """Read a previous scan from *processed_dir*, or None if there is none."""
+def emr_fingerprint(emr_dir: Path | str) -> str:
+    """Identify an EMR folder by its resolved path and its patient_information.csv.
+
+    The path, size and modification time are hashed, so a scan's meta names no
+    folder. A different folder, or the same folder with a replaced EMR, changes it.
+    """
+    root = Path(emr_dir).expanduser().resolve()
+    stat = (root / "patient_information.csv").stat()
+    key = f"{root}\0{stat.st_size}\0{stat.st_mtime_ns}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def scan_matches_emr(meta: dict, emr_dir: Path | str) -> bool:
+    """False only when *meta* records a different EMR than *emr_dir*.
+
+    Scans written before the fingerprint existed, and an EMR folder that cannot
+    be read right now, are not treated as a mismatch.
+    """
+    recorded = meta.get("emr_fingerprint")
+    if not isinstance(recorded, str):
+        return True
+    try:
+        return emr_fingerprint(emr_dir) == recorded
+    except OSError:
+        return True
+
+
+def load_corpus_scan(
+    processed_dir: Path | str, emr_dir: Path | str | None = None
+) -> ScanResult | None:
+    """Read a previous scan from *processed_dir*, or None if there is none.
+
+    With *emr_dir*, a scan recorded for a different EMR is also None.
+    """
     root = Path(processed_dir)
     if not (root / CORPUS_CASES).is_file() or not (root / CORPUS_META).is_file():
+        return None
+    meta = json.loads((root / CORPUS_META).read_text(encoding="utf-8"))
+    if emr_dir is not None and not scan_matches_emr(meta, emr_dir):
         return None
     cases = pd.read_parquet(root / CORPUS_CASES)
     episodes = (
@@ -606,7 +643,6 @@ def load_corpus_scan(processed_dir: Path | str) -> ScanResult | None:
         if (root / CORPUS_EPISODES).is_file()
         else pd.DataFrame()
     )
-    meta = json.loads((root / CORPUS_META).read_text(encoding="utf-8"))
     return ScanResult(cases, episodes, meta)
 
 
