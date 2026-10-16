@@ -17,12 +17,17 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 
+CHART_DPI = 120
+
+
 class ChartView(QWidget):
     """PNG chart panel backed by matplotlib.
 
     Renders figures into a QLabel inside a QScrollArea so tall charts
     (e.g. multi-panel case timelines) can be scrolled with the mouse wheel.
     """
+
+    resized = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,6 +65,15 @@ class ChartView(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(self._scroll)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.resized.emit()
+
+    def figure_size(self, dpi: int = CHART_DPI) -> tuple[float, float]:
+        """Inches that make a figure fill the visible area when rendered at ``dpi``."""
+        viewport = self._scroll.viewport().size()
+        return (max(viewport.width() - 16, 200) / dpi, max(viewport.height() - 8, 120) / dpi)
+
     def clear(self, message: str = "No chart to display.") -> None:
         self._label.setPixmap(QPixmap())
         self._label.setText(message)
@@ -72,7 +86,7 @@ class ChartView(QWidget):
         self._label.setMaximumSize(16777215, 16777215)
         self._label.resize(w, h)
 
-    def set_figure(self, fig: Any | None) -> None:
+    def set_figure(self, fig: Any | None, dpi: int = CHART_DPI) -> None:
         if fig is None:
             self.clear()
             return
@@ -83,7 +97,7 @@ class ChartView(QWidget):
         fig.savefig(
             buf,
             format="png",
-            dpi=120,
+            dpi=dpi,
             bbox_inches="tight",
             facecolor=fig.get_facecolor(),
             edgecolor="none",
@@ -157,13 +171,13 @@ def _new_fig(figsize, style: dict[str, str], **kwargs):
     return fig, ax
 
 
-def top_cases_figure(cases: pd.DataFrame, n: int = 15) -> plt.Figure:
+def top_cases_figure(cases: pd.DataFrame, n: int = 15, *, figsize: tuple[float, float] | None = None) -> plt.Figure:
     style = _style()
     d = cases.nlargest(min(n, len(cases)), "anomaly_score").iloc[::-1]
     labels = d["PID"].astype(str).str.slice(0, 8)
     if "Procedure_short" in d.columns:
         labels = labels + " | " + d["Procedure_short"].fillna("").astype(str).str.slice(0, 24)
-    fig, ax = _new_fig((7.5, max(2.5, 0.28 * len(d))), style)
+    fig, ax = _new_fig(figsize or (7.5, max(2.5, 0.28 * len(d))), style)
     ax.barh(
         range(len(d)),
         d["anomaly_score"].astype(float),
@@ -181,9 +195,11 @@ def top_cases_figure(cases: pd.DataFrame, n: int = 15) -> plt.Figure:
     return fig
 
 
-def flag_rules_figure(flags: pd.DataFrame) -> plt.Figure:
+def flag_rules_figure(
+    flags: pd.DataFrame, *, count_column: str | None = None, figsize: tuple[float, float] | None = None,
+) -> plt.Figure:
     style = _style()
-    fig, ax = _new_fig((7.5, 3.2), style)
+    fig, ax = _new_fig(figsize or (7.5, 3.2), style)
     if flags is None or flags.empty:
         ax.text(
             0.5,
@@ -197,11 +213,8 @@ def flag_rules_figure(flags: pd.DataFrame) -> plt.Figure:
         ax.set_axis_off()
         fig.tight_layout()
         return fig
-    counts = (
-        flags.groupby(["rule_id", "severity"], observed=False)
-        .size()
-        .unstack(fill_value=0)
-    )
+    grouped = flags.groupby(["rule_id", "severity"], observed=False)
+    counts = (grouped[count_column].sum() if count_column else grouped.size()).unstack(fill_value=0)
     for col in ("info", "warn", "critical"):
         if col not in counts.columns:
             counts[col] = 0
@@ -219,11 +232,13 @@ def flag_rules_figure(flags: pd.DataFrame) -> plt.Figure:
         vals = counts[sev].values
         ax.bar(x, vals, bottom=bottom, label=sev, color=colors[sev], width=0.78, edgecolor="none")
         bottom = vals if bottom is None else bottom + vals
+    # Headroom keeps the legend off the tallest bars
+    ax.set_ylim(0, max(float(counts.sum(axis=1).max()), 1.0) * 1.22)
     ax.set_xticks(list(x))
     ax.set_xticklabels(list(counts.index), rotation=45, ha="right", fontsize=8, color=style["text"])
     ax.set_ylabel("Minute-flags")
     ax.set_title("Flag counts by rule", fontsize=11, pad=8)
-    leg = ax.legend(fontsize=8, frameon=True, fancybox=True, framealpha=0.9)
+    leg = ax.legend(fontsize=8, frameon=True, fancybox=True, framealpha=0.9, loc="upper right", ncol=3)
     leg.get_frame().set_facecolor(style["figure_facecolor"])
     leg.get_frame().set_edgecolor(style["spine"])
     for text in leg.get_texts():

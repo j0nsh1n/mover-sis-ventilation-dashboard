@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -86,20 +87,20 @@ def test_scope_text_for_sample_scan_and_empty_states(qapp):
     view = _workspace(_cases())
     view.show_cases()
     overview = view._cases_overview
-    assert overview.scope_label.text() == "Analyzed cases, 3 (loaded sample)"
+    assert overview.scope_label.text() == "Analyzed cases, 3 (loaded sample) · with flags: 2 · max score: 100"
     assert not overview.scope_combo.isVisibleTo(overview)
 
     view.set_cases_data(_cases(), _scan(4), load_rule_catalog("default"))
-    assert overview.scope_label.text() == "Analyzed cases, 3 of 40 indexed surgeries (loaded sample)"
+    assert overview.scope_label.text() == "Analyzed cases, 3 of 40 indexed surgeries (loaded sample) · with flags: 2 · max score: 100"
     assert overview.scope_combo.isVisibleTo(overview)
     assert overview.scope_combo.itemText(1) == "Full-EMR scan, 4 scored, 32 without ventilator data"
 
     overview.scope_combo.setCurrentIndex(1)
-    assert overview.scope_label.text() == "Full-EMR scan, 4 scored, 32 without ventilator data"
+    assert overview.scope_label.text() == "Full-EMR scan, 4 scored, 32 without ventilator data · with flags: 3 · max score: 4"
     assert [overview.cell_text(r, 0)[:4] for r in range(4)] == ["SCAN"] * 4
 
     view.set_cases_data(None, None, load_rule_catalog("default"))
-    assert overview.scope_label.text() == "Analyzed cases, 0 (loaded sample)"
+    assert overview.scope_label.text() == "Analyzed cases, 0 (loaded sample) · with flags: 0 · max score: —"
     assert overview.empty_label.text() == EMPTY_MESSAGE
     assert overview.empty_label.isVisibleTo(overview)
     assert not overview.table.isVisibleTo(overview)
@@ -638,3 +639,126 @@ def test_sort_arrow_is_visible_in_both_app_themes(qapp, theme):
         assert max(_contrast(color, background & 0xFFFFFF) for color in painted) >= 3.0
     finally:
         apply_theme(qapp, "light")
+
+
+def _column(key: str) -> int:
+    return next(i for i, column in enumerate(COLUMNS) if column.key == key)
+
+
+def test_agent_and_median_columns_show_their_own_values(qapp):
+    cases = _cases((9, 100)).assign(primary_agent_name=["sevoflurane", "desflurane"],
+                                    median_TV=[410.5, 505.0], median_PIP=[18.0, 24.5],
+                                    median_ETCO2=[33.0, 41.5])
+    view = _workspace(cases)
+    view.show_cases()
+    overview = view._cases_overview
+    titles = {column.key: column.title for column in COLUMNS}
+    assert [titles[key] for key in ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
+        "Primary agent", "Median TV (mL)", "Median PIP (cmH₂O)", "Median ETCO₂ (mmHg)"]
+    rows = {overview.cell_text(row, 0): row for row in range(2)}
+    first, second = rows["SYN0000000000"], rows["SYN0000000001"]
+    assert [overview.cell_text(first, _column(key)) for key in
+            ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
+        "sevoflurane", "410.5", "18", "33"]
+    assert [overview.cell_text(second, _column(key)) for key in
+            ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
+        "desflurane", "505", "24.5", "41.5"]
+
+
+@pytest.mark.parametrize(("warn", "critical", "flagged"), [
+    ([0, 0, 0], [0, 0, 0], 0),
+    ([1, 0, 0], [0, 0, 0], 1),
+    ([0, 0, 0], [0, 1, 0], 1),
+    ([1, 0, 1], [0, 1, 0], 3),
+    ([1, 1, 0], [1, 0, 0], 2),
+])
+def test_with_flags_counts_cases_with_one_or_more_flagged_minutes(qapp, warn, critical, flagged):
+    cases = _cases((9, 100, 25)).assign(n_warn=warn, n_critical=critical)
+    view = _workspace(cases)
+    view.show_cases()
+    assert f"with flags: {flagged} ·" in view._cases_overview.scope_label.text()
+
+
+def test_rule_chart_only_counts_flags_of_the_cases_in_scope(qapp, monkeypatch):
+    import src.desktop.cases_overview as module
+
+    rules = Mock(wraps=module.flag_rules_figure)
+    monkeypatch.setattr(module, "flag_rules_figure", rules)
+    cases = _cases((9, 100))
+    scan = _scan(2)
+    flags = pd.DataFrame({"PID": [cases.PID[0], cases.PID[1], "OTHER", scan.cases.PID[0]],
+                          "rule_id": ["pip_high"] * 4, "severity": ["warn"] * 4})
+    episodes = flags.assign(PID=[scan.cases.PID[0], "OTHER", scan.cases.PID[1], cases.PID[0]], duration_min=3)
+    view = _workspace(cases, ScanResult(scan.cases, episodes, scan.meta))
+    view.set_cases_data(cases, ScanResult(scan.cases, episodes, scan.meta), load_rule_catalog("default"), flags)
+    view.show_cases()
+    overview = view._cases_overview
+    overview.charts_button.click()
+    assert sorted(rules.call_args.args[0]["PID"]) == sorted([cases.PID[0], cases.PID[1]])
+    overview.charts_button.click()
+    overview.scope_combo.setCurrentIndex(1)
+    overview.charts_button.click()
+    assert sorted(rules.call_args.args[0]["PID"]) == sorted([scan.cases.PID[0], scan.cases.PID[1]])
+
+
+@pytest.mark.parametrize("width", [900, 1400, 1920])
+def test_charts_fit_their_areas_without_cropping(qapp, width):
+    rule_ids = [spec.id for spec in load_rule_catalog().specs][:20]
+    cases = _cases(tuple(range(1, 19)))
+    flags = pd.DataFrame({"PID": [cases.PID[i % 18] for i in range(len(rule_ids))], "rule_id": rule_ids,
+                          "severity": ["warn"] * len(rule_ids)})
+    view = ResearchWorkspace()
+    view.resize(width, 900)
+    view.show()
+    view.set_cases_data(cases, None, load_rule_catalog("default"), flags)
+    view.show_cases()
+    overview = view._cases_overview
+    overview.charts_button.click()
+    QTest.qWait(250)
+    for chart in (overview.top_chart, overview.rules_chart):
+        viewport = chart._scroll.viewport()
+        assert chart._scroll.verticalScrollBar().maximum() == 0
+        assert chart._scroll.horizontalScrollBar().maximum() == 0
+        assert 0 < chart._label.height() <= viewport.height()
+        assert 0 < chart._label.width() <= viewport.width()
+        assert chart._label.height() >= viewport.height() * 0.8
+    view.close()
+
+
+def test_charts_render_again_for_a_new_area(qapp, monkeypatch):
+    import src.desktop.cases_overview as module
+
+    top = Mock(wraps=module.top_cases_figure)
+    monkeypatch.setattr(module, "top_cases_figure", top)
+    view = ResearchWorkspace()
+    view.resize(900, 900)
+    view.show()
+    view.set_cases_data(_cases(), None, load_rule_catalog("default"))
+    view.show_cases()
+    overview = view._cases_overview
+    overview.charts_button.click()
+    QTest.qWait(250)
+    before = top.call_count
+    first = top.call_args.kwargs["figsize"]
+    view.resize(1500, 900)
+    QTest.qWait(300)
+    assert top.call_count > before
+    assert top.call_args.kwargs["figsize"][0] > first[0] * 1.3
+    view.close()
+
+
+def test_chart_areas_are_named_and_tab_order_follows_the_page(qapp):
+    view = _workspace(_cases())
+    view.show_cases()
+    overview = view._cases_overview
+    overview.charts_button.click()
+    assert overview.top_chart.accessibleName() == "Top cases by anomaly score chart"
+    assert overview.rules_chart.accessibleName() == "Flag counts by rule chart"
+    window = view.window()
+    overview.back_button.setFocus()
+    order = [window.focusWidget()]
+    for _ in range(4):
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
+        order.append(window.focusWidget())
+    assert order == [overview.back_button, overview.charts_button, overview.top_chart._scroll,
+                     overview.rules_chart._scroll, overview.table]

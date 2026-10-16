@@ -137,7 +137,7 @@ def test_scan_cancel_has_status_and_no_dialog(window, monkeypatch):
 @pytest.mark.parametrize("failed", [[], [{"n_pids": 2, "error": "synthetic reason " * 40}, {"n_pids": 3, "error": "second"}]])
 def test_scan_status_counts_surgeries_and_exposes_bounded_reason(window, monkeypatch, failed):
     win, _, _ = window
-    monkeypatch.setattr(win, "_refresh_tables_and_selectors", lambda: None)
+    monkeypatch.setattr(win, "_push_cases_overview", lambda: None)
     win._on_corpus_scan_ok(SimpleNamespace(meta={"n_scanned_cases": 12, "n_ventilated_surgeries": 20, "failed_shards": failed}))
     message = win.statusBar().currentMessage()
     assert "12 of 20 surgeries scored" in message

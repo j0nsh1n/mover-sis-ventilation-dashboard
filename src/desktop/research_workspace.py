@@ -132,6 +132,8 @@ class ResearchWorkspace(QWidget):
     setup_requested = Signal()
     model_start_requested = Signal()
     model_refresh_requested = Signal()
+    model_stop_requested = Signal()
+    model_unload_requested = Signal()
     model_changed = Signal(str)
 
     def __init__(self, parent=None):
@@ -161,6 +163,10 @@ class ResearchWorkspace(QWidget):
         self.selected_rule_id: str | None = None
         self.signal_statistics: dict[str, dict[str, float | int | None]] = {}
         self.chart_track_names = ["PIP", "ETCO2", "HR"]
+        # The user's More signals choices outlive episode selection, clearing and other cases
+        self._user_extras: list[str] = []
+        self._rule_extras: list[str] = []
+        self._rule_lines: list[tuple[str | None, str]] = []
         self._cases_data: tuple | None = None
         self._cases_overview: CasesOverview | None = None
         self._overview_candidates: dict[str, SearchCandidate] = {}
@@ -366,6 +372,20 @@ class ResearchWorkspace(QWidget):
         self.setup_button.clicked.connect(self.setup_requested)
         model_actions.addWidget(self.setup_button)
         question_layout.addLayout(model_actions)
+        model_memory = QHBoxLayout()
+        self.stop_button = _button("Stop AI")
+        self.stop_button.setToolTip("Stop Ollama and release its model memory.")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.model_stop_requested)
+        model_memory.addWidget(self.stop_button)
+        self.unload_button = _button("Unload model")
+        self.unload_button.setToolTip("Unload the selected model and keep Ollama running.")
+        self.unload_button.setEnabled(False)
+        self.unload_button.clicked.connect(self.model_unload_requested)
+        model_memory.addWidget(self.unload_button)
+        question_layout.addLayout(model_memory)
+        self.model_status = _wrap("Local AI has not been checked. Search remains available.")
+        question_layout.addWidget(self.model_status)
         self.status_label = _wrap("Set up an EMR folder to search indexed surgeries.")
         self.status_label.setAccessibleName("Research search status")
         question_layout.addWidget(self.status_label)
@@ -555,6 +575,13 @@ class ResearchWorkspace(QWidget):
             metric_row.addLayout(metric, 1)
             self.metric_values[key] = value
         shell_layout.addLayout(metric_row)
+        self.more_signals_button = _button("More signals")
+        self.more_signals_button.clicked.connect(self._choose_signals)
+        shell_layout.addWidget(self.more_signals_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.extras_note = _wrap()
+        self.extras_note.setObjectName("mutedText")
+        self.extras_note.setVisible(False)
+        shell_layout.addWidget(self.extras_note)
         self.detail_chart = FocusedSignalChart()
         self.detail_chart.minute_clicked.connect(self._select_flag_minute)
         self.detail_chart.setMinimumHeight(220)
@@ -597,9 +624,15 @@ class ResearchWorkspace(QWidget):
         self.sample_label = _wrap()
         copy.addWidget(self.sample_label)
         assistant.addLayout(copy, 1)
+        # Stacked so the row stays narrower than the page beside the open rules drawer
+        actions = QVBoxLayout()
         source = _button("Inspect selected source row")
         source.clicked.connect(self._show_current_source)
-        assistant.addWidget(source)
+        actions.addWidget(source)
+        self.context_button = _button("Show grounded context")
+        self.context_button.clicked.connect(self._show_grounded_context)
+        actions.addWidget(self.context_button)
+        assistant.addLayout(actions)
         layout.addLayout(assistant)
         foot = _wrap("Historical de-identified research data · not for clinical care")
         foot.setObjectName("mutedText")
@@ -1357,13 +1390,14 @@ class ResearchWorkspace(QWidget):
         self.rules_drawer.set_thresholds_sha256(view.thresholds_sha256)
         self._minute_rows = focused_minute_rows(view.timeseries).reset_index()
         self.selected_rule_id = None
-        self.chart_track_names = ["PIP", "ETCO2", "HR"]
         self.signal_statistics = {}
         self.rule_detail.setText("Select an episode to inspect its rule and measurements.")
         self.rule_link.setEnabled(False)
         self._episodes = view.episodes.sort_values(["t_start_min", "rule_id"]).reset_index(drop=True) if not view.episodes.empty else pd.DataFrame()
         self._build_episode_list()
         self.detail_chart.set_case(view.timeseries, view.flags)
+        self._rule_extras = []
+        self._apply_extra_tracks()
         self._detail_from_overview = from_overview
         origin = "the Cases overview" if self._detail_from_overview else "the evidence workspace"
         self.back_button.setText(
@@ -1379,6 +1413,95 @@ class ResearchWorkspace(QWidget):
         self.stack.setCurrentIndex(1)
         self.back_button.setFocus()
         self._render_minute(self.minute_slider.value())
+
+    def _choose_signals(self) -> None:
+        if self._current_pid is None:
+            return
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("More signals")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(_wrap("Choose up to three extra tracks. Missing samples remain missing."))
+        ts = self._case_views[self._current_pid].timeseries
+        legacy = ["TV", "PEEP", "Agent_Et", "Agent_Fi", "MAC_Et", "SPO2", "nMAP"]
+        available = list(dict.fromkeys([*legacy, *(str(c) for c in ts.select_dtypes(include="number").columns)]))
+        available = [signal for signal in available if signal not in
+                     {"PIP", "ETCO2", "HR", "t_min", "Age", "case_frac", "case_duration_min", "likely_mech_vent"}]
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        choices = QWidget()
+        choice_layout = QVBoxLayout(choices)
+        boxes = []
+        for signal in available:
+            box = QCheckBox(signal)
+            box.setChecked(signal in self._user_extras)
+            if signal not in ts or not ts[signal].notna().any():
+                box.setToolTip("No recorded samples for this signal in this case.")
+            choice_layout.addWidget(box)
+            boxes.append(box)
+        scroll.setWidget(choices)
+        layout.addWidget(scroll)
+
+        def limit_choices() -> None:
+            full = sum(box.isChecked() for box in boxes) >= 3
+            for box in boxes:
+                box.setEnabled(box.isChecked() or not full)
+
+        for box in boxes:
+            box.toggled.connect(limit_choices)
+        limit_choices()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(350, 480)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._user_extras = [box.text() for box in boxes if box.isChecked()][:3]
+            self._apply_extra_tracks()
+            if self.selected_rule_id is not None:
+                self._render_rule_detail()
+
+    def _wanted_extras(self) -> list[str]:
+        """The user's choices first, then the selected rule's other signals, three at most."""
+        wanted = dict.fromkeys([*self._user_extras, *self._rule_extras])
+        return [signal for signal in wanted if signal not in {"PIP", "ETCO2", "HR"}][:3]
+
+    def _apply_extra_tracks(self) -> None:
+        ts = self._case_views[self._current_pid].timeseries if self._current_pid in self._case_views else pd.DataFrame()
+        # A rule's signal with no samples keeps its track, since the rule detail reports the gap;
+        # a signal the user asked for would only show an empty track, so it gets a note instead.
+        silent = [signal for signal in self._wanted_extras()
+                  if signal in self._user_extras and (signal not in ts or not ts[signal].notna().any())]
+        charted = [signal for signal in self._wanted_extras() if signal not in silent]
+        self.chart_track_names = ["PIP", "ETCO2", "HR", *charted]
+        self.detail_chart.set_tracks(charted)
+        self.extras_note.setText("\n".join(f"No {signal} samples in this case" for signal in silent))
+        self.extras_note.setVisible(bool(silent))
+        self.more_signals_button.setText(
+            "More signals" + (f" ({len(self._user_extras)}/3)" if self._user_extras else ""))
+
+    def _render_rule_detail(self) -> None:
+        wanted = self._wanted_extras()
+        self.rule_detail.setText("\n".join(
+            text + ("; not charted" if signal in self._rule_extras and signal not in wanted else "")
+            for signal, text in self._rule_lines
+        ))
+
+    def _show_grounded_context(self) -> None:
+        if self._current_pid is None:
+            return
+        from src.llm.case_context import build_case_context
+
+        view = self._case_views[self._current_pid]
+        context = build_case_context(self._current_pid, cases=view.cases, timeseries=view.timeseries,
+                                     flags=view.flags, episodes=view.episodes, events=view.events,
+                                     include_emr_extras=True)
+        box = QMessageBox(self)
+        box.setWindowTitle("Grounded case context")
+        box.setText("Structured source briefing for this case.")
+        box.setDetailedText(context[:20000])
+        box.exec()
 
     def _render_minute(self, index: int) -> None:
         if self._current_pid is None:
@@ -1438,23 +1561,21 @@ class ResearchWorkspace(QWidget):
         spec = self._rule_spec(self.selected_rule_id)
         signals = [signal for signal in spec.signals if signal not in
                    {"t_min", "case_frac", "likely_mech_vent", "Age", "Agent"}] if spec else []
-        extras = [signal for signal in signals if signal not in {"PIP", "ETCO2", "HR"}]
-        self.chart_track_names = ["PIP", "ETCO2", "HR", *extras[:3]]
         ts = self._case_views[self._current_pid].timeseries
         rows = focused_minute_rows(ts)
         window = rows.loc[(rows.index >= episode["t_start_min"] - 1e-9)
                           & (rows.index <= episode["t_end_min"] + 1e-9)]
         self.signal_statistics = {}
-        lines = [f"{spec.label if spec else self.selected_rule_id} ({self.selected_rule_id})"]
+        lines: list[tuple[str | None, str]] = [(None, f"{spec.label if spec else self.selected_rule_id} ({self.selected_rule_id})")]
         if spec and self._rule_catalog:
-            lines.extend(self._rule_catalog.thresholds_provenance(
+            lines.extend((None, line) for line in self._rule_catalog.thresholds_provenance(
                 self._case_views[self._current_pid].thresholds_sha256
             ))
-            lines.extend(threshold_parts(spec))
+            lines.extend((None, part) for part in threshold_parts(spec))
             if spec.composition:
-                lines.append(spec.composition)
+                lines.append((None, spec.composition))
         else:
-            lines.append("Current thresholds unavailable for this rule.")
+            lines.append((None, "Current thresholds unavailable for this rule."))
         for signal in signals:
             values = pd.to_numeric(window[signal], errors="coerce") if signal in window else pd.Series(dtype=float)
             stats = {
@@ -1466,12 +1587,13 @@ class ResearchWorkspace(QWidget):
             self.signal_statistics[signal] = stats
             summary = ", ".join(f"{key} {value:.6g}" if value is not None else f"{key} missing"
                                 for key, value in stats.items() if key != "missing")
-            lines.append(f"{signal}: {summary}; {stats['missing']} missing minutes"
-                         + ("; not charted" if signal in extras[3:] else ""))
-        lines.append(f"Phase: {self._episode_phase(episode)}")
-        self.rule_detail.setText("\n".join(lines))
+            lines.append((signal, f"{signal}: {summary}; {stats['missing']} missing minutes"))
+        lines.append((None, f"Phase: {self._episode_phase(episode)}"))
+        self._rule_lines = lines
+        self._rule_extras = [signal for signal in signals if signal not in {"PIP", "ETCO2", "HR"}]
+        self._apply_extra_tracks()
+        self._render_rule_detail()
         self.rule_link.setEnabled(True)
-        self.detail_chart.set_tracks(extras[:3])
         index = int((self._minute_rows["t_min"] - episode["t_start_min"]).abs().argmin())
         self.minute_slider.setValue(index)
         self._render_minute(index)
@@ -1487,10 +1609,10 @@ class ResearchWorkspace(QWidget):
         self.episode_list.blockSignals(False)
         self.selected_rule_id = None
         self.signal_statistics = {}
-        self.chart_track_names = ["PIP", "ETCO2", "HR"]
         self.rule_detail.setText("Select an episode to inspect its rule and measurements.")
         self.rule_link.setEnabled(False)
-        self.detail_chart.set_tracks([])
+        self._rule_extras = []
+        self._apply_extra_tracks()
 
     def _select_flag_minute(self, minute: float) -> None:
         matches = self._episodes[self._episodes["t_start_min"].le(minute) & self._episodes["t_end_min"].ge(minute)] if not self._episodes.empty else self._episodes
@@ -1519,11 +1641,15 @@ class ResearchWorkspace(QWidget):
         self.stack.setCurrentIndex(0)
         self.set_status("Returned to the same question and comparison.")
 
-    def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog) -> None:
+    def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog, flags: pd.DataFrame | None = None) -> None:
         """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
-        self._cases_data = (cases, scan, catalog)
+        self._cases_data = (cases, scan, catalog, flags)
         if self._cases_overview is not None:
-            self._cases_overview.set_data(cases, scan, catalog)
+            self._cases_overview.set_data(cases, scan, catalog, flags)
+
+    def refresh_charts(self) -> None:
+        if self._cases_overview is not None:
+            self._cases_overview.refresh_charts()
 
     def show_cases(self) -> None:
         if self._cases_overview is None:
@@ -1590,12 +1716,15 @@ class ResearchWorkspace(QWidget):
         dialog.resize(620, 480)
         layout = QVBoxLayout(dialog)
         layout.addWidget(_wrap(f"Rows {start + 1}–{stop} of {len(ts)} · minutes relative to incision · dash means missing"))
-        table = QTableWidget(stop - start, 4)
-        table.setHorizontalHeaderLabels(["Minute", "PIP cmH₂O", "ETCO₂ mmHg", "Heart rate bpm"])
+        signals = self.chart_track_names if index is not None else ["PIP", "ETCO2", "HR"]
+        columns = ["t_min", *signals]
+        headings = {"t_min": "Minute", "PIP": "PIP cmH₂O", "ETCO2": "ETCO₂ mmHg", "HR": "Heart rate bpm"}
+        table = QTableWidget(stop - start, len(columns))
+        table.setHorizontalHeaderLabels([headings.get(signal, signal) for signal in columns])
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         for table_row, frame_row in enumerate(range(start, stop)):
             source = ts.iloc[frame_row]
-            for column, key in enumerate(("t_min", "PIP", "ETCO2", "HR")):
+            for column, key in enumerate(columns):
                 value = source.get(key)
                 text = "—" if pd.isna(value) else f"{float(value):g}"
                 table.setItem(table_row, column, QTableWidgetItem(text))

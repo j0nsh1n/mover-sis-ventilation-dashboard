@@ -175,10 +175,11 @@ def test_mainwindow_loads_processed_data(qapp, pipeline_result, monkeypatch, tmp
         time.sleep(0.05)
     elapsed = time.perf_counter() - t0
     assert win.cases is not None and len(win.cases) > 0, "data never loaded"
-    assert win.combo_pid.count() > 0
+    win.research.show_cases()
+    assert win.research._cases_overview._proxy.rowCount() == len(win.cases)
     assert elapsed < 5.0, f"UI data ready took {elapsed:.2f}s (budget 5s)"
     # Charts refresh should not throw
-    win._refresh_charts_if_needed()
+    win.research.refresh_charts()
     qapp.processEvents()
     win.close()
 
@@ -236,12 +237,12 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
     started = time.perf_counter()
     timer.start(10)
     try:
-        win.btn_ollama_start.click()
+        win.research.start_button.click()
         first_worker = win._ollama_worker
         win._ollama_start()
         assert win._ollama_worker is first_worker
-        assert win.btn_ollama_start.text() == "Starting…"
-        assert not win.btn_ollama_start.isEnabled()
+        assert win.research.start_button.text() == "Starting…"
+        assert not win.research.start_button.isEnabled()
         while not ticks and time.perf_counter() - started < 0.1:
             qapp.processEvents()
             time.sleep(0.001)
@@ -249,7 +250,7 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
         assert first_worker.wait(3000)
         qapp.processEvents()
         assert len(calls) == 1
-        assert win.btn_ollama_start.isEnabled()
+        assert win.research.start_button.isEnabled()
         assert "ready" in win.research.status_label.text().lower()
     finally:
         win.close()
@@ -269,7 +270,7 @@ def test_ollama_failure_names_reason(qapp, monkeypatch):
         assert win._ollama_worker.wait(1000)
         qapp.processEvents()
         assert "port busy" in win.research.status_label.text()
-        assert win.btn_ollama_start.isEnabled()
+        assert win.research.start_button.isEnabled()
     finally:
         win.close()
 
@@ -297,7 +298,7 @@ def test_scan_partial_failures_report_case_counts(qapp, monkeypatch):
     from src.desktop.app import MainWindow
 
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_refresh_tables_and_selectors", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_push_cases_overview", lambda self: None)
     win = MainWindow()
     try:
         win._on_corpus_scan_ok(SimpleNamespace(meta={

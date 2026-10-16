@@ -4,7 +4,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtTest import QTest
@@ -27,7 +26,7 @@ def window(monkeypatch, tmp_path):
     win.show()
     app.processEvents()
     yield win, app, dialogs
-    for worker in (win._ollama_worker, getattr(win, "_llm_worker", None)):
+    for worker in (win._ollama_worker,):
         if worker is not None:
             worker.requestInterruption()
             assert worker.wait(5000)
@@ -46,25 +45,6 @@ def pump(app, predicate, timeout=5):
 
 def ready():
     return OllamaStatus(True, "ready", ["synthetic:model"], "http://127.0.0.1:11434")
-
-
-def test_ask_waits_for_auto_start(window, monkeypatch):
-    win, app, dialogs = window
-    gate = threading.Event()
-    monkeypatch.setattr("src.llm.service.ensure_ollama", lambda **kw: (gate.wait(1), ready())[1])
-    monkeypatch.setattr("src.llm.agent.run_agent", lambda **kw: SimpleNamespace(answer="synthetic answer"))
-    win.cases = pd.DataFrame({"PID": ["SYN1"], "n_warn": [0], "n_critical": [0]})
-    win.combo_llm_model.addItem("(stopped)")
-    win.edit_chat.setText("synthetic question")
-    win._send_chat()
-    try:
-        assert not dialogs
-        assert not win.btn_send_chat.isEnabled()
-    finally:
-        gate.set()
-    pump(app, lambda: "synthetic answer" in win.chat_history.toPlainText())
-    assert "synthetic question" in win.chat_history.toPlainText()
-    assert not dialogs
 
 
 def test_close_during_start_is_prompt_and_responsive(window, monkeypatch):
@@ -112,12 +92,12 @@ def test_stop_runs_off_thread_and_start_remains_disabled(window, monkeypatch):
     elapsed = time.monotonic() - before
     try:
         assert elapsed < 0.1
-        assert not win.btn_ollama_start.isEnabled()
+        assert not win.research.start_button.isEnabled()
     finally:
         gate.set()
     pump(app, lambda: not win._ollama_worker.isRunning())
     assert threads and threads[0] != threading.get_ident()
-    assert win.btn_ollama_start.isEnabled()
+    assert win.research.start_button.isEnabled()
 
 
 @pytest.mark.parametrize("action", ["probe", "start"])
@@ -139,14 +119,11 @@ def test_probe_clears_checking_status_and_restores_original_labels(window, monke
     win, app, _ = window
     monkeypatch.setattr("src.llm.service.probe_ollama", lambda **kw: ready())
     button = win.research.start_button
-    assert button is win._research_start_button
     button.setText("Launch local AI")
-    win.btn_ollama_start.setText("Launch")
     win._refresh_ollama_models()
     pump(app, lambda: not win._ollama_worker.isRunning())
     assert "Checking" not in win.statusBar().currentMessage()
     assert button.text() == "Launch local AI"
-    assert win.btn_ollama_start.text() == "Launch"
 
 
 def test_result_uses_emitted_action_after_worker_replacement(window):
@@ -196,11 +173,11 @@ def test_start_stays_disabled_until_probe_thread_finishes(window, monkeypatch):
     try:
         pump(app, lambda: win.research.status_label.text() == "Local model ready.")
         assert win._ollama_worker.isRunning()
-        assert not win.btn_ollama_start.isEnabled()
+        assert not win.research.start_button.isEnabled()
     finally:
         gate.set()
     pump(app, lambda: not win._ollama_worker.isRunning())
-    assert win.btn_ollama_start.isEnabled()
+    assert win.research.start_button.isEnabled()
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

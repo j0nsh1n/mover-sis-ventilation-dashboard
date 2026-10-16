@@ -12,8 +12,10 @@ from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     QPersistentModelIndex,
+    QSize,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QKeyEvent
@@ -33,11 +35,15 @@ if TYPE_CHECKING:
     from src.pipeline.corpus_scan import ScanResult
     from src.rules import RuleCatalog
 
+from src.desktop.charts import ChartView, flag_rules_figure, top_cases_figure
+
 SCOPE_SAMPLE = "sample"
 SCOPE_SCAN = "scan"
 
 EMPTY_MESSAGE = "No processed cases yet. Run Data setup or a full-EMR scan."
 
+# Lower than the default so a chart's text stays small enough for fifteen rows in its area
+CHART_FIT_DPI = 100
 SORT_ROLE = Qt.ItemDataRole.UserRole
 _NO_PARENT = QModelIndex()
 
@@ -51,7 +57,6 @@ class Column:
     first_sort_descending: bool = False
 
 
-# Same source columns and meanings as the Summary tab.
 COLUMNS = (
     Column("PID", "PID", "text"),
     Column("Procedure_short", "Procedure", "text"),
@@ -65,6 +70,10 @@ COLUMNS = (
     Column("n_critical", "Critical count", "number", "Minutes with a critical flag.",
            first_sort_descending=True),
     Column("top_rules", "Top rules", "text", "Most frequent rules with their flagged-minute counts."),
+    Column("primary_agent_name", "Primary agent", "text"),
+    Column("median_TV", "Median TV (mL)", "number"),
+    Column("median_PIP", "Median PIP (cmH₂O)", "number"),
+    Column("median_ETCO2", "Median ETCO₂ (mmHg)", "number"),
 )
 SCORE_COLUMN = next(i for i, c in enumerate(COLUMNS) if c.key == "anomaly_score")
 
@@ -261,6 +270,8 @@ class CasesOverview(QWidget):
         self._scan: ScanResult | None = None
         self._scope = SCOPE_SAMPLE
         self._preset: str | None = None
+        self._flags: pd.DataFrame | None = None
+        self._charts_dirty = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(34, 20, 34, 16)
@@ -284,6 +295,37 @@ class CasesOverview(QWidget):
         self.scope_label.setObjectName("casesScope")
         self.scope_label.setWordWrap(True)
         layout.addWidget(self.scope_label)
+
+        self.charts_button = QPushButton("Charts ▸")
+        self.charts_button.setCheckable(True)
+        self.charts_button.setAccessibleName("Charts")
+        self.charts_button.clicked.connect(self._toggle_charts)
+        layout.addWidget(self.charts_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.charts_panel = QWidget()
+        charts = QHBoxLayout(self.charts_panel)
+        charts.setContentsMargins(0, 0, 0, 0)
+        self.top_chart = ChartView()
+        self.rules_chart = ChartView()
+        # Tall enough for fifteen bars, or twenty rotated rule names, at their normal text size
+        self.top_chart.setMinimumHeight(320)
+        self.rules_chart.setMinimumHeight(320)
+        self.top_chart.setAccessibleName("Top cases by anomaly score chart")
+        self.rules_chart.setAccessibleName("Flag counts by rule chart")
+        self._chart_sizes: tuple[QSize, QSize] | None = None
+        self._chart_resize_timer = QTimer(self)
+        self._chart_resize_timer.setSingleShot(True)
+        self._chart_resize_timer.setInterval(120)
+        self._chart_resize_timer.timeout.connect(self._refit_charts)
+        self.top_chart.resized.connect(self._chart_resize_timer.start)
+        self.rules_chart.resized.connect(self._chart_resize_timer.start)
+        charts.addWidget(self.top_chart, 1)
+        charts.addWidget(self.rules_chart, 1)
+        self.charts_panel.hide()
+        layout.addWidget(self.charts_panel)
+        self.charts_note = QLabel()
+        self.charts_note.setWordWrap(True)
+        self.charts_note.hide()
+        layout.addWidget(self.charts_note)
 
         self._model = _CasesModel(self)
         self._proxy = _CasesProxy(self)
@@ -328,7 +370,10 @@ class CasesOverview(QWidget):
         layout.addWidget(self.hint_label)
 
         self.setTabOrder(self.back_button, self.scope_combo)
-        self.setTabOrder(self.scope_combo, self.table)
+        self.setTabOrder(self.scope_combo, self.charts_button)
+        self.setTabOrder(self.charts_button, self.top_chart._scroll)
+        self.setTabOrder(self.top_chart._scroll, self.rules_chart._scroll)
+        self.setTabOrder(self.rules_chart._scroll, self.table)
         self.table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.DescendingOrder)
         self._fill()
 
@@ -345,10 +390,12 @@ class CasesOverview(QWidget):
         cases: pd.DataFrame | None,
         scan: ScanResult | None,
         catalog: RuleCatalog | None,
+        flags: pd.DataFrame | None = None,
     ) -> None:
         """Replace everything shown; rows from before this call are never kept."""
         self._cases = cases
         self._scan = scan
+        self._flags = flags
         self._preset = catalog.preset if catalog is not None else None
         self._model.set_labels(
             {spec.id: spec.label for spec in catalog.specs} if catalog is not None else {}
@@ -423,14 +470,23 @@ class CasesOverview(QWidget):
             scanned = self._scan_meta().get("preset")
             if scanned and self._preset and scanned != self._preset:
                 label += f" (scanned with preset {scanned}; rule names use {self._preset})"
-            self.scope_label.setText(label)
             self.empty_label.setText(
                 "The full-EMR scan scored no cases. Run File, Scan full EMR again after "
                 "checking the EMR folder in Data setup."
             )
         else:
-            self.scope_label.setText(self._sample_label())
+            label = self._sample_label()
             self.empty_label.setText(EMPTY_MESSAGE)
+        flagged = 0
+        maximum = "—"
+        if frame is not None and not frame.empty:
+            warn = pd.to_numeric(frame.get("n_warn", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
+            critical = pd.to_numeric(frame.get("n_critical", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
+            flagged = int(((warn + critical) > 0).sum())
+            if "anomaly_score" in frame and frame["anomaly_score"].notna().any():
+                maximum = _number_text(float(frame["anomaly_score"].max()))
+        self.scope_label.setText(f"{label} · with flags: {flagged:,} · max score: {maximum}")
+        self.refresh_charts()
         self.table.setVisible(not empty)
         self.empty_label.setVisible(empty)
         self.hint_label.setVisible(not empty)
@@ -438,9 +494,61 @@ class CasesOverview(QWidget):
             self._size_columns()
 
     def _size_columns(self) -> None:
-        widths = (130, 200, 56, 56, 112, 120, 96, 108, 460)
+        widths = (130, 200, 56, 56, 112, 120, 96, 108, 460, 150, 140, 170, 170)
         for column, width in enumerate(widths):
             self.table.setColumnWidth(column, width)
+
+    def _toggle_charts(self, expanded: bool) -> None:
+        self.charts_button.setText("Charts ▾" if expanded else "Charts ▸")
+        self.charts_panel.setVisible(expanded)
+        self.charts_note.setVisible(expanded)
+        if expanded:
+            # The charts are sized to their area, which only exists once the layout has run
+            if (page := self.layout()) is not None:
+                page.activate()
+            self._render_charts()
+
+    def _refit_charts(self) -> None:
+        sizes = (self.top_chart.size(), self.rules_chart.size())
+        if self.charts_panel.isVisible() and sizes != self._chart_sizes:
+            self._charts_dirty = True
+            self._render_charts()
+
+    def refresh_charts(self) -> None:
+        self._charts_dirty = True
+        if self.charts_button.isChecked() and self.isVisible():
+            self._render_charts()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self.charts_button.isChecked():
+            self._render_charts()
+
+    def _render_charts(self) -> None:
+        if not self._charts_dirty:
+            return
+        scan = self._scope == SCOPE_SCAN and self._scan is not None
+        cases = self._scan.cases if scan and self._scan is not None else self._cases
+        flags = self._scan.episodes if scan and self._scan is not None else self._flags
+        cases = cases if cases is not None else pd.DataFrame()
+        flags = flags if flags is not None else pd.DataFrame()
+        if not flags.empty and "PID" in flags and "PID" in cases:
+            flags = flags[flags["PID"].isin(cases["PID"])]
+        if cases.empty or "anomaly_score" not in cases:
+            self.top_chart.clear("No scored cases loaded.")
+        else:
+            self.top_chart.set_figure(
+                top_cases_figure(cases, n=min(15, len(cases)), figsize=self.top_chart.figure_size(CHART_FIT_DPI)),
+                CHART_FIT_DPI)
+        self.rules_chart.set_figure(flag_rules_figure(
+            flags, count_column="duration_min" if scan else None,
+            figsize=self.rules_chart.figure_size(CHART_FIT_DPI)), CHART_FIT_DPI)
+        self._chart_sizes = (self.top_chart.size(), self.rules_chart.size())
+        self.charts_note.setText(
+            "Full-EMR scan. Rule counts sum flagged-minute durations from scan episodes."
+            if scan else "Loaded sample. Rule counts use recorded minute flags."
+        )
+        self._charts_dirty = False
 
     def focus_table(self) -> None:
         if self.table.isVisibleTo(self):

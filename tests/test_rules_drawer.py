@@ -466,8 +466,8 @@ def _main_window(monkeypatch, tmp_path, preset="default", reloads=None):
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "EMR"))
     monkeypatch.setattr("src.desktop.app.load_settings", lambda: {"preset": preset})
     for method in (
-        "_load_corpus_scan", "_refresh_tables_and_selectors",
-        "_refresh_charts_if_needed", "_refresh_ollama_models",
+        "_load_corpus_scan",
+        "_refresh_ollama_models",
     ):
         monkeypatch.setattr(MainWindow, method, lambda *a, **k: None)
     monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(1) if reloads is not None else None)
@@ -590,20 +590,20 @@ def test_invalid_thresholds_reach_the_drawer_from_the_window(qapp, monkeypatch, 
         _dispose(window, qapp)
 
 
-def test_ctrl_r_in_the_workspace_opens_rules_and_elsewhere_still_reloads(qapp, monkeypatch, tmp_path):
+def test_ctrl_r_opens_rules_and_file_action_still_reloads(qapp, monkeypatch, tmp_path):
     reloads = []
     window = _main_window(monkeypatch, tmp_path, reloads=reloads)
     try:
         window.show()
         window.activateWindow()
-        window.tabs.setCurrentWidget(window.research)
         window.research.question_edit.setFocus()
         qapp.processEvents()
         before = len(reloads)
         QTest.keyClick(window.research.question_edit, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
         assert window.research.rules_drawer.is_open
         assert len(reloads) == before
-        QTest.keyClick(window.tabs.tabBar(), Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        file_menu = window.menuBar().actions()[0].menu()
+        next(action for action in file_menu.actions() if action.text() == "Reload processed data").trigger()
         assert len(reloads) == before + 1
     finally:
         _dispose(window, qapp)

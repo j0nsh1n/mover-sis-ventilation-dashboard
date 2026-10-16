@@ -771,3 +771,114 @@ def test_escape_on_signal_detail_closes_open_drawer_before_leaving(episode_view,
     QTest.keyClick(view.back_button, Qt.Key.Key_Escape)
     assert view.stack.currentIndex() == 0
     view.close()
+
+
+def _choose_extras(view, monkeypatch, *signals, accept=True):
+    from PySide6.QtWidgets import QCheckBox
+
+    def choose(dialog):
+        boxes = {box.text(): box for box in dialog.findChildren(QCheckBox)}
+        for box in boxes.values():
+            box.setChecked(False)
+        for signal in signals:
+            boxes[signal].setChecked(True)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", choose)
+    view.more_signals_button.click()
+
+
+def _with_extra_columns(view, fetched, pid="caseA", **columns):
+    ts = fetched.timeseries.copy()
+    for name, value in columns.items():
+        ts[name] = value
+    fetched.timeseries = ts
+    view.set_case_data(pid, ts, fetched.flags, fetched=fetched, open_detail=True)
+
+
+def test_more_signals_choices_persist_across_episodes_clear_and_cases(episode_view, monkeypatch):
+    view, fetched = episode_view
+    _with_extra_columns(view, fetched, TV=[400.] * 6, PEEP=[5.] * 6)
+    _choose_extras(view, monkeypatch, "TV")
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
+    view.episode_list.setCurrentRow(1)
+    assert view.selected_rule_id == "spo2_low"
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
+    assert "not charted" not in view.rule_detail.text()
+    view.clear_episode_selection()
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
+    view.episode_list.setCurrentRow(0)
+    assert view.selected_rule_id == "etco2_high"
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
+    view.detail_chart.minute_clicked.emit(3.)
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
+    view.set_results(RetrievalResult(candidates=(_candidate("caseA"), _candidate("caseB"))))
+    other = replace(fetched, timeseries=fetched.timeseries.assign(PID="caseB"))
+    view.set_case_data("caseB", other.timeseries, fetched.flags, fetched=other, open_detail=True)
+    assert view._current_pid == "caseB"
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
+    assert view.more_signals_button.text() == "More signals (1/3)"
+
+
+def test_chosen_extras_take_the_slots_before_a_rules_signals(episode_view, monkeypatch):
+    view, fetched = episode_view
+    _with_extra_columns(view, fetched, TV=[400.] * 6, PEEP=[5.] * 6, nMAP=[65.] * 6)
+    _choose_extras(view, monkeypatch, "TV", "PEEP", "nMAP")
+    view.episode_list.setCurrentRow(1)
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "PEEP", "nMAP"]
+    assert next(line for line in view.rule_detail.text().splitlines()
+                if line.startswith("SPO2:")).endswith("0 missing minutes; not charted")
+    _choose_extras(view, monkeypatch, "TV")
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
+    assert "not charted" not in view.rule_detail.text()
+
+
+def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(episode_view, monkeypatch):
+    from PySide6.QtWidgets import QCheckBox
+
+    view, fetched = episode_view
+    _with_extra_columns(view, fetched, TV=[400.] * 6, PEEP=[5.] * 6)
+    _choose_extras(view, monkeypatch, "TV")
+    view.episode_list.setCurrentRow(1)
+    _choose_extras(view, monkeypatch, "PEEP", accept=False)
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
+    assert view.more_signals_button.text() == "More signals (1/3)"
+    seen = {}
+
+    def inspect(dialog):
+        seen.update({box.text(): box.isChecked() for box in dialog.findChildren(QCheckBox)})
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", inspect)
+    view.more_signals_button.click()
+    assert seen["TV"] and not seen["SPO2"] and not seen["PEEP"]
+
+
+def test_a_chosen_signal_without_samples_gets_a_note_not_an_empty_track(episode_view, monkeypatch):
+    view, fetched = episode_view
+    _choose_extras(view, monkeypatch, "TV")
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
+    assert view.extras_note.isVisibleTo(view)
+    assert view.extras_note.text() == "No TV samples in this case"
+    assert view.more_signals_button.text() == "More signals (1/3)"
+    _with_extra_columns(view, fetched, TV=[400.] * 6)
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
+    assert not view.extras_note.isVisibleTo(view)
+    _with_extra_columns(view, fetched, TV=[float("nan")] * 6)
+    assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
+    assert view.extras_note.text() == "No TV samples in this case"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="900 px layout is tuned for Linux font and style metrics; the Windows native style needs about 1,060 px (follow-up)")
+def test_signal_detail_does_not_scroll_sideways_at_900_px_with_the_drawer_open(episode_view, qapp):
+    view, _fetched = episode_view
+    view.resize(900, 900)
+    view.open_rules()
+    qapp.processEvents()
+    scroll = view.signal_scroll
+    assert view.stack.currentIndex() == 1
+    assert scroll.horizontalScrollBar().maximum() == 0
+    assert not scroll.horizontalScrollBar().isVisible()
+    assert view.context_button.isVisible()
+    right = view.context_button.mapTo(scroll.viewport(), view.context_button.rect().topRight()).x()
+    assert right <= scroll.viewport().width()

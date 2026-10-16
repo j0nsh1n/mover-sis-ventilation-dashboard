@@ -13,7 +13,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Full-EMR scans record peak memory, requested and used workers, and phase-source counts; profiles show the events percentage, and `scripts/bench_scan.sh` compares worker counts in separate calibration outputs.
 - Runs and full-EMR scans record their thresholds version; signal detail and the Rules drawer show the recorded version and say when thresholds have changed or were not recorded.
 - A failed full-EMR scan shows only a short code, such as `load:KeyError`, in the scan details, status bar and dialog; the full exception text and traceback go to `scan-errors.log` in the processed folder, so file paths and patient values no longer appear on screen or in `corpus_meta.json`.
+- Research is the sole desktop workspace; Cases has optional charts and summary metrics, F has a More signals chooser and grounded context, and Rules includes scoring and Age-40 MAC. Local AI controls are in the question card.
 - Research can import a local CSV/JSONL article catalog and search Articles separately from Cases, with FTS ranking, optional cached embeddings, and answers citing at most five abstracts. A file with a damaged line or an oversized field is reported with its line and imports nothing; case-ID-like tokens are removed from article answers.
+- In F, the More signals you choose now stay for the session across episode selection, clearing and other cases, with a note when a chosen signal has no samples in the case; the buttons under the sample line stack so F no longer scrolls sideways beside the Rules drawer at 900 px. Cases charts are drawn to fit their areas, and the chart areas have names and a tab order that follows the page.
 
 ## [0.12.1] — 2026-10-16
 

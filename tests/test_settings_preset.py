@@ -47,7 +47,6 @@ def test_shared_form_loads_saved_preset(qapp, saved, expected, compact):
 @pytest.mark.parametrize("loaded", [False, True])
 def test_saving_strict_sets_next_runs_and_keeps_the_loaded_datas_preset(qapp, monkeypatch, loaded):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_refresh_charts_if_needed", lambda self: None)
     win = MainWindow()
     win._set_loaded_preset("lenient", recorded=True)
     if loaded:
@@ -65,7 +64,7 @@ def test_saving_strict_sets_next_runs_and_keeps_the_loaded_datas_preset(qapp, mo
     active = "lenient" if loaded else "strict"
     assert win._active_preset == active
     assert win._make_session_snapshot().preset == active
-    assert f"preset: {active}" in win.rules_text.toPlainText()
+    assert f"({active}, " in win.research.rules_drawer.header_label.text()
 
     monkeypatch.setattr(PipelineWorker, "start", lambda self: None)
     win._run_pipeline_menu()

@@ -166,13 +166,16 @@ def test_prototype_questions(prototype_emr, tmp_path, scenario, llm):
         assert not image.isNull() and _distinct_colors(image) > 1
 
 
-def test_open_each_tab_stays_in_the_suite(prototype_emr, tmp_path):
+def test_workspace_walk_covers_the_moved_outputs(prototype_emr, tmp_path):
     out = tmp_path / "run"
-    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", "open-each-tab", "--llm", "off")
+    proc = _drive("--emr", str(prototype_emr), "--out", str(out), "--scenario", "workspace-walk", "--llm", "scripted")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
     assert all(event["ok"] for event in events)
-    assert {event.get("tab") for event in events} >= {"1 · Research", "2 · Ask", "3 · Summary", "4 · Case timeline", "5 · Rule reference"}
+    assert [event["step"] for event in events] == ["load-data", "question", "charts", "extra-signal", "scoring"]
+    assert events[2]["charts_expanded"]
+    assert events[3]["chart_track_names"] == ["PIP", "ETCO2", "HR", "SPO2"]
+    assert events[4]["scoring_expanded"]
 
 
 @pytest.mark.parametrize("scenario,llm,counts", [

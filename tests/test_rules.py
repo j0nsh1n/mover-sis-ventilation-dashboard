@@ -358,7 +358,7 @@ def preset_window(monkeypatch, tmp_path):
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "EMR"))
     monkeypatch.setattr("src.desktop.app.load_settings", lambda: {"preset": "default"})
-    for method in ("_autoload_processed", "_load_corpus_scan", "_refresh_tables_and_selectors", "_refresh_charts_if_needed", "_refresh_ollama_models"):
+    for method in ("_autoload_processed", "_load_corpus_scan", "_refresh_ollama_models"):
         monkeypatch.setattr(MainWindow, method, lambda *a, **k: None)
     window = MainWindow()
     yield window
@@ -379,7 +379,7 @@ def test_settings_theme_change_keeps_loaded_preset_during_scan(preset_window, mo
     window._on_settings_applied({"theme": "dark", "preset": "default"})
     assert window._active_preset == "strict"
     assert window._make_session_snapshot().preset == "strict"
-    assert "preset: strict" in window.rules_text.toPlainText()
+    assert "(strict, " in window.research.rules_drawer.header_label.text()
     monkeypatch.setattr("src.guardrails.validate_io.validate_emr_dir", lambda path: path)
     monkeypatch.setattr(ResearchWorker, "start", lambda self: None)
     window._start_research_search("synthetic pressure")
@@ -405,7 +405,7 @@ def test_loaded_preset_uses_workers_resolved_folder(preset_window, monkeypatch, 
     preset_window._worker = worker
     preset_window._on_pipeline_ok(data)
     assert preset_window._make_session_snapshot().preset == "strict"
-    assert "preset: strict" in preset_window.rules_text.toPlainText()
+    assert "(strict, " in preset_window.research.rules_drawer.header_label.text()
 
 
 def test_uncached_case_fetch_uses_active_preset(preset_window, monkeypatch):
@@ -461,18 +461,17 @@ def test_unrecorded_cache_resets_previous_preset(preset_window, tmp_path, metada
     data = tuple(pd.DataFrame() for _ in range(5))
     window._worker = PipelineWorker(50, "strict", True, parent=window)
     window._on_pipeline_ok(data)
-    assert "not recorded" not in window.rules_text.toPlainText()
+    assert "Preset not recorded" not in window.research.rules_drawer.header_label.text()
     if metadata is not None:
         (tmp_path / "run_meta.json").write_text(metadata)
     window._worker = DataLoadWorker(processed=tmp_path, parent=window)
     window._on_pipeline_ok(data)
     assert window._make_session_snapshot().preset == "default"
-    assert window.rules_text.toPlainText().startswith(
-        "Threshold rules (preset: default, not recorded with this data)"
-    )
+    assert "(default, " in window.research.rules_drawer.header_label.text()
+    assert "Preset not recorded with this data" in window.research.rules_drawer.header_label.text()
     window._worker = PipelineWorker(50, "lenient", True, parent=window)
     window._on_pipeline_ok(data)
-    assert "not recorded" not in window.rules_text.toPlainText()
+    assert "Preset not recorded" not in window.research.rules_drawer.header_label.text()
 
 
 @pytest.mark.parametrize("new_preset", ["default", "strict"])
@@ -581,7 +580,7 @@ def test_llm_reference_clips_oversized_catalog(monkeypatch):
 
 
 def test_desktop_reference_switches_preset(monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
     from src.desktop.app import MainWindow
 
     app = QApplication.instance() or QApplication([])
@@ -592,14 +591,16 @@ def test_desktop_reference_switches_preset(monkeypatch, tmp_path):
     window = MainWindow()
     try:
         window._refresh_rule_reference()
-        assert "'warn': 30" in window.rules_text.toPlainText()
+        window.research.open_rules()
+        assert "warn at least 30 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
         window._on_settings_applied({"preset": "strict"})
-        text = window.rules_text.toPlainText()
-        assert "preset: strict" in text and "'warn': 28" in text
+        text = window.research.rules_drawer.header_label.text()
+        assert "(strict, " in text
+        assert "warn at least 28 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
         assert window._make_session_snapshot().preset == "strict"
         for spec in load_rule_catalog("strict").specs:
-            assert f"{spec.id}:" in text
-            assert str(spec.details()) in text
+            assert spec.id in window.research.rules_drawer.visible_rule_ids()
+            assert spec.description in " ".join(label.text() for label in window.research.rules_drawer._rows[spec.id].findChildren(QLabel))
     finally:
         window.close()
         window.deleteLater()
@@ -610,27 +611,28 @@ def test_desktop_reference_switches_preset(monkeypatch, tmp_path):
     ('{"preset": "strict"}', "strict"), ("invalid json", "default"), ("[]", "default"),
 ])
 def test_desktop_loaded_cache_preset(monkeypatch, tmp_path, metadata, expected):
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
     from src.desktop.app import DataLoadWorker, MainWindow
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
     monkeypatch.setattr("src.desktop.app.load_settings", lambda: {})
-    for method in ("_autoload_processed", "_load_corpus_scan", "_refresh_tables_and_selectors", "_refresh_charts_if_needed", "_refresh_ollama_models"):
+    for method in ("_autoload_processed", "_load_corpus_scan", "_refresh_ollama_models"):
         monkeypatch.setattr(MainWindow, method, lambda *a, **k: None)
     (tmp_path / "run_meta.json").write_text(metadata)
     window = MainWindow()
     try:
-        assert "preset: default" in window.rules_text.toPlainText()
-        assert "'warn': 30" in window.rules_text.toPlainText()
+        assert "(default, " in window.research.rules_drawer.header_label.text()
+        window.research.open_rules()
+        assert "warn at least 30 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
         window._research_engine = object()
         window._worker = DataLoadWorker(processed=tmp_path, parent=window)
         window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
         assert window._make_session_snapshot().preset == expected
-        text = window.rules_text.toPlainText()
-        assert f"preset: {expected}" in text
-        assert str(load_rule_catalog(expected).get("pip_high").details()) in text
+        text = window.research.rules_drawer.header_label.text()
+        assert f"({expected}, " in text
+        assert f"warn at least {load_rule_catalog(expected).get('pip_high').params['warn']:g} cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
         assert window._research_engine is None
     finally:
         window.close()
@@ -647,26 +649,6 @@ def test_same_preset_reload_without_open_case_leaves_status_alone(preset_window)
     window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
     assert window.research.status_label.text() == before
     assert "Reopen" not in window.research.status_label.text()
-
-
-def test_ask_answer_started_before_reload_is_discarded(preset_window, monkeypatch):
-    from types import SimpleNamespace
-    from src.desktop.app import LLMChatWorker, PipelineWorker
-
-    window = preset_window
-    window.cases = pd.DataFrame({"PID": ["SYN0000000001"]})
-    monkeypatch.setattr(LLMChatWorker, "start", lambda self: None)
-    monkeypatch.setattr(window.combo_llm_model, "currentText", lambda: "scripted")
-    window._send_chat_question("which rules fired?")
-    worker = window._llm_worker
-    window._worker = PipelineWorker(50, "strict", True, parent=window)
-    window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
-    worker.finished_ok.emit(SimpleNamespace(answer="stale default-preset answer"))
-    worker.failed.emit("stale failure")
-    history = window.chat_history.toPlainText()
-    assert "stale default-preset answer" not in history
-    assert "stale failure" not in history
-    assert "data was reloaded" in history
 
 
 def test_settings_preset_change_without_data_rejects_pending_fetch(preset_window, monkeypatch):
@@ -686,7 +668,7 @@ def test_settings_preset_change_without_data_rejects_pending_fetch(preset_window
     assert window._active_preset == "strict"
     fetch.loaded.emit(SimpleNamespace(timeseries=_frame(), flags=pd.DataFrame()))
     assert not accepted
-    assert "preset: strict" in window.rules_text.toPlainText()
+    assert "(strict, " in window.research.rules_drawer.header_label.text()
 
 
 def test_settings_apply_with_same_preset_keeps_pending_fetch(preset_window, monkeypatch):
