@@ -16,6 +16,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Research has a Rules button (Ctrl+R) that opens a searchable list of the loaded
   preset's rules beside the evidence board; Escape closes it. Outside the
   workspace Ctrl+R still reloads processed data.
+- Research answers stay in a conversation beside the evidence board, with cited case links, saved boards, and controls to revisit or repeat each question. New question clears the board and keeps the conversation; Reset asks before clearing both. After processed data is reloaded, earlier answers stay but their saved cases must be reopened for current data.
+
 - The Research view has a Cases button that opens a sortable list of the analyzed cases (PID, procedure, age, sex, duration, anomaly score, warn and critical counts, top rules by name). It states its scope, switches to the full-EMR scan when one exists, and opens a case in the signal view with a click or Enter; Back or Escape returns to the list.
 - The Rule reference, the co-pilot's rule lookup, the dashboard rule table and the
   calibration profile read one rule catalog. The reference lists phase skips and

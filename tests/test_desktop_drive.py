@@ -124,3 +124,39 @@ def test_empty_overview_scenario_accepts_a_scripted_model(tmp_path):
                   "--llm", "scripted")
 
     assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.parametrize("scenario,llm,counts", [
+    ("conversation-thread", "scripted", [0, 1, 2, 3, 4, 4]),
+    ("conversation-thread", "off", [0, 1, 2, 3, 4, 4]),
+    ("conversation-no-model", "off", [0, 1]),
+    ("conversation-cancel", "scripted", [0, 1, 2, 2]),
+    ("conversation-cancel", "off", [0, 1, 2, 2]),
+    ("conversation-narrow", "scripted", [0, 1, 2]),
+    ("conversation-narrow", "off", [0, 1, 2]),
+])
+def test_conversation_scenarios_record_panel_and_board(tmp_path, scenario, llm, counts):
+    emr = tmp_path / "EMR"
+    write_synthetic_emr(["--out", str(emr), "--n-cases", "30", "--seed", "3"])
+    out = tmp_path / "run"
+    proc = _drive("--emr", str(emr), "--out", str(out), "--scenario", scenario, "--llm", llm)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    assert [event["turn_count"] for event in events] == counts
+    for event in events:
+        assert event["ok"]
+        assert "scope" in event and "shortlist_pids" in event
+        assert all(set(turn) == {"question", "state", "badge", "answer", "cited_pids"} for turn in event["turns"])
+        assert not QImage(str(out / event["png"])).isNull()
+    if scenario == "conversation-thread":
+        assert all(event["shortlist_pids"] for event in events[1:4])
+        assert events[4]["shortlist_pids"] == []
+        assert events[4]["turns"][-1]["state"] == ("answered" if llm == "scripted" else "no_model")
+        assert events[-1]["shortlist_pids"] == events[1]["shortlist_pids"]
+    elif scenario == "conversation-cancel":
+        assert events[-1]["turns"][-1]["state"] == "cancelled"
+        assert events[-1]["shortlist_pids"] == events[1]["shortlist_pids"]
+    elif scenario == "conversation-narrow":
+        assert all(event["panel_below_board"] for event in events[1:])
+    if scenario != "conversation-thread":
+        assert events[1]["shortlist_pids"]

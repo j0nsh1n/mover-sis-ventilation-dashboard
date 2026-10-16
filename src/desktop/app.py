@@ -61,6 +61,7 @@ from src.desktop.charts import (
     top_cases_figure,
 )
 from src.desktop.research_workspace import ResearchWorkspace
+from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.desktop.theme import apply_theme, chat_role_color
 from src.desktop.updates import UpdateController
@@ -622,6 +623,7 @@ class MainWindow(QMainWindow):
         self._research_start_button = self.research.start_button
         self.research.question_submitted.connect(self._start_research_search)
         self.research.cancel_requested.connect(self._cancel_research)
+        self.research.board_restore_requested.connect(self._invalidate_research_requests)
         self.research.case_requested.connect(self._load_research_case)
         self.research.setup_requested.connect(self._open_setup_wizard)
         self.research.model_start_requested.connect(self._ollama_start)
@@ -1596,12 +1598,13 @@ class MainWindow(QMainWindow):
                 analysis_facts=self._analysis_facts,
                 analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
             )
-        if self._research_worker is not None and self._research_worker.isRunning():
-            self._research_worker.requestInterruption()
+        if self.research._searching:
+            self._cancel_research()
+        self._invalidate_research_requests()
         self._research_request_id += 1
         request_id = self._research_request_id
         self._active_research_request = request_id
-        self.research.begin_question(question)
+        self.research.begin_question(question, request_id)
         self.research.set_status("Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             self._research_engine,
@@ -1665,10 +1668,14 @@ class MainWindow(QMainWindow):
         if request_id is not None and request_id != self._active_research_request:
             return
         self.research.set_results(result)
-        if not result.candidates:
-            self.research.set_answer("No matching indexed surgery records were found for this question.")
-        elif self.research.selected_model() is None:
-            self.research.set_answer("Case search is available. Start and select a local chat model to generate a source-grounded answer.")
+        turn = self.research.conversation.turn(request_id)
+        if turn is not None and turn.model is None:
+            answer = NO_MODEL_ANSWER
+            if not result.candidates:
+                answer += "\n\nNo matching indexed surgery records were found for this question."
+            self.research.set_answer(answer, request_id, state="no_model")
+        elif not result.candidates:
+            self.research.set_answer("No matching indexed surgery records were found for this question.", request_id)
         preferred = self.research.preferred_pid()
         if preferred:
             self._load_research_case(preferred, False, False)
@@ -1676,13 +1683,13 @@ class MainWindow(QMainWindow):
     def _on_research_answer(self, response, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
-        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."))
+        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."), request_id)
 
     def _on_research_fail(self, message: str, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
         self.research.set_status(f"Research request failed: {message}")
-        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.")
+        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.", request_id, state="failed", failure=message)
 
     def _on_research_done(self, request_id: int) -> None:
         self._research_workers.pop(request_id, None)

@@ -231,7 +231,8 @@ def test_cancel_search_restores_board_and_ignores_late_results(qapp, monkeypatch
         win.close()
 
 
-def test_reset_during_search_cancels_and_clears_board(qapp):
+def test_reset_during_search_cancels_and_clears_board(qapp, monkeypatch):
+    monkeypatch.setattr(ResearchWorkspace, "_confirm_reset", lambda self: True)
     view = ResearchWorkspace()
     cancelled = []
     view.cancel_requested.connect(lambda: cancelled.append(True))

@@ -789,6 +789,143 @@ def empty_overview(run: Run) -> dict[str, Any]:
     return facts
 
 
+def conversation_facts(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    return {
+        "turn_count": len(research.conversation.turns),
+        "turns": [
+            {"question": turn.question, "state": turn.state, "badge": turn.badge,
+             "answer": turn.answer[:120], "cited_pids": list(turn.cited_pids)}
+            for turn in research.conversation.turns
+        ],
+        "shortlist_pids": [candidate.pid for candidate in research.result.candidates] if research.result else [],
+        "scope": research.scope_label.text(),
+    }
+
+
+def conversation_load_data(run: Run) -> dict[str, Any]:
+    return {**run_pipeline(run), **conversation_facts(run)}
+
+
+def conversation_ask(run: Run, *, question: str, narrow: bool = False, expect_empty: bool = False) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+
+    if narrow:
+        run.win.resize(1000, 1000)
+    run.win.research.question_edit.setText(question)
+    run.win.research.ask_button.click()
+    run.wait(lambda: _research_idle(run.win), "the conversation turn and board")
+    research = run.win.research
+    turn = research.conversation.turns[-1]
+    assert turn.question == question
+    assert turn.state == ("answered" if turn.model else "no_model")
+    assert research.result is not None
+    assert bool(research.result.candidates) != expect_empty
+    widget = research.conversation.turn_widgets[turn.request_id]
+    research.conversation.ensureWidgetVisible(widget)
+    run.settle()
+    facts = conversation_facts(run)
+    if narrow:
+        from PySide6.QtCore import QPoint
+
+        geometry: tuple[int, ...] | None = None
+        stable_since = time.monotonic()
+
+        def stable_geometry() -> bool:
+            nonlocal geometry, stable_since
+            current = tuple(value for child in (research.board_scroll, research.conversation)
+                            for value in (*child.mapTo(research, QPoint(0, 0)).toTuple(), child.width(), child.height()))
+            if current != geometry:
+                geometry, stable_since = current, time.monotonic()
+            return time.monotonic() - stable_since >= 0.3
+
+        run.wait(stable_geometry, "stable stacked conversation geometry", timeout_s=10)
+        board_top = research.board_scroll.mapTo(research, QPoint(0, 0)).y()
+        panel_top = research.conversation.mapTo(research, QPoint(0, 0)).y()
+        board_bottom = board_top + research.board_scroll.height()
+        assert run.win.width() == 1000
+        assert research.board_splitter.orientation() == Qt.Orientation.Vertical
+        assert research.board_splitter.indexOf(research.conversation) > research.board_splitter.indexOf(research.board_scroll)
+        assert panel_top >= board_bottom - 2, (panel_top, board_bottom, geometry)
+        assert research.conversation.height() >= 180
+        assert research.board_scroll.height() >= 250
+        assert widget.show_button.isVisible() and widget.show_button.isEnabled()
+        assert research.question_edit.isEnabled()
+        facts.update(width=run.win.width(), panel_below_board=True, panel_top=panel_top, board_bottom=board_bottom, geometry=list(geometry or ()))
+    return facts
+
+
+def conversation_restore(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    first = research.conversation.turns[0]
+    assert first.board and first.board.result
+    expected = [candidate.pid for candidate in first.board.result.candidates]
+    scope = first.board.labels[1]
+    research.conversation.turn_widgets[first.request_id].show_button.click()
+    run.settle()
+    facts = conversation_facts(run)
+    assert facts["shortlist_pids"] == expected
+    assert facts["scope"] == scope
+    assert research.question_edit.text() == first.question
+    return {**facts, "restored_first_shortlist": True}
+
+
+def conversation_no_model(run: Run) -> dict[str, Any]:
+    from src.desktop.conversation_panel import NO_MODEL_ANSWER
+
+    facts = conversation_ask(run, question=DEFAULT_QUESTION)
+    turn = run.win.research.conversation.turns[0]
+    assert turn.state == "no_model" and turn.answer == NO_MODEL_ANSWER
+    assert turn.badge == "No AI answer"
+    return facts
+
+
+def conversation_start_cancel(run: Run) -> dict[str, Any]:
+    import threading
+    from types import SimpleNamespace
+    from src.services.retrieval import RetrievalEngine
+
+    research = run.win.research
+    gate = threading.Event()
+    if research.selected_model():
+        original = ScriptedChatClient.chat_turn
+
+        def slow_answer(self: Any, *args: Any, **kwargs: Any) -> Any:
+            gate.set()
+            time.sleep(0.4)
+            return original(self, *args, **kwargs)
+
+        ScriptedChatClient.chat_turn = slow_answer
+    else:
+        def slow_search(self: Any, question: str, on_progress: Any) -> Any:
+            gate.set()
+            while True:
+                on_progress(SimpleNamespace(message="Searching synthetic records…"))
+                time.sleep(0.01)
+
+        RetrievalEngine.search = slow_search
+    research.question_edit.setText("laparoscopic question to cancel")
+    research.ask_button.click()
+    run.wait(gate.is_set, "the scripted answer" if research.selected_model() else "the search")
+    assert research.conversation.turns[-1].state == "running"
+    return conversation_facts(run)
+
+
+def conversation_cancel(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    previous = research.conversation.turns[0]
+    assert previous.board and previous.board.result
+    expected = [candidate.pid for candidate in previous.board.result.candidates]
+    research.cancel_button.click()
+    run.wait(lambda: _research_idle(run.win), "the cancelled conversation request")
+    assert research.conversation.turns[-1].state == "cancelled"
+    assert research.question_edit.text() == previous.question
+    facts = conversation_facts(run)
+    assert facts["shortlist_pids"] == expected
+    assert facts["scope"] == previous.board.labels[1]
+    return {**facts, "board_restored": True}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -811,6 +948,28 @@ SCENARIOS: dict[str, Scenario] = {
     "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                                 Step("episode", f_select), Step("drawer", f_drawer_link))),
     "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
+    "conversation-thread": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("pressure", partial(conversation_ask, question="Where does pressure peak?")),
+        Step("etco2-flags", partial(conversation_ask, question="Which cases have ETCO2 flags?")),
+        Step("missing-etco2", partial(conversation_ask, question="Which cases have missing ETCO2?")),
+        Step("empty-shortlist", partial(conversation_ask, question="xylophone tuning", expect_empty=True)),
+        Step("first-board", conversation_restore),
+    ), llm_modes=("scripted", "off")),
+    "conversation-no-model": Scenario(
+        (Step("load-data", conversation_load_data), Step("no-model", conversation_no_model)), llm_modes=("off",)
+    ),
+    "conversation-cancel": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("previous-question", partial(conversation_ask, question=DEFAULT_QUESTION)),
+        Step("answering", conversation_start_cancel),
+        Step("cancelled", conversation_cancel),
+    ), llm_modes=("scripted", "off")),
+    "conversation-narrow": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("pressure", partial(conversation_ask, question="Where does pressure peak?", narrow=True)),
+        Step("etco2-flags", partial(conversation_ask, question="Which cases have ETCO2 flags?", narrow=True)),
+    ), llm_modes=("scripted", "off")),
     "partial-index": Scenario((Step("partial-index", partial_index),), llm_modes=("off",)),
     "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
     "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),
