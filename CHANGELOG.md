@@ -9,6 +9,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 - Full-EMR scans record peak memory, requested and used workers, and phase-source counts; profiles show the events percentage, and `scripts/bench_scan.sh` compares worker counts in separate calibration outputs.
 - Runs and full-EMR scans record their thresholds version; signal detail and the Rules drawer show the recorded version and say when thresholds have changed or were not recorded.
+- A failed full-EMR scan shows only a short code, such as `load:KeyError`, in the scan details, status bar and dialog; the full exception text and traceback go to `scan-errors.log` in the processed folder, so file paths and patient values no longer appear on screen or in `corpus_meta.json`.
 
 ## [0.12.1] — 2026-10-16
 

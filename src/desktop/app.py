@@ -164,7 +164,7 @@ class CorpusScanWorker(QThread):
         self.workers = workers  # None = automatic (CPU cores minus one)
 
     def run(self) -> None:
-        from src.pipeline.corpus_scan import ScanCancelled, scan_corpus
+        from src.pipeline.corpus_scan import ScanCancelled, scan_corpus, scan_failure_message
 
         try:
             result = scan_corpus(
@@ -179,7 +179,8 @@ class CorpusScanWorker(QThread):
         except ScanCancelled:
             self.cancelled.emit()
         except Exception as e:
-            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+            # Exception text can carry paths and patient data: it goes to the log only
+            self.failed.emit(scan_failure_message(e, self.processed))
 
 
 class OllamaWorker(QThread):

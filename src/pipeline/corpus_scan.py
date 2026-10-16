@@ -19,6 +19,9 @@ Outputs in the processed directory (the sample's files are left untouched):
 - ``corpus_cases.parquet``   one row per scanned surgery (scores, top rules)
 - ``corpus_episodes.parquet`` contiguous flag runs for every scanned surgery
 - ``corpus_meta.json``       scope counts, preset, thresholds hash, timing
+- ``scan-errors.log``        only after a shard fails: full exception text and
+                             traceback, which can hold paths and patient data
+                             and never leave this file
 
     PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default --workers 4
 
@@ -39,9 +42,11 @@ import json
 import logging
 import multiprocessing
 import os
+import re
 import shutil
 import sys
 import time
+import traceback
 import zlib
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from dataclasses import dataclass
@@ -70,6 +75,7 @@ logger = logging.getLogger(__name__)
 CORPUS_CASES = "corpus_cases.parquet"
 CORPUS_EPISODES = "corpus_episodes.parquet"
 CORPUS_META = "corpus_meta.json"
+SCAN_ERROR_LOG = "scan-errors.log"
 
 # Surgeries per shard: large enough to amortize pandas overhead, small enough
 # that one shard's minute-level frames stay well under a few hundred MB.
@@ -85,6 +91,75 @@ ProgressCb = Callable[[str, int, int], None]
 
 class ScanCancelled(PipelineError):
     """The caller asked the scan to stop."""
+
+
+class ShardFailure(PipelineError):
+    """A shard could not be scored.
+
+    The message is fixed text plus a code, safe to show anywhere; the original
+    exception text and traceback are in ``detail`` and go only to the log.
+    """
+
+    def __init__(self, message: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+# Pipeline module that raised -> stage in the failure code
+_STAGE_BY_MODULE = {
+    "load": "load",
+    "clean": "clean",
+    "merge": "merge",
+    "phases": "features",
+    "features": "features",
+    "flags": "flags",
+}
+_STAGE_BY_SHARD_FUNCTION = {"_read_shard": "load", "_split_csv": "load"}
+_TRACEBACK_FRAME = re.compile(r'File "([^"]+)", line \d+, in (\w+)')
+
+
+def _failure_code(trace: str, exc: BaseException) -> str:
+    """``<stage>:<ExceptionClass>`` from the innermost pipeline frame, else ``scan``."""
+    stage = "scan"
+    for filename, function in _TRACEBACK_FRAME.findall(trace):
+        path = Path(filename.replace("\\", "/"))
+        if path.parent.name == "pipeline" and path.stem in _STAGE_BY_MODULE:
+            stage = _STAGE_BY_MODULE[path.stem]
+        elif path.stem == "corpus_scan" and function in _STAGE_BY_SHARD_FUNCTION:
+            stage = _STAGE_BY_SHARD_FUNCTION[function]
+    return f"{stage}:{type(exc).__name__}"
+
+
+def _failure_message(shard: int, code: str) -> str:
+    return f"Shard {shard + 1} could not be scored ({code}). Details are in {SCAN_ERROR_LOG}."
+
+
+def append_scan_error_log(out_dir: Path | str, entries: list[tuple[str, str]]) -> None:
+    """Append ``(heading, detail)`` entries to the debug log; owner-only where supported."""
+    path = Path(out_dir) / SCAN_ERROR_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        for heading, detail in entries:
+            handle.write(f"[{stamp}] {heading}\n{detail.rstrip()}\n\n")
+
+
+def scan_failure_message(exc: BaseException, out_dir: Path | str) -> str:
+    """Text the app may show for a failed scan; the full detail goes to the log.
+
+    A ShardFailure was already logged by ``scan_corpus``. Any other exception
+    (a bad EMR folder, an unreadable file) is logged here.
+    """
+    if isinstance(exc, ShardFailure):
+        return str(exc)
+    trace = "".join(traceback.format_exception(exc))
+    code = _failure_code(trace, exc)
+    try:
+        append_scan_error_log(out_dir, [(f"scan failed ({code})", trace)])
+    except OSError:
+        logger.exception("Could not write %s", SCAN_ERROR_LOG)
+    return f"The full-EMR scan could not finish ({code}). Details are in {SCAN_ERROR_LOG}."
 
 
 @dataclass
@@ -178,10 +253,18 @@ def _score_shard(
     Top-level and given only picklable arguments so a spawned process can
     import and call it. Returns the small per-case and episode tables, never
     the minute-level frames. A shard that cannot be scored for data reasons
-    comes back with ``error`` set; any other exception propagates.
+    comes back with ``error`` (a fixed code message) and ``detail`` (full text,
+    for the log only) set; any other exception propagates.
     """
     path = Path(shard_dir)
-    empty: dict = {"shard": shard, "cases": None, "episodes": None, "error": None, "n_pids": 0}
+    empty: dict = {
+        "shard": shard,
+        "cases": None,
+        "episodes": None,
+        "error": None,
+        "detail": None,
+        "n_pids": 0,
+    }
     vent = _read_shard(path / "vent.csv", VENT_RENAME)
     if vent.empty:
         return empty
@@ -209,7 +292,13 @@ def _score_shard(
             verbose=False,
         )
     except (GuardrailError, PipelineError, ValueError, KeyError) as exc:
-        return {**empty, "error": str(exc)[:300], "n_pids": len(pids)}
+        trace = "".join(traceback.format_exception(exc))
+        return {
+            **empty,
+            "error": _failure_message(shard, _failure_code(trace, exc)),
+            "detail": trace,
+            "n_pids": len(pids),
+        }
     episodes = frames["episodes"]
     return {
         **empty,
@@ -218,12 +307,13 @@ def _score_shard(
     }
 
 
-def _shard_error(shard: int, exc: BaseException) -> PipelineError:
-    return PipelineError(
-        f"Scoring shard {shard + 1} failed: {type(exc).__name__}: {exc}. "
-        "If a worker process was killed, the machine may have run out of memory; "
-        "retry with fewer workers or a smaller cases_per_shard."
+def _shard_error(shard: int, exc: BaseException) -> ShardFailure:
+    trace = "".join(traceback.format_exception(exc))
+    detail = (
+        f"{trace}\nIf a worker process was killed, the machine may have run out of "
+        "memory; retry with fewer workers or a smaller cases_per_shard."
     )
+    return ShardFailure(_failure_message(shard, _failure_code(trace, exc)), detail)
 
 
 def _run_serial(
@@ -240,7 +330,7 @@ def _run_serial(
         try:
             results[job[0]] = _score_shard(*job)
         except Exception as exc:
-            raise _shard_error(job[0], exc) from exc
+            raise _shard_error(job[0], exc) from None
     return results
 
 
@@ -277,7 +367,7 @@ def _run_parallel(
                 try:
                     results[shard] = future.result()
                 except Exception as exc:
-                    raise _shard_error(shard, exc) from exc
+                    raise _shard_error(shard, exc) from None
             if done:
                 progress(
                     f"Scored {len(results)} of {n_shards} shard(s) on {workers} CPU cores…",
@@ -394,10 +484,14 @@ def scan_corpus(
             )
             for shard in range(n_shards)
         ]
-        if n_workers == 1 and should_stop is None:
-            results = _run_serial(jobs, progress, should_stop)
-        else:
-            results = _run_parallel(jobs, n_workers, progress, should_stop)
+        try:
+            if n_workers == 1 and should_stop is None:
+                results = _run_serial(jobs, progress, should_stop)
+            else:
+                results = _run_parallel(jobs, n_workers, progress, should_stop)
+        except ShardFailure as failure:
+            append_scan_error_log(out_path, [(failure.args[0], failure.detail)])
+            raise
         seconds_score = time.monotonic() - score_started
     finally:
         _remove_tree(tmp)
@@ -406,18 +500,25 @@ def scan_corpus(
     case_frames: list[pd.DataFrame] = []
     episode_frames: list[pd.DataFrame] = []
     failed: list[dict] = []
+    failure_log: list[tuple[str, str]] = []
     for shard in range(n_shards):
         res = results[shard]
         if res["error"] is not None:
             failed.append({"shard": shard, "n_pids": res["n_pids"], "error": res["error"]})
+            failure_log.append((res["error"], res["detail"] or ""))
             continue
         if res["cases"] is not None:
             case_frames.append(res["cases"])
         if res["episodes"] is not None:
             episode_frames.append(res["episodes"])
 
+    if failure_log:
+        append_scan_error_log(out_path, failure_log)
     if not case_frames:
-        raise PipelineError("The full-EMR scan produced no scored cases.")
+        raise PipelineError(
+            "The full-EMR scan produced no scored cases."
+            + (f" Details are in {SCAN_ERROR_LOG}." if failure_log else "")
+        )
     corpus_cases = (
         pd.concat(case_frames, ignore_index=True)
         .sort_values(["anomaly_score", "PID"], ascending=[False, True], kind="stable")
