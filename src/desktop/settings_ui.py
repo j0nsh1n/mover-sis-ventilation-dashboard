@@ -98,6 +98,20 @@ class PathsForm(QWidget):
             QVBoxLayout(advanced).addLayout(wave_row)
             root.addWidget(advanced)
 
+        run_form = QFormLayout()
+        self.combo_preset = QComboBox()
+        for label, preset in (("Default", "default"), ("Lenient", "lenient"), ("Strict", "strict")):
+            self.combo_preset.addItem(label, preset)
+        run_form.addRow("Rule preset for new runs", self.combo_preset)
+        dl.addLayout(run_form)
+        preset_hint = QLabel(
+            "Loaded data keeps the preset it was computed with. "
+            "Run the pipeline again to apply a new preset."
+        )
+        preset_hint.setObjectName("pathHint")
+        preset_hint.setWordWrap(True)
+        dl.addWidget(preset_hint)
+
         # --- LLM ---
         llm_box = QGroupBox("Local LLM (Ollama)")
         ll = QVBoxLayout(llm_box)
@@ -185,6 +199,8 @@ class PathsForm(QWidget):
 
     def load_from_settings(self) -> None:
         cfg = load_settings()
+        preset_index = self.combo_preset.findData(cfg.get("preset"))
+        self.combo_preset.setCurrentIndex(max(0, preset_index))
         try:
             self.edit_emr.setText(cfg.get("emr_dir") or str(emr_dir()))
         except Exception:
@@ -246,6 +262,7 @@ class PathsForm(QWidget):
             "ollama_model": self.combo_default_model.currentText().strip(),
             "ollama_embed_model": self.edit_embed_model.text().strip() or "nomic-embed-text",
             "theme": theme,
+            "preset": self.combo_preset.currentData(),
         }
 
     def apply_to_runtime(self, *, require_emr: bool = False) -> list[str]:
@@ -299,6 +316,7 @@ class PathsForm(QWidget):
         update_settings(ollama_embed_model=vals["ollama_embed_model"])
 
         update_settings(theme=vals["theme"])
+        update_settings(preset=vals["preset"])
 
         if errors:
             raise ValueError("\n".join(errors))
