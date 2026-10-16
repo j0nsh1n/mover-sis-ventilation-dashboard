@@ -314,6 +314,7 @@ class MainWindow(QMainWindow):
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
         self.flags: pd.DataFrame | None = None
+        self._analysis_facts: dict[str, str] = {}
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
         # Full-EMR scan results (src.pipeline.corpus_scan.ScanResult), if any
@@ -1130,6 +1131,9 @@ class MainWindow(QMainWindow):
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
+        from src.services.retrieval import build_analysis_facts
+
+        self._analysis_facts = build_analysis_facts(self.ts, self.flags)
         preset, recorded = "default", False
         if isinstance(self._worker, PipelineWorker):
             preset, recorded = self._worker.preset, True
@@ -1589,6 +1593,7 @@ class MainWindow(QMainWindow):
                 cache_path=settings_path().parent / "case_embeddings.sqlite3",
                 embedder=OllamaEmbedder(embed_model),
                 preset=self._active_preset,
+                analysis_facts=self._analysis_facts,
                 analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
             )
         if self._research_worker is not None and self._research_worker.isRunning():

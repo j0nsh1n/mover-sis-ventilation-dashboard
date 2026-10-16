@@ -20,6 +20,7 @@ Typical desktop flow::
         cache_path=cache_file,
         embedder=OllamaEmbedder(model) if model else None,
         analyzed_pids=loaded_processed_pids,
+        analysis_facts=build_analysis_facts(ts, flags),
     )
     engine.prepare(on_progress=set_status)
     hits = engine.search(question, filters=CaseFilters(gender="F"), on_progress=set_status)
@@ -51,7 +52,7 @@ import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 import numpy as np
 import pandas as pd
@@ -172,8 +173,14 @@ def build_case_search_text(
     gender: str | None,
     has_vent: bool,
     analyzed: bool,
+    facts: str = "",
 ) -> str:
-    """Stable, factual search document. No flags, scores, or vectors."""
+    """Stable, factual search document: surgery metadata, plus analysis facts.
+
+    ``facts`` (see ``build_analysis_facts``) is appended for analyzed cases
+    only: the signals the case has, the rules it flagged and the signals with
+    missing minutes. Unanalyzed records never carry facts. No scores or vectors.
+    """
     if age is None or (isinstance(age, float) and (math.isnan(age) or math.isinf(age))):
         age_s = "unknown"
     else:
@@ -187,10 +194,66 @@ def build_case_search_text(
         if analyzed
         else "indexed surgery, not yet analyzed"
     )
-    return (
+    text = (
         f"Procedure: {proc}. Age: {age_s}. Sex: {sex}. "
         f"Ventilator rows: {vent}. Record scope: {scope}."
     )
+    return f"{text} {facts}" if analyzed and facts else text
+
+
+def build_analysis_facts(
+    timeseries: pd.DataFrame | None, flags: pd.DataFrame | None
+) -> dict[str, str]:
+    """One deterministic facts string per analyzed PID, from loaded processed data.
+
+    Computed once per processed-data load. Each fact is its own sentence so
+    ``_keyword_score`` can tell "ETCO2 flag" from a PIP flag on a case that
+    merely records ETCO2. "Missing" means a gap inside a signal's recorded
+    span; unrecorded minutes before and after ventilation are not gaps.
+    """
+    from src.llm.case_context import SIGNAL_LABELS
+    from src.pipeline.features import OBSERVED_SIGNAL_COLS
+    from src.rules import RULE_METADATA
+
+    if timeseries is None or timeseries.empty or "PID" not in timeseries.columns:
+        return {}
+    names = {col: _signal_name(col, name) for col, name, _ in SIGNAL_LABELS}
+    cols = [c for c in OBSERVED_SIGNAL_COLS if c in names and c in timeseries.columns]
+    order = ["PID", "t_min"] if "t_min" in timeseries.columns else ["PID"]
+    work = timeseries[[*order, *cols]].sort_values(order, kind="stable")
+    pids = work["PID"].astype(str)
+    seen = work[cols].notna()
+    present = seen.groupby(pids).any()
+    before = seen.groupby(pids).cummax()
+    after = seen.iloc[::-1].groupby(pids.iloc[::-1]).cummax().iloc[::-1]
+    missing = (~seen & before & after).groupby(pids).any()
+    missing["nMAP"] = False  # cuff readings are intermittent by design, so not gaps
+
+    flagged: dict[str, list[str]] = {}
+    if flags is not None and not flags.empty and {"PID", "rule_id"} <= set(flags.columns):
+        pairs = flags[["PID", "rule_id"]].astype(str).drop_duplicates()
+        for pid, rule_ids in pairs.groupby("PID")["rule_id"]:
+            flagged[str(pid)] = sorted(rule_ids)
+
+    out: dict[str, str] = {}
+    for pid in present.index:
+        has = present.loc[pid]
+        gaps = missing.loc[pid]
+        parts = []
+        if has.any():
+            parts.append("Signals: " + ", ".join(names[c] for c in cols if has[c]) + ".")
+        for rule_id in flagged.get(pid, []):
+            meta = RULE_METADATA.get(rule_id)
+            label = f"{meta.label} ({rule_id})" if meta else rule_id
+            parts.append(f"Flag raised: {label}.")
+        parts.extend(f"Missing minutes: {names[c]}." for c in cols if gaps[c])
+        out[str(pid)] = " ".join(parts)
+    return out
+
+
+def _signal_name(col: str, name: str) -> str:
+    name = name.replace("conc.", "concentration")
+    return name if name.lower() == col.lower() else f"{name} ({col})"
 
 
 def source_label(analyzed: bool, has_vent: bool = True) -> str:
@@ -237,13 +300,86 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return float(np.dot(va, vb) / (na * nb))
 
 
+_STOPWORDS = frozenset(
+    "a an and any are be by can case cases did do does find for from give has have how "
+    "i in is it list many me of on or patient patients show tell that the there these this "
+    "those to was were what when where which who why will with".split()
+)
+
+
+def tokenize_search_text(text: str) -> list[str]:
+    """Lowercase alphanumeric tokens; "CO₂" folds to "co2", a trailing "s" folds away.
+
+    Questions and search documents share this, so matching is on whole tokens
+    ("low" does not hit "flow"). Stopwords are dropped.
+    """
+    tokens = []
+    for tok in re.findall(r"[^\W_]+", str(text).replace("₂", "2").lower()):
+        if tok in _STOPWORDS:
+            continue
+        if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+            tok = tok[:-1]
+        tokens.append(tok)
+    return tokens
+
+
 def _keyword_score(query: str, text: str) -> float:
-    terms = [t for t in str(query).lower().split() if len(t) > 2]
+    """Share of question terms found in the text, half of it by the best single sentence.
+
+    Facts are one sentence each, so a case flagged for ETCO2 outranks a case
+    that only records ETCO2 and has some other flag.
+    """
+    terms = set(tokenize_search_text(query))
     if not terms:
         return 0.0
-    blob = text.lower()
-    hits = sum(1 for t in terms if t in blob)
-    return hits / len(terms)
+    best, found = 0, set()
+    for sentence in re.split(r"[.;]", text):
+        hit = terms.intersection(tokenize_search_text(sentence))
+        found |= hit
+        best = max(best, len(hit))
+    return (len(found) + best) / (2 * len(terms))
+
+
+class _KeywordIndex:
+    """Token tables for every record, so one question scores all of them in numpy.
+
+    Same score as ``_keyword_score``; the per-question cost stays flat as
+    facts make the documents longer. Each document and sentence carries token
+    id 0 so no segment is empty (``reduceat`` mishandles empty segments).
+    """
+
+    def __init__(self, texts: Sequence[str]):
+        self._vocab: dict[str, int] = {}
+        doc_ptr, sent_ptr = [0], [0]
+        doc_idx: list[int] = []
+        sent_idx: list[int] = []
+        sent_doc_ptr: list[int] = []
+        for text in texts:
+            sent_doc_ptr.append(len(sent_ptr) - 1)
+            seen: set[int] = {0}
+            for sentence in re.split(r"[.;]", text):
+                ids = {0, *(self._vocab.setdefault(t, len(self._vocab) + 1) for t in tokenize_search_text(sentence))}
+                sent_idx.extend(ids)
+                sent_ptr.append(len(sent_idx))
+                seen |= ids
+            doc_idx.extend(seen)
+            doc_ptr.append(len(doc_idx))
+        self._doc_ptr = np.array(doc_ptr[:-1])
+        self._doc_idx = np.array(doc_idx)
+        self._sent_ptr = np.array(sent_ptr[:-1])
+        self._sent_idx = np.array(sent_idx)
+        self._sent_doc_ptr = np.array(sent_doc_ptr)
+
+    def scores(self, query: str) -> np.ndarray:
+        terms = set(tokenize_search_text(query))
+        if not terms or not len(self._doc_ptr):
+            return np.zeros(len(self._doc_ptr))
+        known = np.zeros(len(self._vocab) + 1, dtype=np.int32)
+        known[[self._vocab[t] for t in terms if t in self._vocab]] = 1
+        found = np.add.reduceat(known[self._doc_idx], self._doc_ptr)
+        per_sentence = np.add.reduceat(known[self._sent_idx], self._sent_ptr)
+        best = np.maximum.reduceat(per_sentence, self._sent_doc_ptr)
+        return (found + best) / (2 * len(terms))
 
 
 def _normalize_gender(value: str | None) -> str | None:
@@ -317,6 +453,7 @@ class RetrievalEngine:
         candidate_limit: int = DEFAULT_CANDIDATE_LIMIT,
         extract_limit: int = DEFAULT_EXTRACT_LIMIT,
         preset: str = "default",
+        analysis_facts: Mapping[str, str] | None = None,
     ):
         self.emr = Path(emr)
         self.embedder = embedder
@@ -324,8 +461,10 @@ class RetrievalEngine:
         self.candidate_limit = max(1, int(candidate_limit))
         self.extract_limit = max(1, int(extract_limit))
         self.preset = preset
+        self.analysis_facts = dict(analysis_facts or {})
         self._cache = _EmbeddingCache(Path(cache_path))
         self._records: list[SearchRecord] = []
+        self._keyword_index: tuple[list[SearchRecord], _KeywordIndex, dict[str, int]] | None = None
         self._vectors: dict[str, list[float]] = {}
         self._vector_model_id: str | None = None
 
@@ -666,6 +805,7 @@ class RetrievalEngine:
                 gender=gender,
                 has_vent=has_vent,
                 analyzed=analyzed,
+                facts=self.analysis_facts.get(pid, ""),
             )
             out.append(
                 SearchRecord(
@@ -718,11 +858,13 @@ class RetrievalEngine:
         self, pool: Sequence[SearchRecord], question: str, limit: int
     ) -> list[SearchCandidate]:
         pid_terms = set(re.findall(r"\w+", question.lower()))
-        scored = [
-            (2.0 if rec.pid.lower() in pid_terms else _keyword_score(question, rec.source_text), rec)
-            for rec in pool
-        ]
-        if any(len(term) > 2 for term in question.split()):
+        values, positions = self._keyword_scores(question)
+        scored = []
+        for rec in pool:
+            pos = positions.get(rec.pid)
+            score = float(values[pos]) if pos is not None else _keyword_score(question, rec.source_text)
+            scored.append((2.0 if rec.pid.lower() in pid_terms else score, rec))
+        if tokenize_search_text(question):
             scored = [(score, rec) for score, rec in scored if score > 0]
         # Short metadata texts tie often; ties must not fall to file order
         scored.sort(key=_rank_key, reverse=True)
@@ -730,6 +872,14 @@ class RetrievalEngine:
             _candidate(rec, score=score, method="keyword")
             for score, rec in scored[:limit]
         ]
+
+    def _keyword_scores(self, question: str) -> tuple[np.ndarray, dict[str, int]]:
+        if self._keyword_index is None or self._keyword_index[0] is not self._records:
+            index = _KeywordIndex([r.source_text for r in self._records])
+            positions = {r.pid: i for i, r in enumerate(self._records)}
+            self._keyword_index = (self._records, index, positions)
+        _, index, positions = self._keyword_index
+        return index.scores(question), positions
 
     def _extract_for(
         self,
