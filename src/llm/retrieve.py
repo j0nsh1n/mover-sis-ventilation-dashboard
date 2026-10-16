@@ -49,6 +49,13 @@ def format_grounded_extracts(
     return "\n".join(lines)
 
 
+def _case_facts(candidate: SearchCandidate) -> str:
+    """The cited case's own age, which the model may restate even when the extract omits it."""
+    if candidate.age is None:
+        return f"Case facts: PID {candidate.pid}"
+    return f"Case facts: PID {candidate.pid}, age {candidate.age:g}"
+
+
 def _research_session(cited: Sequence[SearchCandidate], preset: str) -> SessionState:
     """A session holding only the cited cases, so the answer gate checks exactly them."""
     pids = [candidate.pid for candidate in cited]
@@ -90,6 +97,11 @@ def answer_from_retrieval(
         candidates=candidates, extracts=extracts
     )
     cited = candidates[: min(len(candidates), len(extracts), 3)]
+    sources = [
+        f"{extract}\n{_case_facts(candidate)}"
+        for candidate, extract in zip(cited, extracts[: len(cited)], strict=True)
+        if extract.strip()
+    ]
     research_session = _research_session(cited, preset)
 
     def status(msg: str) -> None:
@@ -122,4 +134,5 @@ def answer_from_retrieval(
         skip_prefetch=True,
         extra_prefetched=prefetched,
         allow_tools=False,
+        sources=sources,
     )

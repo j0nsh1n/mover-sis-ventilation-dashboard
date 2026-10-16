@@ -134,6 +134,7 @@ class RulesDrawer(QFrame):
         self._fallback_focus = fallback_focus
         self._catalog: RuleCatalog | None = None
         self._recorded = True
+        self._thresholds_sha256: str | None = None
         self._error = ""
         self._rows: dict[str, QFrame] = {}
         self._built_for: RuleCatalog | None = None
@@ -231,9 +232,15 @@ class RulesDrawer(QFrame):
     def visible_rule_ids(self) -> list[str]:
         return [rule_id for rule_id, row in self._rows.items() if not row.isHidden()]
 
-    def set_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True, error: str = "") -> None:
+    def set_thresholds_sha256(self, value: str | None) -> None:
+        self._thresholds_sha256 = value
+        self._refresh_header()
+
+    def set_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True,
+                    thresholds_sha256: str | None = None, error: str = "") -> None:
         changed = catalog != self._catalog
         self._catalog, self._recorded, self._error = catalog, recorded, error
+        self._thresholds_sha256 = thresholds_sha256
         self._refresh_header()
         if self.is_open:
             self._build_rows()
@@ -249,6 +256,7 @@ class RulesDrawer(QFrame):
         self.search_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def open(self, opener: QWidget | None = None) -> None:
+        self._refresh_header()
         if not self.is_open:
             focus = opener or QApplication.focusWidget()
             self._opener = None if focus is not None and self.isAncestorOf(focus) else focus
@@ -307,10 +315,16 @@ class RulesDrawer(QFrame):
             text = ("Threshold config invalid." if self._error else "No rules loaded.")
             self.header_label.setText(text)
             return
-        provenance = "" if self._recorded else ", not recorded with this data"
-        self.header_label.setText(
-            f"Preset: {catalog.preset} · thresholds {catalog.thresholds_sha256[:12]}{provenance}"
-        )
+        current = catalog.refreshed()
+        if current is not catalog:
+            self._catalog = catalog = current
+            if self.is_open:
+                self._build_rows()
+                self._apply_search()
+        lines = list(catalog.thresholds_provenance(self._thresholds_sha256))
+        if not self._recorded:
+            lines.append("Preset not recorded with this data; using default.")
+        self.header_label.setText("\n".join(lines))
 
     def _build_rows(self) -> None:
         if self._built_for is not None and self._built_for == self._catalog and self._rows:

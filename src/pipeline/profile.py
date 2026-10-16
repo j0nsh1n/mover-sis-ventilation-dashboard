@@ -211,11 +211,17 @@ def profile_processed(
             p: (int(phase_minutes.get(p, 0)) if not 0 < ts.loc[ts["_observed"] & ts["phase"].eq(p), "PID"].nunique() < min_cell else None)
             for p in PHASES
         }
+    coverage["phase_source_events_pct"] = None
     if "phase_source" in ts.columns:
         per_case = ts.drop_duplicates("PID")["phase_source"].value_counts()
         coverage["cases_by_phase_source"] = {
             src: _case_count(int(per_case.get(src, 0)), min_cell) for src in PHASE_SOURCES
         }
+        n_events = int(per_case.get("events", 0))
+        if n_cases >= min_cell and not (
+            0 < n_events < min_cell or 0 < n_cases - n_events < min_cell
+        ):
+            coverage["phase_source_events_pct"] = round(100 * n_events / n_cases, 1)
 
     signal_stats: dict[str, Any] = {}
     obs = ts[ts["_observed"]]
@@ -335,11 +341,17 @@ def render_markdown(profile: dict[str, Any]) -> str:
     """Render a profile dict as a Markdown report."""
     c = profile["coverage"]
     metadata = profile["metadata"]
+    events_pct = c.get("phase_source_events_pct")
+    events_headline = (
+        f"{events_pct}%" if events_pct is not None else
+        "suppressed" if "cases_by_phase_source" in c else "unavailable"
+    )
     lines = [
         "# MOVER SIS pipeline profile (aggregate only)",
         "",
         f"Preset: {metadata['preset']}. Thresholds SHA256: {metadata['thresholds_sha256']}.",
         f"Cases: {c['n_cases']}. Seed: {metadata['seed']}.",
+        f"phase_source events: {events_headline} of cases.",
         "",
         f"No PIDs or timestamps. Case counts under {profile['min_cell']} are shown "
         f"as <{profile['min_cell']}; minutes, gaps, and distributions from fewer cases are suppressed.",

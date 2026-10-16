@@ -249,10 +249,10 @@ def test_escape_on_f_without_an_opener_falls_back_to_a_visible_button(view, qapp
 @pytest.mark.parametrize("preset", ["default", "lenient"])
 def test_header_names_the_preset_and_hash_prefix(view, preset):
     catalog = load_rule_catalog(preset)
-    view.set_rule_catalog(catalog)
+    view.set_rule_catalog(catalog, thresholds_sha256=catalog.thresholds_sha256)
     view.rules_button.click()
     header = view.rules_drawer.header_label.text()
-    assert header == f"Preset: {preset} · thresholds {catalog.thresholds_sha256[:12]}"
+    assert header == f"Thresholds when flagged ({preset}, {catalog.thresholds_sha256[:12]})"
     assert len(catalog.thresholds_sha256[:12]) == 12
 
 
@@ -260,8 +260,8 @@ def test_header_says_when_the_preset_was_not_recorded(view):
     catalog = load_rule_catalog("default")
     view.set_rule_catalog(catalog, recorded=False)
     view.rules_button.click()
-    assert view.rules_drawer.header_label.text().endswith(", not recorded with this data")
-    view.set_rule_catalog(catalog, recorded=True)
+    assert "Preset not recorded with this data; using default." in view.rules_drawer.header_label.text()
+    view.set_rule_catalog(catalog, recorded=True, thresholds_sha256=catalog.thresholds_sha256)
     assert "not recorded" not in view.rules_drawer.header_label.text()
 
 
@@ -274,7 +274,7 @@ def test_catalog_replacement_while_open_reapplies_the_search(view):
     view.set_rule_catalog(lenient)
     assert drawer.is_open
     assert drawer.search_text() == "etco2"
-    assert drawer.header_label.text().startswith("Preset: lenient")
+    assert drawer.header_label.text().endswith(f"Current thresholds (lenient, {lenient.thresholds_sha256[:12]})")
     assert drawer.count_label.text() == f"{len(lenient.search('etco2'))} of {len(lenient.specs)} rules"
     assert drawer.visible_rule_ids() == [spec.id for spec in lenient.search("etco2")]
     assert _row_text(drawer, "etco2_high") != default_text
@@ -284,7 +284,7 @@ def test_catalog_replacement_while_open_reapplies_the_search(view):
 def test_catalog_replaced_while_closed_is_used_on_the_next_open(view):
     view.set_rule_catalog(load_rule_catalog("strict"))
     view.rules_button.click()
-    assert view.rules_drawer.header_label.text().startswith("Preset: strict")
+    assert view.rules_drawer.header_label.text().endswith(f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})")
     assert f"warn at least {load_rule_catalog('strict').get('pip_high').params['warn']:g} cmH2O" in _row_text(
         view.rules_drawer, "pip_high"
     )
@@ -474,19 +474,100 @@ def _main_window(monkeypatch, tmp_path, preset="default", reloads=None):
     return MainWindow()
 
 
+@pytest.mark.parametrize("stamp", ["a" * 64, None, [], "bad", "z" * 64])
+@pytest.mark.parametrize("worker_kind", ["load", "pipeline"])
+def test_loaded_run_threshold_hash_reaches_drawer(qapp, monkeypatch, tmp_path, stamp, worker_kind):
+    import json
+    from src.desktop.app import DataLoadWorker, PipelineWorker
+
+    window = _main_window(monkeypatch, tmp_path)
+    try:
+        meta = {"preset": "strict"}
+        if stamp is not None:
+            meta["thresholds_sha256"] = stamp
+        (tmp_path / "run_meta.json").write_text(json.dumps(meta))
+        window._worker = (DataLoadWorker(processed=tmp_path, parent=window) if worker_kind == "load" else
+                          PipelineWorker(50, "strict", True, processed=tmp_path, parent=window))
+        window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
+        header = window.research.rules_drawer.header_label.text()
+        expected = (f"Thresholds when flagged (strict, {stamp[:12]})" if stamp == "a" * 64 else
+                    "Thresholds when flagged: not recorded with this data")
+        assert expected in header
+        assert f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})" in header
+    finally:
+        _dispose(window, qapp)
+
+
+def test_cached_and_live_case_views_keep_their_own_threshold_hash(qapp, monkeypatch, tmp_path):
+    from src.services.case_fetch import FetchResult
+
+    window = _main_window(monkeypatch, tmp_path)
+    try:
+        catalog = load_rule_catalog()
+        window._thresholds_sha256 = "a" * 64
+        window._refresh_rule_reference()
+        window.cases = pd.DataFrame({"PID": ["caseA"]})
+        window.ts = pd.DataFrame({"PID": ["caseA"], "t_min": [0.], "PIP": [20.]})
+        window.flags = pd.DataFrame()
+        view = window.research
+        view.set_results(RetrievalResult(candidates=tuple(
+            SearchCandidate(pid=pid, procedure="Synthetic", has_vent=True,
+                            source_label="Synthetic", analyzed=True, age=55, gender="M",
+                            source_text="Synthetic", rank_method="keyword", score=1.)
+            for pid in ("caseA", "caseB")
+        )))
+        window._load_research_case("caseA", False, True)
+        assert "Thresholds when flagged (default, aaaaaaaaaaaa)" in view.rules_drawer.header_label.text()
+        assert "The thresholds changed" in view.rules_drawer.header_label.text()
+        live = FetchResult(cases=pd.DataFrame({"PID": ["caseB"]}),
+                           timeseries=pd.DataFrame({"PID": ["caseB"], "t_min": [0.], "PIP": [20.]}),
+                           thresholds_sha256_by_pid={"caseB": catalog.thresholds_sha256})
+        window._pending_case = ("caseB", False, True, False)
+        window._on_research_case_loaded(live)
+        assert view.rules_drawer.header_label.text() == (
+            f"Thresholds when flagged (default, {catalog.thresholds_sha256[:12]})"
+        )
+        view.open_detail("caseA")
+        assert "Thresholds when flagged (default, aaaaaaaaaaaa)" in view.rules_drawer.header_label.text()
+        view.return_to_canvas()
+        assert "Thresholds when flagged (default, aaaaaaaaaaaa)" in view.rules_drawer.header_label.text()
+    finally:
+        _dispose(window, qapp)
+
+
+def test_reload_without_hash_clears_previous_run_hash(qapp, monkeypatch, tmp_path):
+    import json
+    from src.desktop.app import DataLoadWorker
+
+    window = _main_window(monkeypatch, tmp_path)
+    try:
+        window._worker = DataLoadWorker(processed=tmp_path, parent=window)
+        meta = tmp_path / "run_meta.json"
+        meta.write_text(json.dumps({"preset": "default", "thresholds_sha256": "a" * 64}))
+        data = tuple(pd.DataFrame() for _ in range(5))
+        window._on_pipeline_ok(data)
+        assert window._thresholds_sha256 == "a" * 64
+        meta.write_text(json.dumps({"preset": "default"}))
+        window._on_pipeline_ok(data)
+        assert window._thresholds_sha256 is None
+        assert "not recorded with this data" in window.research.rules_drawer.header_label.text()
+    finally:
+        _dispose(window, qapp)
+
+
 def test_drawer_follows_the_loaded_preset_not_the_saved_one(qapp, monkeypatch, tmp_path):
     window = _main_window(monkeypatch, tmp_path, preset="default")
     try:
         window.cases = pd.DataFrame()
         drawer = window.research.rules_drawer
         window.research.rules_button.click()
-        assert drawer.header_label.text().startswith("Preset: default")
+        assert drawer.header_label.text().endswith(f"Current thresholds (default, {load_rule_catalog().thresholds_sha256[:12]})")
         window._set_loaded_preset("strict", recorded=True)
-        assert drawer.header_label.text().startswith("Preset: strict")
+        assert drawer.header_label.text().endswith(f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})")
         window._on_settings_applied({"preset": "lenient"})
-        assert drawer.header_label.text().startswith("Preset: strict")
+        assert drawer.header_label.text().endswith(f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})")
         window._set_loaded_preset("default", recorded=False)
-        assert drawer.header_label.text().endswith(", not recorded with this data")
+        assert drawer.header_label.text().endswith("Preset not recorded with this data; using default.")
     finally:
         _dispose(window, qapp)
 

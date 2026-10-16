@@ -19,6 +19,13 @@ Outputs in the processed directory (the sample's files are left untouched):
 - ``corpus_cases.parquet``   one row per scanned surgery (scores, top rules)
 - ``corpus_episodes.parquet`` contiguous flag runs for every scanned surgery
 - ``corpus_meta.json``       scope counts, preset, thresholds hash, timing
+- ``corpus_profile.json`` / ``corpus_profile.md``
+                             aggregate profile (percentiles, rule and phase
+                             counts) merged from per-shard histograms; no PIDs
+                             or timestamps
+- ``scan-errors.log``        only after a shard fails: full exception text and
+                             traceback, which can hold paths and patient data
+                             and never leave this file
 
     PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default --workers 4
 
@@ -35,13 +42,15 @@ under about 12 GB in that pessimistic case; lower ``workers`` or
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import multiprocessing
 import os
+import re
 import shutil
+import sys
 import time
+import traceback
 import zlib
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from dataclasses import dataclass
@@ -51,23 +60,35 @@ from typing import Callable
 
 import pandas as pd
 
-from src.config import load_thresholds
+from src.config import load_thresholds, thresholds_preset_hash
+from src.rules import thresholds_sha256
 from src.guardrails.exceptions import GuardrailError, PipelineError
 from src.guardrails.validate_io import (
     atomic_write_json,
     atomic_write_parquet,
+    atomic_write_text,
     resolve_emr_dir,
     resolve_output_dir,
     validate_emr_dir,
 )
 from src.pipeline.load import NA_VALUES, VENT_RENAME, VITALS_RENAME, load_case_info
+from src.pipeline.phases import PHASE_SOURCES
 from src.pipeline.run import process_frames
+from src.pipeline.scan_profile import (
+    build_corpus_profile,
+    merge_histograms,
+    render_corpus_profile_md,
+    shard_histogram,
+)
 
 logger = logging.getLogger(__name__)
 
 CORPUS_CASES = "corpus_cases.parquet"
 CORPUS_EPISODES = "corpus_episodes.parquet"
 CORPUS_META = "corpus_meta.json"
+CORPUS_PROFILE_JSON = "corpus_profile.json"
+CORPUS_PROFILE_MD = "corpus_profile.md"
+SCAN_ERROR_LOG = "scan-errors.log"
 
 # Surgeries per shard: large enough to amortize pandas overhead, small enough
 # that one shard's minute-level frames stay well under a few hundred MB.
@@ -83,6 +104,76 @@ ProgressCb = Callable[[str, int, int], None]
 
 class ScanCancelled(PipelineError):
     """The caller asked the scan to stop."""
+
+
+class ShardFailure(PipelineError):
+    """A shard could not be scored.
+
+    The message is fixed text plus a code, safe to show anywhere; the original
+    exception text and traceback are in ``detail`` and go only to the log.
+    """
+
+    def __init__(self, message: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+# Pipeline module that raised -> stage in the failure code
+_STAGE_BY_MODULE = {
+    "load": "load",
+    "clean": "clean",
+    "merge": "merge",
+    "phases": "features",
+    "features": "features",
+    "flags": "flags",
+    "scan_profile": "profile",
+}
+_STAGE_BY_SHARD_FUNCTION = {"_read_shard": "load", "_split_csv": "load"}
+_TRACEBACK_FRAME = re.compile(r'File "([^"]+)", line \d+, in (\w+)')
+
+
+def _failure_code(trace: str, exc: BaseException) -> str:
+    """``<stage>:<ExceptionClass>`` from the innermost pipeline frame, else ``scan``."""
+    stage = "scan"
+    for filename, function in _TRACEBACK_FRAME.findall(trace):
+        path = Path(filename.replace("\\", "/"))
+        if path.parent.name == "pipeline" and path.stem in _STAGE_BY_MODULE:
+            stage = _STAGE_BY_MODULE[path.stem]
+        elif path.stem == "corpus_scan" and function in _STAGE_BY_SHARD_FUNCTION:
+            stage = _STAGE_BY_SHARD_FUNCTION[function]
+    return f"{stage}:{type(exc).__name__}"
+
+
+def _failure_message(shard: int, code: str) -> str:
+    return f"Shard {shard + 1} could not be scored ({code}). Details are in {SCAN_ERROR_LOG}."
+
+
+def append_scan_error_log(out_dir: Path | str, entries: list[tuple[str, str]]) -> None:
+    """Append ``(heading, detail)`` entries to the debug log; owner-only where supported."""
+    path = Path(out_dir) / SCAN_ERROR_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        for heading, detail in entries:
+            handle.write(f"[{stamp}] {heading}\n{detail.rstrip()}\n\n")
+
+
+def scan_failure_message(exc: BaseException, out_dir: Path | str) -> str:
+    """Text the app may show for a failed scan; the full detail goes to the log.
+
+    A ShardFailure was already logged by ``scan_corpus``. Any other exception
+    (a bad EMR folder, an unreadable file) is logged here.
+    """
+    if isinstance(exc, ShardFailure):
+        return str(exc)
+    trace = "".join(traceback.format_exception(exc))
+    code = _failure_code(trace, exc)
+    try:
+        append_scan_error_log(out_dir, [(f"scan failed ({code})", trace)])
+    except OSError:
+        logger.exception("Could not write %s", SCAN_ERROR_LOG)
+    return f"The full-EMR scan could not finish ({code}). Details are in {SCAN_ERROR_LOG}."
 
 
 @dataclass
@@ -141,15 +232,27 @@ def _read_shard(path: Path, rename: dict[str, str] | None = None) -> pd.DataFram
     return df
 
 
-def _thresholds_hash(thresholds: dict) -> str:
-    blob = json.dumps(thresholds, sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
-
-
 def default_workers(n_shards: int = MAX_DEFAULT_WORKERS) -> int:
     """One core is left for the desktop / OS; never more workers than shards."""
     cores = os.cpu_count() or 1
     return max(1, min(cores - 1, n_shards, MAX_DEFAULT_WORKERS))
+
+
+def _peak_rss_mb() -> dict[str, float | None]:
+    """Process-lifetime high-water RSS; children reports the largest reaped child.
+
+    A serial CLI scan runs in the parent, so its worker RSS is zero. Repeated
+    scans in one process can retain peaks from earlier work.
+    """
+    try:
+        import resource
+    except ImportError:
+        return {"parent": None, "largest_worker": None}
+    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return {
+        "parent": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale, 1),
+        "largest_worker": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / scale, 1),
+    }
 
 
 def _score_shard(
@@ -162,12 +265,21 @@ def _score_shard(
     """Score one shard; runs in the parent (workers=1) or in a worker process.
 
     Top-level and given only picklable arguments so a spawned process can
-    import and call it. Returns the small per-case and episode tables, never
-    the minute-level frames. A shard that cannot be scored for data reasons
-    comes back with ``error`` set; any other exception propagates.
+    import and call it. Returns the small per-case and episode tables and the
+    mergeable histogram of the shard, never the minute-level frames. A shard that cannot be scored for data reasons
+    comes back with ``error`` (a fixed code message) and ``detail`` (full text,
+    for the log only) set; any other exception propagates.
     """
     path = Path(shard_dir)
-    empty: dict = {"shard": shard, "cases": None, "episodes": None, "error": None, "n_pids": 0}
+    empty: dict = {
+        "shard": shard,
+        "cases": None,
+        "episodes": None,
+        "histogram": None,
+        "error": None,
+        "detail": None,
+        "n_pids": 0,
+    }
     vent = _read_shard(path / "vent.csv", VENT_RENAME)
     if vent.empty:
         return empty
@@ -194,22 +306,33 @@ def _score_shard(
             validate=False,
             verbose=False,
         )
+        histogram = shard_histogram(
+            frames["timeseries"], frames["flags"], frames["episodes"], thresholds
+        )
     except (GuardrailError, PipelineError, ValueError, KeyError) as exc:
-        return {**empty, "error": str(exc)[:300], "n_pids": len(pids)}
+        trace = "".join(traceback.format_exception(exc))
+        return {
+            **empty,
+            "error": _failure_message(shard, _failure_code(trace, exc)),
+            "detail": trace,
+            "n_pids": len(pids),
+        }
     episodes = frames["episodes"]
     return {
         **empty,
         "cases": frames["cases"],
         "episodes": None if episodes.empty else episodes,
+        "histogram": histogram,
     }
 
 
-def _shard_error(shard: int, exc: BaseException) -> PipelineError:
-    return PipelineError(
-        f"Scoring shard {shard + 1} failed: {type(exc).__name__}: {exc}. "
-        "If a worker process was killed, the machine may have run out of memory; "
-        "retry with fewer workers or a smaller cases_per_shard."
+def _shard_error(shard: int, exc: BaseException) -> ShardFailure:
+    trace = "".join(traceback.format_exception(exc))
+    detail = (
+        f"{trace}\nIf a worker process was killed, the machine may have run out of "
+        "memory; retry with fewer workers or a smaller cases_per_shard."
     )
+    return ShardFailure(_failure_message(shard, _failure_code(trace, exc)), detail)
 
 
 def _run_serial(
@@ -226,7 +349,7 @@ def _run_serial(
         try:
             results[job[0]] = _score_shard(*job)
         except Exception as exc:
-            raise _shard_error(job[0], exc) from exc
+            raise _shard_error(job[0], exc) from None
     return results
 
 
@@ -263,7 +386,7 @@ def _run_parallel(
                 try:
                     results[shard] = future.result()
                 except Exception as exc:
-                    raise _shard_error(shard, exc) from exc
+                    raise _shard_error(shard, exc) from None
             if done:
                 progress(
                     f"Scored {len(results)} of {n_shards} shard(s) on {workers} CPU cores…",
@@ -330,6 +453,7 @@ def scan_corpus(
     emr_path = validate_emr_dir(emr_dir if emr_dir is not None else resolve_emr_dir(None))
     out_path = resolve_output_dir(output_dir, create=True)
     thresholds = load_thresholds(preset, validate=True)
+    file_hash = thresholds_sha256()
 
     info = load_case_info(emr_path)
     info["PID"] = info["PID"].astype(str)
@@ -345,6 +469,8 @@ def scan_corpus(
     if workers is not None and workers < 1:
         raise PipelineError(f"workers must be at least 1 (got {workers}).")
     n_workers = min(workers, n_shards) if workers is not None else default_workers(n_shards)
+    if workers is not None and workers > n_shards:
+        progress(f"Requested {workers} workers; using {n_workers} for {n_shards} shard(s).")
 
     def check_stop() -> None:
         if should_stop is not None and should_stop():
@@ -377,10 +503,14 @@ def scan_corpus(
             )
             for shard in range(n_shards)
         ]
-        if n_workers == 1 and should_stop is None:
-            results = _run_serial(jobs, progress, should_stop)
-        else:
-            results = _run_parallel(jobs, n_workers, progress, should_stop)
+        try:
+            if n_workers == 1 and should_stop is None:
+                results = _run_serial(jobs, progress, should_stop)
+            else:
+                results = _run_parallel(jobs, n_workers, progress, should_stop)
+        except ShardFailure as failure:
+            append_scan_error_log(out_path, [(failure.args[0], failure.detail)])
+            raise
         seconds_score = time.monotonic() - score_started
     finally:
         _remove_tree(tmp)
@@ -389,18 +519,28 @@ def scan_corpus(
     case_frames: list[pd.DataFrame] = []
     episode_frames: list[pd.DataFrame] = []
     failed: list[dict] = []
+    failure_log: list[tuple[str, str]] = []
+    histograms: list[dict] = []
     for shard in range(n_shards):
         res = results[shard]
         if res["error"] is not None:
             failed.append({"shard": shard, "n_pids": res["n_pids"], "error": res["error"]})
+            failure_log.append((res["error"], res["detail"] or ""))
             continue
         if res["cases"] is not None:
             case_frames.append(res["cases"])
         if res["episodes"] is not None:
             episode_frames.append(res["episodes"])
+        if res["histogram"] is not None:
+            histograms.append(res["histogram"])
 
+    if failure_log:
+        append_scan_error_log(out_path, failure_log)
     if not case_frames:
-        raise PipelineError("The full-EMR scan produced no scored cases.")
+        raise PipelineError(
+            "The full-EMR scan produced no scored cases."
+            + (f" Details are in {SCAN_ERROR_LOG}." if failure_log else "")
+        )
     corpus_cases = (
         pd.concat(case_frames, ignore_index=True)
         .sort_values(["anomaly_score", "PID"], ascending=[False, True], kind="stable")
@@ -409,17 +549,31 @@ def scan_corpus(
     corpus_episodes = (
         pd.concat(episode_frames, ignore_index=True) if episode_frames else pd.DataFrame()
     )
+    cases_left_out = sum(f["n_pids"] for f in failed)
+    profile = build_corpus_profile(
+        merge_histograms(histograms),
+        thresholds,
+        n_cases_left_out=cases_left_out,
+        n_failed_shards=len(failed),
+    )
     meta = {
         "scope": "full_emr_scan",
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "preset": preset,
-        "thresholds_hash": _thresholds_hash(thresholds),
+        "thresholds_hash": thresholds_preset_hash(thresholds),
+        "thresholds_sha256": file_hash,
         "n_indexed_surgeries": n_indexed,
         "n_ventilated_surgeries": n_ventilated,
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),
         "n_shards": n_shards,
         "failed_shards": failed,
+        "cases_left_out_by_failed_shards": cases_left_out,
+        "workers_requested": workers,
         "workers": n_workers,
+        "cases_by_phase_source": {
+            source: int(corpus_cases["phase_source"].eq(source).sum())
+            for source in PHASE_SOURCES
+        },
         "seconds_split": round(seconds_split, 1),
         "seconds_score": round(seconds_score, 1),
         "seconds": round(time.monotonic() - started, 1),
@@ -428,6 +582,9 @@ def scan_corpus(
         raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
     atomic_write_parquet(corpus_cases, out_path / CORPUS_CASES)
     atomic_write_parquet(corpus_episodes, out_path / CORPUS_EPISODES)
+    atomic_write_json(profile, out_path / CORPUS_PROFILE_JSON)
+    atomic_write_text(render_corpus_profile_md(profile, file_hash), out_path / CORPUS_PROFILE_MD)
+    meta["peak_rss_mb"] = _peak_rss_mb()
     atomic_write_json(meta, out_path / CORPUS_META)
     progress(
         f"Full-EMR scan done: {meta['n_scanned_cases']} of {n_ventilated} ventilated "

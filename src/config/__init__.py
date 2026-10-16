@@ -1,5 +1,7 @@
 from pathlib import Path
 import copy
+import hashlib
+import json
 import yaml
 
 from src.guardrails.exceptions import ConfigValidationError
@@ -16,6 +18,11 @@ def _thresholds_file() -> Path:
 
 # Back-compat alias (resolved at import for non-frozen; prefer _thresholds_file())
 THRESHOLDS_PATH = CONFIG_DIR / "thresholds.yaml"
+
+
+def thresholds_preset_hash(thresholds: dict) -> str:
+    blob = json.dumps(thresholds, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def load_thresholds(preset: str = "default", *, validate: bool = True) -> dict:

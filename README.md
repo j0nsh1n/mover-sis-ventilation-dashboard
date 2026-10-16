@@ -94,7 +94,9 @@ PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default
 
 It processes the export in batches and keeps only per-case scores and flag episodes
 (`corpus_cases.parquet`, `corpus_episodes.parquet`, `corpus_meta.json`), so memory
-stays bounded. Batches are scored in parallel on several CPU cores (default: core
+stays bounded. It also writes an aggregate-only profile (`corpus_profile.json` and
+`corpus_profile.md`: signal percentiles to within one bin width, rule and phase counts,
+counts under 11 shown as `<11`) merged from small per-shard histograms. Batches are scored in parallel on several CPU cores (default: core
 count minus one, at most 6; set `--workers N`, or `--workers 1` for a single
 process). Each worker holds one batch in memory, about 250 MB on synthetic data and
 probably 1 to 2 GB on real data, so use fewer workers on a small machine. On
@@ -116,6 +118,10 @@ critical thresholds, observed minutes per phase, and a table of procedure event 
 with counts (for checking the `phases` patterns). No PIDs or timestamps; case counts
 under 11 print as `<11` and event names used in fewer than 11 cases are pooled.
 Check your MOVER DUA before sharing even aggregate output.
+
+For the full calibration on real data (phase event names, thresholds from percentiles,
+a before-and-after flag table, and scan timing by worker count), follow
+[`docs/CALIBRATION_RUNBOOK.md`](docs/CALIBRATION_RUNBOOK.md).
 
 ### No MOVER data yet?
 

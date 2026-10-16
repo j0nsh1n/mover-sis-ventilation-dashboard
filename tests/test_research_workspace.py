@@ -321,7 +321,8 @@ def episode_view(qapp):
     ])
     fetched = FetchResult(cases=pd.DataFrame({"PID": ["caseA"], "Age": [55]}), timeseries=ts,
                           flags=flags, events=pd.DataFrame({"PID": ["caseA"], "event": ["synthetic"]}))
-    view.set_case_data("caseA", ts, flags, fetched=fetched)
+    view.set_case_data("caseA", ts, flags, fetched=fetched,
+                       thresholds_sha256=load_rule_catalog().thresholds_sha256)
     view.show()
     view.open_detail("caseA")
     qapp.processEvents()
@@ -381,10 +382,10 @@ def test_current_thresholds_change_and_rule_link(episode_view, monkeypatch):
     view, _ = episode_view
     view.episode_list.setCurrentRow(1)
     default = load_rule_catalog("default")
-    assert f"Current thresholds (default, {default.thresholds_sha256[:12]})" in view.rule_detail.text()
+    assert f"Thresholds when flagged (default, {default.thresholds_sha256[:12]})" in view.rule_detail.text()
     other = load_rule_catalog("strict")
     view.set_rule_catalog(other)
-    assert f"Current thresholds (strict, {other.thresholds_sha256[:12]})" in view.rule_detail.text()
+    assert f"Thresholds when flagged (strict, {other.thresholds_sha256[:12]})" in view.rule_detail.text()
     calls = []
     original = view.show_rule
 
@@ -397,6 +398,93 @@ def test_current_thresholds_change_and_rule_link(episode_view, monkeypatch):
     assert calls == ["spo2_low"]
     assert view.rules_drawer.is_open
     assert view.rules_drawer._rows["spo2_low"].property("highlight") is True
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_rule_detail_threshold_provenance_after_file_change(episode_view, monkeypatch, tmp_path, recorded):
+    import src.config
+    import src.rules
+    from src.runtime_paths import thresholds_path
+
+    view, fetched = episode_view
+    original = src.rules.load_rule_catalog()
+    path = tmp_path / "thresholds.yaml"
+    path.write_bytes(thresholds_path().read_bytes() + b"\n# changed for this test\n")
+    monkeypatch.setattr(src.config, "_thresholds_file", lambda: path)
+    monkeypatch.setattr(src.rules, "thresholds_path", lambda: path)
+    current = src.rules.load_rule_catalog()
+    stamp = original.thresholds_sha256 if recorded else None
+    view.set_rule_catalog(current, thresholds_sha256=stamp)
+    view.set_case_data("caseA", fetched.timeseries, fetched.flags, fetched=fetched,
+                       thresholds_sha256=stamp, open_detail=True)
+    view.episode_list.setCurrentRow(1)
+    header = (f"Thresholds when flagged (default, {stamp[:12]})" if stamp else
+              "Thresholds when flagged: not recorded with this data")
+    for text in (view.rule_detail.text(), view.rules_drawer.header_label.text()):
+        assert header in text
+        assert f"Current thresholds (default, {current.thresholds_sha256[:12]})" in text
+        assert ("The thresholds changed since these flags were computed. "
+                "Run the pipeline again to refresh them." in text) is recorded
+    lines = view.rule_detail.text().splitlines()
+    current_line = lines.index(f"Current thresholds (default, {current.thresholds_sha256[:12]})")
+    # The listed values come from the current file, so they must follow the current line directly.
+    assert lines[current_line + 1].startswith(("warn", "critical", "info"))
+
+
+def test_rule_detail_matching_thresholds_omit_change_warning(episode_view):
+    from src.rules import load_rule_catalog
+
+    view, _ = episode_view
+    view.episode_list.setCurrentRow(1)
+    expected = f"Thresholds when flagged (default, {load_rule_catalog().thresholds_sha256[:12]})"
+    for text in (view.rule_detail.text(), view.rules_drawer.header_label.text()):
+        assert expected in text
+        assert "Current thresholds" not in text
+        assert "The thresholds changed" not in text
+
+
+def test_rule_render_reloads_changed_file_values(episode_view, monkeypatch, tmp_path):
+    import src.config
+    import src.rules
+
+    view, _ = episode_view
+    path = tmp_path / "thresholds.yaml"
+    content = src.rules.thresholds_path().read_text()
+    assert "warn: 92" in content
+    path.write_text(content.replace("warn: 92", "warn: 91"))
+    monkeypatch.setattr(src.config, "_thresholds_file", lambda: path)
+    monkeypatch.setattr(src.rules, "thresholds_path", lambda: path)
+    current = src.rules.load_rule_catalog()
+    view.episode_list.setCurrentRow(1)
+    assert f"Current thresholds (default, {current.thresholds_sha256[:12]})" in view.rule_detail.text()
+    assert "warn at most 91 %" in view.rule_detail.text()
+    view.open_rules()
+    assert f"Current thresholds (default, {current.thresholds_sha256[:12]})" in view.rules_drawer.header_label.text()
+    from PySide6.QtWidgets import QLabel
+    assert any("91 %" in label.text() for label in view.rules_drawer._rows["spo2_low"].findChildren(QLabel))
+    monkeypatch.setattr(src.rules, "load_rule_catalog", lambda *args: pytest.fail("unchanged file reloaded"))
+    view._select_episode(1)
+    view.open_rules()
+
+
+def test_show_on_board_restores_case_threshold_hashes(episode_view):
+    view, fetched = episode_view
+    view.return_to_canvas()
+    view.begin_question("First", request_id=10)
+    view.set_results(RetrievalResult(candidates=(_candidate("caseA"),)))
+    view.set_case_data("caseA", fetched.timeseries, fetched.flags, thresholds_sha256="a" * 64)
+    view.set_answer("First answer")
+    view.begin_question("Second", request_id=11)
+    view.set_results(RetrievalResult(candidates=(_candidate("caseA"),)))
+    view.set_case_data("caseA", fetched.timeseries, fetched.flags, thresholds_sha256="b" * 64)
+    view.set_answer("Second answer")
+    view.show_turn(10)
+    view.open_detail("caseA")
+    view.episode_list.setCurrentRow(1)
+    assert view._case_views["caseA"].thresholds_sha256 == "a" * 64
+    for text in (view.rule_detail.text(), view.rules_drawer.header_label.text()):
+        assert "Thresholds when flagged (default, aaaaaaaaaaaa)" in text
+        assert "The thresholds changed" in text
 
 
 def test_no_flags_and_new_case_clear_selection(episode_view):
@@ -587,9 +675,10 @@ def test_mainwindow_retains_full_case_fetch(qapp, episode_view, monkeypatch, rou
     view, fetched = episode_view
     fetched.episodes = view._case_views["caseA"].episodes
     fake = SimpleNamespace(research=view, _pending_case=("caseA", False, False, False),
+                           _thresholds_sha256="a" * 64,
                            _case_worker=None, cases=fetched.cases, ts=fetched.timeseries,
                            flags=fetched.flags, episodes=fetched.episodes, events=fetched.events)
-    fake._on_research_case_data = lambda value: MainWindow._on_research_case_data(fake, value)
+    fake._on_research_case_data = lambda value, **kwargs: MainWindow._on_research_case_data(fake, value, **kwargs)
     if route == "processed":
         for name in ("cases", "ts", "flags", "episodes", "events"):
             frame = getattr(fake, name)
