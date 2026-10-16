@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
         request_id = self._research_request_id
         self._active_research_request = request_id
         self.research.begin_question(question, request_id)
-        self.research.set_status("Searching the local article catalog…" if articles else "Preparing indexed surgery search…")
+        self.research.set_progress("Searching the local article catalog…" if articles else "Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             engine,
             question,
@@ -1025,7 +1025,7 @@ class MainWindow(QMainWindow):
         )
         self._research_workers[request_id] = self._research_worker
         self._research_worker.progress.connect(
-            lambda progress: self.research.set_status(progress.message)
+            lambda progress: self.research.set_progress(progress.message)
             if request_id == self._active_research_request else None
         )
         self._research_worker.shortlist.connect(lambda result: self._on_research_shortlist(result, request_id))
@@ -1118,6 +1118,7 @@ class MainWindow(QMainWindow):
         self._research_workers.pop(request_id, None)
         if request_id == self._active_research_request:
             self.research.set_searching(False)
+            self.research.finish_progress()
 
     def _load_research_case(
         self, pid: str, comparison: bool, open_detail: bool, from_overview: bool | None = None,

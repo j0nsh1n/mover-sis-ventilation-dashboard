@@ -150,6 +150,8 @@ class ResearchWorkspace(QWidget):
         self._setup_required = False
         self._before_question: QuestionState | None = None
         self._searching = False
+        # The status line shows a running step ("Model round 1/8…") that must not outlive its search
+        self._status_is_progress = False
         self._active_turn_request: int | None = None
         self._board_request: int | None = None
         self._before_board_request: int | None = None
@@ -952,6 +954,9 @@ class ResearchWorkspace(QWidget):
         self.set_searching(False)
         if state is not None:
             self._restore_board(state)
+        elif self._status_is_progress:
+            self.status_label.setText("Search cancelled.")
+        self._status_is_progress = False
 
     def show_turn(self, request_id: int) -> None:
         turn = self.conversation.turn(request_id)
@@ -981,7 +986,18 @@ class ResearchWorkspace(QWidget):
             self._overview_candidates[pid] = candidate
             self._open_or_request(pid, comparison=False)
 
+    def set_progress(self, message: str) -> None:
+        """Show a running step of the current search; finish_progress replaces it."""
+        self.set_status(message)
+        self._status_is_progress = True
+
+    def finish_progress(self) -> None:
+        """Replace a running step left on the status line once its search has ended."""
+        if self._status_is_progress:
+            self.set_status("Search finished.")
+
     def set_status(self, message: str) -> None:
+        self._status_is_progress = False
         self.status_label.setText(message)
         self._save_board()
         if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
