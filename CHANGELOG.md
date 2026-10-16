@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). When the agent filter leaves nothing, the answer says where agents come from and, without a scan, that a scan would widen the search.
 - The Research status line no longer keeps a running step such as "Model round 1/8…" or "Rewriting the draft…" after the search ends: it reads "Search finished.", keeps a failure message, and returns to the earlier status when the search is cancelled. Reopening an earlier question shows the same.
 - Enter and Return now press the focused button in the main window, as Space already did: Cases, the Rules drawer, the Cases overview, the conversation panel and the status-bar buttons included.
+- The Cases table's sort arrow points down for a descending sort (highest first) and up for an ascending one; it pointed the other way.
 
 ## [0.13.0] — 2026-10-16
 

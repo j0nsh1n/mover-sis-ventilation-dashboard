@@ -662,6 +662,43 @@ def test_sort_arrow_is_visible_in_both_app_themes(qapp, theme):
         apply_theme(qapp, "light")
 
 
+def _arrow_rows(header) -> list[int]:
+    """Painted width of the sort arrow in each pixel row, top to bottom."""
+    with_arrow = header.grab().toImage()
+    header.setSortIndicatorShown(False)
+    QApplication.processEvents()
+    without_arrow = header.grab().toImage()
+    header.setSortIndicatorShown(True)
+    widths = [
+        sum(with_arrow.pixel(x, y) != without_arrow.pixel(x, y) for x in range(with_arrow.width()))
+        for y in range(with_arrow.height())
+    ]
+    return [w for w in widths if w]
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_sort_arrow_points_down_for_descending_and_up_for_ascending(qapp, theme):
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, theme)
+    try:
+        view = _workspace(_cases())
+        view.show_cases()
+        QApplication.processEvents()
+        table = view._cases_overview.table
+        header = table.horizontalHeader()
+        assert header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+        assert header.sectionsClickable()
+        rows = _arrow_rows(header)
+        assert len(rows) >= 3 and rows[0] > rows[-1], rows  # wide at the top: points down
+        table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.AscendingOrder)
+        QApplication.processEvents()
+        rows = _arrow_rows(header)
+        assert len(rows) >= 3 and rows[0] < rows[-1], rows  # wide at the bottom: points up
+    finally:
+        apply_theme(qapp, "light")
+
+
 def _column(key: str) -> int:
     return next(i for i, column in enumerate(COLUMNS) if column.key == key)
 
