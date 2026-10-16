@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.pipeline.profile import main, profile_processed, render_markdown
 
@@ -246,6 +248,7 @@ def test_event_names_cannot_leak_synthetic_identifiers_or_timestamps(tmp_path, t
     assert "08:30:00" not in output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="scripts/calibrate.sh is a bash script for Linux")
 def test_calibrate_names_missing_emr_path(tmp_path):
     import subprocess
     from pathlib import Path
