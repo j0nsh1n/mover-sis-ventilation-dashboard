@@ -119,6 +119,10 @@ with counts (for checking the `phases` patterns). No PIDs or timestamps; case co
 under 11 print as `<11` and event names used in fewer than 11 cases are pooled.
 Check your MOVER DUA before sharing even aggregate output.
 
+For the full calibration on real data (phase event names, thresholds from percentiles,
+a before-and-after flag table, and scan timing by worker count), follow
+[`docs/CALIBRATION_RUNBOOK.md`](docs/CALIBRATION_RUNBOOK.md).
+
 ### No MOVER data yet?
 
 Generate fictional cases with the same file layout and quirks (`\N` nulls, `ETC02`
