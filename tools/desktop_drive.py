@@ -43,6 +43,7 @@ DEFAULT_DRAFTS = (
 )
 FRAME_INTERVAL_S = 0.2
 FRAME_RATE = 5
+STEP_HOLD_FRAMES = 5
 STEP_TIMEOUT_S = 90.0
 OUT_MARKER = ".desktop_drive"
 
@@ -64,11 +65,14 @@ class Run:
         for _ in range(3):
             self.app.processEvents()
 
-    def frame(self) -> None:
+    def frame(self, hold: int = 1) -> None:
+        """Write the window as it is now; ``hold`` repeats it so a brief state stays visible in the video."""
         if self.frames_dir is None:
             return
-        self.frame_count += 1
-        self.win.grab().save(str(self.frames_dir / f"{self.frame_count:06d}.png"))
+        image = self.win.grab()
+        for _ in range(hold):
+            self.frame_count += 1
+            image.save(str(self.frames_dir / f"{self.frame_count:06d}.png"))
 
     def wait(self, ready: Callable[[], bool], what: str, timeout_s: float = STEP_TIMEOUT_S) -> None:
         deadline = time.monotonic() + timeout_s
@@ -172,11 +176,13 @@ def return_to_question(run: Run) -> dict[str, Any]:
     }
 
 
-def run_pipeline(run: Run) -> dict[str, Any]:
+def run_pipeline(run: Run, *, limit: int | None = None) -> dict[str, Any]:
     from src.runtime_paths import emr_dir
 
     with open(emr_dir() / "patient_information.csv", encoding="utf-8") as f:
         n_cases = max(1, sum(1 for _ in f) - 1)
+    if limit is not None:
+        n_cases = min(n_cases, limit)
     run.win._run_pipeline(n_cases=n_cases)
     run.wait(lambda: not run.win._worker.isRunning(), "the pipeline")
     run.settle()
@@ -545,6 +551,7 @@ def f_facts(run: Run) -> dict[str, Any]:
         "episode_rows_shown": research._episodes.to_dict("records"),
         "selected_rule_id": research.selected_rule_id,
         "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
+        "chart_minute": research.detail_chart._minute,
         "rule_detail": research.rule_detail.text(),
         "signal_statistics": research.signal_statistics,
         "chart_track_names": research.chart_track_names,
@@ -629,6 +636,371 @@ def f_drawer_link(run: Run) -> dict[str, Any]:
     assert research.rules_drawer.is_open
     assert research.rules_drawer._rows[research.selected_rule_id].property("highlight") is True
     return {**f_facts(run), **_drawer_facts(run)}
+def _case_loaded(win: Any) -> bool:
+    worker = win._case_worker
+    return win._pending_case is None and win._queued_case is None and (worker is None or not worker.isRunning())
+
+
+def _overview_facts(run: Run, rows: int = 3) -> dict[str, Any]:
+    research = run.win.research
+    overview = research._cases_overview
+    if overview is None:
+        raise RuntimeError("the Cases overview was never opened")
+    return {
+        "page": research.stack.currentIndex(),
+        "scope": overview.scope_label.text(),
+        "scope_switch_visible": overview.scope_combo.isVisibleTo(overview),
+        "scope_choices": [overview.scope_combo.itemText(i) for i in range(overview.scope_combo.count())],
+        "table_visible": overview.table.isVisibleTo(overview),
+        "empty_message": overview.empty_label.text() if overview.empty_label.isVisibleTo(overview) else "",
+        "rows": overview._proxy.rowCount(),
+        "first_rows": [
+            {"pid": row["PID"], "score": row["anomaly_score"]} for row in overview.visible_rows(rows)
+        ],
+        "message": overview.status_label.text(),
+    }
+
+
+def open_cases(run: Run) -> dict[str, Any]:
+    run.win.resize(900, 860)
+    run.win.tabs.setCurrentWidget(run.win.research)
+    run.settle()
+    research = run.win.research
+    research.cases_button.click()
+    run.settle()
+    if research.stack.currentIndex() != 2:
+        raise RuntimeError("one click on Cases did not open the overview")
+    return _overview_facts(run)
+
+
+def _click_header(run: Run, column: int) -> None:
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    header = run.win.research._cases_overview.table.horizontalHeader()
+    x = header.sectionViewportPosition(column) + header.sectionSize(column) // 2
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, header.height() // 2))
+    run.settle()
+    run.frame(STEP_HOLD_FRAMES)
+
+
+def _click_row(run: Run, row: int) -> str:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    table = run.win.research._cases_overview.table
+    pid = table.model().index(row, 0).data()
+    center = table.visualRect(table.model().index(row, 0)).center()
+    run.frame(STEP_HOLD_FRAMES)
+    QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
+    return str(pid)
+
+
+def sort_cases_by_score(run: Run) -> dict[str, Any]:
+    from src.desktop.cases_overview import COLUMNS
+
+    score = next(i for i, c in enumerate(COLUMNS) if c.key == "anomaly_score")
+    _click_header(run, 0)
+    by_pid = [row["PID"] for row in run.win.research._cases_overview.visible_rows(5)]
+    if by_pid != sorted(by_pid):
+        raise RuntimeError(f"clicking PID did not sort by PID: {by_pid}")
+    _click_header(run, score)
+    facts = {**_overview_facts(run, rows=5), "first_pids_when_sorted_by_pid": by_pid}
+    scores = [row["score"] for row in facts["first_rows"]]
+    if scores != sorted(scores, reverse=True) or len(set(scores)) < 2:
+        raise RuntimeError(f"rows are not sorted by score: {scores}")
+    return facts
+
+
+def open_top_case(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    pid = _click_row(run, 0)
+    run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the signal detail view")
+    if pid not in research.detail_title.text():
+        raise RuntimeError(f"F opened {research.detail_title.text()!r}, not {pid}")
+    return {"pid": pid, "detail": research.detail_title.text(), "back": research.back_button.text()}
+
+
+def sample_pipeline(run: Run) -> dict[str, Any]:
+    return run_pipeline(run, limit=30)
+
+
+def full_scan(run: Run) -> dict[str, Any]:
+    run.win.resize(900, 860)
+    run.win._run_corpus_scan()
+    run.wait(lambda: not run.win._worker.isRunning() and run.win.corpus_scan is not None, "the full-EMR scan", timeout_s=300)
+    scan = run.win.corpus_scan
+    return {"scored": len(scan.cases), "meta": {k: scan.meta.get(k) for k in ("n_indexed_surgeries", "n_ventilated_surgeries", "n_scanned_cases")}}
+
+
+def switch_to_scan_scope(run: Run) -> dict[str, Any]:
+    run.win.tabs.setCurrentWidget(run.win.research)
+    run.win.research.cases_button.click()
+    run.settle()
+    overview = run.win.research._cases_overview
+    if overview.scope_combo.count() < 2:
+        raise RuntimeError("the scope switch does not offer the scan")
+    overview.scope_combo.setCurrentIndex(1)
+    run.settle()
+    return _overview_facts(run)
+
+
+def request_scan_only_case(run: Run) -> dict[str, Any]:
+    win = run.win
+    overview = win.research._cases_overview
+    sample = set(win.cases["PID"].astype(str))
+    row = next(
+        (r for r in range(overview._proxy.rowCount()) if overview.cell_text(r, 0) not in sample), None
+    )
+    if row is None:
+        raise RuntimeError("every scanned case is also in the loaded sample")
+    pid = _click_row(run, row)
+    facts = {
+        "pid": pid,
+        "in_sample": pid in sample,
+        "progress": win.research.status_label.text(),
+        "overview_message": overview.status_label.text(),
+    }
+    if facts["progress"] != f"Loading this case: {pid}…" or facts["overview_message"] != facts["progress"]:
+        raise RuntimeError(f"progress text not shown: {facts}")
+    return facts
+
+
+def scan_case_detail(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the scan-only case in F")
+    return {"detail": research.detail_title.text(), "context": research.detail_context.text()}
+
+
+def back_to_cases(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.back_button.click()
+    run.settle()
+    if research.stack.currentIndex() != 2:
+        raise RuntimeError("Back from F did not return to the overview")
+    return _overview_facts(run)
+
+
+def empty_overview(run: Run) -> dict[str, Any]:
+    if run.win.cases is not None:
+        raise RuntimeError("this scenario needs a window with no processed data")
+    facts = open_cases(run)
+    if not facts["empty_message"] or facts["table_visible"]:
+        raise RuntimeError(f"the empty overview does not say why: {facts}")
+    return facts
+
+
+def conversation_facts(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    return {
+        "turn_count": len(research.conversation.turns),
+        "turns": [
+            {"question": turn.question, "state": turn.state, "badge": turn.badge,
+             "answer": turn.answer[:120], "cited_pids": list(turn.cited_pids)}
+            for turn in research.conversation.turns
+        ],
+        "shortlist_pids": [candidate.pid for candidate in research.result.candidates] if research.result else [],
+        "scope": research.scope_label.text(),
+    }
+
+
+def conversation_load_data(run: Run) -> dict[str, Any]:
+    return {**run_pipeline(run), **conversation_facts(run)}
+
+
+def conversation_ask(run: Run, *, question: str, narrow: bool = False, expect_empty: bool = False) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+
+    if narrow:
+        run.win.resize(1000, 1000)
+    run.win.research.question_edit.setText(question)
+    run.win.research.ask_button.click()
+    run.wait(lambda: _research_idle(run.win), "the conversation turn and board")
+    research = run.win.research
+    turn = research.conversation.turns[-1]
+    assert turn.question == question
+    assert turn.state == ("answered" if turn.model else "no_model")
+    assert research.result is not None
+    assert bool(research.result.candidates) != expect_empty
+    widget = research.conversation.turn_widgets[turn.request_id]
+    research.conversation.ensureWidgetVisible(widget)
+    run.settle()
+    facts = conversation_facts(run)
+    if narrow:
+        from PySide6.QtCore import QPoint
+
+        geometry: tuple[int, ...] | None = None
+        stable_since = time.monotonic()
+
+        def stable_geometry() -> bool:
+            nonlocal geometry, stable_since
+            current = tuple(value for child in (research.board_scroll, research.conversation)
+                            for value in (*child.mapTo(research, QPoint(0, 0)).toTuple(), child.width(), child.height()))
+            if current != geometry:
+                geometry, stable_since = current, time.monotonic()
+            return time.monotonic() - stable_since >= 0.3
+
+        run.wait(stable_geometry, "stable stacked conversation geometry", timeout_s=10)
+        board_top = research.board_scroll.mapTo(research, QPoint(0, 0)).y()
+        panel_top = research.conversation.mapTo(research, QPoint(0, 0)).y()
+        board_bottom = board_top + research.board_scroll.height()
+        assert run.win.width() == 1000
+        assert research.board_splitter.orientation() == Qt.Orientation.Vertical
+        assert research.board_splitter.indexOf(research.conversation) > research.board_splitter.indexOf(research.board_scroll)
+        assert panel_top >= board_bottom - 2, (panel_top, board_bottom, geometry)
+        assert research.conversation.height() >= 180
+        assert research.board_scroll.height() >= 250
+        assert widget.show_button.isVisible() and widget.show_button.isEnabled()
+        assert research.question_edit.isEnabled()
+        facts.update(width=run.win.width(), panel_below_board=True, panel_top=panel_top, board_bottom=board_bottom, geometry=list(geometry or ()))
+    return facts
+
+
+def conversation_restore(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    first = research.conversation.turns[0]
+    assert first.board and first.board.result
+    expected = [candidate.pid for candidate in first.board.result.candidates]
+    scope = first.board.labels[1]
+    research.conversation.turn_widgets[first.request_id].show_button.click()
+    run.settle()
+    facts = conversation_facts(run)
+    assert facts["shortlist_pids"] == expected
+    assert facts["scope"] == scope
+    assert research.question_edit.text() == first.question
+    return {**facts, "restored_first_shortlist": True}
+
+
+def conversation_no_model(run: Run) -> dict[str, Any]:
+    from src.desktop.conversation_panel import NO_MODEL_ANSWER
+
+    facts = conversation_ask(run, question=DEFAULT_QUESTION)
+    turn = run.win.research.conversation.turns[0]
+    assert turn.state == "no_model" and turn.answer == NO_MODEL_ANSWER
+    assert turn.badge == "No AI answer"
+    return facts
+
+
+def prototype_ask(run: Run) -> dict[str, Any]:
+    from src.desktop.conversation_panel import NO_MODEL_ANSWER
+    from src.llm.agent import find_directive_phrases
+
+    facts = conversation_ask(run, question=run.question)
+    research = run.win.research
+    candidates = research.result.candidates
+    labels = [candidate.source_label for candidate in candidates]
+    analyzed = set(run.win.cases["PID"].astype(str)) if run.win.cases is not None else set()
+    assert labels
+    for candidate, label in zip(candidates, labels, strict=True):
+        expected = ({"analyzed case"} if candidate.pid in analyzed
+                    else {"indexed surgery", "indexed surgery · no ventilator data"})
+        assert label in expected, (candidate.pid, label)
+    assert [research.candidate_table.item(row, 2).text() for row in range(len(candidates))] == labels
+    research.candidate_table.setCurrentCell(0, 0)
+    research._select_candidate(0)
+    run.wait(lambda: _case_loaded(run.win), "the top prototype candidate")
+    turn = research.conversation.turns[-1]
+    if turn.model:
+        assert not find_directive_phrases(turn.answer), turn.answer
+        if run.question == "Why did pressure rise?":
+            assert "record cannot establish cause" in turn.answer.lower(), turn.answer
+    else:
+        assert turn.badge == "No AI answer" and turn.answer == NO_MODEL_ANSWER
+    return {**facts, "source_labels": labels, "top_pid": candidates[0].pid,
+            "answer": turn.answer, "window_width": run.win.width()}
+
+
+def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
+    open_case(run)
+    research = run.win.research
+    top_pid = research.result.candidates[0].pid
+    assert research._current_pid == top_pid
+    ts = run.win.ts[run.win.ts.PID.astype(str).eq(top_pid)].sort_values("t_min")
+    facts = f_facts(run)
+    minute = facts["cursor_minute"]
+    assert facts["chart_minute"] == minute, (facts["chart_minute"], minute)
+    selected = ts[ts.t_min.eq(minute)]
+    assert not selected.empty, f"F selected minute {minute} absent from the timeseries"
+    if signal == "PIP":
+        maximum = ts.PIP.max()
+        assert selected.PIP.eq(maximum).any(), (minute, maximum)
+        facts.update(max_pip=float(maximum), selected_pip=float(selected.PIP.iloc[0]))
+    else:
+        first_missing = float(ts.loc[ts.ETCO2.isna(), "t_min"].iloc[0])
+        assert minute == first_missing and selected.ETCO2.isna().all()
+        assert research.metric_values["ETCO2"].text() == "missing"
+        gaps = {}
+        for pid, rows in run.win.ts.groupby("PID"):
+            rows = rows.sort_values("t_min")
+            seen = rows.ETCO2.notna()
+            inside = rows.loc[~seen & seen.cummax() & seen.iloc[::-1].cummax().iloc[::-1], "t_min"]
+            if not inside.empty:
+                gaps[str(pid)] = [float(value) for value in inside]
+        facts.update(first_missing_minute=first_missing, internal_etco2_gaps=gaps)
+    research.signal_scroll.ensureWidgetVisible(research.minute_label)
+    return facts
+
+
+def prototype_flags(run: Run) -> dict[str, Any]:
+    open_case(run)
+    research = run.win.research
+    assert research._current_pid == research.result.candidates[0].pid
+    matches = research._episodes[research._episodes.rule_id.str.contains("etco2")]
+    assert not matches.empty, "the top candidate has no ETCO2 episode"
+    rule_id = str(matches.iloc[0].rule_id)
+    facts = f_select(run, rule=rule_id)
+    rule = research._rule_catalog.get(rule_id)
+    assert "ETCO2" in rule.signals
+    assert rule_id in facts["rule_detail"] and rule.label in facts["rule_detail"]
+    run.settle()
+    assert not research.rule_detail.visibleRegion().isEmpty()
+    return facts
+
+
+def conversation_start_cancel(run: Run) -> dict[str, Any]:
+    import threading
+    from types import SimpleNamespace
+    from src.services.retrieval import RetrievalEngine
+
+    research = run.win.research
+    gate = threading.Event()
+    if research.selected_model():
+        original = ScriptedChatClient.chat_turn
+
+        def slow_answer(self: Any, *args: Any, **kwargs: Any) -> Any:
+            gate.set()
+            time.sleep(0.4)
+            return original(self, *args, **kwargs)
+
+        ScriptedChatClient.chat_turn = slow_answer
+    else:
+        def slow_search(self: Any, question: str, on_progress: Any) -> Any:
+            gate.set()
+            while True:
+                on_progress(SimpleNamespace(message="Searching synthetic records…"))
+                time.sleep(0.01)
+
+        RetrievalEngine.search = slow_search
+    research.question_edit.setText("laparoscopic question to cancel")
+    research.ask_button.click()
+    run.wait(gate.is_set, "the scripted answer" if research.selected_model() else "the search")
+    assert research.conversation.turns[-1].state == "running"
+    return conversation_facts(run)
+
+
+def conversation_cancel(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    previous = research.conversation.turns[0]
+    assert previous.board and previous.board.result
+    expected = [candidate.pid for candidate in previous.board.result.candidates]
+    research.cancel_button.click()
+    run.wait(lambda: _research_idle(run.win), "the cancelled conversation request")
+    assert research.conversation.turns[-1].state == "cancelled"
+    assert research.question_edit.text() == previous.question
+    facts = conversation_facts(run)
+    assert facts["shortlist_pids"] == expected
+    assert facts["scope"] == previous.board.labels[1]
+    return {**facts, "board_restored": True}
 
 
 TAB_STEPS = tuple(
@@ -642,7 +1014,20 @@ TAB_STEPS = tuple(
     )
 )
 
+# The overview never asks the model anything, so a scripted client cannot mislabel its screenshots
+OVERVIEW_LLM_MODES = ("off", "scripted")
+
 SCENARIOS: dict[str, Scenario] = {
+    "proto-peak": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                             Step("proto-peak", partial(prototype_open, signal="PIP"))), llm_modes=("scripted", "off")),
+    "proto-scenario": Scenario((Step("load-data", run_pipeline), Step("proto-scenario", prototype_ask)),
+                                llm_modes=("scripted", "off")),
+    "proto-missing": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                                Step("proto-missing", partial(prototype_open, signal="ETCO2"))), llm_modes=("scripted", "off")),
+    "proto-flags": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
+                              Step("proto-flags", prototype_flags)), llm_modes=("scripted", "off")),
+    "proto-cause": Scenario((Step("load-data", run_pipeline), Step("proto-cause", prototype_ask)),
+                             llm_modes=("scripted", "off")),
     "f-episodes": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                              Step("episode", f_select))),
     "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
@@ -650,6 +1035,28 @@ SCENARIOS: dict[str, Scenario] = {
     "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
                                 Step("episode", f_select), Step("drawer", f_drawer_link))),
     "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
+    "conversation-thread": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("pressure", partial(conversation_ask, question="Where does pressure peak?")),
+        Step("etco2-flags", partial(conversation_ask, question="Which cases have ETCO2 flags?")),
+        Step("missing-etco2", partial(conversation_ask, question="Which cases have missing ETCO2?")),
+        Step("empty-shortlist", partial(conversation_ask, question="xylophone tuning", expect_empty=True)),
+        Step("first-board", conversation_restore),
+    ), llm_modes=("scripted", "off")),
+    "conversation-no-model": Scenario(
+        (Step("load-data", conversation_load_data), Step("no-model", conversation_no_model)), llm_modes=("off",)
+    ),
+    "conversation-cancel": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("previous-question", partial(conversation_ask, question=DEFAULT_QUESTION)),
+        Step("answering", conversation_start_cancel),
+        Step("cancelled", conversation_cancel),
+    ), llm_modes=("scripted", "off")),
+    "conversation-narrow": Scenario((
+        Step("load-data", conversation_load_data),
+        Step("pressure", partial(conversation_ask, question="Where does pressure peak?", narrow=True)),
+        Step("etco2-flags", partial(conversation_ask, question="Which cases have ETCO2 flags?", narrow=True)),
+    ), llm_modes=("scripted", "off")),
     "partial-index": Scenario((Step("partial-index", partial_index),), llm_modes=("off",)),
     "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
     "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),
@@ -678,6 +1085,27 @@ SCENARIOS: dict[str, Scenario] = {
         Step("typed", partial(type_rule_search, text="peep")),
         Step("escape", escape_rules_from_question),
     )),
+    "cases-overview": Scenario(
+        (
+            Step("load-data", run_pipeline),
+            Step("open-cases", open_cases),
+            Step("sorted-by-score", sort_cases_by_score),
+            Step("top-case-in-f", open_top_case),
+        ),
+        llm_modes=OVERVIEW_LLM_MODES,
+    ),
+    "cases-overview-scan": Scenario(
+        (
+            Step("sample", sample_pipeline),
+            Step("scan", full_scan),
+            Step("scan-scope", switch_to_scan_scope),
+            Step("scan-only-case-loading", request_scan_only_case),
+            Step("scan-only-case-in-f", scan_case_detail),
+            Step("back-to-cases", back_to_cases),
+        ),
+        llm_modes=OVERVIEW_LLM_MODES,
+    ),
+    "cases-overview-empty": Scenario((Step("empty", empty_overview),), llm_modes=OVERVIEW_LLM_MODES),
 }
 
 
@@ -699,7 +1127,7 @@ class ScriptedChatClient:
         return self.chat_turn(model, messages, **kwargs).content
 
 
-def load_drafts(path: Path | None) -> tuple[str, ...]:
+def load_drafts(path: Path | None, *, scenario: str | None = None) -> tuple[str, ...]:
     if path is None:
         return DEFAULT_DRAFTS
     import yaml
@@ -708,6 +1136,8 @@ def load_drafts(path: Path | None) -> tuple[str, ...]:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise InputError(f"drafts file {path} could not be read: {exc}") from exc
+    if scenario is not None:
+        data = data.get(scenario) if isinstance(data, dict) else None
     drafts = data.get("drafts") if isinstance(data, dict) else None
     if not drafts or not isinstance(drafts, list) or not all(isinstance(d, str) and d.strip() for d in drafts):
         raise InputError(f"drafts file {path} needs a non-empty 'drafts' list of strings")
@@ -870,7 +1300,20 @@ def drive(args: argparse.Namespace) -> int:
     llm = args.llm or scenario.llm_modes[0]
     if llm not in scenario.llm_modes:
         raise InputError(f"scenario {args.scenario} runs only with --llm {'/'.join(scenario.llm_modes)}")
-    drafts = load_drafts(args.drafts) if llm == "scripted" else ()
+    prototype = args.scenario.startswith("proto-")
+    fixture = ROOT / "tests" / "fixtures" / "drive_prototype.yaml"
+    if prototype:
+        import yaml
+
+        example = yaml.safe_load(fixture.read_text(encoding="utf-8"))[args.scenario]
+        args.question = example["question"]
+    drafts = ()
+    if llm == "scripted":
+        drafts = load_drafts(args.drafts or (fixture if prototype else None),
+                             scenario=args.scenario if prototype and args.drafts is None else None)
+    steps = scenario.steps
+    if prototype and llm == "off":
+        steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))
 
     emr = args.emr.expanduser().resolve()
     out = args.out.expanduser().resolve()
@@ -903,6 +1346,8 @@ def drive(args: argparse.Namespace) -> int:
     from src.desktop.app import MainWindow
 
     win = MainWindow()
+    if args.width is not None:
+        win.resize(args.width, 1000)
     run = Run(app=app, win=win, question=args.question, frames_dir=frames_dir)
     record_dialogs(run)
     win.show()
@@ -912,7 +1357,7 @@ def drive(args: argparse.Namespace) -> int:
     failed = False
     started = time.monotonic()
     with open(out / "events.jsonl", "w", encoding="utf-8") as events:
-        for step in scenario.steps:
+        for step in steps:
             dialogs_before = len(run.dialogs)
             event: dict[str, Any] = {"step": step.name}
             try:
@@ -927,7 +1372,7 @@ def drive(args: argparse.Namespace) -> int:
             run.settle()
             png = out / f"{step.name}.png"
             win.grab().save(str(png))
-            run.frame()
+            run.frame(STEP_HOLD_FRAMES)
             event.update(
                 status_bar=win.statusBar().currentMessage(),
                 dialogs=run.dialogs[dialogs_before:],
@@ -955,6 +1400,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--llm", choices=LLM_MODES, default=None, help="default: the scenario's first mode")
     parser.add_argument("--drafts", type=Path, default=None, help="YAML with a 'drafts' list for --llm scripted")
     parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument("--width", type=int, default=None, help="window width in pixels")
     parser.add_argument("--frames", action="store_true", help="write numbered frames under <out>/frames")
     parser.add_argument("--video", action="store_true", help="also join the frames into <out>/run.mp4")
     return parser.parse_args(argv)

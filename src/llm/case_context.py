@@ -11,6 +11,24 @@ import pandas as pd
 from src.runtime_paths import emr_dir, wave_dir, waveform_case_dir
 
 
+# Plain names for the minute-level signals; shared with the research search text.
+SIGNAL_LABELS: tuple[tuple[str, str, str], ...] = (
+    ("TV", "Tidal volume", "mL"),
+    ("TV_mlkg", "TV per IBW", "mL/kg"),
+    ("PIP", "Peak inspiratory pressure", "cmH2O"),
+    ("PEEP", "PEEP", "cmH2O"),
+    ("RR", "Respiratory rate", "/min"),
+    ("ETCO2", "End-tidal CO2", "mmHg"),
+    ("FIO2", "FiO2", "%"),
+    ("Agent_Et", "End-tidal agent conc.", "vol%"),
+    ("Agent_Fi", "Inspired agent conc.", "vol%"),
+    ("MAC_Et", "Age-adj MAC (Et)", ""),
+    ("HR", "Heart rate", "bpm"),
+    ("SPO2", "SpO2", "%"),
+    ("nMAP", "Noninvasive MAP", "mmHg"),
+)
+
+
 def phase_note(row: pd.Series) -> str:
     """Suffix such as ", during induction" for a flag or episode row; "" when the phase is unknown."""
     start = row.get("phase")
@@ -152,21 +170,7 @@ def build_case_context(
                 f"{_fmt_num(ts['t_min'].max(), 0)} minutes from case start "
                 f"({n_obs} of {len(ts)} minutes with data)"
             )
-        for col, name, unit in [
-            ("TV", "Tidal volume", "mL"),
-            ("TV_mlkg", "TV per IBW", "mL/kg"),
-            ("PIP", "Peak inspiratory pressure", "cmH2O"),
-            ("PEEP", "PEEP", "cmH2O"),
-            ("RR", "Respiratory rate", "/min"),
-            ("ETCO2", "End-tidal CO2", "mmHg"),
-            ("FIO2", "FiO2", "%"),
-            ("Agent_Et", "End-tidal agent conc.", "vol%"),
-            ("Agent_Fi", "Inspired agent conc.", "vol%"),
-            ("MAC_Et", "Age-adj MAC (Et)", ""),
-            ("HR", "Heart rate", "bpm"),
-            ("SPO2", "SpO2", "%"),
-            ("nMAP", "Noninvasive MAP", "mmHg"),
-        ]:
+        for col, name, unit in SIGNAL_LABELS:
             if col in ts.columns:
                 lines.append(_series_stats(ts[col], name, unit))
         if "Agent" in ts.columns:

@@ -9,11 +9,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Research search finds cases for questions about flags and signals, such as "Which cases have ETCO2 flags?" or "Which cases have missing ETCO2?", even without an embedding model: analyzed cases carry their signals, raised rules and signal gaps in the search text, and keyword matching ignores question words and punctuation and matches whole words.
+
 - Signal detail shows flag episodes, a minute-aligned flag lane, current rule thresholds, and episode measurements with missing-minute counts. Traces retain fractional minutes and stay readable when the window is resized; empty lane clicks leave the selection unchanged.
 
 - Research has a Rules button (Ctrl+R) that opens a searchable list of the loaded
   preset's rules beside the evidence board; Escape closes it. Outside the
   workspace Ctrl+R still reloads processed data.
+- Research answers stay in a conversation beside the evidence board, with cited case links, saved boards, and controls to revisit or repeat each question. New question clears the board and keeps the conversation; Reset asks before clearing both. After processed data is reloaded, earlier answers stay but their saved cases must be reopened for current data.
+
+- The Research view has a Cases button that opens a sortable list of the analyzed cases (PID, procedure, age, sex, duration, anomaly score, warn and critical counts, top rules by name). It states its scope, switches to the full-EMR scan when one exists, and opens a case in the signal view with a click or Enter; Back or Escape returns to the list.
 - The Rule reference, the co-pilot's rule lookup, the dashboard rule table and the
   calibration profile read one rule catalog. The reference lists phase skips and
   follows the active preset instead of always showing `default`.

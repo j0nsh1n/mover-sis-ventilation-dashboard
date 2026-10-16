@@ -338,6 +338,60 @@ def test_ask_selection_never_enters_the_research_answer(synthetic_emr_dir):
     assert result.focus_pids == []
 
 
+def test_prior_research_turn_never_enters_the_next_questions_messages(
+    tmp_path, monkeypatch,
+):
+    import time
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication
+    from src.desktop.app import MainWindow
+    from src.services.retrieval import RetrievalResult
+    from src.pipeline.synthetic import main as write_synthetic_emr
+
+    synthetic_emr = tmp_path / "session-emr"
+    write_synthetic_emr(["--out", str(synthetic_emr), "--n-cases", "2", "--seed", "3"])
+    monkeypatch.setenv("MOVER_EMR_DIR", str(synthetic_emr))
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_load_research_case", lambda *args: None)
+    clients = []
+
+    def client_factory(**kwargs):
+        client = DraftClient("PRIOR_ANSWER_SENTINEL." if not clients else "caseA has a PIP median of 22.")
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("src.desktop.research_workers.OllamaClient", client_factory)
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    win.research.set_models(["fake"])
+    win._research_engine = SimpleNamespace(
+        emr=synthetic_emr.resolve(), extract_limit=3, preset="default",
+        search=lambda *args, **kwargs: RetrievalResult(candidates=(_candidate(),)),
+        fetch_extracts=lambda pids, **kwargs: (["SOURCE EXTRACT PID=caseA\nPIP median 22"], pids),
+    )
+    try:
+        for question in ("PRIOR_QUESTION_SENTINEL", "laparoscopic cholecystectomy high PIP"):
+            win.research.question_edit.setText(question)
+            win.research.ask_button.click()
+            deadline = time.monotonic() + 5
+            while win.research._searching and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.001)
+            assert not win.research._searching
+        assert len(win.research.conversation.turns) == 2
+        assert "PRIOR_ANSWER_SENTINEL" in win.research.conversation.turns[0].answer
+        assert len(clients) == 2
+        assert "PRIOR_QUESTION_SENTINEL" not in str(clients[1].sent)
+        assert "PRIOR_ANSWER_SENTINEL" not in str(clients[1].sent)
+        assert "laparoscopic cholecystectomy high PIP" in str(clients[1].sent)
+    finally:
+        win.close()
+        app.processEvents()
+
+
 _TWO_CASES = (
     replace(_candidate(), pid="caseA", age=40.0),
     replace(_candidate(), pid="caseC", age=60.0),

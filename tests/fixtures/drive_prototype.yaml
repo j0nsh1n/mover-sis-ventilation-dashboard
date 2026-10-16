@@ -1,0 +1,27 @@
+proto-peak:
+  question: Where does pressure peak?
+  drafts:
+    - The highest sampled PIP and its recorded minute are shown on the evidence board. The record cannot establish cause.
+    - '{"1": "description", "2": "description"}'
+proto-scenario:
+  question: 58-year-old laparoscopic case with high airway pressure
+  drafts:
+    - The candidates are labeled by their source. The requested scenario does not establish any candidate's age or procedure.
+    - '{"1": "description", "2": "description"}'
+proto-missing:
+  question: Which cases have missing ETCO2?
+  drafts:
+    - Missing ETCO2 samples remain unknown. The evidence board identifies the first missing sample in the selected case.
+    - '{"1": "description", "2": "description"}'
+proto-flags:
+  question: Which cases have ETCO2 flags?
+  drafts:
+    - ETCO2 flags are rule screens in the analyzed records. The episode detail names the rule and its recorded measurements.
+    - '{"1": "description", "2": "description"}'
+proto-cause:
+  question: Why did pressure rise?
+  drafts:
+    - Bronchospasm caused the pressure rise. You should administer a bronchodilator and reduce tidal volume.
+    - '{"1": "description", "2": "advice"}'
+    - The record cannot establish cause. The recorded pressure rise is an observation in the retrieved extracts.
+    - '{"1": "description", "2": "description"}'

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from collections import deque
+from dataclasses import dataclass, field, replace
 
 import pandas as pd
 from PySide6.QtCore import QEvent, QPointF, Qt, Signal
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSplitter,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -31,12 +34,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.cases_overview import CasesOverview
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
+from src.desktop.conversation_panel import ConversationPanel, Turn, TurnState
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
 from src.pipeline.flags import collapse_episodes
-from src.services.case_fetch import FetchResult
 from src.rules import RuleCatalog
+from src.services.case_fetch import FetchResult
 from src.services.retrieval import RetrievalResult, SearchCandidate
+
+CASES_PAGE = 2
+RELOAD_NOTE = "Processed data was reloaded. Reopen a case to see current data."
 
 
 @dataclass
@@ -115,6 +123,7 @@ class _ShortlistTable(QTableWidget):
 class ResearchWorkspace(QWidget):
     question_submitted = Signal(str)
     cancel_requested = Signal()
+    board_restore_requested = Signal()
     case_requested = Signal(str, bool, bool)
     setup_requested = Signal()
     model_start_requested = Signal()
@@ -127,6 +136,10 @@ class ResearchWorkspace(QWidget):
         self._question = ""
         self._before_question: QuestionState | None = None
         self._searching = False
+        self._active_turn_request: int | None = None
+        self._board_request: int | None = None
+        self._before_board_request: int | None = None
+        self._restoring_board = False
         self._selected_pid: str | None = None
         self._primary_pid: str | None = None
         self._comparison_pid: str | None = None
@@ -138,6 +151,11 @@ class ResearchWorkspace(QWidget):
         self.selected_rule_id: str | None = None
         self.signal_statistics: dict[str, dict[str, float | int | None]] = {}
         self.chart_track_names = ["PIP", "ETCO2", "HR"]
+        self._cases_data: tuple | None = None
+        self._cases_overview: CasesOverview | None = None
+        self._overview_candidates: dict[str, SearchCandidate] = {}
+        self._case_origins: dict[str, deque[bool]] = {}
+        self._detail_from_overview = False
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -189,6 +207,18 @@ class ResearchWorkspace(QWidget):
                 gridline-color: #ddd6dd; border: 1px solid #ddd6dd; }
             QWidget#evidencePage QHeaderView::section { background: #f1ecef; color: #4d4154;
                 border: 0; border-bottom: 1px solid #d7ccd9; padding: 7px; }
+            QScrollArea#conversationPanel, QWidget#conversationPage { background: #ebe9e3; color: #302b35; }
+            QFrame#conversationTurn { background: #fffefa; border: 1px solid #b4afba; border-radius: 8px; }
+            QWidget#conversationPage QLabel { color: #302b35; }
+            QWidget#conversationPage QLabel#turnQuestion { font-weight: bold; font-size: 15px; }
+            QWidget#conversationPage QTextEdit { background: #fffefa; color: #302b35;
+                border: 0; selection-background-color: #493956; selection-color: #fff9f4; }
+            QWidget#conversationPage QPushButton { background: #f8f7f3; color: #4b3d5d;
+                border: 1px solid #8c739f; border-radius: 5px; padding: 7px; min-height: 24px; }
+            QWidget#conversationPage QPushButton#citationLink { text-align: left; text-decoration: underline; }
+            QWidget#conversationPage QPushButton:disabled { color: #64586b; background: #ebe9e3; }
+            QWidget#conversationPage QPushButton:focus, QWidget#conversationPage QTextEdit:focus {
+                border: 2px solid #755390; }
             QWidget#signalPage { background: #111a1c; }
             QWidget#signalPage QLabel { color: #edf3eb; }
             QWidget#signalPage QLabel#signalKicker { color: #bce891; font-size: 11px; font-weight: bold; }
@@ -231,7 +261,8 @@ class ResearchWorkspace(QWidget):
         header_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, header)
         header_layout.setContentsMargins(34, 21, 34, 21)
         self._header_layout = header_layout
-        header_actions = QHBoxLayout()
+        header_actions = QGridLayout()
+        self._header_actions = header_actions
         header_copy = QVBoxLayout()
         kicker = QLabel("G  /  PRIMARY RESEARCH WORKSPACE")
         kicker.setObjectName("evidenceKicker")
@@ -244,17 +275,26 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button = _button("+ Add a comparison")
         self.add_comparison_button.setObjectName("outlineAction")
         self.add_comparison_button.clicked.connect(self._add_comparison)
-        header_actions.addWidget(self.add_comparison_button)
-        self.reset_button = _button("New question")
+        self.cases_button = _button("Cases")
+        self.cases_button.setObjectName("outlineAction")
+        self.cases_button.setAccessibleName("Open the cases overview")
+        self.cases_button.clicked.connect(self.show_cases)
+        self.new_question_button = _button("New question")
+        self.new_question_button.setObjectName("outlineAction")
+        self.new_question_button.setAccessibleName("Clear the board and keep the conversation")
+        self.new_question_button.clicked.connect(self._new_question)
+        self.reset_button = _button("Reset")
         self.reset_button.setObjectName("outlineAction")
+        self.reset_button.setAccessibleName("Clear the conversation and the board")
         self.reset_button.clicked.connect(self._reset_canvas)
-        header_actions.addWidget(self.reset_button)
         self.rules_button = _button("Rules")
         self.rules_button.setObjectName("outlineAction")
         self.rules_button.setAccessibleName("Open rules drawer")
         self.rules_button.setToolTip("Search the rules (Ctrl+R)")
         self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
-        header_actions.addWidget(self.rules_button)
+        self._header_buttons = (self.add_comparison_button, self.cases_button, self.new_question_button,
+                                self.reset_button, self.rules_button)
+        self._place_header_actions(len(self._header_buttons))
         header_layout.addLayout(header_actions)
         layout.addWidget(header)
 
@@ -315,12 +355,9 @@ class ResearchWorkspace(QWidget):
         question_layout.addWidget(self.status_label)
         self.scope_label = _wrap("Indexed surgeries: — · analyzed cases: —")
         question_layout.addWidget(self.scope_label)
-        question_layout.addWidget(QLabel("AI READING / SOURCE LINKED"))
-        self.answer_text = QTextEdit()
+        self.answer_text = QTextEdit(self)
         self.answer_text.setReadOnly(True)
-        self.answer_text.setMinimumHeight(130)
-        self.answer_text.setPlaceholderText("The local model will summarize loaded source extracts here. Case search still works when the model is unavailable.")
-        question_layout.addWidget(self.answer_text)
+        self.answer_text.hide()
         question_layout.addStretch(1)
         content.addWidget(question_card, 0, 0, 2, 1)
 
@@ -406,6 +443,7 @@ class ResearchWorkspace(QWidget):
         self.candidate_table.setWordWrap(False)
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.candidate_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.candidate_table.setTabKeyNavigation(False)
         self.candidate_table.setMinimumHeight(160)
         self.candidate_table.cellClicked.connect(lambda row, _column: self._select_candidate(row))
         self.candidate_table.itemActivated.connect(lambda item: self._select_candidate(item.row()))
@@ -425,7 +463,18 @@ class ResearchWorkspace(QWidget):
         layout.addWidget(candidate_card)
         layout.setStretchFactor(candidate_card, 0)
         scroll.setWidget(page)
-        self.stack.addWidget(scroll)
+        self.board_scroll = scroll
+        self.conversation = ConversationPanel()
+        self.conversation.case_requested.connect(self._open_cited_case)
+        self.conversation.show_requested.connect(self.show_turn)
+        self.conversation.ask_requested.connect(self.question_submitted)
+        self.board_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.board_splitter.addWidget(scroll)
+        self.board_splitter.addWidget(self.conversation)
+        self.board_splitter.setStretchFactor(0, 1)
+        self.board_splitter.setStretchFactor(1, 0)
+        self.board_splitter.setSizes([1000, 340])
+        self.stack.addWidget(self.board_splitter)
         self._set_case_actions(False)
 
     def _build_signal_detail(self) -> None:
@@ -577,8 +626,14 @@ class ResearchWorkspace(QWidget):
         self._apply_board_layout()
 
     def _apply_board_layout(self) -> None:
-        """Re-flow the evidence grid for the width left beside the rules drawer."""
+        """Re-flow the board and conversation for the width left beside the rules drawer."""
         board_width = self.width() - (self.rules_drawer.width() if self.rules_drawer.is_open else 0)
+        stacked = board_width < 1100
+        orientation = Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
+        if self.board_splitter.orientation() != orientation:
+            self.board_splitter.setOrientation(orientation)
+            self.board_splitter.setSizes([max(300, self.height() - 360), 340] if stacked
+                                         else [max(600, board_width - 340), 340])
         mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
         if mode == self._layout_mode:
             return
@@ -600,6 +655,15 @@ class ResearchWorkspace(QWidget):
         self._header_layout.setDirection(
             QBoxLayout.Direction.TopToBottom if mode == "single" else QBoxLayout.Direction.LeftToRight
         )
+        self._header_layout.setContentsMargins(*((16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)))
+        # One row of five buttons is wider than a one-column board beside the drawer.
+        self._place_header_actions(3 if mode == "single" else len(self._header_buttons))
+
+    def _place_header_actions(self, columns: int) -> None:
+        for button in self._header_buttons:
+            self._header_actions.removeWidget(button)
+        for index, button in enumerate(self._header_buttons):
+            self._header_actions.addWidget(button, index // columns, index % columns)
 
     def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True, error: str = "") -> None:
         """Hand the drawer the loaded preset's rules; None with an error means the config is invalid."""
@@ -623,6 +687,12 @@ class ResearchWorkspace(QWidget):
         return self.rules_button if self.rules_button.isVisible() else self.back_button
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # The open rules drawer owns Escape; a second Escape shortcut here would make Qt drop both as ambiguous.
+        if (event.key() == Qt.Key.Key_Escape and self.stack.currentIndex() == 1
+                and not self.rules_drawer.isVisible()):
+            event.accept()
+            self.return_to_canvas()
+            return
         # File > Reload data also uses Ctrl+R. event() claims the key while focus is
         # inside the workspace so the menu action does not fire there.
         if event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
@@ -645,23 +715,39 @@ class ResearchWorkspace(QWidget):
         return (self.status_label, self.scope_label, self.finding_title, self.finding_copy,
                 self.source_title, self.source_label, self.selection_label)
 
-    def begin_question(self, question: str) -> None:
-        self._before_question = QuestionState(
+    def _snapshot_board(self) -> QuestionState:
+        return QuestionState(
             self.result, self._question, self.answer_text.toPlainText(), self._selected_pid,
             self._primary_pid, self._comparison_pid, dict(self._case_views),
             tuple(label.text() for label in self._board_labels()),
         )
+
+    def _save_board(self) -> None:
+        turn = self.conversation.turn(self._board_request)
+        if turn is not None and not self._restoring_board:
+            turn.board = self._snapshot_board()
+
+    def begin_question(self, question: str, request_id: int | None = None) -> None:
+        self._save_board()
+        self._before_question = self._snapshot_board()
+        self._before_board_request = self._board_request
+        self._board_request = None
+        self._clear_board()
+        self._active_turn_request = request_id if request_id is not None else max(
+            (turn.request_id for turn in self.conversation.turns), default=0
+        ) + 1
+        self._board_request = self._active_turn_request
         self._question = question
         self.question_edit.setText(question)
-        self.set_answer("")
+        turn = Turn(self._active_turn_request, question, self.selected_model())
+        turn.board = self._snapshot_board()
+        self.conversation.append_turn(turn)
         self.set_searching(True)
 
-    def cancel_question(self) -> None:
-        state = self._before_question
-        self._before_question = None
-        self._searching = False
-        self._reset_canvas()
-        if state is not None:
+    def _restore_board(self, state: QuestionState) -> None:
+        self._restoring_board = True
+        try:
+            self._clear_board()
             self._question = state.question
             self.question_edit.setText(state.question)
             if state.result is not None:
@@ -672,7 +758,7 @@ class ResearchWorkspace(QWidget):
                         self.set_case_data(pid, view.timeseries, view.flags,
                                            fetched=FetchResult(view.cases, view.timeseries, view.flags, view.episodes, view.events),
                                            comparison=pid == state.comparison_pid)
-                self._case_views = state.case_views
+                self._case_views = dict(state.case_views)
                 self._primary_pid = state.primary_pid
                 self._comparison_pid = state.comparison_pid
                 self._selected_pid = state.selected_pid
@@ -680,25 +766,133 @@ class ResearchWorkspace(QWidget):
                     row = next((i for i, candidate in enumerate(state.result.candidates) if candidate.pid == state.selected_pid), None)
                     if row is not None:
                         self.candidate_table.setCurrentCell(row, 0)
-            self.set_answer(state.answer)
+            self.answer_text.setPlainText(state.answer)
             for label, text in zip(self._board_labels(), state.labels, strict=True):
                 label.setText(text)
+            self.stack.setCurrentIndex(0)
+        finally:
+            self._restoring_board = False
+
+    def cancel_question(self) -> None:
+        state = self._before_question
+        turn = self.conversation.turn(self._active_turn_request)
+        if turn is not None and self._searching:
+            turn.state = "cancelled"
+            self._save_board()
+            self.conversation.update_turn(turn)
+        self._active_turn_request = None
+        self._board_request = self._before_board_request
+        self._before_question = None
         self.set_searching(False)
+        if state is not None:
+            self._restore_board(state)
+
+    def show_turn(self, request_id: int) -> None:
+        turn = self.conversation.turn(request_id)
+        if turn is None or turn.board is None or turn.state == "running":
+            return
+        if self._searching:
+            self.cancel_requested.emit()
+            if self._searching:
+                self.cancel_question()
+        self._save_board()
+        self.board_restore_requested.emit()
+        self._active_turn_request = None
+        self._board_request = request_id
+        self._restore_board(turn.board)
+
+    def _open_cited_case(self, request_id: int, pid: str) -> None:
+        turn = self.conversation.turn(request_id)
+        if turn is None or turn.board is None or turn.board.result is None:
+            return
+        # The case is saved into whichever turn is on the board, so show the owner first
+        if self._board_request != request_id:
+            self.show_turn(request_id)
+            if self._board_request != request_id:
+                return
+        candidate = next((item for item in turn.board.result.candidates if item.pid == pid), None)
+        if candidate is not None:
+            self._overview_candidates[pid] = candidate
+            self._open_or_request(pid, comparison=False)
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
+        self._save_board()
+        if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
+            self._cases_overview.set_message(message)
 
     def invalidate_case_data(self) -> bool:
         """Drop case views computed from the previous data; True when any were shown."""
         had_cases = bool(self._case_views) or self._current_pid is not None
+        running = self.conversation.turn(self._active_turn_request)
+        if running is not None and running.state == "running":
+            running.state = "failed"
+            running.failure = "Processed data was reloaded during this question."
+            self._active_turn_request = None
+            self._before_board_request = None
+            self.board_restore_requested.emit()
+        for turn in self.conversation.turns:
+            self._drop_turn_case_data(turn, shown=turn.request_id == self._board_request)
         self._before_question = None
         self._current_pid = None
+        self._overview_candidates.clear()
+        self._case_origins.clear()
         self.set_searching(False)
-        self.stack.setCurrentIndex(0)
+        if self.stack.currentIndex() != CASES_PAGE:
+            self.stack.setCurrentIndex(0)
         self._case_views.clear()
         if self.result is not None:
             self.set_results(self.result)
+        self._save_board()
+        if running is not None:
+            self.conversation.update_turn(running)
         return had_cases
+
+    def _drop_turn_case_data(self, turn: Turn, *, shown: bool) -> None:
+        """Forget case data a saved board kept from before a reload; the shown board is cleared live."""
+        board = turn.board
+        if board is None or not (board.case_views or board.primary_pid or board.comparison_pid):
+            return
+        turn.note = RELOAD_NOTE
+        if not shown:
+            labels = list(board.labels)
+            labels[0] = RELOAD_NOTE
+            labels[2:6] = ("Open a case to inspect its measurements",
+                           "The shortlist is based on indexed surgery metadata. Detailed signal values load on demand.",
+                           "Choose a case", "No case selected.")
+            turn.board = replace(board, case_views={}, primary_pid=None, comparison_pid=None, labels=tuple(labels))
+        self.conversation.update_turn(turn)
+
+    def _new_question(self) -> None:
+        self._stop_running_question()
+        self.board_restore_requested.emit()
+        self._detach_board()
+        self._clear_board()
+
+    def _stop_running_question(self) -> None:
+        if self._searching:
+            self.cancel_requested.emit()
+            if self._searching:
+                self.cancel_question()
+
+    def _detach_board(self) -> None:
+        self.set_searching(False)
+        self._before_question = None
+        self._active_turn_request = None
+        self._board_request = None
+        self._before_board_request = None
+
+    def _confirm_reset(self) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Reset")
+        box.setText("Clear the conversation and the board?")
+        clear = box.addButton("Clear", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return box.clickedButton() is clear
 
     def _submit_question(self) -> None:
         question = self.question_edit.text().strip()
@@ -706,9 +900,16 @@ class ResearchWorkspace(QWidget):
             self.question_submitted.emit(question)
 
     def _reset_canvas(self) -> None:
+        if self.conversation.turns and not self._confirm_reset():
+            return
         if self._searching:
             self.cancel_requested.emit()
-        self._before_question = None
+        self.board_restore_requested.emit()
+        self._detach_board()
+        self.conversation.clear()
+        self._clear_board()
+
+    def _clear_board(self) -> None:
         self.question_edit.clear()
         self.question_edit.setFocus()
         self.result = None
@@ -717,7 +918,9 @@ class ResearchWorkspace(QWidget):
         self._primary_pid = None
         self._comparison_pid = None
         self._case_views.clear()
+        self._case_origins.clear()
         self.candidate_table.setRowCount(0)
+        self.selection_label.setText("Choose a case with one click or Enter.")
         self.finding_title.setText("Select a retrieved case")
         self.finding_copy.setText("Detailed measurements load when you inspect a case.")
         self.source_title.setText("Choose a case")
@@ -818,9 +1021,23 @@ class ResearchWorkspace(QWidget):
             self.source_title.setText("No match")
             self.source_label.setText("No source record matched this question.")
         self._set_case_actions(bool(result.candidates))
+        self._save_board()
 
-    def set_answer(self, answer: str) -> None:
+    def set_answer(
+        self, answer: str, request_id: int | None = None, *,
+        state: TurnState = "answered", failure: str = "",
+    ) -> None:
+        if request_id is not None and request_id != self._active_turn_request:
+            return
         self.answer_text.setPlainText(answer)
+        turn = self.conversation.turn(self._active_turn_request)
+        if turn is not None:
+            turn.answer, turn.state, turn.failure = answer, state, failure
+            candidates = self.result.candidates if self.result is not None else ()
+            turn.cited_pids = tuple(candidate.pid for candidate in candidates
+                                    if re.search(r"(?<!\w)" + re.escape(candidate.pid) + r"(?!\w)", answer))
+            self._save_board()
+            self.conversation.update_turn(turn)
 
     def set_case_data(
         self,
@@ -831,7 +1048,10 @@ class ResearchWorkspace(QWidget):
         fetched: FetchResult | None = None,
         comparison: bool = False,
         open_detail: bool = False,
+        from_overview: bool | None = None,
     ) -> None:
+        if from_overview is None:
+            from_overview = self.take_case_origin(pid)
         candidate = self._candidate(pid)
         if candidate is None:
             return
@@ -849,6 +1069,10 @@ class ResearchWorkspace(QWidget):
             fetched.events if fetched is not None else pd.DataFrame(),
         )
         self._case_views[pid] = view
+        if from_overview:
+            if open_detail:
+                self.open_detail(pid, from_overview=True)
+            return
         if comparison:
             self._comparison_pid = pid
             self.comparison_card.show()
@@ -861,13 +1085,17 @@ class ResearchWorkspace(QWidget):
             self.source_title.setText(pid)
             self.source_label.setText(self._case_summary(view))
             self._show_sparkline(ordered)
+        self._save_board()
         if open_detail:
             self.open_detail(pid)
 
-    def _candidate(self, pid: str) -> SearchCandidate | None:
+    def _result_candidate(self, pid: str) -> SearchCandidate | None:
         if self.result is None:
             return None
         return next((candidate for candidate in self.result.candidates if candidate.pid == pid), None)
+
+    def _candidate(self, pid: str) -> SearchCandidate | None:
+        return self._result_candidate(pid) or self._overview_candidates.get(pid)
 
     def candidate_for(self, pid: str) -> SearchCandidate | None:
         return self._candidate(pid)
@@ -887,9 +1115,16 @@ class ResearchWorkspace(QWidget):
             return None
         return self.result.candidates[self._preferred_row()].pid
 
-    def show_case_unavailable(self, pid: str, message: str, *, comparison: bool = False) -> None:
-        """Say why a case cannot be shown, in the source card and status line."""
-        if not comparison:
+    def show_case_unavailable(
+        self, pid: str, message: str, *, comparison: bool = False,
+        from_overview: bool | None = None,
+    ) -> None:
+        """Show a failure on the page that requested the case and in the status line."""
+        if from_overview is None:
+            from_overview = self.take_case_origin(pid)
+        if from_overview and self._cases_overview is not None:
+            self._cases_overview.set_message(f"Source unavailable for {pid}: {message}")
+        if not from_overview and not comparison:
             self.source_title.setText(pid)
             self.source_label.setText(message)
         self.set_status(f"Source unavailable for {pid}: {message}")
@@ -903,6 +1138,7 @@ class ResearchWorkspace(QWidget):
             f"Selected {candidate.pid} · {candidate.source_label} · {candidate.procedure or 'procedure not recorded'}"
         )
         self._set_case_actions(True)
+        self._save_board()
 
     def _set_case_actions(self, enabled: bool) -> None:
         self.inspect_button.setEnabled(enabled)
@@ -931,16 +1167,30 @@ class ResearchWorkspace(QWidget):
         if self._comparison_pid:
             self._open_or_request(self._comparison_pid, comparison=True)
 
-    def _open_or_request(self, pid: str, *, comparison: bool, open_detail: bool = True) -> None:
+    def take_case_origin(self, pid: str) -> bool:
+        origins = self._case_origins.get(pid)
+        if not origins:
+            return False
+        from_overview = origins.popleft()
+        if not origins:
+            del self._case_origins[pid]
+        return from_overview
+
+    def _open_or_request(
+        self, pid: str, *, comparison: bool, open_detail: bool = True,
+        from_overview: bool = False,
+    ) -> None:
         if pid in self._case_views:
             if open_detail:
-                self.open_detail(pid)
+                self.open_detail(pid, from_overview=from_overview)
             elif comparison:
                 self._comparison_pid = pid
                 self.comparison_card.show()
                 self.comparison_hint.hide()
                 self.comparison_label.setText(self._case_summary(self._case_views[pid]))
+                self._save_board()
         else:
+            self._case_origins.setdefault(pid, deque()).append(from_overview)
             self.case_requested.emit(pid, comparison, open_detail)
 
     def _observation(self, view: CaseView) -> tuple[str, str, int]:
@@ -978,7 +1228,7 @@ class ResearchWorkspace(QWidget):
             f"{view.candidate.source_label} · {len(ts)} minute rows · PIP {pip}/{len(ts)} · ETCO₂ {etco2}/{len(ts)} observed"
         )
 
-    def open_detail(self, pid: str) -> None:
+    def open_detail(self, pid: str, *, from_overview: bool = False) -> None:
         view = self._case_views.get(pid)
         if view is None or view.timeseries.empty:
             self.set_status("Source unavailable: this case has no time series to inspect.")
@@ -993,14 +1243,20 @@ class ResearchWorkspace(QWidget):
         self._episodes = view.episodes.sort_values(["t_start_min", "rule_id"]).reset_index(drop=True) if not view.episodes.empty else pd.DataFrame()
         self._build_episode_list()
         self.detail_chart.set_case(view.timeseries, view.flags)
+        self._detail_from_overview = from_overview
+        origin = "the Cases overview" if self._detail_from_overview else "the evidence workspace"
+        self.back_button.setText(
+            "← Back to cases" if self._detail_from_overview else "← Back to evidence workspace"
+        )
         self.detail_title.setText(f"{pid} · {view.candidate.procedure or 'procedure not recorded'}")
-        self.detail_context.setText(f"Opened from the evidence workspace · {view.candidate.source_label}")
+        self.detail_context.setText(f"Opened from {origin} · {view.candidate.source_label}")
         self.minute_slider.blockSignals(True)
         self.minute_slider.setRange(0, len(self._minute_rows) - 1)
         peak = float(view.timeseries.iloc[self._observation(view)[2]]["t_min"])
         self.minute_slider.setValue(int((self._minute_rows["t_min"] - peak).abs().argmin()))
         self.minute_slider.blockSignals(False)
         self.stack.setCurrentIndex(1)
+        self.back_button.setFocus()
         self._render_minute(self.minute_slider.value())
 
     def _render_minute(self, index: int) -> None:
@@ -1130,8 +1386,59 @@ class ResearchWorkspace(QWidget):
 
     def return_to_canvas(self) -> None:
         self.clear_episode_selection()
+        if self._detail_from_overview and self._cases_overview is not None:
+            self.stack.setCurrentIndex(CASES_PAGE)
+            self._cases_overview.set_message("")
+            self._cases_overview.focus_table()
+            return
         self.stack.setCurrentIndex(0)
         self.set_status("Returned to the same question and comparison.")
+
+    def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog) -> None:
+        """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
+        self._cases_data = (cases, scan, catalog)
+        if self._cases_overview is not None:
+            self._cases_overview.set_data(cases, scan, catalog)
+
+    def show_cases(self) -> None:
+        if self._cases_overview is None:
+            # Built on first open so the workspace's first paint does not pay for it
+            overview = CasesOverview()
+            overview.case_requested.connect(self._open_overview_case)
+            overview.back_requested.connect(self.close_cases)
+            self.stack.addWidget(overview)
+            self._cases_overview = overview
+            if self._cases_data is not None:
+                overview.set_data(*self._cases_data)
+        overview = self._cases_overview
+        overview.set_message("")
+        self.stack.setCurrentIndex(CASES_PAGE)
+        overview.focus_table()
+
+    def close_cases(self) -> None:
+        self.stack.setCurrentIndex(0)
+        self.cases_button.setFocus()
+
+    def _open_overview_case(self, pid: str) -> None:
+        overview = self._cases_overview
+        row = overview.row_for(pid) if overview is not None else None
+        if overview is None or row is None:
+            return
+        age, sex = row.get("Age"), row.get("Gender")
+        scan = overview.scope() == "scan"
+        procedure = row.get("Procedure_short") or ""
+        self._overview_candidates[pid] = SearchCandidate(
+            pid=pid,
+            source_label="full-EMR scan case" if scan else "analyzed case",
+            analyzed=True,
+            procedure=procedure,
+            age=age,
+            gender=sex or None,
+            source_text=f"PID {pid}. Procedure: {procedure or 'not recorded'}.",
+            rank_method="overview",
+            score=0.0,
+        )
+        self._open_or_request(pid, comparison=False, from_overview=True)
 
     def _show_primary_source(self) -> None:
         pid = self._primary_pid or self._selected_pid

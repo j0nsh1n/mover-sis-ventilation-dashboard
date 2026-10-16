@@ -2,16 +2,14 @@
 
 ## Current State
 
-- **Version:** 0.10.0 released 2026-09-30; installed v0.9.0 builds update through
-  the signed Pages manifest. `main` has unreleased phase context (#25) and the
-  parallel scan (#26).
-- **Branch:** `main` includes everything through v0.10.0 (#15–#24), #25 and #26.
-  Two unmerged branches hold the v0.11.0 work: `feat/v0.11-answers` (offscreen
-  desktop driver, Research answer check on cited cases, hedged-advice patterns,
-  model-labeled advice check, roadmap phases 4 to 9) and `feat/v0.11-app` stacked
-  on it (Ollama start off the GUI thread, Cancel controls and visible failure
-  reasons, frozen-app scan self-test in CI, Qt bundled in local Linux builds,
-  partial-index retrieval labeling, the calibration wrapper).
+- **Version:** 0.10.0 released 2026-09-30. The v0.11.0 work is merged to
+  `main` (#27, #28, 2026-10-15); the v0.11.0 release is not cut yet (held by the
+  owner).
+- **Branch:** `main` includes everything through #28. The v0.12.0 work sits on
+  two stacked branches: `feat/v0.12-rules-f` on `main` (one rule catalog,
+  Rules drawer, real-wave tests opt-in, F flag episodes and rule detail) and
+  `feat/v0.12-g` on it (Cases overview, flag-aware search, side-panel
+  conversation, prototype driver scenarios).
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -19,22 +17,24 @@
   manifest are live.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
 - **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` passes on
-  `feat/v0.11-answers` (396 passed, 1 skipped, 2026-10-15) with `ruff check .`
-  and `mypy` clean, and on `feat/v0.11-app` (452 passed, 2 skipped,
-  2026-10-15). Rust updater and signer suites last passed 2026-09-28. v0.10.0 Linux
-  and Windows release jobs passed. The local frozen Linux app crashed in Qt
-  XCB keyboard handling on this Nobara host in September; the v0.11 local
-  build ran 10 s on both wayland and xcb without a crash (2026-10-14).
+  `feat/v0.12-g` (809 passed, 2 skipped, 5 deselected, 2026-10-16) with
+  `ruff check .` and `mypy` clean. The five real-wave decode tests run only
+  with `MOVER_REAL_DATA_TESTS=1`. Rust updater and signer suites last passed
+  2026-09-28. The v0.11 local build ran 10 s on both wayland and xcb without a
+  crash (2026-10-14).
   Real EMR and wave data are on this machine; no test or lane reads them.
   `tools/desktop_drive.py` drives the app offscreen on synthetic data and
   saves a screenshot per step; every desktop check uses it.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
-  retrieval indexes one short metadata record per surgery and gives up to three
-  case extracts to the local AI. Keyword search remains available when the
-  embedding model is absent. The desktop G uses the evidence map layout;
-  F opens all three case signal tracks and their source rows in a dark studio.
+  retrieval indexes one short record per surgery, plus short facts (signals,
+  flagged rules, signal gaps) for analyzed cases, and gives up to three case
+  extracts to the local AI. Keyword search matches whole words and works
+  without the embedding model. G has a Rules drawer (Ctrl+R), a Cases
+  overview and a conversation panel beside the evidence board. F shows the
+  three signal tracks, source rows, flag episodes, a flag lane and rule detail
+  with current thresholds.
 - **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
   design and a future article-search proposal based on `HealthDatabaseAccess`.
 - **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
@@ -218,36 +218,21 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-10-15
-- **Branches:** `feat/v0.11-answers` on `main`, and `feat/v0.11-app` stacked on
-  it. Both are for the owner to review and land in that order. The plan and
-  decision trail live outside the repo under
-  `~/.claude/orchestrate/mover-overhaul/`.
-- **Done (answers branch):** `tools/desktop_drive.py` offscreen driver with
-  scenarios and screenshots; the Research answer check verifies cited cases'
-  ages, doses and PIDs; a 110-sentence directive corpus at 0 false results; the
-  model-labeled advice check (holdout 20 of 20 caught, 0 of 20 descriptions
-  flagged, 0.78 s per six sentences on `holo9b-16k`); roadmap phases 4 to 9
-  with the side panel chosen for the v0.12 conversation.
-- **Done (app branch):** Ollama start, stop and probe on a worker thread (GUI
-  stall 49 ms instead of 5 s in the test); Cancel for research and full-EMR
-  scans; failure reasons that stay visible; frozen `--selftest-scan` in the
-  Linux and Windows CI smoke steps; Qt bundled in local Linux builds
-  (394 MiB onedir); non-blocking startup dialogs.
-- **Verified:** every item ran a swarm of ten live lanes plus gates and audits on
-  synthetic data; findings were fixed in a second round. The app branch's
-  round-two fixes were re-verified by the suite and all six driver scenarios,
-  not by a fresh full lane set. The local build ran 10 s on wayland and xcb.
-- **Done (app branch, later):** V5, partial-index search ranks unembedded
-  records by keywords with a share of the shortlist, labels the split in G, no
-  longer embeds PIDs, and keys vectors by model digest (keyword recall@5 0.90 on
-  20 synthetic questions). V7, `scripts/calibrate.sh`, a profile header with
-  the thresholds hash and seed, `--diff`, phase-aware shares and small-cell
-  suppression. Both were built by Codex and reviewed with one fix round.
-- **Next:** owner reviews and lands the two branches; then
-  v0.12.0 (rules drawer, F flags and rule detail, Cases overview, side-panel
-  conversation) per `roadmap.md` Phase 5. `spec.md` drift to approve: desktop
-  scans always use the spawn pool; the Research answer check now covers cited
-  cases' ages, doses and PIDs plus a model advice label; Cancel controls exist;
-  retrieval no longer embeds PIDs and G's scope label states embedding coverage.
-  The 600-second Pages cache and the configured-but-missing `qwen3:14b` remain.
+- **Date:** 2026-10-16
+- **Branches:** `feat/v0.12-rules-f` on `main` (PR 1) and `feat/v0.12-g`
+  stacked on it (PR 2). The owner lands PR 1 first. The plan and decision trail
+  live outside the repo under `~/.claude/orchestrate/mover-overhaul/`
+  (`docs/v012/plan.md`, `decisions.tsv`).
+- **Done:** W1 one rule catalog read by the reference, co-pilot, dashboard and
+  profile; W2 Rules drawer; real-wave tests opt-in; W3 F episodes, flag lane,
+  rule detail and cursor dots; W4 Cases overview; flag-aware keyword search;
+  W5 side-panel conversation with New question and a confirmed Reset; W6 the
+  five prototype questions as driver scenarios.
+- **Verified:** every commit ran gates, live lanes on synthetic data against its
+  parent, a perf lane and audit lanes; findings were fixed and folded in.
+  W4 was re-checked after the rebase onto W3. Each commit's own tests pass at
+  that commit.
+- **Next:** the owner reviews and lands the two PRs, approves the `spec.md`
+  drift wording listed in each PR body, and decides two product questions: a
+  preset selector in Settings, and rendering model answers as rich text. Then
+  mark `roadmap.md` Phase 5. The v0.11.0 release is still to be cut.

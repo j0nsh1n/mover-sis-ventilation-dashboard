@@ -61,6 +61,7 @@ from src.desktop.charts import (
     top_cases_figure,
 )
 from src.desktop.research_workspace import ResearchWorkspace
+from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.desktop.theme import apply_theme, chat_role_color
 from src.desktop.updates import UpdateController
@@ -314,6 +315,7 @@ class MainWindow(QMainWindow):
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
         self.flags: pd.DataFrame | None = None
+        self._analysis_facts: dict[str, str] = {}
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
         # Full-EMR scan results (src.pipeline.corpus_scan.ScanResult), if any
@@ -334,8 +336,8 @@ class MainWindow(QMainWindow):
         self._research_workers: dict[int, ResearchWorker] = {}
         self._case_request_id = 0
         self._research_engine = None
-        self._pending_case: tuple[str, bool, bool] | None = None
-        self._queued_case: tuple[str, bool, bool] | None = None
+        self._pending_case: tuple[str, bool, bool, bool] | None = None
+        self._queued_case: tuple[str, bool, bool, bool] | None = None
         self._charts_pending = False
         self._show_vitals = True
         self._llm_mode: str = "analyze"  # default: management-pattern analysis
@@ -621,6 +623,7 @@ class MainWindow(QMainWindow):
         self._research_start_button = self.research.start_button
         self.research.question_submitted.connect(self._start_research_search)
         self.research.cancel_requested.connect(self._cancel_research)
+        self.research.board_restore_requested.connect(self._invalidate_research_requests)
         self.research.case_requested.connect(self._load_research_case)
         self.research.setup_requested.connect(self._open_setup_wizard)
         self.research.model_start_requested.connect(self._ollama_start)
@@ -1103,6 +1106,7 @@ class MainWindow(QMainWindow):
         self.statusBar().setToolTip(str(failures[0].get("error", ""))[:300] if failures else "")
         self._update_status_paths(message)
         self._refresh_tables_and_selectors()
+        self._push_cases_overview()
 
     def _on_corpus_scan_cancelled(self) -> None:
         self._update_status_paths("Full-EMR scan cancelled; the previous scan was kept.")
@@ -1129,6 +1133,9 @@ class MainWindow(QMainWindow):
 
     def _on_pipeline_ok(self, data) -> None:
         self.cases, self.ts, self.flags, self.episodes, self.events = data
+        from src.services.retrieval import build_analysis_facts
+
+        self._analysis_facts = build_analysis_facts(self.ts, self.flags)
         preset, recorded = "default", False
         if isinstance(self._worker, PipelineWorker):
             preset, recorded = self._worker.preset, True
@@ -1588,14 +1595,16 @@ class MainWindow(QMainWindow):
                 cache_path=settings_path().parent / "case_embeddings.sqlite3",
                 embedder=OllamaEmbedder(embed_model),
                 preset=self._active_preset,
+                analysis_facts=self._analysis_facts,
                 analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
             )
-        if self._research_worker is not None and self._research_worker.isRunning():
-            self._research_worker.requestInterruption()
+        if self.research._searching:
+            self._cancel_research()
+        self._invalidate_research_requests()
         self._research_request_id += 1
         request_id = self._research_request_id
         self._active_research_request = request_id
-        self.research.begin_question(question)
+        self.research.begin_question(question, request_id)
         self.research.set_status("Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             self._research_engine,
@@ -1628,6 +1637,18 @@ class MainWindow(QMainWindow):
         self._data_generation += 1
         self._research_engine = None
         self._invalidate_research_requests()
+        self._push_cases_overview()
+
+    def _push_cases_overview(self) -> None:
+        if not hasattr(self, "research"):
+            return
+        from src.rules import load_rule_catalog
+
+        try:
+            catalog = load_rule_catalog(self._active_preset)
+        except GuardrailError:
+            catalog = None
+        self.research.set_cases_data(self.cases, self.corpus_scan, catalog)
 
     def _invalidate_research_requests(self) -> None:
         self._active_research_request = None
@@ -1647,10 +1668,14 @@ class MainWindow(QMainWindow):
         if request_id is not None and request_id != self._active_research_request:
             return
         self.research.set_results(result)
-        if not result.candidates:
-            self.research.set_answer("No matching indexed surgery records were found for this question.")
-        elif self.research.selected_model() is None:
-            self.research.set_answer("Case search is available. Start and select a local chat model to generate a source-grounded answer.")
+        turn = self.research.conversation.turn(request_id)
+        if turn is not None and turn.model is None:
+            answer = NO_MODEL_ANSWER
+            if not result.candidates:
+                answer += "\n\nNo matching indexed surgery records were found for this question."
+            self.research.set_answer(answer, request_id, state="no_model")
+        elif not result.candidates:
+            self.research.set_answer("No matching indexed surgery records were found for this question.", request_id)
         preferred = self.research.preferred_pid()
         if preferred:
             self._load_research_case(preferred, False, False)
@@ -1658,30 +1683,36 @@ class MainWindow(QMainWindow):
     def _on_research_answer(self, response, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
-        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."))
+        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."), request_id)
 
     def _on_research_fail(self, message: str, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
         self.research.set_status(f"Research request failed: {message}")
-        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.")
+        self.research.set_answer(f"Research request failed: {message}\n\nRetrieved cases remain available for manual inspection.", request_id, state="failed", failure=message)
 
     def _on_research_done(self, request_id: int) -> None:
         self._research_workers.pop(request_id, None)
         if request_id == self._active_research_request:
             self.research.set_searching(False)
 
-    def _load_research_case(self, pid: str, comparison: bool, open_detail: bool) -> None:
+    def _load_research_case(
+        self, pid: str, comparison: bool, open_detail: bool, from_overview: bool | None = None,
+    ) -> None:
+        if from_overview is None:
+            from_overview = self.research.take_case_origin(pid)
         if self._case_worker is not None and self._case_worker.isRunning():
-            self._queued_case = (pid, comparison, open_detail)
+            self._queued_case = (pid, comparison, open_detail, from_overview)
             self.research.set_status(f"Loading {pid} after the current case…")
             return
         candidate = self.research.candidate_for(pid)
         if candidate is not None and not candidate.has_vent:
             # The pipeline analyzes ventilated surgeries only; skip a doomed fetch
-            self.research.show_case_unavailable(pid, NO_VENT_MESSAGE, comparison=comparison)
+            self.research.show_case_unavailable(
+                pid, NO_VENT_MESSAGE, comparison=comparison, from_overview=from_overview
+            )
             return
-        self._pending_case = (pid, comparison, open_detail)
+        self._pending_case = (pid, comparison, open_detail, from_overview)
         if self.cases is not None and self.ts is not None and "PID" in self.cases and "PID" in self.ts:
             cases = self.cases[self.cases["PID"].astype(str) == pid]
             if not cases.empty:
@@ -1707,7 +1738,7 @@ class MainWindow(QMainWindow):
             if request_id == self._case_request_id else None
         )
         self._case_worker.failed.connect(
-            lambda message: self.research.show_case_unavailable(pid, message, comparison=comparison)
+            lambda message: self._on_research_case_failed(message)
             if request_id == self._case_request_id else None
         )
         self._case_worker.finished.connect(self._on_research_case_fetch_done)
@@ -1719,6 +1750,15 @@ class MainWindow(QMainWindow):
             self._queued_case = None
             self._load_research_case(*request)
 
+    def _on_research_case_failed(self, message: str) -> None:
+        if self._pending_case is None:
+            return
+        pid, comparison, _, from_overview = self._pending_case
+        self._pending_case = None
+        self.research.show_case_unavailable(
+            pid, message, comparison=comparison, from_overview=from_overview
+        )
+
     def _on_research_case_loaded(self, fetched) -> None:
         self._on_research_case_data(fetched)
 
@@ -1726,11 +1766,12 @@ class MainWindow(QMainWindow):
         timeseries, flags = fetched.timeseries, fetched.flags
         if self._pending_case is None:
             return
-        pid, comparison, open_detail = self._pending_case
+        pid, comparison, open_detail, from_overview = self._pending_case
         self._pending_case = None
         if timeseries is None or timeseries.empty or "t_min" not in timeseries:
             self.research.show_case_unavailable(
-                pid, "no signal samples were found for this surgery.", comparison=comparison
+                pid, "no signal samples were found for this surgery.",
+                comparison=comparison, from_overview=from_overview
             )
             return
         self.research.set_case_data(
@@ -1740,6 +1781,7 @@ class MainWindow(QMainWindow):
             fetched=fetched,
             comparison=comparison,
             open_detail=open_detail,
+            from_overview=from_overview,
         )
         self.research.set_status(f"Loaded source values for {pid}.")
 

@@ -321,7 +321,7 @@ def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     assert drawer.width() <= int(view.width() * 0.42)
     assert view.minimumSizeHint().width() <= 900
     assert view.width() == 900
-    scroll = view.stack.widget(0)
+    scroll = view.board_splitter.widget(0)
     assert not scroll.horizontalScrollBar().isVisible()
     assert scroll.viewport().width() >= 480
     assert view.question_edit.isVisible() and view.question_edit.width() >= 300
@@ -341,6 +341,23 @@ def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     view.question_edit.setFocus()
     QTest.keyClicks(view.question_edit, "pressure")
     assert view.question_edit.text() == "pressure"
+
+
+def test_header_buttons_wrap_beside_the_drawer_at_900_px(view, qapp):
+    view.resize(900, 900)
+    view.rules_button.click()
+    qapp.processEvents()
+    viewport = view.board_splitter.widget(0).viewport()
+    buttons = view._header_buttons
+    for button in buttons:
+        origin = button.mapTo(viewport, button.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + button.width() <= viewport.width(), button.text()
+    assert buttons[-1].y() > buttons[0].y()
+    view.rules_drawer.close_drawer()
+    qapp.processEvents()
+    view.resize(1400, 900)
+    qapp.processEvents()
+    assert len({button.y() for button in buttons}) == 1
 
 
 def test_the_board_regains_its_layout_when_the_drawer_closes(view, qapp):
