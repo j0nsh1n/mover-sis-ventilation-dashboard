@@ -49,7 +49,7 @@ def format_grounded_extracts(
     return "\n".join(lines)
 
 
-def _research_session(cited: Sequence[SearchCandidate]) -> SessionState:
+def _research_session(cited: Sequence[SearchCandidate], preset: str) -> SessionState:
     """A session holding only the cited cases, so the answer gate checks exactly them."""
     pids = [candidate.pid for candidate in cited]
     unreadable = None
@@ -58,6 +58,7 @@ def _research_session(cited: Sequence[SearchCandidate]) -> SessionState:
     except (PipelineError, OSError) as exc:
         medications, unreadable = pd.DataFrame(), str(exc)
     return SessionState(
+        preset=preset,
         cases=pd.DataFrame(
             {
                 "PID": pids,
@@ -79,6 +80,7 @@ def answer_from_retrieval(
     candidates: Sequence[SearchCandidate],
     extracts: Sequence[str],
     client: OllamaClient,
+    preset: str = "default",
     mode: str = MODE_ANALYZE,
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
@@ -88,7 +90,7 @@ def answer_from_retrieval(
         candidates=candidates, extracts=extracts
     )
     cited = candidates[: min(len(candidates), len(extracts), 3)]
-    research_session = _research_session(cited)
+    research_session = _research_session(cited, preset)
 
     def status(msg: str) -> None:
         if on_status is not None:

@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Signal detail shows flag episodes, a minute-aligned flag lane, current rule thresholds, and episode measurements with missing-minute counts. Traces retain fractional minutes and stay readable when the window is resized; empty lane clicks leave the selection unchanged.
+
+- Research has a Rules button (Ctrl+R) that opens a searchable list of the loaded
+  preset's rules beside the evidence board; Escape closes it. Outside the
+  workspace Ctrl+R still reloads processed data.
+- The Rule reference, the co-pilot's rule lookup, the dashboard rule table and the
+  calibration profile read one rule catalog. The reference lists phase skips and
+  follows the active preset instead of always showing `default`.
 - `scripts/calibrate.sh <emr-dir> <name>` writes a profile into the ignored
   `calibration/` folder. The profile header names the preset, thresholds hash,
   case count and seed; `--diff` compares two profiles per rule and phase;

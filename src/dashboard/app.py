@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.config import load_thresholds
+from src.rules import load_rule_catalog
 from src.dashboard.components import case_timeline_figure, flag_bar_by_rule, top_cases_bar
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
@@ -248,6 +249,7 @@ def main():
     else:
         try:
             cfg = load_thresholds(preset, validate=True)
+            catalog = load_rule_catalog(preset)
         except GuardrailError as e:
             st.error(f"Threshold config invalid: {e}")
             return
@@ -257,11 +259,10 @@ def main():
             "Flags are research/education tools on public de-identified data. "
             "They are **not** validated clinical alarms."
         )
-        rules = cfg.get("rules", {})
-        for rid, spec in rules.items():
-            st.markdown(f"**`{rid}`** — {spec.get('description', '')}")
+        for spec in catalog.specs:
+            st.markdown(f"**`{spec.id}`** — {spec.description}")
             st.code(
-                str({k: v for k, v in spec.items() if k != "description"}),
+                str(spec.details()),
                 language="yaml",
             )
 

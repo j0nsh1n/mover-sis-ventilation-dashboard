@@ -25,7 +25,6 @@ use agreement before sharing even aggregate output.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -37,7 +36,7 @@ import pandas as pd
 from src.config import load_thresholds
 from src.pipeline.features import OBSERVED_SIGNAL_COLS
 from src.pipeline.phases import PHASE_SOURCES, PHASES, classify_event_names
-from src.runtime_paths import thresholds_path
+from src.rules import RuleCatalog
 
 PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
 
@@ -56,23 +55,6 @@ PROFILE_SIGNALS = [
 STREAMS = {
     "vent": ["TV", "RR", "PEEP", "PIP", "ETCO2", "FIO2", "Agent_Et"],
     "vitals": ["HR", "HRe", "HRp", "SPO2"],
-}
-
-# rule -> (signal, higher_is_worse, warn key, critical key)
-THRESHOLD_RULES = {
-    "pip_high": ("PIP", True, "warn", "critical"),
-    "peep_high": ("PEEP", True, "warn", "critical"),
-    "tv_low_mlkg": ("TV_mlkg", False, "warn", "critical"),
-    "tv_high_mlkg": ("TV_mlkg", True, "warn", "critical"),
-    "rr_low": ("RR", False, "warn", "critical"),
-    "rr_high": ("RR", True, "warn", "critical"),
-    "etco2_high": ("ETCO2", True, "warn", "critical"),
-    "etco2_low": ("ETCO2", False, "warn", "critical"),
-    "spo2_low": ("SPO2", False, "warn", "critical"),
-    "hr_high": ("HR", True, "warn", "critical"),
-    "hr_low": ("HR", False, "warn", "critical"),
-    "map_low": ("nMAP", False, "warn", "critical"),
-    "agent_high": ("MAC_total_Et", True, "warn_mac", "critical_mac"),
 }
 
 
@@ -203,7 +185,11 @@ def profile_processed(
     flags = pd.read_parquet(flags_path) if flags_path.exists() else pd.DataFrame()
     if thresholds is None:
         thresholds = load_thresholds()
-    rules = thresholds.get("rules", {})
+    catalog = RuleCatalog.from_thresholds(thresholds)
+    threshold_specs = {
+        spec.id: spec for spec in catalog.specs
+        if spec.kind == "threshold" and ("warn" in spec.params or "warn_mac" in spec.params)
+    }
 
     signals = [c for c in OBSERVED_SIGNAL_COLS if c in ts.columns]
     observed = ts[signals].notna().any(axis=1)
@@ -260,9 +246,10 @@ def profile_processed(
     eligible_indices: dict[tuple[str, ...], np.ndarray] = {}
     numeric_signals = {
         col: pd.to_numeric(obs[col], errors="coerce").to_numpy(dtype=float)
-        for col in {rule[0] for rule in THRESHOLD_RULES.values()} if col in obs.columns
+        for col in {spec.signals[0] for spec in threshold_specs.values()} if col in obs.columns
     }
-    for rule_id, spec in rules.items():
+    for spec in catalog.specs:
+        rule_id = spec.id
         f = flags[flags["rule_id"] == rule_id] if not flags.empty else flags
         n_minutes = int(f[["PID", "Obs_time"]].drop_duplicates().shape[0]) if len(f) else 0
         n_flagged = int(f["PID"].nunique()) if len(f) else 0
@@ -276,10 +263,11 @@ def profile_processed(
             ),
             "flagged_minutes_per_hour": round(n_minutes / obs_hours, 3) if obs_hours and not 0 < n_flagged < min_cell else None,
         }
-        if rule_id in THRESHOLD_RULES and rule_id in rules:
-            col, higher, wkey, ckey = THRESHOLD_RULES[rule_id]
+        if rule_id in threshold_specs:
+            col, higher = spec.signals[0], spec.direction == "high"
+            wkey, ckey = ("warn", "critical") if "warn" in spec.params else ("warn_mac", "critical_mac")
             if col in obs.columns:
-                skipped = tuple(spec.get("skip_phases", []))
+                skipped = spec.skip_phases
                 if skipped not in eligible_indices:
                     eligible_indices[skipped] = (
                         np.flatnonzero(~obs["phase"].isin(skipped).to_numpy())
@@ -289,8 +277,8 @@ def profile_processed(
                 values = numeric_signals[col]
                 if rule_id == "etco2_low":
                     values = np.where(values > 0, values, np.nan)
-                warn, crit = spec.get(wkey), spec.get(ckey)
-                if warn is not None and crit is not None:
+                warn, crit = spec.params.get(wkey), spec.params.get(ckey)
+                if isinstance(warn, (int, float)) and isinstance(crit, (int, float)):
                     entry.update({
                         "signal": col,
                         "direction": "high" if higher else "low",
@@ -314,7 +302,7 @@ def profile_processed(
     return {
         "metadata": {
             "preset": thresholds.get("_preset", meta.get("preset", "unknown")),
-            "thresholds_sha256": hashlib.sha256(thresholds_path().read_bytes()).hexdigest(),
+            "thresholds_sha256": catalog.thresholds_sha256,
             "seed": seed if seed is not None else "unknown",
         },
         "min_cell": min_cell,

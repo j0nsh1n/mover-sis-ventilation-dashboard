@@ -361,6 +361,276 @@ def partial_index(run: Run) -> dict[str, Any]:
     return {**details, "scope": label}
 
 
+def _focus_name(run: Run) -> str:
+    from PySide6.QtWidgets import QApplication
+
+    widget = QApplication.focusWidget() or run.win.focusWidget()
+    if widget is None:
+        return "none"
+    label = widget.objectName() or getattr(widget, "text", lambda: "")()
+    return f"{type(widget).__name__}:{label}"
+
+
+def _drawer_facts(run: Run) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    return {
+        "open": drawer.is_open,
+        "header": drawer.header_label.text(),
+        "search": drawer.search_text(),
+        "count": drawer.count_label.text(),
+        "visible_ids": drawer.visible_rule_ids(),
+        "empty_state": drawer.empty_label.text() if drawer.empty_state.isVisible() else "",
+        "notice": drawer.notice_label.text() if drawer.notice_label.isVisible() else "",
+        "focus": _focus_name(run),
+    }
+
+
+def open_rules_from_button(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.tabs.setCurrentWidget(research)
+    run.win.activateWindow()
+    run.settle()
+    research.rules_button.click()
+    run.settle()
+    assert research.rules_drawer.is_open
+    return _drawer_facts(run)
+
+
+def search_rules(run: Run, *, text: str) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    drawer.search_edit.setText(text)
+    run.settle()
+    return _drawer_facts(run)
+
+
+def clear_rule_search(run: Run) -> dict[str, Any]:
+    drawer = run.win.research.rules_drawer
+    assert drawer.clear_button.isVisible()
+    drawer.clear_button.click()
+    run.settle()
+    return _drawer_facts(run)
+
+
+def show_rule(run: Run, *, rule_id: str) -> dict[str, Any]:
+    research = run.win.research
+    research.show_rule(rule_id)
+    run.settle()
+    drawer = research.rules_drawer
+    row = drawer._rows[rule_id]
+    assert row.property("highlight") is True
+    return {**_drawer_facts(run), "highlighted": rule_id, "scroll": drawer.rule_scroll.verticalScrollBar().value()}
+
+
+def escape_rules(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    drawer = run.win.research.rules_drawer
+    QTest.keyClick(drawer.search_edit, Qt.Key.Key_Escape)
+    run.settle()
+    assert not drawer.is_open
+    return _drawer_facts(run)
+
+
+def escape_rules_from_question(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    research = run.win.research
+    research.question_edit.setFocus()
+    QTest.keyClick(research.question_edit, Qt.Key.Key_Escape)
+    run.settle()
+    assert not research.rules_drawer.is_open
+    assert research.question_edit.hasFocus()
+    return _drawer_facts(run)
+
+
+def _has_no_horizontal_scroll(view: Any) -> bool:
+    bar = view.horizontalScrollBar()
+    return not bar.isVisible() or bar.maximum() == 0
+
+
+def _wait_layout_settled(run: Run, scroll: Any, table: Any, quiet_s: float = 0.3) -> None:
+    """Wait until the narrow layout stops changing, so a transient scrollbar is not read."""
+
+    def layout() -> tuple[Any, ...]:
+        return (
+            run.win.width(),
+            run.win.research.rules_drawer.width(),
+            scroll.horizontalScrollBar().maximum(),
+            scroll.horizontalScrollBar().isVisible(),
+            table.horizontalScrollBar().maximum(),
+            table.horizontalScrollBar().isVisible(),
+            tuple(table.columnWidth(i) for i in range(table.columnCount())),
+        )
+
+    state = {"seen": layout(), "since": time.monotonic()}
+
+    def stable() -> bool:
+        now = layout()
+        if now != state["seen"]:
+            state["seen"], state["since"] = now, time.monotonic()
+        return time.monotonic() - state["since"] >= quiet_s
+
+    run.wait(stable, "the narrow layout to stop changing", timeout_s=10.0)
+
+
+def open_rules_narrow(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.resize(900, 860)
+    run.settle()
+    facts = open_rules_from_button(run)
+    scroll = research.stack.widget(0)
+    table = research.candidate_table
+    _wait_layout_settled(run, scroll, table)
+    assert run.win.width() == 900, f"the open drawer widened the window to {run.win.width()}"
+    # A bar can show for a moment with nothing to scroll; only a bar that scrolls is a failure.
+    assert _has_no_horizontal_scroll(scroll), "the board scrolls horizontally"
+    assert _has_no_horizontal_scroll(table), "the shortlist scrolls horizontally"
+    assert sum(table.columnWidth(i) for i in range(table.columnCount())) <= table.viewport().width()
+    assert all(table.item(row, col).toolTip() == table.item(row, col).text()
+               for row in range(table.rowCount()) for col in range(table.columnCount()))
+    return {
+        **facts,
+        "window_width": run.win.width(),
+        "drawer_width": research.rules_drawer.width(),
+        "board_h_scroll": not _has_no_horizontal_scroll(scroll),
+        "shortlist_h_scroll": not _has_no_horizontal_scroll(table),
+        "shortlist_columns": [table.columnWidth(i) for i in range(table.columnCount())],
+    }
+
+
+def focus_question(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.win.tabs.setCurrentWidget(research)
+    run.win.activateWindow()
+    research.question_edit.setFocus()
+    run.settle()
+    return {"focus": _focus_name(run)}
+
+
+def show_narrow_shortlist(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    table = research.candidate_table
+    research.stack.widget(0).ensureWidgetVisible(table)
+    run.settle()
+    assert not table.horizontalScrollBar().isVisible()
+    return {"shortlist_columns": [table.columnWidth(i) for i in range(table.columnCount())]}
+
+
+def ctrl_r(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.keyClick(run.win.research.question_edit, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    run.settle()
+    assert run.win.research.rules_drawer.is_open
+    return _drawer_facts(run)
+
+
+def type_rule_search(run: Run, *, text: str) -> dict[str, Any]:
+    from PySide6.QtTest import QTest
+
+    QTest.keyClicks(run.win.research.rules_drawer.search_edit, text)
+    run.settle()
+    return _drawer_facts(run)
+
+
+def f_facts(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    run.wait(lambda: not research.detail_chart._resize_timer.isActive(), "F chart resize")
+    pid = research._current_pid
+    return {
+        "pid": pid,
+        "episode_rows_shown": research._episodes.to_dict("records"),
+        "selected_rule_id": research.selected_rule_id,
+        "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
+        "rule_detail": research.rule_detail.text(),
+        "signal_statistics": research.signal_statistics,
+        "chart_track_names": research.chart_track_names,
+        "lane_marks": len(research.detail_chart.lane_marks),
+        "window_width": run.win.width(),
+    }
+
+
+def f_load(run: Run) -> dict[str, Any]:
+    facts = run_pipeline(run)
+    return {**facts, **f_facts(run)}
+
+
+def f_open(run: Run, *, kind: str) -> dict[str, Any]:
+    from src.services.retrieval import RetrievalResult, SearchCandidate
+
+    win, research = run.win, run.win.research
+    if kind == "spo2":
+        matches = win.episodes[win.episodes["rule_id"].eq("spo2_low")]
+        assert not matches.empty, "no spo2_low episode in this synthetic EMR"
+        pid = str(matches.iloc[0]["PID"])
+    elif kind == "clean":
+        flagged = set(win.flags["PID"].astype(str))
+        pid = next(str(pid) for pid in win.ts["PID"].unique() if str(pid) not in flagged)
+    else:
+        pid = str(win.flags.groupby("PID").size().idxmax())
+    candidate = SearchCandidate(pid=pid, source_label="analyzed case", analyzed=True,
+                                procedure="Synthetic research case", age=None, gender="",
+                                source_text="Synthetic source", rank_method="keyword", score=1.)
+    research.set_results(RetrievalResult(candidates=(candidate,)))
+    win.tabs.setCurrentWidget(research)
+    if kind == "spo2":
+        win.resize(900, 860)
+    win._load_research_case(pid, False, True)
+    run.wait(lambda: research.stack.currentIndex() == 1, "F with full case data")
+    research.signal_scroll.verticalScrollBar().setValue(0)
+    if kind == "clean":
+        assert research.episode_list.item(0).text() == "No flags in this case"
+        assert not research.detail_chart.lane_marks
+    return f_facts(run)
+
+
+def f_select(run: Run, *, rule: str = "") -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    research = run.win.research
+    episodes = research._episodes
+    matches = episodes[episodes.rule_id.eq(rule)] if rule else episodes[episodes.rule_id.str.contains("etco2")]
+    index = int(matches.index[0]) if not matches.empty else 0
+    item = research.episode_list.item(index)
+    research.signal_scroll.ensureWidgetVisible(research.episode_list)
+    research.episode_list.scrollToItem(item)
+    run.settle()
+    QTest.mouseClick(research.episode_list.viewport(), Qt.MouseButton.LeftButton,
+                     pos=research.episode_list.visualItemRect(item).center())
+    run.settle()
+    assert research.selected_rule_id == episodes.iloc[index].rule_id
+    facts = f_facts(run)
+    assert facts["cursor_minute"] == episodes.iloc[index].t_start_min
+    assert facts["signal_statistics"]
+    if rule == "spo2_low":
+        assert "SPO2" in facts["chart_track_names"]
+    research.signal_scroll.ensureWidgetVisible(research.rule_detail)
+    return facts
+
+
+def f_clear(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.clear_episode_button.click()
+    run.settle()
+    assert research.selected_rule_id is None
+    assert "SPO2" not in research.chart_track_names
+    research.signal_scroll.ensureWidgetVisible(research.detail_chart)
+    return f_facts(run)
+
+
+def f_drawer_link(run: Run) -> dict[str, Any]:
+    research = run.win.research
+    research.rule_link.click()
+    run.settle()
+    assert research.rules_drawer.is_open
+    assert research.rules_drawer._rows[research.selected_rule_id].property("highlight") is True
+    return {**f_facts(run), **_drawer_facts(run)}
+
+
 TAB_STEPS = tuple(
     Step(name, partial(open_tab, label=label))
     for name, label in (
@@ -373,6 +643,13 @@ TAB_STEPS = tuple(
 )
 
 SCENARIOS: dict[str, Scenario] = {
+    "f-episodes": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                             Step("episode", f_select))),
+    "f-extra-signal": Scenario((Step("data", f_load), Step("case-900px", partial(f_open, kind="spo2")),
+                                 Step("spo2", partial(f_select, rule="spo2_low")), Step("cleared", f_clear))),
+    "f-drawer-link": Scenario((Step("data", f_load), Step("case", partial(f_open, kind="most")),
+                                Step("episode", f_select), Step("drawer", f_drawer_link))),
+    "f-no-flags": Scenario((Step("data", f_load), Step("no-flags", partial(f_open, kind="clean")))),
     "partial-index": Scenario((Step("partial-index", partial_index),), llm_modes=("off",)),
     "search-cancel": Scenario((Step("previous-question", ask), Step("searching", start_slow_search), Step("cancelled", cancel_search)), llm_modes=("off",)),
     "scan-cancel": Scenario((Step("scanning", start_scan), Step("cancelled", cancel_scan)), llm_modes=("off",)),
@@ -383,6 +660,24 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "open-each-tab": Scenario((Step("pipeline", run_pipeline), *TAB_STEPS)),
     "no-model": Scenario((Step("no-model", ask),), llm_modes=("off",)),
+    "rules-drawer": Scenario((
+        Step("data", run_pipeline),
+        Step("open", open_rules_from_button),
+        Step("search-etco2", partial(search_rules, text="etco2")),
+        Step("search-empty", partial(search_rules, text="zzz")),
+        Step("cleared", clear_rule_search),
+        Step("show-rule", partial(show_rule, rule_id="spo2_low")),
+        Step("escape", escape_rules),
+    )),
+    "rules-drawer-narrow": Scenario((
+        Step("ask", ask), Step("narrow-open", open_rules_narrow), Step("shortlist", show_narrow_shortlist),
+    )),
+    "rules-drawer-keyboard": Scenario((
+        Step("focus-question", focus_question),
+        Step("ctrl-r", ctrl_r),
+        Step("typed", partial(type_rule_search, text="peep")),
+        Step("escape", escape_rules_from_question),
+    )),
 }
 
 

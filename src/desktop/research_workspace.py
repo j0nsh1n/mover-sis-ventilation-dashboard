@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -27,7 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.desktop.charts import ChartView, focused_signals_figure
+from src.desktop.charts import FocusedSignalChart, focused_minute_rows
+from src.desktop.rules_drawer import RulesDrawer, threshold_parts
+from src.pipeline.flags import collapse_episodes
+from src.services.case_fetch import FetchResult
+from src.rules import RuleCatalog
 from src.services.retrieval import RetrievalResult, SearchCandidate
 
 
@@ -36,6 +44,9 @@ class CaseView:
     candidate: SearchCandidate
     timeseries: pd.DataFrame
     flags: pd.DataFrame
+    cases: pd.DataFrame = field(default_factory=pd.DataFrame)
+    episodes: pd.DataFrame = field(default_factory=pd.DataFrame)
+    events: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -48,6 +59,10 @@ class QuestionState:
     comparison_pid: str | None
     case_views: dict[str, CaseView]
     labels: tuple[str, ...]
+
+
+RULES_DRAWER_MAX_WIDTH = 420
+RULES_DRAWER_SHARE = 0.42
 
 
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -84,6 +99,19 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
     return button
 
 
+class _ShortlistTable(QTableWidget):
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.fit_columns()
+
+    def fit_columns(self) -> None:
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.resizeColumnsToContents()
+        if header.length() > self.viewport().width():
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+
 class ResearchWorkspace(QWidget):
     question_submitted = Signal(str)
     cancel_requested = Signal()
@@ -104,13 +132,23 @@ class ResearchWorkspace(QWidget):
         self._comparison_pid: str | None = None
         self._current_pid: str | None = None
         self._case_views: dict[str, CaseView] = {}
+        self._rule_catalog: RuleCatalog | None = None
+        self._episodes = pd.DataFrame()
+        self._minute_rows = pd.DataFrame()
+        self.selected_rule_id: str | None = None
+        self.signal_statistics: dict[str, dict[str, float | int | None]] = {}
+        self.chart_track_names = ["PIP", "ETCO2", "HR"]
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         self.stack = QStackedWidget()
-        root.addWidget(self.stack)
+        root.addWidget(self.stack, 1)
         self._build_canvas()
         self._build_signal_detail()
+        self.rules_drawer = RulesDrawer(self, fallback_focus=self._rules_fallback_focus)
+        self.rules_drawer.closed.connect(self._apply_board_layout)
+        root.addWidget(self.rules_drawer)
         self.setStyleSheet("""
             QWidget#evidencePage, QScrollArea#evidenceScroll { background: #ebe9e3; color: #2c2930; }
             QWidget#evidenceHeader { background: #f8f7f3; border-bottom: 1px solid #d5d0d4; }
@@ -130,6 +168,7 @@ class ResearchWorkspace(QWidget):
             QFrame#questionNode QTextEdit { background: #493956; color: #fff9f4;
                 border: 1px solid #8c739f; border-radius: 5px; padding: 8px; }
             QFrame#questionNode QLineEdit:disabled { color: #d3c6d9; }
+            QFrame#questionNode QLineEdit:focus { border: 2px solid #fff9f4; padding: 7px; }
             QFrame#questionNode QPushButton#primaryBtn { background: #f5e2cb; color: #332941;
                 border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
             QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
@@ -160,6 +199,12 @@ class ResearchWorkspace(QWidget):
             QFrame#signalShell QLabel { color: #d5e5dc; }
             QWidget#signalPage QPushButton { background: #263a2b; color: #d4f4b8;
                 border: 1px solid #5b775e; border-radius: 5px; padding: 8px 12px; }
+            QWidget#signalPage QListWidget { background: #142124; color: #edf3eb;
+                border: 1px solid #5b775e; padding: 4px; }
+            QWidget#signalPage QListWidget::item { padding: 8px; }
+            QWidget#signalPage QListWidget::item:selected { background: #344d40; color: #ffffff; }
+            QWidget#signalPage QListWidget:focus { border: 2px solid #8c739f; }
+            QScrollArea#signalScroll { background: #111a1c; border: 0; }
             QWidget#signalPage QSlider::groove:horizontal { height: 5px; background: #3a534e; }
             QWidget#signalPage QSlider::handle:horizontal { background: #c4ed93; width: 16px;
                 margin: -6px 0; border-radius: 8px; }
@@ -183,8 +228,10 @@ class ResearchWorkspace(QWidget):
         layout.setSpacing(0)
         header = QWidget()
         header.setObjectName("evidenceHeader")
-        header_layout = QHBoxLayout(header)
+        header_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, header)
         header_layout.setContentsMargins(34, 21, 34, 21)
+        self._header_layout = header_layout
+        header_actions = QHBoxLayout()
         header_copy = QVBoxLayout()
         kicker = QLabel("G  /  PRIMARY RESEARCH WORKSPACE")
         kicker.setObjectName("evidenceKicker")
@@ -197,11 +244,18 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button = _button("+ Add a comparison")
         self.add_comparison_button.setObjectName("outlineAction")
         self.add_comparison_button.clicked.connect(self._add_comparison)
-        header_layout.addWidget(self.add_comparison_button)
+        header_actions.addWidget(self.add_comparison_button)
         self.reset_button = _button("New question")
         self.reset_button.setObjectName("outlineAction")
         self.reset_button.clicked.connect(self._reset_canvas)
-        header_layout.addWidget(self.reset_button)
+        header_actions.addWidget(self.reset_button)
+        self.rules_button = _button("Rules")
+        self.rules_button.setObjectName("outlineAction")
+        self.rules_button.setAccessibleName("Open rules drawer")
+        self.rules_button.setToolTip("Search the rules (Ctrl+R)")
+        self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
+        header_actions.addWidget(self.rules_button)
+        header_layout.addLayout(header_actions)
         layout.addWidget(header)
 
         map_wrap = QWidget()
@@ -339,15 +393,17 @@ class ResearchWorkspace(QWidget):
         content.setColumnStretch(2, 10)
         self._evidence_grid = content
         self._evidence_cards = (question_card, finding_card, source_card, self.comparison_card, limit_card)
-        self._narrow = False
+        self._layout_mode = "wide"
         map_layout.addLayout(content)
         layout.addWidget(map_wrap)
 
         candidate_card, candidate_layout = _card("RETRIEVED CASES / SOURCE SHORTLIST")
         candidate_card.setObjectName("shortlistNode")
         _name_kicker(candidate_layout)
-        self.candidate_table = QTableWidget(0, 3)
+        self.candidate_table = _ShortlistTable(0, 3)
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
+        self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.candidate_table.setWordWrap(False)
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.candidate_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.candidate_table.setMinimumHeight(160)
@@ -378,9 +434,9 @@ class ResearchWorkspace(QWidget):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 14, 34, 14)
         layout.setSpacing(10)
-        back = _button("← Back to evidence workspace")
-        back.clicked.connect(self.return_to_canvas)
-        layout.addWidget(back, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.back_button = _button("← Back to evidence workspace")
+        self.back_button.clicked.connect(self.return_to_canvas)
+        layout.addWidget(self.back_button, alignment=Qt.AlignmentFlag.AlignLeft)
         header = QHBoxLayout()
         heading = QVBoxLayout()
         kicker = QLabel("F  /  SIGNAL DETAIL")
@@ -388,6 +444,7 @@ class ResearchWorkspace(QWidget):
         heading.addWidget(kicker)
         title = QLabel("Go straight to the moment.")
         title.setObjectName("signalTitle")
+        title.setWordWrap(True)
         heading.addWidget(title)
         heading.addWidget(_wrap("Inspect the observation from G. Scrub the case and check its exact sample."))
         header.addLayout(heading, 1)
@@ -424,7 +481,8 @@ class ResearchWorkspace(QWidget):
             metric_row.addLayout(metric, 1)
             self.metric_values[key] = value
         shell_layout.addLayout(metric_row)
-        self.detail_chart = ChartView()
+        self.detail_chart = FocusedSignalChart()
+        self.detail_chart.minute_clicked.connect(self._select_flag_minute)
         self.detail_chart.setMinimumHeight(220)
         shell_layout.addWidget(self.detail_chart, stretch=1)
         self.minute_label = _wrap()
@@ -436,12 +494,32 @@ class ResearchWorkspace(QWidget):
         shell_layout.addWidget(self.minute_slider)
         shell.setMinimumHeight(445)
         layout.addWidget(shell, 1)
+        self.episode_list = QListWidget()
+        self.episode_list.setAccessibleName("Flag episodes")
+        self.episode_list.setWordWrap(True)
+        self.episode_list.setMinimumHeight(130)
+        self.episode_list.setMaximumHeight(185)
+        self.episode_list.currentRowChanged.connect(self._select_episode)
+        self.episode_list.itemSelectionChanged.connect(self._episode_selection_cleared)
+        layout.addWidget(self.episode_list)
+        self.clear_episode_button = _button("Clear episode selection")
+        self.clear_episode_button.clicked.connect(self.clear_episode_selection)
+        layout.addWidget(self.clear_episode_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.rule_detail = _wrap("Select an episode to inspect its rule and measurements.")
+        self.rule_detail.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.rule_detail)
+        self.rule_link = _button("Show in rules list")
+        self.rule_link.setEnabled(False)
+        self.rule_link.clicked.connect(self._show_selected_rule)
+        layout.addWidget(self.rule_link, alignment=Qt.AlignmentFlag.AlignLeft)
         assistant = QHBoxLayout()
         mark = QLabel("✳")
         mark.setStyleSheet("font-size: 26px; color: #c4ed93;")
         assistant.addWidget(mark)
         copy = QVBoxLayout()
-        copy.addWidget(QLabel("SOURCE SAMPLE / SELECTED MINUTE"))
+        sample_kicker = QLabel("SOURCE SAMPLE / SELECTED MINUTE")
+        sample_kicker.setWordWrap(True)
+        copy.addWidget(sample_kicker)
         self.sample_label = _wrap()
         copy.addWidget(self.sample_label)
         assistant.addLayout(copy, 1)
@@ -452,7 +530,12 @@ class ResearchWorkspace(QWidget):
         foot = _wrap("Historical de-identified research data · not for clinical care")
         foot.setObjectName("mutedText")
         layout.addWidget(foot)
-        self.stack.addWidget(page)
+        self.signal_scroll = QScrollArea()
+        self.signal_scroll.setObjectName("signalScroll")
+        self.signal_scroll.setWidgetResizable(True)
+        self.signal_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.signal_scroll.setWidget(page)
+        self.stack.addWidget(self.signal_scroll)
 
     def selected_model(self) -> str | None:
         value = self.model_combo.currentText().strip()
@@ -490,21 +573,73 @@ class ResearchWorkspace(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        narrow = self.width() < 1100
-        if narrow == self._narrow:
+        self.rules_drawer.setFixedWidth(min(RULES_DRAWER_MAX_WIDTH, int(self.width() * RULES_DRAWER_SHARE)))
+        self._apply_board_layout()
+
+    def _apply_board_layout(self) -> None:
+        """Re-flow the evidence grid for the width left beside the rules drawer."""
+        board_width = self.width() - (self.rules_drawer.width() if self.rules_drawer.is_open else 0)
+        mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
+        if mode == self._layout_mode:
             return
-        self._narrow = narrow
-        positions = (
-            ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1))
-            if narrow else
-            ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1))
-        )
-        for card in self._evidence_cards:
+        self._layout_mode = mode
+        positions = {
+            "wide": ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1)),
+            "narrow": ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)),
+            "single": ((0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 1, 1), (3, 0, 1, 1), (4, 0, 1, 1)),
+        }[mode]
+        for card in (*self._evidence_cards, self.comparison_hint):
             self._evidence_grid.removeWidget(card)
         for card, position in zip(self._evidence_cards, positions, strict=True):
             self._evidence_grid.addWidget(card, *position)
-        for column, stretch in enumerate((10, 10, 0) if narrow else (10, 11, 10)):
+        # The hint stands in for the comparison card until one is added.
+        self._evidence_grid.addWidget(self.comparison_hint, *positions[3])
+        stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
+        for column, stretch in enumerate(stretches):
             self._evidence_grid.setColumnStretch(column, stretch)
+        self._header_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if mode == "single" else QBoxLayout.Direction.LeftToRight
+        )
+
+    def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True, error: str = "") -> None:
+        """Hand the drawer the loaded preset's rules; None with an error means the config is invalid."""
+        self._rule_catalog = catalog
+        self.rules_drawer.set_catalog(catalog, recorded=recorded, error=error)
+        if self._current_pid is not None:
+            selected = self.episode_list.currentRow() if self.selected_rule_id is not None else -1
+            self._build_episode_list()
+            if selected >= 0:
+                self.episode_list.setCurrentRow(selected)
+
+    def open_rules(self, opener: QWidget | None = None) -> None:
+        self.rules_drawer.open(opener)
+        self._apply_board_layout()
+
+    def show_rule(self, rule_id: str) -> None:
+        self.rules_drawer.show_rule(rule_id)
+        self._apply_board_layout()
+
+    def _rules_fallback_focus(self) -> QWidget:
+        return self.rules_button if self.rules_button.isVisible() else self.back_button
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # File > Reload data also uses Ctrl+R. event() claims the key while focus is
+        # inside the workspace so the menu action does not fire there.
+        if event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            event.accept()
+            self.open_rules()
+            return
+        super().keyPressEvent(event)
+
+    def event(self, event) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and event.key() == Qt.Key.Key_R
+            and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+        ):
+            event.accept()
+            return True
+        return super().event(event)
 
     def _board_labels(self) -> tuple[QLabel, ...]:
         return (self.status_label, self.scope_label, self.finding_title, self.finding_copy,
@@ -534,7 +669,9 @@ class ResearchWorkspace(QWidget):
                 for pid in (state.primary_pid, state.comparison_pid):
                     if pid is not None and pid in state.case_views:
                         view = state.case_views[pid]
-                        self.set_case_data(pid, view.timeseries, view.flags, comparison=pid == state.comparison_pid)
+                        self.set_case_data(pid, view.timeseries, view.flags,
+                                           fetched=FetchResult(view.cases, view.timeseries, view.flags, view.episodes, view.events),
+                                           comparison=pid == state.comparison_pid)
                 self._case_views = state.case_views
                 self._primary_pid = state.primary_pid
                 self._comparison_pid = state.comparison_pid
@@ -550,6 +687,18 @@ class ResearchWorkspace(QWidget):
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
+
+    def invalidate_case_data(self) -> bool:
+        """Drop case views computed from the previous data; True when any were shown."""
+        had_cases = bool(self._case_views) or self._current_pid is not None
+        self._before_question = None
+        self._current_pid = None
+        self.set_searching(False)
+        self.stack.setCurrentIndex(0)
+        self._case_views.clear()
+        if self.result is not None:
+            self.set_results(self.result)
+        return had_cases
 
     def _submit_question(self) -> None:
         question = self.question_edit.text().strip()
@@ -650,8 +799,10 @@ class ResearchWorkspace(QWidget):
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):
             for column, value in enumerate((candidate.pid, candidate.procedure, candidate.source_label)):
-                self.candidate_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.candidate_table.resizeColumnsToContents()
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                self.candidate_table.setItem(row, column, item)
+        self.candidate_table.fit_columns()
         self._selected_pid = None
         if result.candidates:
             row = self._preferred_row()
@@ -677,6 +828,7 @@ class ResearchWorkspace(QWidget):
         timeseries: pd.DataFrame,
         flags: pd.DataFrame,
         *,
+        fetched: FetchResult | None = None,
         comparison: bool = False,
         open_detail: bool = False,
     ) -> None:
@@ -684,11 +836,18 @@ class ResearchWorkspace(QWidget):
         if candidate is None:
             return
         ordered = (
-            timeseries.sort_values("t_min").reset_index(drop=True)
+            timeseries.sort_values("t_min", kind="stable").reset_index(drop=True)
             if timeseries is not None and "t_min" in timeseries
             else pd.DataFrame(columns=["t_min"])
         )
-        view = CaseView(candidate, ordered, flags)
+        episodes = fetched.episodes if fetched is not None else pd.DataFrame()
+        if episodes.empty and not flags.empty:
+            episodes = collapse_episodes(flags)
+        view = CaseView(
+            candidate, ordered, flags,
+            fetched.cases if fetched is not None else pd.DataFrame(), episodes,
+            fetched.events if fetched is not None else pd.DataFrame(),
+        )
         self._case_views[pid] = view
         if comparison:
             self._comparison_pid = pid
@@ -825,11 +984,21 @@ class ResearchWorkspace(QWidget):
             self.set_status("Source unavailable: this case has no time series to inspect.")
             return
         self._current_pid = pid
+        self._minute_rows = focused_minute_rows(view.timeseries).reset_index()
+        self.selected_rule_id = None
+        self.chart_track_names = ["PIP", "ETCO2", "HR"]
+        self.signal_statistics = {}
+        self.rule_detail.setText("Select an episode to inspect its rule and measurements.")
+        self.rule_link.setEnabled(False)
+        self._episodes = view.episodes.sort_values(["t_start_min", "rule_id"]).reset_index(drop=True) if not view.episodes.empty else pd.DataFrame()
+        self._build_episode_list()
+        self.detail_chart.set_case(view.timeseries, view.flags)
         self.detail_title.setText(f"{pid} · {view.candidate.procedure or 'procedure not recorded'}")
         self.detail_context.setText(f"Opened from the evidence workspace · {view.candidate.source_label}")
         self.minute_slider.blockSignals(True)
-        self.minute_slider.setRange(0, len(view.timeseries) - 1)
-        self.minute_slider.setValue(self._observation(view)[2])
+        self.minute_slider.setRange(0, len(self._minute_rows) - 1)
+        peak = float(view.timeseries.iloc[self._observation(view)[2]]["t_min"])
+        self.minute_slider.setValue(int((self._minute_rows["t_min"] - peak).abs().argmin()))
         self.minute_slider.blockSignals(False)
         self.stack.setCurrentIndex(1)
         self._render_minute(self.minute_slider.value())
@@ -837,8 +1006,7 @@ class ResearchWorkspace(QWidget):
     def _render_minute(self, index: int) -> None:
         if self._current_pid is None:
             return
-        view = self._case_views[self._current_pid]
-        row = view.timeseries.iloc[index]
+        row = self._minute_rows.iloc[index]
         minute = float(row["t_min"])
         self.minute_slider.setAccessibleDescription(f"{minute:g} minutes relative to incision")
         self.minute_stamp.setText(f"{minute:g} min")
@@ -849,9 +1017,119 @@ class ResearchWorkspace(QWidget):
             values.append(f"{label}: {'missing' if pd.isna(value) else f'{float(value):g} {unit}'}")
             self.metric_values[column].setText("missing" if pd.isna(value) else f"{float(value):g}")
         self.sample_label.setText(" · ".join(values))
-        self.detail_chart.set_figure(focused_signals_figure(view.timeseries, minute))
+        self.detail_chart.set_minute(minute)
+
+    def _rule_spec(self, rule_id: str):
+        if self._rule_catalog is not None:
+            try:
+                return self._rule_catalog.get(rule_id)
+            except KeyError:
+                pass
+        return None
+
+    @staticmethod
+    def _episode_phase(episode) -> str:
+        start, end = episode.get("phase"), episode.get("phase_end")
+        phase = str(start) if pd.notna(start) else "unknown"
+        return f"{phase} → {end}" if pd.notna(end) and end != start else phase
+
+    def _build_episode_list(self) -> None:
+        self.episode_list.blockSignals(True)
+        self.episode_list.clear()
+        if self._episodes.empty:
+            item = QListWidgetItem("No flags in this case")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.episode_list.addItem(item)
+        for episode in self._episodes.to_dict("records"):
+            spec = self._rule_spec(episode["rule_id"])
+            label = spec.label if spec else episode["rule_id"]
+            item = QListWidgetItem(
+                f"{label} · {episode['severity']} · {self._episode_phase(episode)}\n"
+                f"{episode['t_start_min']:g} to {episode['t_end_min']:g} min · {episode['duration_min']:g} min duration"
+            )
+            item.setToolTip(item.text())
+            self.episode_list.addItem(item)
+        self.episode_list.blockSignals(False)
+
+    def _select_episode(self, index: int) -> None:
+        if self._current_pid is None or not 0 <= index < len(self._episodes):
+            self.clear_episode_selection()
+            return
+        episode = self._episodes.iloc[index]
+        self.selected_rule_id = str(episode["rule_id"])
+        spec = self._rule_spec(self.selected_rule_id)
+        signals = [signal for signal in spec.signals if signal not in
+                   {"t_min", "case_frac", "likely_mech_vent", "Age", "Agent"}] if spec else []
+        extras = [signal for signal in signals if signal not in {"PIP", "ETCO2", "HR"}]
+        self.chart_track_names = ["PIP", "ETCO2", "HR", *extras[:3]]
+        ts = self._case_views[self._current_pid].timeseries
+        rows = focused_minute_rows(ts)
+        window = rows.loc[(rows.index >= episode["t_start_min"] - 1e-9)
+                          & (rows.index <= episode["t_end_min"] + 1e-9)]
+        self.signal_statistics = {}
+        lines = [f"{spec.label if spec else self.selected_rule_id} ({self.selected_rule_id})"]
+        if spec and self._rule_catalog:
+            lines.append(f"Current thresholds ({self._rule_catalog.preset}, {self._rule_catalog.thresholds_sha256[:12]})")
+            lines.extend(threshold_parts(spec))
+            if spec.composition:
+                lines.append(spec.composition)
+        else:
+            lines.append("Current thresholds unavailable for this rule.")
+        for signal in signals:
+            values = pd.to_numeric(window[signal], errors="coerce") if signal in window else pd.Series(dtype=float)
+            stats = {
+                "min": float(values.min()) if values.notna().any() else None,
+                "max": float(values.max()) if values.notna().any() else None,
+                "mean": float(values.mean()) if values.notna().any() else None,
+                "missing": len(window) - int(values.notna().sum()),
+            }
+            self.signal_statistics[signal] = stats
+            summary = ", ".join(f"{key} {value:.6g}" if value is not None else f"{key} missing"
+                                for key, value in stats.items() if key != "missing")
+            lines.append(f"{signal}: {summary}; {stats['missing']} missing minutes"
+                         + ("; not charted" if signal in extras[3:] else ""))
+        lines.append(f"Phase: {self._episode_phase(episode)}")
+        self.rule_detail.setText("\n".join(lines))
+        self.rule_link.setEnabled(True)
+        self.detail_chart.set_tracks(extras[:3])
+        index = int((self._minute_rows["t_min"] - episode["t_start_min"]).abs().argmin())
+        self.minute_slider.setValue(index)
+        self._render_minute(index)
+
+    def _episode_selection_cleared(self) -> None:
+        if not self.episode_list.selectedItems():
+            self.clear_episode_selection()
+
+    def clear_episode_selection(self) -> None:
+        self.episode_list.blockSignals(True)
+        self.episode_list.setCurrentRow(-1)
+        self.episode_list.clearSelection()
+        self.episode_list.blockSignals(False)
+        self.selected_rule_id = None
+        self.signal_statistics = {}
+        self.chart_track_names = ["PIP", "ETCO2", "HR"]
+        self.rule_detail.setText("Select an episode to inspect its rule and measurements.")
+        self.rule_link.setEnabled(False)
+        self.detail_chart.set_tracks([])
+
+    def _select_flag_minute(self, minute: float) -> None:
+        matches = self._episodes[self._episodes["t_start_min"].le(minute) & self._episodes["t_end_min"].ge(minute)] if not self._episodes.empty else self._episodes
+        if not matches.empty:
+            ranked = matches.assign(_severity=matches["severity"].map({"critical": 0, "warn": 1, "info": 2}).fillna(3))
+            index = int(ranked.sort_values(["_severity", "t_start_min", "rule_id"]).index[0])
+            self.episode_list.blockSignals(True)
+            self.episode_list.setCurrentRow(index)
+            self.episode_list.blockSignals(False)
+            self._select_episode(index)
+        if self._current_pid is not None:
+            self.minute_slider.setValue(int((self._minute_rows["t_min"] - minute).abs().argmin()))
+
+    def _show_selected_rule(self) -> None:
+        if self.selected_rule_id is not None:
+            self.show_rule(self.selected_rule_id)
 
     def return_to_canvas(self) -> None:
+        self.clear_episode_selection()
         self.stack.setCurrentIndex(0)
         self.set_status("Returned to the same question and comparison.")
 
@@ -871,7 +1149,7 @@ class ResearchWorkspace(QWidget):
             if candidate:
                 QMessageBox.information(self, f"Indexed source · {pid}", candidate.source_text)
             return
-        ts = view.timeseries
+        ts = self._minute_rows if index is not None and pid == self._current_pid else view.timeseries
         selected = self._observation(view)[2] if index is None else index
         start = max(0, selected - 10)
         stop = min(len(ts), selected + 11)

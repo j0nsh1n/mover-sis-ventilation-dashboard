@@ -10,6 +10,7 @@ import pandas as pd
 from src.llm.case_context import build_case_context, phase_counts_line
 from src.runtime_paths import wave_dir, waveform_case_dir
 from src.search import filter_cases_by_keywords
+from src.rules import load_rule_catalog
 
 # Max tool result characters returned to the model (keeps light models on track)
 MAX_TOOL_CHARS = 6000
@@ -38,6 +39,7 @@ class SessionState:
     medications: pd.DataFrame | None = None
     # Why ``medications`` could not be read; the answer then says doses went unchecked.
     medications_unreadable: str | None = None
+    preset: str = "default"
 
     def has_corpus_scan(self) -> bool:
         return self.corpus is not None and not self.corpus.empty
@@ -238,7 +240,7 @@ def _fetch_into_session(session: SessionState, pid: str) -> bool:
     try:
         from src.services.case_fetch import fetch_cases
 
-        fetched = fetch_cases([pid])
+        fetched = fetch_cases([pid], preset=session.preset)
     except Exception:
         return False
     if fetched.cases.empty or pid not in set(fetched.cases["PID"].astype(str)):
@@ -430,18 +432,17 @@ def tool_rule_reference(session: SessionState, **_kwargs: Any) -> str:
     try:
         from src.config import load_thresholds
 
-        cfg = load_thresholds("default", validate=True)
+        cfg = load_thresholds(session.preset, validate=True)
+        catalog = load_rule_catalog(session.preset)
     except Exception as e:
         return f"ERROR loading thresholds: {e}"
     lines = [
         "Rule reference (research screens, not clinical alarms):",
-        f"Preset: {cfg.get('_preset', 'default')}",
+        f"Preset: {catalog.preset}",
     ]
-    for rid, spec in (cfg.get("rules") or {}).items():
-        lines.append(f"- {rid}: {spec.get('description', '')}")
-        details = {k: v for k, v in spec.items() if k != "description"}
-        if details:
-            lines.append(f"  params: {details}")
+    for spec in catalog.specs:
+        lines.append(f"- {spec.id}: {spec.description}")
+        lines.append(f"  params: {spec.details()}")
     lines.append(
         "Phases: flags and episodes carry the anesthesia phase of the minute (pre_induction, "
         "induction, maintenance, emergence, post_emergence); skip_phases lists where a rule is "

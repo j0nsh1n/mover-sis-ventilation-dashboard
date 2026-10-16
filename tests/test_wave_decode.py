@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import struct
 
 import numpy as np
@@ -172,8 +173,10 @@ _REAL_WAVE_ROOT = __import__("pathlib").Path(
     "/var/mnt/games/sis_wave_v2/UCI_deidentified_part3_SIS_11_07/Waveforms"
 )
 
+# Opt-in so agent and CI runs never read real patient data by default
 _needs_real_waves = pytest.mark.skipif(
-    not _REAL_WAVE_ROOT.is_dir(), reason="real MOVER wave tree not present"
+    os.environ.get("MOVER_REAL_DATA_TESTS") != "1" or not _REAL_WAVE_ROOT.is_dir(),
+    reason="set MOVER_REAL_DATA_TESTS=1 with the real MOVER wave tree present",
 )
 
 

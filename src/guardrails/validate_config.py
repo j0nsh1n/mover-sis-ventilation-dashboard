@@ -7,28 +7,20 @@ from typing import Any
 
 from src.guardrails.exceptions import ConfigValidationError
 from src.guardrails.limits import ALLOWED_PRESETS
+from src.rules import RULE_METADATA
 
-# Rules that use warn/critical with higher-is-worse semantics
 HIGHER_IS_WORSE_RULES = {
-    "pip_high",
-    "peep_high",
-    "tv_high_mlkg",
-    "rr_high",
-    "etco2_high",
-    "hr_high",
+    rule_id for rule_id, meta in RULE_METADATA.items()
+    if meta.direction == "high" and meta.unit != "MAC" and meta.severities == ("warn", "critical")
 }
-
-# Rules that use warn/critical with lower-is-worse semantics
 LOWER_IS_WORSE_RULES = {
-    "tv_low_mlkg",
-    "rr_low",
-    "etco2_low",
-    "spo2_low",
-    "hr_low",
-    "map_low",
+    rule_id for rule_id, meta in RULE_METADATA.items()
+    if meta.direction == "low" and meta.severities == ("warn", "critical")
 }
-
-MAC_HIGHER_RULES = {"agent_high"}  # warn_mac / critical_mac
+MAC_HIGHER_RULES = {
+    rule_id for rule_id, meta in RULE_METADATA.items()
+    if meta.direction == "high" and meta.unit == "MAC" and meta.severities == ("warn", "critical")
+}
 
 # Anesthesia phases a rule's skip_phases may name (see src/pipeline/phases.py)
 VALID_PHASES = {"pre_induction", "induction", "maintenance", "emergence", "post_emergence"}
