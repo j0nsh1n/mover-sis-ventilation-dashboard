@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - A saved full-EMR scan records which EMR folder it scored (as a hash, not a path). Pointing the app at a different EMR no longer shows the old scan's cases, scan scope or indexed count; scan again for the new EMR. Scans saved by earlier versions still load.
 - Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). When the agent filter leaves nothing, the answer says where agents come from and, without a scan, that a scan would widen the search.
 - The Research status line no longer keeps a running step such as "Model round 1/8…" or "Rewriting the draft…" after the search ends: it reads "Search finished.", keeps a failure message, and returns to the earlier status when the search is cancelled. Reopening an earlier question shows the same.
+- Enter and Return now press the focused button in the main window, as Space already did: Cases, the Rules drawer, the Cases overview, the conversation panel and the status-bar buttons included.
 
 ## [0.13.0] — 2026-10-16
 

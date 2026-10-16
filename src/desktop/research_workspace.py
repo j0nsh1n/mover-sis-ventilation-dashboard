@@ -111,6 +111,9 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
     button = QPushButton(text)
     button.setMinimumHeight(44)
     button.setObjectName("primaryBtn" if primary else "secondaryBtn")
+    # Outside a dialog Qt clicks a focused button on Space only; autoDefault adds Enter.
+    # Every QPushButton in the main window sets it.
+    button.setAutoDefault(True)
     return button
 
 
