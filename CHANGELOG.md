@@ -7,7 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.12.0] — 2026-10-16
+## [0.12.1] — 2026-10-16
+
+### Fixed
+
+- The pipeline no longer stops when its progress output goes to a Windows pipe or file, whose legacy code page (cp1252, cp437) cannot encode `…` or `→`. Progress lines are now plain ASCII. 0.12.0 was not published: its Windows build failed on this.
+
+## [0.12.0] — 2026-10-16 (not published)
 
 This release also carries the 0.11 work (#27, #28); 0.11.0 was not published separately.
 

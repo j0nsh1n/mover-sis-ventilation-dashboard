@@ -2,10 +2,11 @@
 
 ## Current State
 
-- **Version:** 0.12.0 released 2026-10-16. It carries the v0.11 work (#27,
-  #28); v0.11.0 was not published separately. Installed apps update through the
-  signed Pages manifest.
-- **Branch:** `main` includes everything through v0.12.0: #29 (one rule
+- **Version:** 0.12.1 released 2026-10-16. It carries the v0.11 and v0.12
+  work (#27 to #31); neither v0.11.0 nor v0.12.0 was published (the v0.12.0
+  Windows build failed on cp1252 pipeline output, fixed in 0.12.1). Installed
+  apps update through the signed Pages manifest.
+- **Branch:** `main` includes everything through v0.12.1: #29 (one rule
   catalog, Rules drawer, real-wave tests opt-in, F flag episodes and rule
   detail), #30 (Cases overview, flag-aware search, side-panel conversation,
   prototype driver scenarios) and #31 (spec.md, Settings preset selector,
@@ -219,7 +220,7 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-10-16
-- **Released:** v0.12.0 from `main` (#29, #30, #31 and the release PR). The
+- **Released:** v0.12.1 from `main` (#29, #30, #31, #32 and the 0.12.1 fix). The
   plan and decision trail live outside the repo under
   `~/.claude/orchestrate/mover-overhaul/` (`docs/v012/plan.md`,
   `decisions.tsv`).
@@ -232,4 +233,6 @@ Wave root (optional) ──► wave_decode                   │
   under the old preset, unguarded processed-folder change during a run, a
   scan surviving a reload of a different EMR, Enter on the Cases button, the
   descending sort arrow, the stale progress line after an answer, the
-  per-size chart image cache, and a 1 MB single-word answer stalling layout.
+  per-size chart image cache, a 1 MB single-word answer stalling layout, and
+  on Windows a minimum window width of about 1,060 px (the 900 px layout tests
+  skip there).

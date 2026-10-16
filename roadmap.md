@@ -45,7 +45,7 @@ to publish.
   - Repeatable, safer calibration tooling (V7)
 - Complete when: V0 to V7 are verified and landed, and v0.11.0 is released
 - Status: [x] 2026-10-15 — V0 to V7 landed (#27, #28). Ships in v0.12.0; the owner
-  chose not to publish v0.11.0 separately. Released in v0.12.0 (2026-10-16).
+  chose not to publish v0.11.0 separately. Released in v0.12.1 (2026-10-16).
 
 ## Phase 5 — One workspace, step 1 (v0.12.0)
 - Tasks:
@@ -60,7 +60,7 @@ to publish.
 - Status: [x] 2026-10-16 — rules drawer, F episodes and rule detail (#29); Cases
   overview, flag-aware search, side-panel conversation and the five prototype
   scenarios (#30); Settings preset selector and Markdown answers (#31). Released in
-  v0.12.0 (2026-10-16).
+  v0.12.1 (2026-10-16); the v0.12.0 build failed on Windows and was not published.
 
 ## Phase 6 — Calibrate on real MOVER data (v0.13.0)
 - Tasks:

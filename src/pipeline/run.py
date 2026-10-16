@@ -77,7 +77,7 @@ def process_frames(
             print(message)
 
     # --- clean ---
-    log("[pipeline] cleaning…")
+    log("[pipeline] cleaning...")
     cases = clean_case_info(cases_raw)
     vent = clean_ventilator(vent_raw, thresholds)
     vitals = clean_vitals(vitals_raw, thresholds)
@@ -96,7 +96,7 @@ def process_frames(
         )
 
     # --- merge + features ---
-    log("[pipeline] merging, phases & features…")
+    log("[pipeline] merging, phases & features...")
     ts = merge_vent_vitals(vent, vitals, cases)
     if ts.empty:
         raise PipelineError("Merged timeseries is empty")
@@ -110,7 +110,7 @@ def process_frames(
     log(f"  timeseries rows: {len(ts)}  cases: {ts['PID'].nunique()}")
 
     # --- flags ---
-    log("[pipeline] flagging anomalies…")
+    log("[pipeline] flagging anomalies...")
     flags = flag_anomalies(ts, thresholds)
     episodes = collapse_episodes(flags)
 
@@ -223,7 +223,7 @@ def run_pipeline(
         )
 
     # --- load ---
-    print("[pipeline] loading case info…")
+    print("[pipeline] loading case info...")
     cases_raw = load_case_info(emr_path)
     cases_raw["PID"] = cases_raw["PID"].astype(str)
     cases_raw = cases_raw[cases_raw["PID"].isin(pids)].copy()
@@ -235,13 +235,13 @@ def run_pipeline(
             )
         assert_raw_cases(cases_raw)
 
-    print("[pipeline] loading ventilator…")
+    print("[pipeline] loading ventilator...")
     vent_raw = load_ventilator(emr_path, pids=pids)
     print(f"  vent rows: {len(vent_raw)}")
     if validate:
         assert_raw_ventilator(vent_raw)
 
-    print("[pipeline] loading vitals…")
+    print("[pipeline] loading vitals...")
     vitals_raw = load_vitals(emr_path, pids=pids)
     print(f"  vitals rows: {len(vitals_raw)}")
     if validate:
@@ -274,7 +274,7 @@ def run_pipeline(
         )
 
     # --- write (atomic) ---
-    print(f"[pipeline] writing outputs → {out_path}")
+    print(f"[pipeline] writing outputs -> {out_path}")
     atomic_write_parquet(ts, out_path / "timeseries.parquet")
     atomic_write_parquet(case_summary, out_path / "cases.parquet")
     atomic_write_parquet(flags, out_path / "flags.parquet")

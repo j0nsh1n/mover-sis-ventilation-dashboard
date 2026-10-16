@@ -112,6 +112,30 @@ jobs:
           ./scripts/build_executable.sh
           dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor --selftest-scan
 
+  test-windows:
+    # Same suite the release's Windows job runs, so a Windows-only failure shows up on the PR.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests (as the release's Windows job does)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: pytest -q --ignore=tests/test_desktop_app.py --ignore=tests/test_desktop_paths_ui.py
+
   updater-windows:
     runs-on: windows-latest
     steps:
