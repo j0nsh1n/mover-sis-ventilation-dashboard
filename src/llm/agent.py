@@ -17,6 +17,12 @@ from typing import Any, Callable, NamedTuple
 import pandas as pd
 
 from src.llm.advice_check import AdviceCheck, NotRun, check_advice
+from src.llm.grounding import (
+    PID_TOKEN,
+    REMOVED_NOTE,
+    find_ungrounded_numbers,
+    remove_ungrounded_numbers,
+)
 from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     MODE_CHAT,
@@ -37,9 +43,7 @@ from src.llm.schemas import (
 )
 from src.llm.tools import SessionState, execute_tool, tool_select_case
 
-# MOVER PIDs are 16 hex characters; synthetic ones are SYN + 10 (src/pipeline/synthetic.py).
-# Anything looser reads counts and timestamps as PIDs.
-_PID_TOKEN = re.compile(r"\b(SYN[0-9a-f]{10}|[0-9a-f]{16})\b", re.IGNORECASE)
+_PID_TOKEN = PID_TOKEN
 # Each shape targets advice *aimed at a reader*. Past-tense description of what the
 # record shows ("PEEP was increased at t=40", "TV was reduced") must stay legal, so the
 # verbs are anchored to imperative/gerund/modal framing rather than matched bare.
@@ -463,12 +467,19 @@ def _heuristic_prefetch(
 
 
 def verify_answer(
-    answer: str, session: SessionState, *, advice: AdviceCheck | None = None
+    answer: str,
+    session: SessionState,
+    *,
+    advice: AdviceCheck | None = None,
+    sources: Sequence[str] | None = None,
+    question: str = "",
 ) -> tuple[str, list[str]]:
     """
     Append a visible note for each problem the answer still has.
 
     ``advice`` is the model check of this answer; None when the caller ran none.
+    ``sources`` are the extracts or abstracts the answer was written from; a number
+    found in none of them (or in ``question``) is replaced. None skips that check.
     """
     notes: list[str] = []
     text = strip_think((answer or "").strip())
@@ -491,6 +502,7 @@ def verify_answer(
     if session.corpus is not None and session.has_corpus_scan():
         corpus |= set(session.corpus["PID"].astype(str))
 
+    body_end = len(text)
     bad = _unknown_pids(text, corpus)
     if bad:
         notes.append("unknown_pids:" + ",".join(bad[:5]))
@@ -531,6 +543,15 @@ def verify_answer(
             "\n\n**Verification note:** doses were not checked — the medication record "
             "could not be read."
         )
+
+    # Last, so the checks above still see the numbers they judge; the replacement
+    # touches only the answer body, never the notes or footer.
+    if sources is not None:
+        body, removed = remove_ungrounded_numbers(text[:body_end], sources, question)
+        text = body + text[body_end:]
+        if removed:
+            notes.append(f"ungrounded_numbers:{removed}")
+            text += f"\n\n**Verification note:** {REMOVED_NOTE}"
 
     if VERIFICATION_FOOTER.strip() not in text:
         text = text.rstrip() + VERIFICATION_FOOTER
@@ -624,12 +645,18 @@ def _dose_problems(text: str, med: pd.DataFrame) -> list[str]:
 
 
 def answer_problems(
-    text: str, session: SessionState, *, advice: Sequence[str] = ()
+    text: str,
+    session: SessionState,
+    *,
+    advice: Sequence[str] = (),
+    sources: Sequence[str] | None = None,
+    question: str = "",
 ) -> list[str]:
     """
     Reasons a draft must be rewritten, phrased for the model to act on.
 
-    ``advice`` holds the sentences the model check labeled as advice.
+    ``advice`` holds the sentences the model check labeled as advice. ``sources`` are
+    the extracts or abstracts the draft was written from; None skips the number check.
     """
     problems = [
         f'- prescriptive phrasing: "{d}" — describe what the record shows instead'
@@ -647,6 +674,12 @@ def answer_problems(
         f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
         for pid in _unknown_pids(text, set(session.cited_pids))
     ]
+    if sources is not None:
+        problems += [
+            f"- the number {number} is not in the source extracts or the question — "
+            f"use only numbers that appear there"
+            for number in find_ungrounded_numbers(text, sources, question)[:8]
+        ]
     return problems
 
 
@@ -663,6 +696,7 @@ def run_agent(
     skip_prefetch: bool = False,
     extra_prefetched: str = "",
     allow_tools: bool = True,
+    sources: Sequence[str] | None = None,
 ) -> AgentResult:
     client = client or OllamaClient()
     mode = (mode or MODE_CHAT).lower()
@@ -815,7 +849,9 @@ def run_agent(
     # rejected and sent back once.
     # Annotating prescriptive text with a disclaimer still ships the prescription.
     advice = check_advice(final_text, client, model)
-    problems = answer_problems(final_text, session, advice=advice.advice)
+    problems = answer_problems(
+        final_text, session, advice=advice.advice, sources=sources, question=question
+    )
     if problems:
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
         if on_status:
@@ -837,15 +873,26 @@ def run_agent(
             rewritten = strip_think(retry.content or "").strip()
             if rewritten:
                 rewritten_advice = check_advice(rewritten, client, model)
-                left = answer_problems(rewritten, session, advice=rewritten_advice.advice)
-                # Keep whichever draft has fewer violations
-                if len(left) < len(problems):
+                left = answer_problems(
+                    rewritten,
+                    session,
+                    advice=rewritten_advice.advice,
+                    sources=sources,
+                    question=question,
+                )
+                introduced_advice = (
+                    _advice_phrases(rewritten, rewritten_advice.advice)
+                    and not _advice_phrases(final_text, advice.advice)
+                )
+                if not introduced_advice and len(left) < len(problems):
                     final_text, advice = rewritten, rewritten_advice
                 trace.append("rewrite:still_flagged" if left else "rewrite:accepted")
         except Exception as e:  # keep the original answer if the retry fails
             trace.append(f"rewrite:failed:{e}")
 
-    verified, notes = verify_answer(final_text, session, advice=advice)
+    verified, notes = verify_answer(
+        final_text, session, advice=advice, sources=sources, question=question
+    )
     if notes:
         trace.append("verify:" + ";".join(notes))
 

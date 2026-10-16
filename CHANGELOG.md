@@ -7,6 +7,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Research answer checks preserve signed range endpoints and supported calculations, catch disguised numbers and model-written verification markers, and reject rewrites that introduce advice even when no extracts were loaded.
+- Research answers are checked number by number against the source extracts and the question: a number found in neither is sent back for one rewrite, and any still unsupported is replaced with "[number not in sources]" and a note, so a fabricated measurement no longer reads as a record value.
 - Full-EMR scans write `corpus_profile.json` and `corpus_profile.md`: percentiles per signal, rule and phase counts and the phase-source share, merged from small per-shard histograms (precision is one bin width; counts under 11 are shown as `<11`; no PIDs or timestamps). Shards that fail are left out and counted.
 - Full-EMR scans record peak memory, requested and used workers, and phase-source counts; profiles show the events percentage, and `scripts/bench_scan.sh` compares worker counts in separate calibration outputs.
 - Runs and full-EMR scans record their thresholds version; signal detail and the Rules drawer show the recorded version and say when thresholds have changed or were not recorded.

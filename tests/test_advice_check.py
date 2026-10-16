@@ -21,6 +21,11 @@ from src.services.retrieval import SearchCandidate
 HEDGED = "A slower FiO2 wean seems like a good idea for this airway."
 FACT = "caseA had a PIP median of 22 cmH2O."
 REWRITTEN = "caseA had a PIP median of 22 cmH2O. FiO2 was weaned over 20 minutes."
+# Every figure the drafts below state, as the extract would give it.
+EXTRACT = (
+    "SOURCE EXTRACT PID=caseA\nPIP median 22 cmH2O. FiO2 weaned over 20 minutes to 1.0. "
+    "PEEP 8 cmH2O at t=40. SpO2 89 % at t=95. Extubation at t=182."
+)
 
 
 def _flag_hedged(sentences: list[str]) -> str:
@@ -75,7 +80,7 @@ def _research(client: ScriptedClient):
         question="high PIP",
         model="fake",
         candidates=[candidate],
-        extracts=["SOURCE EXTRACT PID=caseA\nPIP median 22"],
+        extracts=[EXTRACT],
         client=client,
     )
 

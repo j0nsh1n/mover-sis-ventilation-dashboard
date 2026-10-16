@@ -65,12 +65,13 @@ def _write_medications(emr: Path, rows: list[dict]) -> None:
     pd.DataFrame(rows).to_csv(emr / "patient_medication.csv", index=False)
 
 
-def _answer(client, *candidates: SearchCandidate):
+def _answer(client, *candidates: SearchCandidate, facts: str = ""):
+    """``facts`` is extract text beyond the PIP line: the figures a draft may state."""
     return answer_from_retrieval(
         question="laparoscopic cholecystectomy high PIP",
         model="fake",
         candidates=list(candidates),
-        extracts=[f"SOURCE EXTRACT PID={c.pid}\nPIP median 22" for c in candidates],
+        extracts=[f"SOURCE EXTRACT PID={c.pid}\nPIP median 22 {facts}" for c in candidates],
         client=client,
     )
 
@@ -242,7 +243,7 @@ def test_dose_absent_from_the_cited_case_medications_is_rewritten(synthetic_emr_
         "caseA, a 55-year-old man, received fentanyl 250 mcg.",
         "caseA, a 55-year-old man, received fentanyl 100 mcg.",
     )
-    result = _answer(client, _candidate())
+    result = _answer(client, _candidate(), facts="Fentanyl 100 mcg or 250 mcg.")
     assert len(client.sent) == 2
     assert "100 mcg" in client.rewrite_request()
     assert "fentanyl 100 mcg" in result.answer
@@ -270,7 +271,7 @@ def test_pid_outside_the_cited_set_is_rewritten(cited_pid, uncited_pid):
 
 def test_a_case_number_is_not_mistaken_for_an_uncited_pid():
     client = DraftClient("SYN0a1b2c3d4e had 12345678 ventilator samples.")
-    result = _answer(client, replace(_candidate(), pid="SYN0a1b2c3d4e"))
+    result = _answer(client, replace(_candidate(), pid="SYN0a1b2c3d4e"), facts="12345678 samples.")
     assert len(client.sent) == 1
     assert "Verification note" not in result.answer
 
@@ -281,7 +282,7 @@ def test_correct_draft_makes_exactly_one_chat_call(synthetic_emr_dir):
         [{"PID": "caseA", "Drug_name": "Fentanyl", "Dose": "100", "Drug_units": "mcg"}],
     )
     client = DraftClient("caseA, a 60-year-old man, received fentanyl 100 mcg.")
-    result = _answer(client, replace(_candidate(), age=60.0))
+    result = _answer(client, replace(_candidate(), age=60.0), facts="Fentanyl 100 mcg.")
     assert len(client.sent) == 1
     assert "Verification note" not in result.answer
 
@@ -310,7 +311,7 @@ def test_only_the_wrong_age_among_three_cited_cases_is_rewritten():
 
 def test_missing_age_on_a_cited_case_neither_rewrites_nor_invents_an_age():
     client = DraftClient("caseA is a 55-year-old man with a PIP median of 22.")
-    result = _answer(client, replace(_candidate(), age=None))
+    result = _answer(client, replace(_candidate(), age=None), facts="Age: 55.")
     assert len(client.sent) == 1
     assert "Verification note" not in result.answer
     assert "55" in result.answer
@@ -331,7 +332,7 @@ def test_ask_selection_never_enters_the_research_answer(synthetic_emr_dir):
     run_agent(model="fake", question="caseB", session=ask, client=FakeClient("caseB."))
 
     client = DraftClient("caseA, a 55-year-old man, received fentanyl 250 mcg.")
-    result = _answer(client, _candidate())
+    result = _answer(client, _candidate(), facts="Fentanyl 250 mcg.")
     assert "caseB" not in str(client.sent)
     assert len(client.sent) == 1, "caseB's medications must not gate a caseA answer"
     assert result.active_pid is None
@@ -428,7 +429,7 @@ def test_unreadable_medication_record_still_answers_with_a_note(synthetic_emr_di
         'PID,Drug_name,Dose,Drug_units\ncaseA,"Fentanyl,100,mcg\n', encoding="utf-8"
     )
     client = DraftClient("caseA, a 55-year-old man, received fentanyl 250 mcg.")
-    result = _answer(client, _candidate())
+    result = _answer(client, _candidate(), facts="Fentanyl 250 mcg.")
     assert len(client.sent) == 1
     assert "fentanyl 250 mcg" in result.answer
     notes = result.answer.split("**Verification note:**")[1:]
