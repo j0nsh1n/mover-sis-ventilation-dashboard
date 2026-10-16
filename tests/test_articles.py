@@ -393,3 +393,28 @@ def test_driver_registers_articles_scenario(tmp_path):
     assert scenario.llm_modes == ("scripted", "off")
     assert "articles" in driver.parse_args(["--emr", str(tmp_path), "--out", str(tmp_path),
                                           "--scenario", "articles"]).scenario
+
+
+def test_a_number_not_in_the_abstracts_is_removed_from_an_article_answer(tmp_path):
+    from src.llm.grounding import REMOVED_MARK
+    from src.llm.ollama_client import ChatResult
+    from src.llm.retrieve import answer_from_articles
+
+    store = catalog(tmp_path)
+    store.import_file(FIXTURE)
+    articles = [replace(a, abstract="Peak pressure was reported without a numeric value.", title="Fictional pressure study",
+                        year=2019, authors="Fictional Author")
+                for a in store.search("fictional").articles]
+    fabricated = "The paper reported a peak pressure of 47 cmH2O [A1]."
+    seen = []
+
+    class Client:
+        def chat_turn(self, model, messages, **kwargs):
+            if kwargs.get("format"):
+                return ChatResult(content=json.dumps(dict.fromkeys(kwargs["format"]["required"], "description")))
+            seen.append(messages[-1]["content"])
+            return ChatResult(content=fabricated)
+
+    result = answer_from_articles(question="pressure", model="fake", articles=articles, client=Client())
+    assert len(seen) == 2 and "the number 47 is not in the source extracts" in seen[1]
+    assert "47" not in result.answer and f"of {REMOVED_MARK} cmH2O [A1]" in result.answer

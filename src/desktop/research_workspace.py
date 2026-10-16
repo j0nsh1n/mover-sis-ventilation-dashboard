@@ -1148,7 +1148,8 @@ class ResearchWorkspace(QWidget):
         else:
             ranking = "keywords"
         self.scope_label.setText(
-            f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {ranking}"
+            result.scope_note
+            or f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {ranking}"
         )
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):

@@ -380,3 +380,52 @@ def test_synthetic_metadata_recall_at_five(tmp_path):
     recall = sum(recalls) / len(recalls)
     print(f"Synthetic metadata recall@5 over {len(recalls)} unfiltered questions: {recall:.3f}")
     assert recall >= 0.8
+
+
+def _keyword_engine(synthetic_emr, tmp_path, **kwargs):
+    return RetrievalEngine(
+        emr=synthetic_emr, cache_path=tmp_path / "kw.sqlite", embedder=FakeEmbedder(available=False),
+        analyzed_pids=["caseA"], **kwargs,
+    )
+
+
+@pytest.mark.parametrize(
+    ("filters", "pids"),
+    [
+        (CaseFilters(age_min=50, age_max=60), ["caseA"]),
+        (CaseFilters(age_max=45), ["caseB"]),
+        (CaseFilters(age_min=56), []),
+        (CaseFilters(procedures=("appendectomy",)), ["caseB"]),
+        (CaseFilters(procedures=("laparoscopic", "cholecystectomy")), ["caseA"]),
+        (CaseFilters(procedures=("laparoscopic", "appendectomy")), []),
+        (CaseFilters(agent="sevoflurane"), ["caseA"]),
+        (CaseFilters(agent="desflurane"), []),
+        (CaseFilters(gender="F", age_min=30, age_max=45, procedures=("appendectomy",)), ["caseB"]),
+    ],
+)
+def test_scenario_filters_cut_the_pool_before_ranking(synthetic_emr, tmp_path, filters, pids):
+    engine = _keyword_engine(synthetic_emr, tmp_path, case_agents={"caseA": "sevoflurane"})
+    result = engine.search("surgery", filters=filters)
+    assert sorted(c.pid for c in result.candidates) == pids
+    assert result.filtered_count == len(pids)
+
+
+def test_a_case_passing_every_filter_stays_listed_when_no_question_word_matches(synthetic_emr, tmp_path):
+    engine = _keyword_engine(synthetic_emr, tmp_path)
+    assert engine.search("zzzz qqqq").candidates == ()
+    scenario = engine.search("zzzz qqqq", filters=CaseFilters(gender="F"))
+    assert [c.pid for c in scenario.candidates] == ["caseB"]
+
+
+def test_filter_counts_name_the_filter_that_emptied_the_pool(synthetic_emr, tmp_path):
+    engine = _keyword_engine(synthetic_emr, tmp_path, case_agents={"caseA": "sevoflurane"})
+    engine.prepare()
+    filters = CaseFilters(gender="M", age_min=50, age_max=60, procedures=("appendectomy",), agent="sevoflurane")
+    assert engine.filter_counts(filters) == [("age", 1), ("sex", 1), ("procedure", 0), ("agent", 0)]
+
+
+def test_named_pids_resolve_in_any_letter_case_and_unknown_ones_are_reported(synthetic_emr, tmp_path):
+    engine = _keyword_engine(synthetic_emr, tmp_path)
+    engine.prepare()
+    assert engine.resolve_pids(["CASEB", "casea", "nope", "caseB"]) == (["caseB", "caseA"], ["nope"])
+    assert [c.pid for c in engine.candidates_for(["caseB", "caseA"])] == ["caseB", "caseA"]

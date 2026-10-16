@@ -339,8 +339,15 @@ def test_ask_selection_never_enters_the_research_answer(synthetic_emr_dir):
     assert result.focus_pids == []
 
 
+@pytest.mark.parametrize(
+    ("question", "task"),
+    [("laparoscopic cholecystectomy high PIP", "Answer the research question"),
+     ("55-year-old woman, cholecystectomy, sevoflurane, high PIP", "matched that description"),
+     ("compare these two cases on PIP", "Contrast the cases")],
+    ids=["question", "scenario", "compare"],
+)
 def test_prior_research_turn_never_enters_the_next_questions_messages(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, question, task,
 ):
     import time
     from types import SimpleNamespace
@@ -368,14 +375,18 @@ def test_prior_research_turn_never_enters_the_next_questions_messages(
     app = QApplication.instance() or QApplication([])
     win = MainWindow()
     win.research.set_models(["fake"])
+    cases = (_candidate(), replace(_candidate(), pid="caseC", age=60.0))
     win._research_engine = SimpleNamespace(
         emr=synthetic_emr.resolve(), extract_limit=3, preset="default",
-        search=lambda *args, **kwargs: RetrievalResult(candidates=(_candidate(),)),
-        fetch_extracts=lambda pids, **kwargs: (["SOURCE EXTRACT PID=caseA\nPIP median 22"], pids),
+        search=lambda *args, **kwargs: RetrievalResult(candidates=cases, indexed_count=2, filtered_count=2),
+        fetch_extracts=lambda pids, **kwargs: (
+            [f"SOURCE EXTRACT PID={pid}\nPIP median 22" for pid in pids], tuple(pids)),
+        filter_counts=lambda filters: [], resolve_pids=lambda names: ([], list(names)),
+        candidates_for=lambda pids: [c for c in cases if c.pid in pids],
     )
     try:
-        for question in ("PRIOR_QUESTION_SENTINEL", "laparoscopic cholecystectomy high PIP"):
-            win.research.question_edit.setText(question)
+        for asked in ("PRIOR_QUESTION_SENTINEL", question):
+            win.research.question_edit.setText(asked)
             win.research.ask_button.click()
             deadline = time.monotonic() + 5
             while win.research._searching and time.monotonic() < deadline:
@@ -387,7 +398,7 @@ def test_prior_research_turn_never_enters_the_next_questions_messages(
         assert len(clients) == 2
         assert "PRIOR_QUESTION_SENTINEL" not in str(clients[1].sent)
         assert "PRIOR_ANSWER_SENTINEL" not in str(clients[1].sent)
-        assert "laparoscopic cholecystectomy high PIP" in str(clients[1].sent)
+        assert question in str(clients[1].sent) and task in str(clients[1].sent)
     finally:
         win.close()
         app.processEvents()

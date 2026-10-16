@@ -888,6 +888,49 @@ def prototype_ask(run: Run) -> dict[str, Any]:
             "answer": turn.answer, "window_width": run.win.width()}
 
 
+def intent_ask(run: Run, *, kind: str) -> dict[str, Any]:
+    """Ask a scenario or comparison question built from the loaded cases and check the board's scope line."""
+    from src.llm.intent import AGE_TOLERANCE, classify
+
+    cases = run.win.cases.copy()
+    cases["PID"] = cases["PID"].astype(str)
+    research = run.win.research
+    if kind == "scenario":
+        for row in cases.itertuples():
+            words = classify(f"55y {row.Procedure_short}").procedures
+            if words and row.primary_agent_name in ("sevoflurane", "desflurane", "isoflurane") and row.Gender in ("F", "M"):
+                break
+        else:
+            raise RuntimeError("no loaded case has a procedure word and an agent")
+        sex = "woman" if row.Gender == "F" else "man"
+        question = f"{int(row.Age)}-year-old {sex}, {words[0]}, {row.primary_agent_name}, elevated PIP"
+        intent = classify(question)
+        assert intent.kind == "scenario" and intent.age == float(int(row.Age)), intent
+        facts = conversation_ask(run, question=question)
+        candidates = research.result.candidates
+        assert candidates and research.scope_label.text().startswith("Scenario: "), research.scope_label.text()
+        assert "matching case" in research.scope_label.text()
+        for candidate in candidates:
+            assert abs(candidate.age - row.Age) <= AGE_TOLERANCE and candidate.gender == row.Gender, candidate
+            assert words[0] in candidate.procedure.lower() and candidate.pid in set(cases.PID), candidate
+            agent = cases.loc[cases.PID.eq(candidate.pid), "primary_agent_name"].iloc[0]
+            assert agent == row.primary_agent_name, (candidate.pid, agent)
+        research.board_scroll.ensureWidgetVisible(research.scope_label)
+        run.settle()
+        return {**facts, "question": question, "scope_line": research.scope_label.text(),
+                "shortlist": [candidate.pid for candidate in candidates]}
+    first, second = cases.PID.iloc[0], cases.PID.iloc[1]
+    question = f"Compare {first} and {second.lower()} on pressure"
+    assert classify(question).kind == "compare"
+    facts = conversation_ask(run, question=question)
+    assert [candidate.pid for candidate in research.result.candidates] == [first, second]
+    assert research.scope_label.text() == f"Comparing {first} and {second}", research.scope_label.text()
+    research.board_scroll.ensureWidgetVisible(research.scope_label)
+    run.settle()
+    return {**facts, "question": question, "scope_line": research.scope_label.text(),
+            "shortlist": [first, second]}
+
+
 def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
     open_case(run)
     research = run.win.research
@@ -1068,6 +1111,10 @@ SCENARIOS: dict[str, Scenario] = {
     "proto-peak": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
                              Step("proto-peak", partial(prototype_open, signal="PIP"))), llm_modes=("scripted", "off")),
     "proto-scenario": Scenario((Step("load-data", run_pipeline), Step("proto-scenario", prototype_ask)),
+                                llm_modes=("scripted", "off")),
+    "intent-scenario": Scenario((Step("load-data", run_pipeline), Step("intent-scenario", partial(intent_ask, kind="scenario"))),
+                                 llm_modes=("scripted", "off")),
+    "intent-compare": Scenario((Step("load-data", run_pipeline), Step("intent-compare", partial(intent_ask, kind="compare"))),
                                 llm_modes=("scripted", "off")),
     "proto-missing": Scenario((Step("load-data", run_pipeline), Step("ask", prototype_ask),
                                 Step("proto-missing", partial(prototype_open, signal="ETCO2"))), llm_modes=("scripted", "off")),
@@ -1353,13 +1400,13 @@ def drive(args: argparse.Namespace) -> int:
     llm = args.llm or scenario.llm_modes[0]
     if llm not in scenario.llm_modes:
         raise InputError(f"scenario {args.scenario} runs only with --llm {'/'.join(scenario.llm_modes)}")
-    prototype = args.scenario.startswith("proto-")
+    prototype = args.scenario.startswith(("proto-", "intent-"))
     fixture = ROOT / "tests" / "fixtures" / "drive_prototype.yaml"
     if prototype:
         import yaml
 
         example = yaml.safe_load(fixture.read_text(encoding="utf-8"))[args.scenario]
-        args.question = example["question"]
+        args.question = example.get("question", args.question)
     drafts = ()
     if llm == "scripted":
         drafts = load_drafts(args.drafts or (fixture if prototype else None),
@@ -1367,7 +1414,7 @@ def drive(args: argparse.Namespace) -> int:
     if args.scenario == "articles" and llm == "scripted" and args.drafts is None:
         drafts = ("The fictional abstract described pressure observations [A1].",)
     steps = scenario.steps
-    if prototype and llm == "off":
+    if args.scenario.startswith("proto-") and llm == "off":
         steps = (Step("load-data", run_pipeline), Step(args.scenario, prototype_ask))
 
     emr = args.emr.expanduser().resolve()

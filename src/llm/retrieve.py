@@ -8,6 +8,7 @@ answer gate, research footer).
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import pandas as pd
 
@@ -34,15 +35,16 @@ def answer_from_articles(
     cited = articles[:ABSTRACT_LIMIT]
     if not cited:
         return AgentResult(answer=NO_MATCHES)
-    extracts = "\n\n".join(
+    blocks = [
         f"[A{i}] {a.title} ({a.year}). {a.authors}.\n"
         f"DOI/URL: {a.doi_or_url}\nSource: {a.source}\nRights: {a.rights_note}\nAbstract: {a.abstract}"
         for i, a in enumerate(cited, 1)
-    )
+    ]
+    extracts = "\n\n".join(blocks)
     return run_agent(
         model=model, question=question, session=SessionState(), client=client,
         mode=MODE_ANALYZE, skip_prefetch=True, extra_prefetched=extracts,
-        allow_tools=False, source_scope="articles", on_status=on_status,
+        allow_tools=False, source_scope="articles", sources=blocks, on_status=on_status,
     )
 
 
@@ -109,6 +111,7 @@ def answer_from_retrieval(
     client: OllamaClient,
     preset: str = "default",
     mode: str = MODE_ANALYZE,
+    kind: Literal["question", "scenario", "compare"] = "question",
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
 ) -> AgentResult:
@@ -155,4 +158,5 @@ def answer_from_retrieval(
         extra_prefetched=prefetched,
         allow_tools=False,
         sources=sources,
+        answer_kind=kind,
     )

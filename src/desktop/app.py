@@ -954,6 +954,14 @@ class MainWindow(QMainWindow):
             message += "\n\n" + "\n".join(report.errors)
         QMessageBox.information(self, "Article import", message)
 
+    def _case_agents(self) -> dict[str, str]:
+        """Primary anesthetic agent per analyzed case, for scenario questions."""
+        cases = self.cases
+        if cases is None or not {"PID", "primary_agent_name"} <= set(cases.columns):
+            return {}
+        known = cases[["PID", "primary_agent_name"]].dropna()
+        return dict(zip(known["PID"].astype(str), known["primary_agent_name"].astype(str), strict=True))
+
     def _start_research_search(self, question: str) -> None:
         from src.guardrails.validate_io import validate_emr_dir
         from src.llm.ollama_client import OllamaEmbedder
@@ -980,6 +988,7 @@ class MainWindow(QMainWindow):
                     embedder=OllamaEmbedder(embed_model),
                     preset=self._active_preset,
                     analysis_facts=self._analysis_facts,
+                    case_agents=self._case_agents(),
                     analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
                 )
             engine = self._research_engine
@@ -1061,16 +1070,22 @@ class MainWindow(QMainWindow):
             return
         self.research.set_results(result)
         turn = self.research.conversation.turn(request_id)
+        unanswerable = result.empty_reason or (
+            "" if result.candidates else "No matching indexed surgery records were found for this question."
+        )
         if turn is not None and turn.model is None:
             answer = NO_MODEL_ANSWER
-            if not result.candidates:
-                answer += "\n\nNo matching indexed surgery records were found for this question."
+            if unanswerable:
+                answer += f"\n\n{unanswerable}"
             self.research.set_answer(answer, request_id, state="no_model")
-        elif not result.candidates:
-            self.research.set_answer("No matching indexed surgery records were found for this question.", request_id)
+        elif unanswerable:
+            self.research.set_answer(unanswerable, request_id)
         preferred = self.research.preferred_pid()
         if preferred:
             self._load_research_case(preferred, False, False)
+            other = next((c.pid for c in result.candidates if c.pid != preferred), None) if result.compare else None
+            if other:
+                self._load_research_case(other, True, False)
 
     def _on_research_answer(self, response, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:

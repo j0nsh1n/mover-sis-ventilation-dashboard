@@ -16,6 +16,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Research is the sole desktop workspace; Cases has optional charts and summary metrics, F has a More signals chooser and grounded context, and Rules includes scoring and Age-40 MAC. Local AI controls are in the question card.
 - Research can import a local CSV/JSONL article catalog and search Articles separately from Cases, with FTS ranking, optional cached embeddings, and answers citing at most five abstracts. A file with a damaged line or an oversized field is reported with its line and imports nothing; case-ID-like tokens are removed from article answers.
 - In F, the More signals you choose now stay for the session across episode selection, clearing and other cases, with a note when a chosen signal has no samples in the case; the buttons under the sample line stack so F no longer scrolls sideways beside the Rules drawer at 900 px. Cases charts are drawn to fit their areas, and the chart areas have names and a tab order that follows the page.
+- Research recognises scenario questions (age or age range, sex, procedure, anesthetic agent) and comparisons (two or more PIDs, or "compare"/"vs"): scenarios search only matching cases and say which filter left none, comparisons use the named PIDs, and the board's scope line shows the scenario or the cases compared. Answers still come from at most three source extracts and the model is no longer told to call tools it does not have. Article answers get the same number check as case answers.
 
 ## [0.12.1] — 2026-10-16
 

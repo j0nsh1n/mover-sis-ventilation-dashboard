@@ -32,7 +32,9 @@ from src.llm.prompts import (
     REWRITE_INSTRUCTION,
     REWRITE_RESEARCH,
     VERIFICATION_FOOTER,
+    build_extract_system_prompt,
     build_system_prompt,
+    extract_user_message,
     session_header_text,
     user_message,
 )
@@ -715,6 +717,7 @@ def run_agent(
     allow_tools: bool = True,
     sources: Sequence[str] | None = None,
     source_scope: Literal["cases", "articles"] = "cases",
+    answer_kind: Literal["question", "scenario", "compare"] = "question",
 ) -> AgentResult:
     client = client or OllamaClient()
     mode = (mode or MODE_CHAT).lower()
@@ -722,10 +725,13 @@ def run_agent(
     if temperature is None:
         temperature = 0.25 if mode == "analyze" else 0.12
 
+    extract_only = not allow_tools and source_scope == "cases"
     system = build_system_prompt(mode=mode, model=model)
     if source_scope == "articles":
         system = ARTICLE_SYSTEM_PROMPT
-    if not allow_tools:
+    if extract_only:
+        system = build_extract_system_prompt(model=model)
+    elif not allow_tools:
         system += "\nTools are unavailable for this answer. Use only the supplied source extracts."
     n_cases = 0 if session.cases is None else len(session.cases)
 
@@ -756,7 +762,9 @@ def run_agent(
         {"role": "system", "content": system},
         {
             "role": "user",
-            "content": (f"Question: {question}\n\n{prefetched}" if source_scope == "articles" else user_message(
+            "content": (f"Question: {question}\n\n{prefetched}" if source_scope == "articles" else extract_user_message(
+                question, kind=answer_kind, extracts=prefetched,
+            ) if extract_only else user_message(
                 question,
                 session_header=header,
                 active_briefing=active_brief if session.active_pid else "",
