@@ -311,6 +311,30 @@ def test_scan_partial_failures_report_case_counts(qapp, monkeypatch):
 
 
 @requires_qt
+def test_scenario_agents_come_from_the_scan_and_the_sample_wins(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    import pandas as pd
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_push_cases_overview", lambda self: None)
+    win = MainWindow()
+    try:
+        assert win._case_agents() == {}
+        win.cases = pd.DataFrame({"PID": ["A"], "primary_agent_name": ["desflurane"]})
+        win._research_engine = object()
+        win._on_corpus_scan_ok(SimpleNamespace(
+            cases=pd.DataFrame({"PID": ["A", "B", "C"], "primary_agent_name": ["sevoflurane", "isoflurane", None]}),
+            meta={"n_scanned_cases": 3, "n_ventilated_surgeries": 3, "failed_shards": []},
+        ))
+        assert win._research_engine is None
+        assert win._case_agents() == {"A": "desflurane", "B": "isoflurane"}
+    finally:
+        win.close()
+
+
+@requires_qt
 def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow

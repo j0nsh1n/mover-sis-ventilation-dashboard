@@ -126,7 +126,7 @@ class SearchRecord:
     gender: str | None
     has_vent: bool
     analyzed: bool
-    # Known only for analyzed cases, where the pipeline derives the primary agent
+    # Known for analyzed cases and, after a full-EMR scan, for every ventilated surgery
     agent: str | None = None
 
 
@@ -475,6 +475,7 @@ class RetrievalEngine:
         preset: str = "default",
         analysis_facts: Mapping[str, str] | None = None,
         case_agents: Mapping[str, str] | None = None,
+        agents_from_scan: bool = False,
     ):
         self.emr = Path(emr)
         self.embedder = embedder
@@ -484,6 +485,8 @@ class RetrievalEngine:
         self.preset = preset
         self.analysis_facts = dict(analysis_facts or {})
         self.case_agents = {str(pid): str(agent) for pid, agent in (case_agents or {}).items()}
+        # True when case_agents covers every ventilated surgery, not just the analyzed sample
+        self.agents_from_scan = agents_from_scan
         self._cache = EmbeddingCache(Path(cache_path))
         self._records: list[SearchRecord] = []
         self._keyword_index: tuple[list[SearchRecord], _KeywordIndex, dict[str, int]] | None = None

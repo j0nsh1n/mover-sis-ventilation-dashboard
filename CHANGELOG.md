@@ -8,6 +8,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - A saved full-EMR scan records which EMR folder it scored (as a hash, not a path). Pointing the app at a different EMR no longer shows the old scan's cases, scan scope or indexed count; scan again for the new EMR. Scans saved by earlier versions still load.
+- Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). When the agent filter leaves nothing, the answer says where agents come from and, without a scan, that a scan would widen the search.
 
 ## [0.13.0] — 2026-10-16
 

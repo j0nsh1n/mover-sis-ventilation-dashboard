@@ -693,6 +693,7 @@ class MainWindow(QMainWindow):
 
     def _on_corpus_scan_ok(self, result) -> None:
         self.corpus_scan = result
+        self._research_engine = None  # scenario agents come from the scan
         meta = result.meta
         failures = meta.get("failed_shards", [])
         failed_count = sum(shard.get("n_pids", 0) for shard in failures)
@@ -720,6 +721,7 @@ class MainWindow(QMainWindow):
         """
         from src.pipeline.corpus_scan import load_corpus_scan
 
+        self._research_engine = None  # scenario agents come from the scan
         try:
             self.corpus_scan = load_corpus_scan(processed_dir(), emr_dir())
         except Exception as exc:
@@ -961,12 +963,19 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Article import", message)
 
     def _case_agents(self) -> dict[str, str]:
-        """Primary anesthetic agent per analyzed case, for scenario questions."""
-        cases = self.cases
-        if cases is None or not {"PID", "primary_agent_name"} <= set(cases.columns):
-            return {}
-        known = cases[["PID", "primary_agent_name"]].dropna()
-        return dict(zip(known["PID"].astype(str), known["primary_agent_name"].astype(str), strict=True))
+        """Primary anesthetic agent per case, for scenario questions.
+
+        A full-EMR scan supplies it for every ventilated surgery; the analyzed
+        sample, scored with the loaded preset, wins where both have a case.
+        """
+        agents: dict[str, str] = {}
+        tables = [self.corpus_scan.cases if self.corpus_scan is not None else None, self.cases]
+        for cases in tables:
+            if cases is None or not {"PID", "primary_agent_name"} <= set(cases.columns):
+                continue
+            known = cases[["PID", "primary_agent_name"]].dropna()
+            agents.update(zip(known["PID"].astype(str), known["primary_agent_name"].astype(str), strict=True))
+        return agents
 
     def _start_research_search(self, question: str) -> None:
         from src.guardrails.validate_io import validate_emr_dir
@@ -995,6 +1004,7 @@ class MainWindow(QMainWindow):
                     preset=self._active_preset,
                     analysis_facts=self._analysis_facts,
                     case_agents=self._case_agents(),
+                    agents_from_scan=self.corpus_scan is not None,
                     analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
                 )
             engine = self._research_engine
