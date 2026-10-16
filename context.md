@@ -2,14 +2,14 @@
 
 ## Current State
 
-- **Version:** 0.10.0 released 2026-09-30. The v0.11.0 work is merged to
-  `main` (#27, #28, 2026-10-15); the v0.11.0 release is not cut yet (held by the
-  owner).
-- **Branch:** `main` includes everything through #28. The v0.12.0 work sits on
-  two stacked branches: `feat/v0.12-rules-f` on `main` (one rule catalog,
-  Rules drawer, real-wave tests opt-in, F flag episodes and rule detail) and
-  `feat/v0.12-g` on it (Cases overview, flag-aware search, side-panel
-  conversation, prototype driver scenarios).
+- **Version:** 0.12.0 released 2026-10-16. It carries the v0.11 work (#27,
+  #28); v0.11.0 was not published separately. Installed apps update through the
+  signed Pages manifest.
+- **Branch:** `main` includes everything through v0.12.0: #29 (one rule
+  catalog, Rules drawer, real-wave tests opt-in, F flag episodes and rule
+  detail), #30 (Cases overview, flag-aware search, side-panel conversation,
+  prototype driver scenarios) and #31 (spec.md, Settings preset selector,
+  Markdown answers). No working branches are open.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
@@ -219,20 +219,17 @@ Wave root (optional) ──► wave_decode                   │
 ## Session Handoff
 
 - **Date:** 2026-10-16
-- **Branches:** `feat/v0.12-rules-f` on `main` (PR 1) and `feat/v0.12-g`
-  stacked on it (PR 2). The owner lands PR 1 first. The plan and decision trail
-  live outside the repo under `~/.claude/orchestrate/mover-overhaul/`
-  (`docs/v012/plan.md`, `decisions.tsv`).
-- **Done:** W1 one rule catalog read by the reference, co-pilot, dashboard and
-  profile; W2 Rules drawer; real-wave tests opt-in; W3 F episodes, flag lane,
-  rule detail and cursor dots; W4 Cases overview; flag-aware keyword search;
-  W5 side-panel conversation with New question and a confirmed Reset; W6 the
-  five prototype questions as driver scenarios.
-- **Verified:** every commit ran gates, live lanes on synthetic data against its
-  parent, a perf lane and audit lanes; findings were fixed and folded in.
-  W4 was re-checked after the rebase onto W3. Each commit's own tests pass at
-  that commit.
-- **Next:** the owner reviews and lands the two PRs, approves the `spec.md`
-  drift wording listed in each PR body, and decides two product questions: a
-  preset selector in Settings, and rendering model answers as rich text. Then
-  mark `roadmap.md` Phase 5. The v0.11.0 release is still to be cut.
+- **Released:** v0.12.0 from `main` (#29, #30, #31 and the release PR). The
+  plan and decision trail live outside the repo under
+  `~/.claude/orchestrate/mover-overhaul/` (`docs/v012/plan.md`,
+  `decisions.tsv`).
+- **Verified:** every commit ran gates, live lanes on synthetic data, a perf
+  lane and audit lanes; #31's Markdown renderer had an adversarial audit. A
+  local frozen build passed the smoke test and `--selftest-scan` before the
+  release.
+- **Next:** roadmap Phase 6 (calibrate on real MOVER data, v0.13.0). Open
+  follow-ups are listed in the #29, #30 and #31 bodies: late full-EMR scan
+  under the old preset, unguarded processed-folder change during a run, a
+  scan surviving a reload of a different EMR, Enter on the Cases button, the
+  descending sort arrow, the stale progress line after an answer, the
+  per-size chart image cache, and a 1 MB single-word answer stalling layout.
