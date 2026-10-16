@@ -73,3 +73,19 @@ def test_flag_pids_subset_of_cases(pipeline_result):
     case_pids = set(pipeline_result["cases"]["PID"])
     flag_pids = set(pipeline_result["flags"]["PID"])
     assert flag_pids <= case_pids
+
+
+def test_pipeline_runs_when_stdout_cannot_encode_unicode(synthetic_emr, tmp_path, monkeypatch):
+    # Windows pipes use a legacy code page under Python 3.14 (cp1252, cp437); progress output
+    # must not crash the run.
+    import io
+    import sys
+
+    monkeypatch.setenv("MOVER_ALLOW_EXTERNAL_OUTPUT", "1")
+    buffer = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buffer, encoding="cp437", errors="strict"))
+    res = run_pipeline(emr_dir=synthetic_emr, output_dir=tmp_path / "out",
+                       pids=["caseA", "caseB"], write_sample_csv=False)
+    sys.stdout.flush()
+    assert len(res["cases"]) == 2
+    assert b"[pipeline] writing outputs" in buffer.getvalue()
