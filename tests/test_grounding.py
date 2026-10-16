@@ -271,7 +271,8 @@ def test_check_time_on_a_three_extract_answer(synthetic):
         )
         for _ in range(20)
     )
-    assert best < 0.01, f"{best * 1000:.1f} ms"
+    # About 7 ms locally; shared CI runners measured up to 14 ms. 50 ms still catches a blow-up.
+    assert best < 0.05, f"{best * 1000:.1f} ms"
 
 
 # The agent gate
