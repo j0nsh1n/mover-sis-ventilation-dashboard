@@ -164,3 +164,80 @@ def test_absent_processed_autoload_is_quiet_before_setup(window, monkeypatch):
     monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: True)
     win._autoload_processed()
     assert not dialogs
+
+
+class ProgressThenAnswer(QThread):
+    progress = Signal(object)
+    shortlist = Signal(object)
+    answer = Signal(object)
+    failed = Signal(str)
+    release = threading.Event()
+    answers = True
+
+    def __init__(self, engine, question, model, session, parent=None):
+        super().__init__(parent)
+
+    def run(self):
+        self.progress.emit(SimpleNamespace(message="Model round 1/8…"))
+        self.shortlist.emit(RetrievalResult(candidates=()))
+        self.progress.emit(SimpleNamespace(message="Rewriting the draft to pass the answer check…"))
+        self.release.wait(2)
+        if self.answers and not self.isInterruptionRequested():
+            self.answer.emit(SimpleNamespace(answer="The extracts describe the cited cases."))
+
+
+@pytest.mark.parametrize("answers", [True, False], ids=["answered", "no-answer"])
+def test_progress_line_clears_when_the_search_ends(window, monkeypatch, synthetic_emr, answers):
+    win, app, _ = window
+    prepare_search(win, monkeypatch, synthetic_emr)
+    monkeypatch.setattr("src.desktop.app.ResearchWorker", ProgressThenAnswer)
+    ProgressThenAnswer.release = threading.Event()
+    ProgressThenAnswer.answers = answers
+    win._start_research_search("elevated PIP")
+    worker = win._research_worker
+    pump(app, lambda: "Rewriting" in win.research.status_label.text())
+    ProgressThenAnswer.release.set()
+    pump(app, lambda: not worker.isRunning() and not win.research._searching)
+    status = win.research.status_label.text()
+    assert "Rewriting" not in status and "Model round" not in status
+    assert status == "Search finished."
+    # The turn's saved board does not bring the running step back either
+    turn = win.research.conversation.turns[-1]
+    assert "Rewriting" not in " ".join(turn.board.labels)
+
+
+def test_progress_line_clears_when_the_search_is_cancelled(window, monkeypatch, synthetic_emr):
+    win, app, _ = window
+    prepare_search(win, monkeypatch, synthetic_emr)
+    monkeypatch.setattr("src.desktop.app.ResearchWorker", ProgressThenAnswer)
+    ProgressThenAnswer.release = threading.Event()
+    ProgressThenAnswer.answers = True
+    win.research.set_status("Ready to search indexed surgeries.")
+    win._start_research_search("elevated PIP")
+    worker = win._research_worker
+    try:
+        pump(app, lambda: "Rewriting" in win.research.status_label.text())
+        win._cancel_research()
+        assert "Rewriting" not in win.research.status_label.text()
+        assert win.research.status_label.text() == "Ready to search indexed surgeries."
+    finally:
+        ProgressThenAnswer.release.set()
+        worker.wait(2000)
+    app.processEvents()
+    assert "Rewriting" not in win.research.status_label.text()
+    # Reopening the cancelled question does not bring the running step back
+    cancelled = win.research.conversation.turns[-1]
+    assert cancelled.state == "cancelled"
+    win.research.show_turn(cancelled.request_id)
+    assert win.research.status_label.text() == "Search cancelled."
+
+
+def test_a_failure_message_stays_after_the_search_ends(window, monkeypatch, synthetic_emr):
+    win, app, _ = window
+    prepare_search(win, monkeypatch, synthetic_emr)
+    ControlledSearch.gates = {"fails": threading.Event()}
+    ControlledSearch.gates["fails"].set()
+    win._start_research_search("fails")
+    worker = win._research_worker
+    pump(app, lambda: not worker.isRunning() and not win.research._searching)
+    assert win.research.status_label.text().startswith("Research request failed: late failure fails")

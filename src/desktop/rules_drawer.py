@@ -158,6 +158,7 @@ class RulesDrawer(QFrame):
         heading.addWidget(title)
         top.addLayout(heading, 1)
         self.close_button = QPushButton("Close")
+        self.close_button.setAutoDefault(True)
         self.close_button.setAccessibleName("Close rules drawer")
         self.close_button.clicked.connect(self.close_drawer)
         top.addWidget(self.close_button, alignment=Qt.AlignmentFlag.AlignTop)
@@ -196,6 +197,7 @@ class RulesDrawer(QFrame):
         self.empty_label.setWordWrap(True)
         empty_layout.addWidget(self.empty_label)
         self.clear_button = QPushButton("Clear search")
+        self.clear_button.setAutoDefault(True)
         self.clear_button.clicked.connect(self.clear_search)
         empty_layout.addWidget(self.clear_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.empty_state.hide()
@@ -229,6 +231,7 @@ class RulesDrawer(QFrame):
 
     def _explanation(self, title: str) -> tuple[QPushButton, QLabel]:
         button = QPushButton(title + " ▸")
+        button.setAutoDefault(True)
         button.setCheckable(True)
         button.setAccessibleName(title)
         label = QLabel()

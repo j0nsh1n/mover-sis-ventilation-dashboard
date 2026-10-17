@@ -7,6 +7,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A saved full-EMR scan records which EMR folder it scored (as a hash, not a path). Pointing the app at a different EMR or processed folder drops the old scan's cases, scan scope and indexed count at once, even while another scan runs; a scan that finishes after either folder changed is not loaded, and a scan whose `patient_information.csv` changed while it ran writes nothing. Scan again for the new EMR. Scans saved by earlier versions still load.
+- Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). Without a scan, the scope line of an agent-filtered scenario says the agent is known for analyzed cases only; when the agent filter leaves nothing, the answer says where agents come from and that a scan would widen the search.
+- The Research status line no longer keeps a running step such as "Model round 1/8…" or "Rewriting the draft…" after the search ends: it reads "Search finished.", keeps a failure message, and returns to the earlier status when the search is cancelled. Reopening an earlier question, cancelled ones included, shows "Search finished." or "Search cancelled." instead of the running step.
+- Enter and Return now press the focused button in the main window, as Space already did: Cases, the Rules drawer, the Cases overview, the conversation panel and the status-bar buttons included.
+- `requirements.txt` no longer installs scipy: nothing in the app, the optional browser UI or the tests imports it. The packaged app already left it out.
+
 ## [0.13.0] — 2026-10-16
 
 - Signal detail has an "Ask about this minute" field under the slider: the local model answers from that case's rows within 10 minutes of the cursor, the flagged episode covering it and its thresholds, with the same checks as research answers. The answer is labeled with the minute and case, stays out of the conversation panel and later questions, and clears when the minute or case changes or signal detail is left.

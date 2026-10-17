@@ -112,6 +112,21 @@ to publish.
 - Status: [x] 2026-10-16 — local article catalog (CSV/JSONL import, FTS5, optional
   vectors) as its own scope in G, at most five cited abstracts (#35). Released in v0.13.0.
 
+## Phase 10 — Desktop follow-ups and dependency trim (v0.14.0)
+- Tasks:
+  - Reloading a different EMR clears the previous full-EMR scan, so scan scope and
+    the indexed count describe the new data only
+  - The scenario agent filter also matches indexed cases that are not yet analyzed,
+    or the answer says plainly that only analyzed cases were searched
+  - Clear the progress line ("Rewriting the draft...", "Model round 1/8...") when an
+    answer finishes, fails, or is cancelled
+  - Enter activates the Cases button in G, as Space already does
+  - Remove the unused `scipy` pin from `requirements.txt` (nothing imports it); keep
+    the packaging exclude
+- Complete when: each item has a test that fails before the fix, the five prototype
+  scenarios still pass, and CI passes on Linux and Windows
+- Status: [ ]
+
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
   into G/F (prototype built: `docs/prototypes/consolidated-workspace.html`, #21;
@@ -122,6 +137,14 @@ to publish.
 - Dependabot: enable only if human wants weekly bot PRs (pip-only; no npm)
 - Windows/Linux release polish (signing, smaller Qt subset)
 - The GitHub Pages manifest cache of 600 seconds against a 60-second poll
-- Unused `scipy` and `plotly` pins in the desktop requirements, and unlocked
-  transitive dependencies
+- Unlocked transitive dependencies (`plotly` stays: the optional Streamlit UI and
+  its tests use it; the `scipy` pin is scheduled in Phase 10)
+- Signal- and unit-aware number grounding (coincidental matches with unrelated
+  source numbers pass today)
+- On Windows, a minimum window width of about 1,060 px (the 900 px layout tests
+  skip there)
+- The per-size chart image cache grows on each resize until the next case opens
+- The Cases table's sort arrow points up for a descending sort on Linux; Qt draws it
+  the other way on Windows, so the fix is to draw our own arrow, checked on both
+  systems (a flip of Qt's indicator was dropped from v0.14)
 - The Nobara XKB crash, if the operator reopens it

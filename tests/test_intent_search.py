@@ -87,7 +87,30 @@ def test_scenario_filters_the_search_and_answers_from_at_most_three_cases(monkey
 def test_scenario_agent_filter_uses_the_agent_recorded_for_analyzed_cases(monkeypatch, engine):
     seen, _ = run_worker(monkeypatch, engine, "women aged 60-80 arthroplasty with sevoflurane")
     assert {c.pid for c in seen.shortlist[0].candidates} == {"SYN000583775c", "SYN000757bf6a"}
-    assert seen.shortlist[0].scope_note.endswith("2 matching cases")
+    assert seen.shortlist[0].scope_note.endswith("2 matching cases · agent known for analyzed cases only")
+
+
+def test_scan_agents_match_unanalyzed_surgeries_without_the_coverage_note(monkeypatch, engine):
+    engine.case_agents = {**AGENTS, "SYN0023ed8d50": "sevoflurane"}
+    engine.agents_from_scan = True
+    seen, _ = run_worker(monkeypatch, engine, "women aged 60-80 arthroplasty with sevoflurane")
+    pids = {c.pid for c in seen.shortlist[0].candidates}
+    assert pids == {"SYN000583775c", "SYN000757bf6a", "SYN0023ed8d50"}
+    assert "SYN0023ed8d50" not in engine.analyzed_pids
+    assert seen.shortlist[0].scope_note.endswith("3 matching cases")
+
+
+@pytest.mark.parametrize(
+    ("from_scan", "hint"),
+    [
+        (False, "a full-EMR scan adds it for every surgery with ventilator data"),
+        (True, "surgeries without it never match"),
+    ],
+)
+def test_an_emptied_agent_filter_says_where_agents_come_from(monkeypatch, engine, from_scan, hint):
+    engine.agents_from_scan = from_scan
+    seen, _ = run_worker(monkeypatch, engine, "women aged 60-80 arthroplasty with isoflurane")
+    assert hint in seen.shortlist[0].empty_reason
 
 
 @pytest.mark.parametrize(

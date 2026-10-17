@@ -111,6 +111,9 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
     button = QPushButton(text)
     button.setMinimumHeight(44)
     button.setObjectName("primaryBtn" if primary else "secondaryBtn")
+    # Outside a dialog Qt clicks a focused button on Space only; autoDefault adds Enter.
+    # Every QPushButton in the main window sets it.
+    button.setAutoDefault(True)
     return button
 
 
@@ -150,6 +153,8 @@ class ResearchWorkspace(QWidget):
         self._setup_required = False
         self._before_question: QuestionState | None = None
         self._searching = False
+        # The status line shows a running step ("Model round 1/8…") that must not outlive its search
+        self._status_is_progress = False
         self._active_turn_request: int | None = None
         self._board_request: int | None = None
         self._before_board_request: int | None = None
@@ -942,6 +947,10 @@ class ResearchWorkspace(QWidget):
     def cancel_question(self) -> None:
         state = self._before_question
         turn = self.conversation.turn(self._active_turn_request)
+        if self._status_is_progress:
+            # The cancelled turn keeps its board; it must not keep the running step
+            self.status_label.setText("Search cancelled.")
+            self._status_is_progress = False
         if turn is not None and self._searching:
             turn.state = "cancelled"
             self._save_board()
@@ -981,7 +990,18 @@ class ResearchWorkspace(QWidget):
             self._overview_candidates[pid] = candidate
             self._open_or_request(pid, comparison=False)
 
+    def set_progress(self, message: str) -> None:
+        """Show a running step of the current search; finish_progress replaces it."""
+        self.set_status(message)
+        self._status_is_progress = True
+
+    def finish_progress(self) -> None:
+        """Replace a running step left on the status line once its search has ended."""
+        if self._status_is_progress:
+            self.set_status("Search finished.")
+
     def set_status(self, message: str) -> None:
+        self._status_is_progress = False
         self.status_label.setText(message)
         self._save_board()
         if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:

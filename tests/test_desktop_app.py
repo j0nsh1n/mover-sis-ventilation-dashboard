@@ -311,6 +311,63 @@ def test_scan_partial_failures_report_case_counts(qapp, monkeypatch):
 
 
 @requires_qt
+def test_scenario_agents_come_from_the_scan_and_the_sample_wins(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import pandas as pd
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_push_cases_overview", lambda self: None)
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    win = MainWindow()
+    try:
+        assert win._case_agents() == {}
+        win.cases = pd.DataFrame({"PID": ["A"], "primary_agent_name": ["desflurane"]})
+        win._research_engine = object()
+        win._on_corpus_scan_ok(SimpleNamespace(
+            cases=pd.DataFrame({"PID": ["A", "B", "C"], "primary_agent_name": ["sevoflurane", "isoflurane", None]}),
+            meta={"n_scanned_cases": 3, "n_ventilated_surgeries": 3, "failed_shards": []},
+        ))
+        assert win._research_engine is None
+        assert win._case_agents() == {"A": "desflurane", "B": "isoflurane"}
+        engine = win._new_research_engine(tmp_path)
+        assert engine.case_agents == {"A": "desflurane", "B": "isoflurane"} and engine.agents_from_scan
+        assert engine.analyzed_pids == {"A"}
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_a_scan_that_finishes_after_the_emr_changed_is_not_loaded(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import pandas as pd
+    from src.desktop.app import MainWindow
+    from src.pipeline.corpus_scan import emr_fingerprint
+
+    old, new = tmp_path / "old", tmp_path / "new"
+    for emr in (old, new):
+        emr.mkdir()
+        (emr / "patient_information.csv").write_text(f"PID\n{emr.name}\n")
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_push_cases_overview", lambda self: None)
+    monkeypatch.setenv("MOVER_EMR_DIR", str(new))
+    win = MainWindow()
+    try:
+        meta = {"emr_fingerprint": emr_fingerprint(old), "n_scanned_cases": 1,
+                "n_ventilated_surgeries": 1, "failed_shards": []}
+        win._on_corpus_scan_ok(SimpleNamespace(cases=pd.DataFrame({"PID": ["X"]}), meta=meta))
+        assert win.corpus_scan is None
+        assert "previous data folder" in win.statusBar().currentMessage()
+        meta["emr_fingerprint"] = emr_fingerprint(new)
+        win._on_corpus_scan_ok(SimpleNamespace(cases=pd.DataFrame({"PID": ["X"]}), meta=meta))
+        assert win.corpus_scan is not None
+    finally:
+        win.close()
+
+
+@requires_qt
 def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
