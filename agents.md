@@ -14,3 +14,4 @@
 6. Read `context.md` before touching data code; update `CHANGELOG.md` and `roadmap.md`
    with each milestone.
 7. No pushing or remotes until Joo says so.
+8. Run pytest only from the repo root (pytest.ini disables the cache). Never use the raw data folder as the working directory for anything that writes.
