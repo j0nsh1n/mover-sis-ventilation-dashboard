@@ -42,6 +42,8 @@ def test_made_up_signal_values_do_not_pass_by_coincidence(scripted):
     _, metrics = scripted
     # Before numbers were tied to their signal, about 30% passed on these extracts
     assert metrics["coincidental_pass_rate"] <= 0.02
+    # and every figure the extracts print for those signals still passes
+    assert metrics["true_claim_pass_rate"] == 1.0
 
 
 def test_corpus_covers_each_kind_of_answer(scripted):

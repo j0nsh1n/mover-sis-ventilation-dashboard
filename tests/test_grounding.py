@@ -446,6 +446,36 @@ def test_article_answer_with_a_number_not_in_the_abstracts_is_caught_and_replace
     assert find_ungrounded_numbers(good, ABSTRACTS, "protective ventilation") == []
 
 
+@pytest.mark.parametrize("title,year", [
+    ("Protective ventilation in adults", 2019),
+    ("P.I.P. and PEEP in adults", 1888),
+])
+@pytest.mark.parametrize("value,removed", [(5, False), (13, True)])
+def test_article_answers_keep_the_value_check_with_catalog_headers(title, year, value, removed):
+    from src.llm.retrieve import answer_from_articles
+    from src.services.articles import Article
+
+    article = Article(
+        id="ventilation", title=title, year=year, authors="Smith et al.",
+        abstract="PEEP of 5 cmH2O was used. PIP of 20 cmH2O was used.",
+        doi_or_url="https://example.org/ventilation", source="synthetic",
+        rights_note="fictional test article", imported_at="2026-10-17",
+    )
+    draft = f"PIP was {value} cmH2O [A1]."
+    client = Drafts(draft, draft)
+    result = answer_from_articles(
+        question="Describe airway pressure in the articles", model="fake",
+        articles=[article], client=client,
+    )
+    if removed:
+        assert f"PIP was {REMOVED_MARK} cmH2O [A1]." in result.answer
+        assert result.answer.count(REMOVED_NOTE) == 1
+    else:
+        assert draft in result.answer
+        assert REMOVED_MARK not in result.answer
+        assert len(client.sent) == 1
+
+
 def test_prototype_drafts_and_conversation_answers_have_no_false_positive(extract):
     drafts = yaml.safe_load(PROTOTYPE_DRAFTS.read_text(encoding="utf-8"))
     texts = [d for scenario in drafts.values() for d in scenario["drafts"] if not d.startswith("{")]
@@ -488,6 +518,8 @@ MINUTE = (
         "The heart rate rose to 98.5 bpm.",  # the SpO2 median
         "PIP reached 66.6.",  # the heart-rate median, no unit
         "A pressure of 66.6 cmH2O was recorded.",  # no signal named: compared with cmH2O values only
+        "SpO2 fell to 93%.",  # a percent is not excused by some ratio of two source numbers
+        "PIP was 19.9 cmH2O at minute 32 and 67 at minute 33.",  # 67 is the case duration
     ],
 )
 def test_a_value_of_another_signal_is_not_grounded(answer):
@@ -526,3 +558,71 @@ def test_sources_without_a_labeled_signal_fall_back_to_any_value():
     abstract = "[A1] Smith et al. 2019. Airway pressure stayed at 25 in lean adults."
     assert find_ungrounded_numbers("PIP was 25 cmH2O in lean adults [A1].", [abstract]) == []
     assert find_ungrounded_numbers("PIP was 27 cmH2O in lean adults [A1].", [abstract]) == ["27"]
+
+
+EPISODE = (
+    "SOURCE EXTRACT (analyzed case) PID=SYN0000085e40\n"
+    "SOURCE ROWS from 30 to 31 min\n"
+    "t_min | PIP | ETCO2 (mmHg) | nMAP\n"
+    "30 | 21 | 37 | 75\n"
+    "31 | 24 | 39 | 62\n"
+    "\n"
+    "EPISODE COVERING THE SELECTED MINUTE: High PIP (pip_high), warn, 30 to 34 min\n"
+    "Mean flagged value (PIP): 27.5\n"
+    "PIP: min 20, max 25, mean 22.1; 0 missing minutes\n"
+    "ETCO2: min 35, max 40, mean 37.2; 0 missing minutes\n"
+    "HR: min 61.5, max 70, mean 65; 0 missing minutes\n"
+    "warn at least 25 cmH2O\n"
+    "critical at least 30 cmH2O\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "sources"),
+    [
+        ("The minimum PIP in the episode was 20 cmH2O.", [EPISODE]),
+        ("ETCO2 min was 35 and max 40 mmHg.", [EPISODE]),
+        ("Minimum HR was 61.5 bpm.", [EPISODE]),
+        ("PIP ranged from 20 to 25 cmH2O.", [EPISODE]),
+        ("PIP at 21 is below the critical 30 cmH2O.", [EPISODE]),
+        ("The mean flagged PIP was 27.5 cmH2O.", [EPISODE]),
+        ("MAP was 75 mmHg, and mean arterial pressure was 62 mmHg a minute later.", [EPISODE]),
+        ("PIP was 21 cmH2O during minutes 30 and 31.", [EPISODE]),
+        ("PIP was 18.6 cmH2O; SpO2 later reached 100.", [CASE]),
+        ("PIP peaked at 19.9 cmH2O in a 23-year-old.", [CASE]),
+        ("HR was 66.6 bpm in 2016.", [CASE]),
+        ("SpO2 fell to 89% in 6 of 98 minutes (6%).", [CASE + "- spo2_low [warn]: 6 minute-flags\n"]),
+        ("PIP climbed by 3.0 cmH2O from its minimum.", [CASE]),
+        ("HR median 66.6 bpm, with 98 recorded minutes.", [CASE]),
+        ("PIP was 18.6 cmH2O across 64 valid one-minute recordings.", [CASE]),
+        ("PEEP of 8.0 cmH2O was kept during 98 recorded minutes.", [CASE]),
+        ("PIP at min 31 was 24 cmH2O.", [MINUTE]),
+        ("HR was 71 at the selected minute.", ["At the selected minute: PIP 22; ETCO2 38; HR 71\nSOURCE ROWS from 30 to 31 min\n"]),
+        ("SpO2 was below 90% for 6% of minutes.", [CASE + "- spo2_low [warn]: 6 minute-flags\n- SpO2 below 90 %\n"]),
+        ("She received 500 mL of Lactated Ringer.", [CASE + "- Lactated Ringer dose samples: 500, 1000 mL\n"]),
+        ("PEEP of 10 cmH2O was used [A2].", [
+            "[A1] Lee et al. 2020. PEEP of 5 cmH2O was used.",
+            "[A2] Kim et al. 2021. Patients received 10 cmH2O of PEEP or 4 cmH2O PEEP.",
+        ]),
+    ],
+)
+def test_correct_figures_stay_grounded_when_tied_to_signals(answer, sources):
+    assert find_ungrounded_numbers(answer, sources) == []
+
+
+def test_tying_numbers_to_signals_grows_linearly_with_source_length():
+    import time
+
+    def best_time(n_events: int) -> float:
+        events = "".join(f"- 2016-03-01 {7 + i // 60:02d}:{i % 60:02d}:00: Event {i}\n" for i in range(n_events))
+        sources = [CASE + events] * 3
+        answer = "PIP peaked at 19.9 cmH2O and PEEP stayed at 8.0 cmH2O. " * 10
+        times = []
+        for _ in range(3):
+            start = time.perf_counter()
+            find_ungrounded_numbers(answer, sources)
+            times.append(time.perf_counter() - start)
+        return min(times)
+
+    # Four times the events: linear work takes about four times as long, quadratic sixteen
+    assert best_time(1200) < 8 * best_time(300)

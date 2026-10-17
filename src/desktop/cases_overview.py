@@ -278,6 +278,7 @@ class CasesOverview(QWidget):
         layout.setSpacing(10)
         top = QHBoxLayout()
         self.back_button = QPushButton("← Back to question")
+        self.back_button.setAutoDefault(True)
         self.back_button.setObjectName("casesBack")
         self.back_button.setAccessibleName("Back to the research question")
         self.back_button.clicked.connect(self.back_requested)
@@ -297,6 +298,7 @@ class CasesOverview(QWidget):
         layout.addWidget(self.scope_label)
 
         self.charts_button = QPushButton("Charts ▸")
+        self.charts_button.setAutoDefault(True)
         self.charts_button.setCheckable(True)
         self.charts_button.setAccessibleName("Charts")
         self.charts_button.clicked.connect(self._toggle_charts)

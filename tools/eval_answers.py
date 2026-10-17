@@ -55,12 +55,14 @@ _SIGNALS = {
 # Made-up claims for the coincidental pass rate: every whole number in a plausible range
 # that is not one of the signal's own figures in an extract.
 COINCIDENCE_SEARCH = "high airway pressure"
-_CLAIMS = {
-    "pip": ("PIP", "cmH2O", range(10, 46)),
-    "peep": ("PEEP", "cmH2O", range(0, 16)),
-    "tv": ("Tidal volume", "mL", range(300, 701, 5)),
-    "etco2": ("ETCO2", "mmHg", range(25, 56)),
-    "hr": ("Heart rate", "bpm", range(40, 121)),
+_CLAIMS = {  # extract label: (name in the claim, unit, values tried)
+    "Peak inspiratory pressure": ("PIP", "cmH2O", range(10, 46)),
+    "PEEP": ("PEEP", "cmH2O", range(0, 16)),
+    "Tidal volume": ("Tidal volume", "mL", range(300, 701, 5)),
+    "End-tidal CO2": ("ETCO2", "mmHg", range(25, 56)),
+    "Heart rate": ("Heart rate", "bpm", range(40, 121)),
+    "SpO2": ("SpO2", "%", range(80, 101)),
+    "FiO2": ("FiO2", "%", range(21, 101)),
 }
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}")
 _WRONG_AGE_OFFSET = 25
@@ -350,27 +352,33 @@ def summarize(outcomes: Sequence[Outcome], *, live: bool) -> dict[str, Any]:
     return metrics
 
 
-def coincidental_pass_rate(extracts: Sequence[str]) -> float | None:
-    """Share of made-up signal values the number check accepts.
+def claim_rates(extracts: Sequence[str]) -> tuple[float | None, float | None]:
+    """How the number check treats made-up and true signal values.
 
-    Each claim names a signal and its unit ("PIP reached 27 cmH2O.") with a whole
-    number that none of that signal's printed figures rounds to, so a pass can only
-    come from an unrelated source number.
+    Each claim names a signal and its unit ("PIP reached 27 cmH2O."). Made-up claims
+    use whole numbers that none of that signal's printed figures rounds to, so a pass
+    can only come from an unrelated source number. True claims quote each figure as
+    the extract prints it, so every one should pass. Returns (made-up claims passed,
+    true claims passed).
     """
     from src.llm.grounding import find_ungrounded_numbers
 
-    passed = total = 0
-    for key, (name, unit, values) in _CLAIMS.items():
-        own: set[int] = set()
+    made_up = made_up_passed = true = true_passed = 0
+    for label, (name, unit, values) in _CLAIMS.items():
+        own: set[str] = set()
         for extract in extracts:
-            line = next((ln for ln in extract.splitlines() if ln.startswith(f"- {_SIGNALS[key]}:")), "")
-            own.update(math.floor(float(v) + 0.5) for v in re.findall(r"-?\d+(?:\.\d+)?", line.split("(n=")[0]))
+            line = next((ln for ln in extract.splitlines() if ln.startswith(f"- {label}:")), "")
+            # Figures only: not the 2 in "cmH2O" or "CO2"
+            own.update(re.findall(r"(?<![A-Za-z0-9.])-?\d+(?:\.\d+)?(?![A-Za-z0-9])", line.split("(n=")[0]))
+        rounded = {math.floor(float(v) + 0.5) for v in own}
         for value in values:
-            if value in own:
-                continue
-            total += 1
-            passed += not find_ungrounded_numbers(f"{name} reached {value} {unit}.", extracts)
-    return _rate(passed, total)
+            if value not in rounded:
+                made_up += 1
+                made_up_passed += not find_ungrounded_numbers(f"{name} reached {value} {unit}.", extracts)
+        for figure in sorted(own):
+            true += 1
+            true_passed += not find_ungrounded_numbers(f"{name} reached {figure} {unit}.", extracts)
+    return _rate(made_up_passed, made_up), _rate(true_passed, true)
 
 
 def build_corpus(work: Path, seed: int, n_cases: int) -> tuple[Any, dict[str, Any]]:
@@ -491,7 +499,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     metrics = summarize(outcomes, live=client is not None)
     metrics["seed"], metrics["n_cases"] = header["seed"], header["n_cases"]
-    metrics["coincidental_pass_rate"] = coincidental_pass_rate(header.get("coincidence_extracts", []))
+    metrics["coincidental_pass_rate"], metrics["true_claim_pass_rate"] = claim_rates(
+        header.get("coincidence_extracts", [])
+    )
     if args.live:
         metrics["model"] = args.live
         metrics["timestamp"] = datetime.now(UTC).isoformat(timespec="seconds")

@@ -180,6 +180,27 @@ def test_back_button_and_escape_return_focus_to_the_cases_button(qapp):
     assert view.window().focusWidget() is view.cases_button
 
 
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space])
+def test_enter_and_space_open_cases_from_the_cases_button(qapp, key):
+    view = _workspace(_cases())
+    view.cases_button.setFocus()
+    QTest.keyClick(view.cases_button, key)
+    assert view.stack.currentIndex() == CASES_PAGE
+
+
+def test_every_workspace_button_answers_enter(qapp):
+    from PySide6.QtWidgets import QPushButton
+
+    view = _workspace(_cases())
+    view.show_cases()
+    view.begin_question("elevated PIP", 1)
+    view.set_answer("An answer.", 1)
+    buttons = view.findChildren(QPushButton)
+    assert view.cases_button in buttons
+    assert {"Close", "Charts ▸", "Show on board", "Ask again"} <= {b.text() for b in buttons}
+    assert [b.text() for b in buttons if not b.autoDefault()] == []
+
+
 def test_rule_labels_come_from_the_loaded_presets_catalog(qapp):
     view = _workspace(_cases())
     view.show_cases()

@@ -6,11 +6,14 @@ so each number is compared with the source extracts (or article abstracts) and t
 question.
 
 A number is compared with the values of the signal it is about when the sources
-label that signal: "PIP reached 23" must match a PIP value, not the age 23. The
-signal is the one named last before the number in the same sentence (in a pipe
-table, the column's header). Without a named signal, a number with a measurement
-unit (cmH2O, mmHg, mL, mL/kg, bpm, /min, vol%) must match a source value with that
-unit. Anything else is compared with every source value. cmH2O and cm H₂O, and the
+label that signal: "PIP reached 23" must match a PIP figure (or a threshold in
+PIP's unit), not the age 23. A number is about the signals named since the
+previous number in its sentence, when it sits within a few words of them ("PIP and
+PEEP were 18.6 and 8.0"); in a pipe table, about its column's header signal. Counts,
+times, dates, ages, doses and figure numbers are about no signal. Without a signal,
+a number with a measurement unit (cmH2O, mmHg, mL, mL/kg, bpm, /min, vol%) must
+match a source value with that unit. Anything else, including every number in
+article abstracts, is compared with every source value. cmH2O and cm H₂O, and the
 other unit spellings, count as one unit.
 """
 
@@ -46,13 +49,19 @@ _WORD_NUMBER = re.compile(
     r"\b(?:" + "|".join(_TENS_WORDS) + r")(?:[- ](?:" + "|".join(_SMALL_WORDS[1:10])
     + r"))?\b|\b(?:" + "|".join(_WORD_VALUES) + r")\b", re.IGNORECASE,
 )
-_UNIT_AFTER = re.compile(r"\s*[\])]*\s*(" + _UNITS + r")(?![A-Za-z])", re.IGNORECASE)
+_UNIT_AFTER = re.compile(r"[ \t]*[\])]*[ \t]*(" + _UNITS + r")(?![A-Za-z])", re.IGNORECASE)
 _MINUTE_BEFORE = re.compile(r"\bminutes?\s*$", re.IGNORECASE)
 _RANGE_TAIL = re.compile(r"\s*(?:to|[–—-])\s*[-−]?(?:\d+(?:\.\d+)?)\s*[\])]*\s*(" + _UNITS + r")", re.IGNORECASE)
 _TIME = re.compile(r"(?:(\d{4}-\d{2}-\d{2})[ T])?(\d{2}):(\d{2}):(\d{2})")
-_DIFFERENCE = re.compile(r"\b(?:duration|difference|differed|span|lasted|(?:rose|fell|increased|decreased) by)\b", re.IGNORECASE)
+_DIFFERENCE = re.compile(
+    r"\b(?:duration|difference|differed|span|lasted"
+    r"|(?:rose|fell|increased|decreased|climbed|dropped|declined|jumped|went (?:up|down)) by)\b",
+    re.IGNORECASE,
+)
 _SIGNED_RANGE_LEAD = re.compile(r"(?:\d\s*[–—-]|\bto)\s*$")
-_ARTICLE_HEADER = re.compile(r"(?m)^\[[A-Za-z]\d+\][^\n.]*\b(?:19|20)\d{2}\.")
+_ARTICLE_HEADER = re.compile(
+    r"(?m)^\[[A-Za-z]\d+\][^\n]*(?:\([0-9]{1,4}\)|\b(?:19|20)\d{2})\."
+)
 _MINUS = "-−"
 _SIGN_LEAD = set(" \t\n([{=:~,;<>≈±/")
 _MAX_INTEGER_DIGITS = 15
@@ -90,7 +99,7 @@ _NUMBER_IN_LABEL = re.compile(r"\d+")
 # answer may use for them, and their units as _kind spells them. Short abbreviations
 # are case-sensitive, so "map" and "mac" in prose are not signals.
 _SIGNALS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
-    "TV_mlkg": ("ml/kg", (r"TV per IBW", r"tidal volumes? per (?:kg|kilogram)"), ()),
+    "TV_mlkg": ("ml/kg", (r"TV per IBW", r"tidal volumes? per (?:kg|kilogram)"), ("TV_mlkg",)),
     "TV": ("ml", (r"tidal volumes?",), ("TV", "VT", "Vt")),
     "PIP": ("cmh2o", (r"peak inspiratory pressures?", r"peak (?:airway )?pressures?", r"Ppeak"), ("PIP",)),
     "PEEP": ("cmh2o", (r"positive end[- ]expiratory pressures?", r"PEEP"), ()),
@@ -100,15 +109,15 @@ _SIGNALS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
     "Agent_Et": ("vol%", (
         r"end[- ]tidal (?:agent|anesthetic|sevoflurane|desflurane|isoflurane)(?: conc(?:entration|\.)?)?",
         r"Et agent", r"ET(?:sevo|des|iso)",
-    ), ()),
+    ), ("Agent_Et",)),
     "Agent_Fi": ("vol%", (
         r"inspired (?:agent|anesthetic|sevoflurane|desflurane|isoflurane)(?: conc(?:entration|\.)?)?",
         r"Fi agent",
-    ), ()),
-    "MAC_Et": ("", (r"age[- ]adj(?:usted|\.)? MAC(?: \(Et\))?",), ("MAC",)),
+    ), ("Agent_Fi",)),
+    "MAC_Et": ("", (r"age[- ]adj(?:usted|\.)? MAC(?: \(Et\))?",), ("MAC_Et", "MAC")),
     "HR": ("bpm", (r"heart rates?", r"pulse rates?"), ("HR",)),
     "SPO2": ("%", (r"SpO2", r"SpO₂", r"oxygen saturations?", r"saturations?"), ()),
-    "nMAP": ("mmhg", (r"(?:non-?invasive )?mean arterial pressures?", r"non-?invasive MAP"), ("MAP",)),
+    "nMAP": ("mmhg", (r"(?:non-?invasive )?mean arterial pressures?", r"non-?invasive MAP"), ("nMAP", "MAP")),
 }
 _SIGNAL_KEYS: list[str] = []
 _signal_patterns: list[str] = []
@@ -121,53 +130,90 @@ _order = sorted(range(len(_signal_patterns)), key=lambda i: -len(_signal_pattern
 _SIGNAL_MENTION = re.compile(
     r"(?<![A-Za-z0-9_])(?:"
     + "|".join(f"(?P<s{i}>{_signal_patterns[i]})" for i in _order)
-    + r")(?![A-Za-z0-9])"
+    + r")(?![A-Za-z0-9_])"
 )
 _SIGNAL_UNIT = {key: unit for key, (unit, _, _) in _SIGNALS.items()}
 _MEASURE_UNITS = frozenset(unit for unit in _SIGNAL_UNIT.values() if unit and unit != "%")
 # A sentence ends at a line break or at ". " before a capital; decimals never end one.
+# In an answer a semicolon ends one too: "PIP was 18.6; fentanyl 100 mcg was given".
 _SENTENCE_END = re.compile(r"\n|[.!?](?=\s+[A-Z(\[]|\s*$)")
-# Numbers that count, time or index things, not a signal's value
+_ANSWER_SENTENCE_END = re.compile(r"\n|;|[.!?](?=\s+[A-Z(\[]|\s*$)")
+# How far after the signal name (or its previous value) an answer's number may sit
+_ANSWER_REACH = 40
+# Numbers that count, time, date, dose or index things, not a signal's value
+# Never across a line break: "HR 71" ends a line before "SOURCE ROWS".
 _NOT_A_VALUE_AFTER = re.compile(
-    r"\s*(?:of\s+\d|out of\b|(?:cases?|patients?|surgeries|records?|episodes?|flags?|minute-flags"
-    r"|samples?|readings?|times?|sources?|extracts?|rows?)\b)",
+    r"[ \t]*(?:of[ \t]+(?:the[ \t]+)?\d|out of\b|%[ \t]*of\b|-?[ \t]*(?:years?|yrs?)(?:-old)?\b|-year-old\b|y/o\b"
+    r"|(?:cases?|patients?|surgeries|records?|episodes?|flags?|minute-flags|samples?|readings?|times?"
+    r"|sources?|extracts?|rows?|mg|mcg|µg|ug|units?|doses?)\b"
+    # a count, perhaps with two describing words: "98 recorded minutes", "64 valid one-minute
+    # recordings"; not "39 at minute 31", where a preposition starts a time
+    r"|(?:(?!(?:at|in|on|during|for|over|after|before|by|within|from|to|per|until|since|around|near)\b)"
+    r"-?[A-Za-z][A-Za-z-]*[ \t]+){0,2}(?:minutes?|mins?|data points?|observations?|recordings?"
+    r"|measurements?|values?|readings?|samples?|cases?|patients?|surgeries)\b)",
     re.IGNORECASE,
 )
-_NOT_A_VALUE_BEFORE = re.compile(r"(?:\b[nt]\s*=\s*|\bminutes?\s+|\bmin\s+|\bat\s+t\s*)$", re.IGNORECASE)
+_NOT_A_VALUE_BEFORE = re.compile(
+    r"(?:\b[nt]\s*=\s*|\bminutes?\s+|\bat\s+min\s+|\brows?\s+|\bat\s+t\s*|\bage[ds]?\s+"
+    r"|\bfig(?:ure)?\.?\s*|\btable\s+|\bno\.\s*|#\s*"
+    # a share right after a count: "6 of 98 minutes (6%)"
+    r"|\d+\s+of\s+\d+[^.;()\n]{0,30}\(\s*)$",
+    re.IGNORECASE,
+)
+# A list keeps an index's exclusion after a plural ("minutes 30 and 31") or in a range ("rows 30-32")
+_PLURAL_INDEX = re.compile(r"\b(?:minutes|mins|rows)\s+$", re.IGNORECASE)
+_RANGE_ONLY = re.compile(r"\s*(?:to|[–—-])\s*$")
+_YEAR = re.compile(r"(?:19|20)\d{2}")
 _CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}(?::\d{2})?")
-_RANGE_JOIN = re.compile(r"\s*(?:to|[–—-])\s*$")
+# A list or range carries the context of its first number: "minutes 30 and 31", "500, 1000 mL"
+_LIST_JOIN = re.compile(r"\s*(?:to|and|or|,|[–—-])\s*$")
 
 
-def _mentions(text: str) -> list[tuple[int, str]]:
-    return [(m.start(), _SIGNAL_KEYS[int(m.lastgroup[1:])]) for m in _SIGNAL_MENTION.finditer(text) if m.lastgroup]
+def _not_a_value(text: str, number: _Found, clock: list[tuple[int, int]]) -> bool:
+    at = bisect_left(clock, (number.start + 1, -1)) - 1
+    if at >= 0 and clock[at][0] <= number.start < clock[at][1]:
+        return True
+    if _YEAR.fullmatch(number.text) or _kind(text, number) in ("min", "sec", "hour"):
+        return True
+    return (
+        _NOT_A_VALUE_BEFORE.search(text[max(0, number.start - 48):number.start]) is not None
+        or _NOT_A_VALUE_AFTER.match(text, number.end) is not None
+    )
 
 
-def _attribute(text: str, numbers: Sequence[_Found]) -> dict[int, frozenset[str]]:
+def _attribute(text: str, numbers: Sequence[_Found], *, answer: bool) -> dict[int, frozenset[str]]:
     """The signals each number in ``text`` is a value of, keyed by the number's start.
 
     Prose: the signals named since the previous number in the same sentence
     ("PIP and PEEP were 18.6 and 8.0" gives both numbers {PIP, PEEP}). A pipe table:
     the signal in the header cell of the number's column. A number with a unit keeps
-    only the signals measured in that unit; counts, times and minute indexes get none.
+    only the signals measured in that unit; counts, times, dates, ages, doses and
+    figure numbers get none, and so does the rest of a list or range they start.
+
+    An ``answer`` is read strictly, since a wrong tie flags a correct number: a
+    semicolon also ends the sentence, and the number must sit within a few words of
+    the signal's name or its previous value. Sources are read generously, so a
+    signal's figures are all in its pool.
     """
     clock = [(m.start(), m.end()) for m in _CLOCK.finditer(text)]
-    ends = [m.start() for m in _SENTENCE_END.finditer(text)]
-    mentions = _mentions(text)
+    ends = [m.start() for m in (_ANSWER_SENTENCE_END if answer else _SENTENCE_END).finditer(text)]
+    mentions = [(m.start(), m.end(), _SIGNAL_KEYS[int(m.lastgroup[1:])])
+                for m in _SIGNAL_MENTION.finditer(text) if m.lastgroup]
     out: dict[int, frozenset[str]] = {}
-    columns: list[frozenset[str]] | None = None
-    by_line: dict[int, list[_Found]] = {}
     line_starts = [0] + [i + 1 for i, ch in enumerate(text) if ch == "\n"]
+    by_line: dict[int, list[_Found]] = {}
     for number in numbers:
         by_line.setdefault(line_starts[bisect_left(line_starts, number.start + 1) - 1], []).append(number)
+    columns: list[frozenset[str]] | None = None
     for line_start in line_starts:
         line_end = text.find("\n", line_start)
-        line_end = len(text) if line_end < 0 else line_end
-        line = text[line_start:line_end]
+        line = text[line_start:len(text) if line_end < 0 else line_end]
         if "|" not in line:
             columns = None
             continue
         cells = line.split("|")
-        named = [frozenset(key for _, key in _mentions(cell)) for cell in cells]
+        named = [frozenset(_SIGNAL_KEYS[int(m.lastgroup[1:])] for m in _SIGNAL_MENTION.finditer(cell) if m.lastgroup)
+                 for cell in cells]
         if any(named) and not by_line.get(line_start):
             columns = named
             continue
@@ -181,40 +227,47 @@ def _attribute(text: str, numbers: Sequence[_Found]) -> dict[int, frozenset[str]
                 out[number.start] = columns[cell]
     run: set[str] = set()
     consumed = False
+    anchor = 0  # where the last signal name or attributed value ended
     previous: _Found | None = None
     previous_excluded = False
-    events: list[tuple[int, str | None, _Found | None]] = sorted(
-        [(at, key, None) for at, key in mentions] + [(n.start, None, n) for n in numbers],
-        key=lambda event: (event[0], event[2] is not None),
+    plural_index = False  # the list being read started after "minutes" or "rows"
+    events: list[tuple[int, int, str | None, _Found | None]] = sorted(
+        [(start, end, key, None) for start, end, key in mentions]
+        + [(n.start, n.end, None, n) for n in numbers],
+        key=lambda event: (event[0], event[3] is not None),
     )
     segment = 0
-    for at, key, found in events:
+    for at, stop, key, found in events:
         while segment < len(ends) and ends[segment] < at:
             segment += 1
-            run, consumed, previous = set(), False, None
+            run, consumed, previous, previous_excluded = set(), False, None, False
         if found is None:
             if consumed:
                 run, consumed = set(), False
             run.add(key or "")
+            anchor = stop
             continue
         number = found
         if number.start in out:
             consumed, previous, previous_excluded = True, number, False
             continue
-        joined = previous is not None and _RANGE_JOIN.search(text[previous.end:number.start]) is not None
-        excluded = (
-            any(start <= number.start < end for start, end in clock)
-            or _NOT_A_VALUE_BEFORE.search(text[max(0, number.start - 12):number.start]) is not None
-            or _NOT_A_VALUE_AFTER.match(text, number.end) is not None
-            or (joined and previous_excluded)
+        carried = previous is not None and previous_excluded and (
+            _RANGE_ONLY.search(text[previous.end:number.start]) is not None
+            or (_LIST_JOIN.search(text[previous.end:number.start]) is not None and plural_index)
         )
+        excluded = _not_a_value(text, number, clock) or carried
         keys = set(run)
         unit = _kind(text, number)
         if unit:
-            keys = {key for key in keys if _SIGNAL_UNIT[key] == unit}
+            keys = {k for k in keys if _SIGNAL_UNIT[k] == unit}
+        if answer and number.start - anchor > _ANSWER_REACH:
+            keys = set()
         if keys and not excluded:
             out[number.start] = frozenset(keys)
-        consumed, previous, previous_excluded = True, number, excluded or not keys
+            anchor = number.end
+        if not carried:
+            plural_index = _PLURAL_INDEX.search(text[max(0, number.start - 12):number.start]) is not None
+        consumed, previous, previous_excluded = True, number, excluded
     return out
 
 
@@ -359,17 +412,29 @@ class _SourceValues:
         derived_values: set[Decimal] = set()
         kinds: dict[str, set[Decimal]] = {}
         signals: dict[str, set[Decimal]] = {}
+        # Values with a unit but no signal, such as "critical at least 30 cmH2O"
+        loose: dict[str, set[Decimal]] = {}
         for text in texts:
             headers = [(m.start(), m.end()) for m in _ARTICLE_HEADER.finditer(text)]
             numbers = _scan(text)
-            attributed = _attribute(text, numbers)
-            for number in numbers:
+            attributed = {} if headers else _attribute(text, numbers, answer=False)
+            listed: list[_Found] = []
+            for i, number in enumerate(numbers):
                 values.add(number.value)
                 if not any(start <= number.start < end for start, end in headers):
                     derived_values.add(number.value)
+                previous = numbers[i - 1] if i else None
+                if previous is None or not _LIST_JOIN.search(text[previous.end:number.start]):
+                    listed = []
+                listed.append(number)
                 kind = _kind(text, number)
+                # "500, 1000 mL": the unit belongs to the whole list
+                for item in listed if kind else ():
+                    kinds.setdefault(kind, set()).add(item.value)
+                    if kind in _MEASURE_UNITS and item.start not in attributed:
+                        loose.setdefault(kind, set()).add(item.value)
                 if kind:
-                    kinds.setdefault(kind, set()).add(number.value)
+                    listed = []
                 for key in attributed.get(number.start, ()):
                     signals.setdefault(key, set()).add(number.value)
                 for part in number.parts:
@@ -387,7 +452,10 @@ class _SourceValues:
         self.question_values = {number.value for number in _scan(question)}
         values.update(self.question_values)
         self.values = values
-        self.signals = signals
+        # A signal's pool also holds the unattributed values in its unit (thresholds)
+        self.signals = {
+            key: found | loose.get(_SIGNAL_UNIT[key], set()) for key, found in signals.items()
+        }
         # A unit's values include those of every signal measured in it, since a table
         # header or "PIP 22" can carry the unit away from the number
         self.units = {
@@ -491,10 +559,11 @@ def _ungrounded(
     masked = _mask_ignored(answer, len(sources))
     index = _SourceValues(sources, question)
     numbers = _scan(masked)
-    attributed = _attribute(answer, numbers)
+    attributed = _attribute(answer, numbers, answer=True)
     bad = []
     for number in numbers:
-        pool = index.pool(attributed.get(number.start), _kind(answer, number))
+        unit = _kind(answer, number)
+        pool = index.pool(attributed.get(number.start), unit)
         if pool is None:
             if index.has(number) or index.derived(number, answer):
                 continue

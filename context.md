@@ -5,23 +5,28 @@
 - **Version:** 0.13.0 released 2026-10-16 (roadmap Phases 7, 8 and 9, and Phase 6
   engineering). 0.12.1 before it carried the v0.11 and v0.12 work. Installed apps
   update through the signed Pages manifest.
-- **Branch:** `main` includes everything through v0.13.0 (#34, #35 and the release
-  PR). No working branches are open.
+- **Local release candidate:** v0.14.0 Linux package built 2026-10-17 from merged
+  PR #37 (`b9dbcb9`) under `~/mover-sis-work/release-v0.14.0/`. It is not published
+  or installed. Full Python gate passed, 1,182 passed and six skipped; frozen
+  startup and 19-case scan, packaging, thresholds and both Rust suites passed.
+  Grok 4.6 at xhigh returned PASS+NOTES. Available ruff 0.16.6 and mypy 2.3.0 are
+  below the spec pins. No local Windows archive was built.
+- **Branch:** `feat/v0.15-signal-grounding`, with the existing grounding changes
+  preserved and the merged v0.14 base integrated locally. The integrated result
+  passed validation and independent review. Two working branch names exist.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
   Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
   manifest are live.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` passes on
-  `feat/v0.12-g` (809 passed, 2 skipped, 5 deselected, 2026-10-16) with
-  `ruff check .` and `mypy` clean. The five real-wave decode tests run only
-  with `MOVER_REAL_DATA_TESTS=1`. Rust updater and signer suites last passed
-  2026-09-28. The v0.11 local build ran 10 s on both wayland and xcb without a
-  crash (2026-10-14).
-  Real EMR and wave data are on this machine; no test or lane reads them.
-  `tools/desktop_drive.py` drives the app offscreen on synthetic data and
-  saves a screenshot per step; every desktop check uses it.
+- **Tests:** the v0.15 combined gate passed 1,227 tests with seven skipped on
+  Python 3.14.7, 2026-10-17. Available ruff 0.16.6 and mypy 2.3.0 passed.
+  The recorded eval has zero mismatches, a 100% catch rate and no false flags.
+  Rust updater and signer suites passed on the unchanged v0.14 trees the same
+  day. The v0.14 frozen Linux startup and scan self-test passed. The v0.15 frozen
+  tests skipped because no bundle exists in this checkout; real-wave tests
+  remained opt-in and did not run. No real research data was read.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
@@ -67,9 +72,9 @@
     The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
     `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
   - `requirements.txt` pins direct dependencies exactly; transitive packages
-    are not locked. `scipy` and `plotly` stay listed although the desktop
-    bundle omits both (only the optional Streamlit UI and its tests use plotly;
-    nothing in `src/` imports scipy).
+    are not locked. `plotly` stays listed although the desktop bundle omits it
+    (only the optional Streamlit UI and its tests use it). `scipy` was dropped
+    in v0.14 because nothing imports it; the packaging spec still excludes it.
   - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
     verified on Linux only; the release workflow's Windows smoke test is the check.
   - Procedure-event name patterns (`phases:` in `thresholds.yaml`) are unverified on
@@ -215,20 +220,26 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-10-16
-- **Released:** v0.13.0. The plan and decision trail are under
-  `~/.claude/orchestrate/mover-overhaul/` (`docs/v013/plan.md`, `decisions.tsv`).
-- **Done:** one Research workspace with the legacy tabs retired; scenario and
-  comparison intents; ask about a minute in F; local article search; number
-  grounding with an eval in CI; thresholds version shown in F; scan memory,
-  bench script, merged full-EMR profile and sanitized scan failures; the
-  calibration runbook. PR CI now runs the test suite on Windows too.
-- **Verified:** every item had an owner gate, an independent audit (Codex or
-  Sonnet) and fixes in a second round; the stacked gate passed 1164 tests.
-- **Next:** the operator runs Phase 6 on the real data per
-  `docs/CALIBRATION_RUNBOOK.md` and approves the spec.md wording proposed in #34
-  and #35. Follow-ups: signal- and unit-aware number grounding (coincidental
-  matches), the stale progress line after an answer, the Windows minimum window
-  width, Enter on the Cases button, the descending sort arrow, a scan surviving a
-  reload of a different EMR, the per-size chart image cache, and the agent filter
-  matching analyzed cases only.
+- **Date:** 2026-10-17
+- **Release preparation:** local v0.14.0 Linux candidate, checksum, metadata patch,
+  independent review and validation report are under
+  `~/mover-sis-work/release-v0.14.0/`. Published version remains v0.13.0.
+- **In flight:** v0.15 signal-grounding continuation. GLM through OpenCode
+  completed the source/test map. Composer 2.5 through Cursor CLI with Fast off
+  completed review notes and proposed spec wording. A fresh GLM resource
+  reporter uses raw OS readings after the first reporter was stopped for
+  inaccurate fields. Composer's reports are complete, with a mixed-source
+  wording correction noted by the coordinator. Grok 4.6 through Grok CLI at
+  xhigh completed two independent review rounds. Its article-header finding
+  is fixed with four regression cases. The integrated tree passed 1,227 tests
+  with seven skipped; packaging passed 11 with two skipped because no frozen
+  v0.15 bundle exists. Lint, types, thresholds and the recorded eval passed.
+  Grok round 2 returned PASS+NOTES. On three seed-8 extracts, made-up signal
+  claims passed 51.67% on the v0.14 checker and 0% on this checker; true printed
+  figures passed 100% on both. No live-model or real-data evaluation ran.
+  Task IDs and sealed brief paths are in `.handoff/v015-orchestration.md`.
+- **Next:** publication and any new package remain pending. Review receipts, metrics and
+  the corrected proposed numeric-grounding spec text are under
+  `~/mover-sis-work/v0.15/`. The spec has not changed. No push, PR, installed-app
+  replacement or publication occurred. Real-data calibration, a v0.15 frozen
+  build, Windows verification and the earlier spec proposals remain open.

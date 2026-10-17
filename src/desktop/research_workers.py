@@ -32,6 +32,15 @@ def _names(pids: list[str]) -> str:
     return pids[0] if len(pids) == 1 else ", ".join(pids[:-1]) + f" and {pids[-1]}"
 
 
+def _agent_coverage(engine: RetrievalEngine) -> str:
+    if engine.agents_from_scan:
+        return " The agent comes from ventilator data, so surgeries without it never match."
+    return (
+        " The agent is known only for analyzed cases;"
+        " a full-EMR scan adds it for every surgery with ventilator data."
+    )
+
+
 def _scenario_search(
     engine: RetrievalEngine, intent: Intent, question: str,
     progress: Callable[[RetrievalProgress], None],
@@ -49,7 +58,7 @@ def _scenario_search(
                 reason = (
                     f"No indexed surgery matched the {name} filter ({wording[name]}); "
                     f"{_plural(previous, 'surgery', 'surgeries')} passed the filters before it."
-                    + (" The agent is recorded for analyzed cases only." if name == "agent" else "")
+                    + (_agent_coverage(engine) if name == "agent" else "")
                 )
                 break
             previous = left
@@ -61,6 +70,8 @@ def _scenario_search(
     note = f"{head} · {_plural(matched, 'matching case', 'matching cases')}"
     if matched > engine.extract_limit:
         note += f" · answering from the top {engine.extract_limit}"
+    if filters.agent and not engine.agents_from_scan:
+        note += " · agent known for analyzed cases only"
     return replace(result, candidates=tuple(candidates), scope_note=note), candidates[: engine.extract_limit]
 
 
