@@ -377,7 +377,7 @@ def test_prior_research_turn_never_enters_the_next_questions_messages(
     win.research.set_models(["fake"])
     cases = (_candidate(), replace(_candidate(), pid="caseC", age=60.0))
     win._research_engine = SimpleNamespace(
-        emr=synthetic_emr.resolve(), extract_limit=3, preset="default",
+        emr=synthetic_emr.resolve(), extract_limit=3, preset="default", agents_from_scan=False,
         search=lambda *args, **kwargs: RetrievalResult(candidates=cases, indexed_count=2, filtered_count=2),
         fetch_extracts=lambda pids, **kwargs: (
             [f"SOURCE EXTRACT PID={pid}\nPIP median 22" for pid in pids], tuple(pids)),

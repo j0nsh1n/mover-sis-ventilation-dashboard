@@ -225,6 +225,11 @@ def test_progress_line_clears_when_the_search_is_cancelled(window, monkeypatch, 
         worker.wait(2000)
     app.processEvents()
     assert "Rewriting" not in win.research.status_label.text()
+    # Reopening the cancelled question does not bring the running step back
+    cancelled = win.research.conversation.turns[-1]
+    assert cancelled.state == "cancelled"
+    win.research.show_turn(cancelled.request_id)
+    assert win.research.status_label.text() == "Search cancelled."
 
 
 def test_a_failure_message_stays_after_the_search_ends(window, monkeypatch, synthetic_emr):

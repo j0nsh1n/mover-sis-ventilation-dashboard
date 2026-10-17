@@ -67,9 +67,9 @@
     The rest is mostly pyarrow (113 MB), Qt core/GUI/widgets + ICU (88 MB),
     `libpython` (32 MB), and numpy's OpenBLAS (27 MB); none is removable safely.
   - `requirements.txt` pins direct dependencies exactly; transitive packages
-    are not locked. `scipy` and `plotly` stay listed although the desktop
-    bundle omits both (only the optional Streamlit UI and its tests use plotly;
-    nothing in `src/` imports scipy).
+    are not locked. `plotly` stays listed although the desktop bundle omits it
+    (only the optional Streamlit UI and its tests use it). `scipy` was dropped
+    in v0.14 because nothing imports it; the packaging spec still excludes it.
   - The Windows spec changes (hook-based Qt/pyarrow collection, path filters) are
     verified on Linux only; the release workflow's Windows smoke test is the check.
   - Procedure-event name patterns (`phases:` in `thresholds.yaml`) are unverified on

@@ -107,6 +107,10 @@ class ScanCancelled(PipelineError):
     """The caller asked the scan to stop."""
 
 
+class EmrChangedDuringScan(PipelineError):
+    """patient_information.csv changed while a scan ran; its fixed message is safe to show."""
+
+
 class ShardFailure(PipelineError):
     """A shard could not be scored.
 
@@ -166,7 +170,7 @@ def scan_failure_message(exc: BaseException, out_dir: Path | str) -> str:
     A ShardFailure was already logged by ``scan_corpus``. Any other exception
     (a bad EMR folder, an unreadable file) is logged here.
     """
-    if isinstance(exc, ShardFailure):
+    if isinstance(exc, (ShardFailure, EmrChangedDuringScan)):
         return str(exc)
     trace = "".join(traceback.format_exception(exc))
     code = _failure_code(trace, exc)
@@ -452,6 +456,8 @@ def scan_corpus(
 
     started = time.monotonic()
     emr_path = validate_emr_dir(emr_dir if emr_dir is not None else resolve_emr_dir(None))
+    # Taken before any input is read, and checked again before anything is written
+    fingerprint = emr_fingerprint(emr_path)
     out_path = resolve_output_dir(output_dir, create=True)
     thresholds = load_thresholds(preset, validate=True)
     file_hash = thresholds_sha256()
@@ -563,7 +569,7 @@ def scan_corpus(
         "preset": preset,
         "thresholds_hash": thresholds_preset_hash(thresholds),
         "thresholds_sha256": file_hash,
-        "emr_fingerprint": emr_fingerprint(emr_path),
+        "emr_fingerprint": fingerprint,
         "n_indexed_surgeries": n_indexed,
         "n_ventilated_surgeries": n_ventilated,
         "n_scanned_cases": int(corpus_cases["PID"].nunique()),
@@ -582,6 +588,11 @@ def scan_corpus(
     }
     if should_stop is not None and should_stop():
         raise ScanCancelled("Full-EMR scan cancelled; the previous scan was kept.")
+    if emr_fingerprint(emr_path) != fingerprint:
+        raise EmrChangedDuringScan(
+            "patient_information.csv changed while the full-EMR scan ran; "
+            "nothing was written and the previous scan was kept. Scan again."
+        )
     atomic_write_parquet(corpus_cases, out_path / CORPUS_CASES)
     atomic_write_parquet(corpus_episodes, out_path / CORPUS_EPISODES)
     atomic_write_json(profile, out_path / CORPUS_PROFILE_JSON)

@@ -111,6 +111,95 @@ def test_saved_scan_for_another_emr_is_not_loaded(emr, tmp_path, allow_external)
     assert load_corpus_scan(tmp_path / "out", other) is not None
 
 
+def test_an_emr_replaced_during_the_scan_writes_nothing(tmp_path, allow_external):
+    from src.pipeline.corpus_scan import EmrChangedDuringScan, scan_failure_message
+
+    emr = generate_synthetic_emr(tmp_path / "EMR", n_cases=6, seed=4)
+    info = emr / "patient_information.csv"
+    replaced = []
+
+    def replace_info(message, done, total):
+        if not replaced:  # the first progress call comes after the EMR was read
+            info.write_text(info.read_text() + info.read_text().splitlines()[-1] + "\n")
+            replaced.append(message)
+
+    with pytest.raises(EmrChangedDuringScan) as caught:
+        scan_corpus(emr, tmp_path / "out", workers=1, on_progress=replace_info)
+    assert not (tmp_path / "out" / CORPUS_META).exists()
+    message = scan_failure_message(caught.value, tmp_path / "out")
+    assert "changed while the full-EMR scan ran" in message and str(emr) not in message
+
+
+class _BusyScan:
+    """Stands in for a running CorpusScanWorker."""
+
+    def __init__(self, processed):
+        self.processed = processed
+
+    def isRunning(self):  # noqa: N802
+        return True
+
+    def wait(self):
+        return True
+
+
+def test_desktop_switching_folders_during_a_scan(emr, tmp_path, monkeypatch, allow_external):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    from src.desktop import app as desktop_app
+    from src.desktop.app import MainWindow
+
+    QApplication.instance() or QApplication([])
+    first, second = tmp_path / "first", tmp_path / "second"
+    scan = scan_corpus(emr, first, cases_per_shard=20)
+    other = generate_synthetic_emr(tmp_path / "other" / "EMR", n_cases=6, seed=11)
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setattr(desktop_app, "CorpusScanWorker", _BusyScan)
+    for name, value in {"XDG_CONFIG_HOME": tmp_path / "config", "XDG_DATA_HOME": tmp_path / "data",
+                        "MOVER_SKIP_SETUP": "1", "MOVER_PROCESSED_DIR": first, "MOVER_EMR_DIR": emr}.items():
+        monkeypatch.setenv(name, str(value))
+    win = MainWindow()
+    try:
+        win._load_corpus_scan()
+        assert win.corpus_scan is not None
+        (first / "cases.parquet").write_bytes(b"")  # a sample exists, so the reload would start a worker
+        busy = _BusyScan(first)
+        win._worker = busy
+        win._research_request_id += 1
+        win._active_research_request = win._research_request_id
+        win.research.begin_question("elevated PIP", win._research_request_id)
+        monkeypatch.setenv("MOVER_EMR_DIR", str(other))
+        win._autoload_processed()
+        assert win.corpus_scan is None and win._reload_after_scan
+        # A search that started with the old scan can no longer answer
+        assert win._active_research_request is None and not win.research._searching
+
+        # A scan of the previous processed folder finishing now is not installed
+        monkeypatch.setenv("MOVER_EMR_DIR", str(emr))
+        monkeypatch.setenv("MOVER_PROCESSED_DIR", str(second))
+        win._on_corpus_scan_ok(scan, first)
+        assert win.corpus_scan is None
+        assert "previous data folder" in win.statusBar().currentMessage()
+        win._on_corpus_scan_ok(scan, second)
+        assert win.corpus_scan is not None
+
+        # The reload skipped during the scan runs when it ends
+        reloads = []
+        monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(True))
+        win._after_corpus_scan(busy)
+        assert reloads == [True] and not win._reload_after_scan
+        # but not while the window is closing
+        win._reload_after_scan, win._closing = True, True
+        win._after_corpus_scan(busy)
+        assert reloads == [True] and not win._reload_after_scan
+        win._closing = False
+    finally:
+        win._worker = None
+        win.close()
+
+
 def test_desktop_reload_of_another_emr_drops_the_old_scan(emr, tmp_path, monkeypatch, allow_external):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")

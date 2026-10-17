@@ -70,6 +70,8 @@ def _scenario_search(
     note = f"{head} · {_plural(matched, 'matching case', 'matching cases')}"
     if matched > engine.extract_limit:
         note += f" · answering from the top {engine.extract_limit}"
+    if filters.agent and not engine.agents_from_scan:
+        note += " · agent known for analyzed cases only"
     return replace(result, candidates=tuple(candidates), scope_note=note), candidates[: engine.extract_limit]
 
 

@@ -13,6 +13,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -57,6 +58,9 @@ from src.runtime_paths import (
     wave_dir,
 )
 from src.user_settings import apply_ollama_env_from_settings, load_settings, needs_first_run_setup, settings_path
+
+if TYPE_CHECKING:
+    from src.services.retrieval import RetrievalEngine
 
 NO_VENT_MESSAGE = (
     "this surgery has no ventilator rows in the EMR export, so there are no "
@@ -212,8 +216,12 @@ class MainWindow(QMainWindow):
         self._analysis_facts: dict[str, str] = {}
         self.episodes: pd.DataFrame | None = None
         self.events: pd.DataFrame | None = None
-        # Full-EMR scan results (src.pipeline.corpus_scan.ScanResult), if any
+        # Full-EMR scan results (src.pipeline.corpus_scan.ScanResult), if any,
+        # and the processed folder they belong to
         self.corpus_scan = None
+        self._corpus_scan_dir: Path | None = None
+        # A data reload asked for while a scan ran; it runs when the scan ends
+        self._reload_after_scan = False
         self._worker: QThread | None = None
         self._ollama_worker: OllamaWorker | None = None
         self._ollama_available = False
@@ -434,6 +442,8 @@ class MainWindow(QMainWindow):
 
     # ----- workers -----
     def _autoload_processed(self) -> None:
+        # Even when a job is running and the reload has to wait, an old scan must go now
+        self._drop_stale_scan()
         proc = processed_dir()
         if not (proc / "cases.parquet").exists():
             self._update_status_paths(
@@ -446,6 +456,8 @@ class MainWindow(QMainWindow):
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
         if self._worker and self._worker.isRunning():
+            if isinstance(self._worker, CorpusScanWorker):
+                self._reload_after_scan = True
             return
         self._update_status_paths("Loading data…")
         self._worker = DataLoadWorker(processed=proc, parent=self)
@@ -678,10 +690,11 @@ class MainWindow(QMainWindow):
         self._update_status_paths("Scanning full EMR…")
         worker = CorpusScanWorker(emr_dir(), processed_dir(), preset=self._next_run_preset(), parent=self)
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
-        worker.finished_ok.connect(self._on_corpus_scan_ok)
+        worker.finished_ok.connect(lambda result: self._on_corpus_scan_ok(result, worker.processed))
         worker.failed.connect(self._on_corpus_scan_fail)
         worker.cancelled.connect(self._on_corpus_scan_cancelled)
         worker.finished.connect(self._scan_cancel_button.hide)
+        worker.finished.connect(lambda: self._after_corpus_scan(worker))
         self._scan_cancel_button.setEnabled(True)
         self._scan_cancel_button.show()
         self._worker = worker
@@ -693,8 +706,16 @@ class MainWindow(QMainWindow):
             self._scan_cancel_button.setEnabled(False)
             self.statusBar().showMessage("Cancelling full-EMR scan…")
 
-    def _on_corpus_scan_ok(self, result) -> None:
+    def _on_corpus_scan_ok(self, result, processed: Path | None = None) -> None:
+        from src.pipeline.corpus_scan import scan_matches_emr
+
+        if (processed is not None and processed != processed_dir()) or not scan_matches_emr(result.meta, emr_dir()):
+            # The EMR or processed folder changed while the scan ran
+            self._update_status_paths("Full-EMR scan finished for a previous data folder; it was not loaded.")
+            self._drop_stale_scan()
+            return
         self.corpus_scan = result
+        self._corpus_scan_dir = processed_dir()
         self._research_engine = None  # scenario agents come from the scan
         meta = result.meta
         failures = meta.get("failed_shards", [])
@@ -716,6 +737,28 @@ class MainWindow(QMainWindow):
         self._update_status_paths(msg.splitlines()[0])
         QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
 
+    def _after_corpus_scan(self, worker: QThread) -> None:
+        if self._reload_after_scan and self._worker is worker:
+            self._reload_after_scan = False
+            if self._closing:
+                return
+            worker.wait()
+            self._autoload_processed()
+
+    def _drop_stale_scan(self) -> None:
+        """Forget a loaded scan that no longer matches the EMR or processed folder."""
+        from src.pipeline.corpus_scan import scan_matches_emr
+
+        scan = self.corpus_scan
+        if scan is None or (self._corpus_scan_dir == processed_dir() and scan_matches_emr(scan.meta, emr_dir())):
+            return
+        self.corpus_scan = None
+        self._corpus_scan_dir = None
+        # A search started with the old scan must not answer after the switch
+        if self.research._searching:
+            self._cancel_research()
+        self._data_changed()
+
     def _load_corpus_scan(self) -> None:
         """Pick up a previous full-EMR scan saved next to the processed sample.
 
@@ -726,8 +769,10 @@ class MainWindow(QMainWindow):
         self._research_engine = None  # scenario agents come from the scan
         try:
             self.corpus_scan = load_corpus_scan(processed_dir(), emr_dir())
+            self._corpus_scan_dir = processed_dir() if self.corpus_scan is not None else None
         except Exception as exc:
             self.corpus_scan = None
+            self._corpus_scan_dir = None
             root = processed_dir()
             self._warn(
                 "Saved full-EMR scan could not load",
@@ -979,10 +1024,25 @@ class MainWindow(QMainWindow):
             agents.update(zip(known["PID"].astype(str), known["primary_agent_name"].astype(str), strict=True))
         return agents
 
+    def _new_research_engine(self, source: Path) -> RetrievalEngine:
+        from src.llm.ollama_client import OllamaEmbedder
+        from src.services.retrieval import RetrievalEngine
+
+        embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
+        return RetrievalEngine(
+            emr=source,
+            cache_path=settings_path().parent / "case_embeddings.sqlite3",
+            embedder=OllamaEmbedder(embed_model),
+            preset=self._active_preset,
+            analysis_facts=self._analysis_facts,
+            case_agents=self._case_agents(),
+            agents_from_scan=self.corpus_scan is not None,
+            analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
+        )
+
     def _start_research_search(self, question: str) -> None:
         from src.guardrails.validate_io import validate_emr_dir
         from src.llm.ollama_client import OllamaEmbedder
-        from src.services.retrieval import RetrievalEngine
 
         articles = self.research.scope == "Articles"
         if articles:
@@ -998,17 +1058,7 @@ class MainWindow(QMainWindow):
                 return
             if (self._research_engine is None or self._research_engine.emr != source
                     or any(worker.isRunning() for worker in self._research_workers.values())):
-                embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
-                self._research_engine = RetrievalEngine(
-                    emr=source,
-                    cache_path=settings_path().parent / "case_embeddings.sqlite3",
-                    embedder=OllamaEmbedder(embed_model),
-                    preset=self._active_preset,
-                    analysis_facts=self._analysis_facts,
-                    case_agents=self._case_agents(),
-                    agents_from_scan=self.corpus_scan is not None,
-                    analyzed_pids=(self.cases["PID"].astype(str).tolist() if self.cases is not None and "PID" in self.cases else []),
-                )
+                self._research_engine = self._new_research_engine(source)
             engine = self._research_engine
         if self.research._searching:
             self._cancel_research()

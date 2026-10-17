@@ -947,6 +947,10 @@ class ResearchWorkspace(QWidget):
     def cancel_question(self) -> None:
         state = self._before_question
         turn = self.conversation.turn(self._active_turn_request)
+        if self._status_is_progress:
+            # The cancelled turn keeps its board; it must not keep the running step
+            self.status_label.setText("Search cancelled.")
+            self._status_is_progress = False
         if turn is not None and self._searching:
             turn.state = "cancelled"
             self._save_board()
@@ -957,9 +961,6 @@ class ResearchWorkspace(QWidget):
         self.set_searching(False)
         if state is not None:
             self._restore_board(state)
-        elif self._status_is_progress:
-            self.status_label.setText("Search cancelled.")
-        self._status_is_progress = False
 
     def show_turn(self, request_id: int) -> None:
         turn = self.conversation.turn(request_id)
