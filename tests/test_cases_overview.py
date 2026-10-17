@@ -662,18 +662,49 @@ def test_sort_arrow_is_visible_in_both_app_themes(qapp, theme):
         apply_theme(qapp, "light")
 
 
-def _arrow_rows(header) -> list[int]:
-    """Painted width of the sort arrow in each pixel row, top to bottom."""
-    with_arrow = header.grab().toImage()
-    header.setSortIndicatorShown(False)
-    QApplication.processEvents()
-    without_arrow = header.grab().toImage()
-    header.setSortIndicatorShown(True)
-    widths = [
-        sum(with_arrow.pixel(x, y) != without_arrow.pixel(x, y) for x in range(with_arrow.width()))
-        for y in range(with_arrow.height())
-    ]
-    return [w for w in widths if w]
+def _arrow_shapes(table, column: int) -> tuple[list[int], list[int]]:
+    """Painted width of the sort arrow per pixel row, descending then ascending.
+
+    Only pixels that differ between the two sort orders are the arrow; the
+    header text stays put, so it never counts. Within that area a pixel is
+    arrow when it differs from the header background.
+    """
+    header = table.horizontalHeader()
+    images = []
+    for order in (Qt.SortOrder.DescendingOrder, Qt.SortOrder.AscendingOrder):
+        table.sortByColumn(column, order)
+        QApplication.processEvents()
+        images.append(header.grab().toImage())
+    down, up = images
+    changed = [(x, y) for y in range(down.height()) for x in range(down.width())
+               if down.pixel(x, y) != up.pixel(x, y)]
+    assert changed, "the sort arrow did not change with the sort order"
+    left, right = min(x for x, _ in changed), max(x for x, _ in changed)
+    top, bottom = min(y for _, y in changed), max(y for _, y in changed)
+    background = down.pixel(left - 1, top - 1)
+
+    def rows(image) -> list[int]:
+        widths = [sum(image.pixel(x, y) != background for x in range(left, right + 1))
+                  for y in range(top, bottom + 1)]
+        return [w for w in widths if w]
+
+    return rows(down), rows(up)
+
+
+def test_cases_header_asks_the_style_for_a_down_arrow_when_descending(qapp):
+    from PySide6.QtWidgets import QStyleOptionHeader
+
+    view = _workspace(_cases())
+    view.show_cases()
+    table = view._cases_overview.table
+    header = table.horizontalHeader()
+    option = QStyleOptionHeader()
+    header.initStyleOptionForIndex(option, SCORE_COLUMN)
+    assert header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+    assert option.sortIndicator == QStyleOptionHeader.SortIndicator.SortDown
+    table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.AscendingOrder)
+    header.initStyleOptionForIndex(option, SCORE_COLUMN)
+    assert option.sortIndicator == QStyleOptionHeader.SortIndicator.SortUp
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
@@ -689,12 +720,9 @@ def test_sort_arrow_points_down_for_descending_and_up_for_ascending(qapp, theme)
         header = table.horizontalHeader()
         assert header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
         assert header.sectionsClickable()
-        rows = _arrow_rows(header)
-        assert len(rows) >= 3 and rows[0] > rows[-1], rows  # wide at the top: points down
-        table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.AscendingOrder)
-        QApplication.processEvents()
-        rows = _arrow_rows(header)
-        assert len(rows) >= 3 and rows[0] < rows[-1], rows  # wide at the bottom: points up
+        down, up = _arrow_shapes(table, SCORE_COLUMN)
+        assert len(down) >= 3 and down[0] > down[-1], down  # wide at the top: points down
+        assert len(up) >= 3 and up[0] < up[-1], up  # wide at the bottom: points up
     finally:
         apply_theme(qapp, "light")
 
