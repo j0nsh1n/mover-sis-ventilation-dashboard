@@ -7,6 +7,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The number check ties each number in an answer to the signal it describes: "PIP reached 23" must match a PIP figure in the sources, not the patient's age 23 or a heart-rate value. The signal is the one named last before the number in its sentence, or the column header in a table of rows. With no signal named, a number with a measurement unit (cmH2O, mmHg, mL, mL/kg, bpm, /min, vol%) must match a source figure in that unit. Counts, times and minute numbers are compared as before, as are numbers about signals the sources do not label, such as most article abstracts. On the eval's three seed-8 extracts, made-up PIP, PEEP, tidal volume, ETCO2 and heart-rate values that passed by coincidence fell from 30% to none; the eval now reports this as `coincidental_pass_rate`.
+
 ## [0.13.0] — 2026-10-16
 
 - Signal detail has an "Ask about this minute" field under the slider: the local model answers from that case's rows within 10 minutes of the cursor, the flagged episode covering it and its thresholds, with the same checks as research answers. The answer is labeled with the minute and case, stays out of the conversation panel and later questions, and clears when the minute or case changes or signal detail is left.

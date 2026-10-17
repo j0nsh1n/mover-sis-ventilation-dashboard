@@ -52,6 +52,16 @@ _SIGNALS = {
     "etco2": "End-tidal CO2",
     "hr": "Heart rate",
 }
+# Made-up claims for the coincidental pass rate: every whole number in a plausible range
+# that is not one of the signal's own figures in an extract.
+COINCIDENCE_SEARCH = "high airway pressure"
+_CLAIMS = {
+    "pip": ("PIP", "cmH2O", range(10, 46)),
+    "peep": ("PEEP", "cmH2O", range(0, 16)),
+    "tv": ("Tidal volume", "mL", range(300, 701, 5)),
+    "etco2": ("ETCO2", "mmHg", range(25, 56)),
+    "hr": ("Heart rate", "bpm", range(40, 121)),
+}
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}")
 _WRONG_AGE_OFFSET = 25
 
@@ -340,6 +350,29 @@ def summarize(outcomes: Sequence[Outcome], *, live: bool) -> dict[str, Any]:
     return metrics
 
 
+def coincidental_pass_rate(extracts: Sequence[str]) -> float | None:
+    """Share of made-up signal values the number check accepts.
+
+    Each claim names a signal and its unit ("PIP reached 27 cmH2O.") with a whole
+    number that none of that signal's printed figures rounds to, so a pass can only
+    come from an unrelated source number.
+    """
+    from src.llm.grounding import find_ungrounded_numbers
+
+    passed = total = 0
+    for key, (name, unit, values) in _CLAIMS.items():
+        own: set[int] = set()
+        for extract in extracts:
+            line = next((ln for ln in extract.splitlines() if ln.startswith(f"- {_SIGNALS[key]}:")), "")
+            own.update(math.floor(float(v) + 0.5) for v in re.findall(r"-?\d+(?:\.\d+)?", line.split("(n=")[0]))
+        for value in values:
+            if value in own:
+                continue
+            total += 1
+            passed += not find_ungrounded_numbers(f"{name} reached {value} {unit}.", extracts)
+    return _rate(passed, total)
+
+
 def build_corpus(work: Path, seed: int, n_cases: int) -> tuple[Any, dict[str, Any]]:
     """The synthetic EMR, its pipeline output and a keyword retrieval engine over it."""
     from src.pipeline.run import run_pipeline
@@ -384,7 +417,10 @@ def run_eval(
     with mock.patch.dict(os.environ, env):
         engine, frames = build_corpus(work, header["seed"], header["n_cases"])
         engine.extract_limit = max(e.take for e in entries)
-        extract_of: dict[str, str] = {}
+        picked = [c.pid for c in engine.search(COINCIDENCE_SEARCH).candidates[:3]]
+        texts, fetched = engine.fetch_extracts(picked, session_frames=frames)
+        extract_of: dict[str, str] = dict(zip(fetched, texts, strict=True))
+        header["coincidence_extracts"] = [extract_of[pid] for pid in fetched]
         for entry in entries:
             picked = list(engine.search(entry.search).candidates[: entry.take])
             missing = [c.pid for c in picked if c.pid not in extract_of]
@@ -455,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     metrics = summarize(outcomes, live=client is not None)
     metrics["seed"], metrics["n_cases"] = header["seed"], header["n_cases"]
+    metrics["coincidental_pass_rate"] = coincidental_pass_rate(header.get("coincidence_extracts", []))
     if args.live:
         metrics["model"] = args.live
         metrics["timestamp"] = datetime.now(UTC).isoformat(timespec="seconds")

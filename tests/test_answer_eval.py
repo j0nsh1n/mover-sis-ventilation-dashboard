@@ -38,6 +38,12 @@ def test_gate_catches_every_flawed_answer_and_flags_no_clean_one(scripted):
     assert metrics["draft_grounding_rate"] < 1.0, "the corpus must contain drafts with invented numbers"
 
 
+def test_made_up_signal_values_do_not_pass_by_coincidence(scripted):
+    _, metrics = scripted
+    # Before numbers were tied to their signal, about 30% passed on these extracts
+    assert metrics["coincidental_pass_rate"] <= 0.02
+
+
 def test_corpus_covers_each_kind_of_answer(scripted):
     _, metrics = scripted
     assert metrics["n_entries"] >= 20

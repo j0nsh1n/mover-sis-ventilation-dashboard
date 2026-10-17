@@ -83,13 +83,19 @@ def test_fabricated_value_is_caught(extract):
     assert find_ungrounded_numbers(answer, [extract]) == ["45"]
 
 
-@pytest.mark.parametrize(
-    "spelling",
-    ["{v} cmH2O", "{v} cm H₂O", "{v} cm H2O", "{v}cmH2O", "{v} mmHg", "{v}%", "{v} /min", "{v} bpm", "{v} mL"],
-)
+@pytest.mark.parametrize("spelling", ["{v} cmH2O", "{v} cm H₂O", "{v} cm H2O", "{v}cmH2O", "{v}%"])
 def test_unit_spellings_do_not_matter(extract, spelling):
     peak = _value(extract, "Peak inspiratory pressure")
     assert find_ungrounded_numbers("It was " + spelling.format(v=peak), [extract]) == []
+
+
+@pytest.mark.parametrize("unit", ["mmHg", "/min", "bpm", "mL", "vol%"])
+def test_a_value_in_another_unit_is_not_grounded(extract, unit):
+    peak = _value(extract, "Peak inspiratory pressure")
+    if any(_value(extract, label, bound) == peak for label in ("End-tidal CO2", "Heart rate", "Tidal volume",
+           "Respiratory rate", "Noninvasive MAP") for bound in ("min", "max")):
+        pytest.skip("the PIP figure also appears in a signal measured in another unit")
+    assert find_ungrounded_numbers(f"It was {peak} {unit}", [extract]) == [peak]
 
 
 @pytest.mark.parametrize(
@@ -451,3 +457,72 @@ def test_prototype_drafts_and_conversation_answers_have_no_false_positive(extrac
 
     for draft in DEFAULT_DRAFTS:
         assert find_ungrounded_numbers(draft, [extract], "Where does pressure peak?") == [], draft
+
+
+CASE = (
+    "SOURCE EXTRACT (analyzed case) PID=SYN0000085e40\n"
+    "- Age: 23\n"
+    "- Case duration (min): 67.0\n"
+    "- Peak inspiratory pressure: median 18.6 cmH2O, IQR [18.1–18.9] cmH2O, min–max [16.9–19.9] cmH2O (n=64)\n"
+    "- PEEP: median 8.0 cmH2O, IQR [8.0–8.0] cmH2O, min–max [8.0–8.0] cmH2O (n=64)\n"
+    "- Heart rate: median 66.6 bpm, IQR [65.3–68.2] bpm, min–max [60.1–71.0] bpm (n=98)\n"
+    "- SpO2: median 98.5 %, IQR [98.0–99.0] %, min–max [89.0–100.0] % (n=98)\n"
+    "- spo2_low [warn]: t=32–37 min, during maintenance (Low oxygen saturation)\n"
+    "- 2016-03-01 07:08:00: Intubation\n"
+)
+MINUTE = (
+    "SOURCE EXTRACT (analyzed case) PID=SYN0000085e40\n"
+    "At the selected minute: PIP 22; ETCO2 38; HR 71\n"
+    "SOURCE ROWS from 30 to 34 min\n"
+    "t_min | PIP (cmH₂O) | ETCO2 (mmHg) | HR (bpm)\n"
+    "30 | 21 | 37 | 70\n"
+    "31 | 24 | 39 | 74\n"
+)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "PIP reached 23 cmH2O.",  # the age, not a PIP value
+        "Peak pressure peaked at 67 cmH2O.",  # the case duration
+        "The heart rate rose to 98.5 bpm.",  # the SpO2 median
+        "PIP reached 66.6.",  # the heart-rate median, no unit
+        "A pressure of 66.6 cmH2O was recorded.",  # no signal named: compared with cmH2O values only
+    ],
+)
+def test_a_value_of_another_signal_is_not_grounded(answer):
+    assert find_ungrounded_numbers(answer, [CASE]) != []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "PIP and PEEP were 18.6 and 8.0 cmH2O.",
+        "Heart rate was 66.6 bpm while PIP stayed at 18.6 cmH2O.",
+        "PIP ranged from 16.9 to 19.9 cmH2O (IQR 18.1–18.9).",
+        "SpO2 fell to 89% during the spo2_low episode at t=32–37 min.",
+        "PIP rose after intubation at 07:08 and stayed near 19 cmH2O for 67 minutes.",
+        "PIP was recorded in 64 of 98 minutes.",
+        "The case was 23 years old; PIP peaked at 19.9 cmH2O.",
+        "PIP rose by 3.0 cmH2O from its minimum.",
+    ],
+)
+def test_values_of_the_named_signal_and_other_numbers_are_grounded(answer):
+    assert find_ungrounded_numbers(answer, [CASE]) == []
+
+
+def test_a_pipe_table_attributes_values_by_column():
+    assert find_ungrounded_numbers("PIP was 24 cmH₂O at minute 31.", [MINUTE]) == []
+    assert find_ungrounded_numbers("PIP was 22 at the selected minute and ETCO2 38.", [MINUTE]) == []
+    assert find_ungrounded_numbers("PIP was 39 at minute 31.", [MINUTE]) == ["39"]  # the ETCO2 cell
+    assert find_ungrounded_numbers("HR was 37 bpm.", [MINUTE]) == ["37"]
+
+
+def test_the_question_grounds_a_value_for_any_signal():
+    assert find_ungrounded_numbers("PIP never exceeded 35 cmH2O.", [CASE], "Was PIP above 35?") == []
+
+
+def test_sources_without_a_labeled_signal_fall_back_to_any_value():
+    abstract = "[A1] Smith et al. 2019. Airway pressure stayed at 25 in lean adults."
+    assert find_ungrounded_numbers("PIP was 25 cmH2O in lean adults [A1].", [abstract]) == []
+    assert find_ungrounded_numbers("PIP was 27 cmH2O in lean adults [A1].", [abstract]) == ["27"]
