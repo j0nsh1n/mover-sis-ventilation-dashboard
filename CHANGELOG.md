@@ -11,7 +11,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). Without a scan, the scope line of an agent-filtered scenario says the agent is known for analyzed cases only; when the agent filter leaves nothing, the answer says where agents come from and that a scan would widen the search.
 - The Research status line no longer keeps a running step such as "Model round 1/8…" or "Rewriting the draft…" after the search ends: it reads "Search finished.", keeps a failure message, and returns to the earlier status when the search is cancelled. Reopening an earlier question, cancelled ones included, shows "Search finished." or "Search cancelled." instead of the running step.
 - Enter and Return now press the focused button in the main window, as Space already did: Cases, the Rules drawer, the Cases overview, the conversation panel and the status-bar buttons included.
-- The Cases table's sort arrow points down for a descending sort (highest first) and up for an ascending one; it pointed the other way.
 - `requirements.txt` no longer installs scipy: nothing in the app, the optional browser UI or the tests imports it. The packaged app already left it out.
 
 ## [0.13.0] — 2026-10-16

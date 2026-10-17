@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
-    QStyleOptionHeader,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -198,25 +197,6 @@ class _CasesProxy(QSortFilterProxyModel):
         return bool(first < second) if ascending else bool(first > second)
 
 
-class _CasesHeader(QHeaderView):
-    """Qt draws an up arrow for a descending sort; this header points it down."""
-
-    def __init__(self, parent: QTableView) -> None:
-        super().__init__(Qt.Orientation.Horizontal, parent)
-        # What QTableView sets on the header it builds itself
-        self.setSectionsClickable(True)
-        self.setHighlightSections(True)
-
-    _FLIP = {
-        QStyleOptionHeader.SortIndicator.SortUp: QStyleOptionHeader.SortIndicator.SortDown,
-        QStyleOptionHeader.SortIndicator.SortDown: QStyleOptionHeader.SortIndicator.SortUp,
-    }
-
-    def initStyleOptionForIndex(self, option, logical_index: int) -> None:  # noqa: N802
-        super().initStyleOptionForIndex(option, logical_index)
-        option.sortIndicator = self._FLIP.get(option.sortIndicator, option.sortIndicator)
-
-
 class _CasesTable(QTableView):
     """Emits ``row_activated`` once per click or Enter; a double-click is one action, not two."""
 
@@ -354,7 +334,6 @@ class CasesOverview(QWidget):
         self._proxy.setSourceModel(self._model)
         self._proxy.setSortRole(SORT_ROLE)
         self.table = _CasesTable()
-        self.table.setHorizontalHeader(_CasesHeader(self.table))
         self.table.setObjectName("casesTable")
         self.table.setAccessibleName("Cases")
         self.table.setModel(self._proxy)

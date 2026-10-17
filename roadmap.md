@@ -121,7 +121,6 @@ to publish.
   - Clear the progress line ("Rewriting the draft...", "Model round 1/8...") when an
     answer finishes, fails, or is cancelled
   - Enter activates the Cases button in G, as Space already does
-  - The Cases table's sort arrow points down for a descending sort
   - Remove the unused `scipy` pin from `requirements.txt` (nothing imports it); keep
     the packaging exclude
 - Complete when: each item has a test that fails before the fix, the five prototype
@@ -145,4 +144,7 @@ to publish.
 - On Windows, a minimum window width of about 1,060 px (the 900 px layout tests
   skip there)
 - The per-size chart image cache grows on each resize until the next case opens
+- The Cases table's sort arrow points up for a descending sort on Linux; Qt draws it
+  the other way on Windows, so the fix is to draw our own arrow, checked on both
+  systems (a flip of Qt's indicator was dropped from v0.14)
 - The Nobara XKB crash, if the operator reopens it
