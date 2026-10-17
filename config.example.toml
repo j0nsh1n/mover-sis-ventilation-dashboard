@@ -1,0 +1,4 @@
+# Copy to config.toml (git-ignored) and edit.
+# raw_dir is READ-ONLY: never write, move or chmod anything there.
+raw_dir = "/var/mnt/games/EMR"
+out_dir = "/var/mnt/games/processed"
