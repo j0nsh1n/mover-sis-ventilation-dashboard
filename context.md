@@ -2,15 +2,13 @@
 
 ## Current State
 
-- **Version:** 0.13.0 released 2026-10-16 (roadmap Phases 7, 8 and 9, and Phase 6
-  engineering). 0.12.1 before it carried the v0.11 and v0.12 work. Installed apps
-  update through the signed Pages manifest.
-- **Local release candidate:** v0.14.0 Linux package built 2026-10-17 from merged
-  PR #37 (`b9dbcb9`) under `~/mover-sis-work/release-v0.14.0/`. It is not published
-  or installed. Full Python gate passed, 1,182 passed and six skipped; frozen
-  startup and 19-case scan, packaging, thresholds and both Rust suites passed.
-  Grok 4.6 at xhigh returned PASS+NOTES. Available ruff 0.16.6 and mypy 2.3.0 are
-  below the spec pins. No local Windows archive was built.
+- **Version:** source is 0.15.0, prepared locally on 2026-10-17. Published version
+  remains 0.13.0, released 2026-10-16. No installed app was replaced.
+- **Local release candidates:** v0.14.0 Linux archive from merged PR #37
+  (`b9dbcb9`) is preserved under `~/mover-sis-work/release-v0.14.0/`. The combined
+  v0.15.0 Linux AppImage is under `~/mover-sis-work/release-v0.15.0/`. Its first
+  reviewed image passed startup and a 19-case scan. Final rebuild is pending
+  after two minor review fixes. No local Windows archive was built.
 - **Branch:** `feat/v0.15-signal-grounding`, with the existing grounding changes
   preserved and the merged v0.14 base integrated locally. The integrated result
   passed validation and independent review. Two working branch names exist.
@@ -20,13 +18,16 @@
   Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
   manifest are live.
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** the v0.15 combined gate passed 1,227 tests with seven skipped on
-  Python 3.14.7, 2026-10-17. Available ruff 0.16.6 and mypy 2.3.0 passed.
+- **Tests:** the v0.15 AppImage gate passed 1,233 tests with seven skipped on
+  Python 3.14.7, 2026-10-17. After two minor review fixes, 13 focused path,
+  launcher and version cases, ruff and mypy passed. Available ruff 0.16.6 and
+  mypy 2.3.0 are below spec pins 0.16.9 and 2.3.1.
   The recorded eval has zero mismatches, a 100% catch rate and no false flags.
   Rust updater and signer suites passed on the unchanged v0.14 trees the same
-  day. The v0.14 frozen Linux startup and scan self-test passed. The v0.15 frozen
-  tests skipped because no bundle exists in this checkout; real-wave tests
-  remained opt-in and did not run. No real research data was read.
+  day. Frozen tests in this checkout skipped because the bundle was built in
+  the release snapshot. Actual v0.15 AppImage startup and scan passed, and
+  scripted source UI Research, minute follow-up and article flows passed.
+  Real-wave tests remained opt-in and did not run. No real research data was read.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the first tab after setup; local embedding
@@ -224,22 +225,25 @@ Wave root (optional) ──► wave_decode                   │
 - **Release preparation:** local v0.14.0 Linux candidate, checksum, metadata patch,
   independent review and validation report are under
   `~/mover-sis-work/release-v0.14.0/`. Published version remains v0.13.0.
-- **In flight:** v0.15 signal-grounding continuation. GLM through OpenCode
-  completed the source/test map. Composer 2.5 through Cursor CLI with Fast off
-  completed review notes and proposed spec wording. A fresh GLM resource
-  reporter uses raw OS readings after the first reporter was stopped for
-  inaccurate fields. Composer's reports are complete, with a mixed-source
-  wording correction noted by the coordinator. Grok 4.6 through Grok CLI at
-  xhigh completed two independent review rounds. Its article-header finding
-  is fixed with four regression cases. The integrated tree passed 1,227 tests
-  with seven skipped; packaging passed 11 with two skipped because no frozen
-  v0.15 bundle exists. Lint, types, thresholds and the recorded eval passed.
-  Grok round 2 returned PASS+NOTES. On three seed-8 extracts, made-up signal
+- **Grounding:** local merge `9e7ebac` combines the existing v0.15 changes with
+  merged main `b9dbcb9`. GLM completed the source map; Composer 2.5 through
+  Cursor CLI with Fast off wrote review notes and proposed spec wording.
+  Grok 4.6 through Grok CLI at xhigh returned PASS+NOTES after its article-header
+  finding was fixed with four cases. On three seed-8 extracts, made-up signal
   claims passed 51.67% on the v0.14 checker and 0% on this checker; true printed
   figures passed 100% on both. No live-model or real-data evaluation ran.
-  Task IDs and sealed brief paths are in `.handoff/v015-orchestration.md`.
-- **Next:** publication and any new package remain pending. Review receipts, metrics and
-  the corrected proposed numeric-grounding spec text are under
-  `~/mover-sis-work/v0.15/`. The spec has not changed. No push, PR, installed-app
-  replacement or publication occurred. Real-data calibration, a v0.15 frozen
-  build, Windows verification and the earlier spec proposals remain open.
+  Task IDs and sealed briefs are in `.handoff/v015-orchestration.md`.
+- **AppImage:** local v0.15.0 packaging uses the existing Bash frozen build,
+  explicit pinned AppImage tools and manual file replacement. Saved/env paths
+  take precedence; new outputs default to writable user data outside the image.
+  Grok round 1 returned PASS+NOTES. Its checksum relocation and empty-XDG notes
+  are fixed and passed 13 focused tests. Round 2 returned PASS+NOTES with no new
+  defects. The final rebuild is pending the machine's available-memory floor.
+  GLM's raw resource readings were usable, but its summary again mislabeled a
+  minimum; that reporting attempt stopped. The full test gate exited normally.
+- **Next:** finish the local AppImage refresh when memory allows. Release records
+  are under `~/mover-sis-work/release-v0.15.0/`; numeric-grounding records and the
+  corrected spec proposal remain under `~/mover-sis-work/v0.15/`. The spec has
+  not changed. No push, PR, installed-app replacement or publication occurred.
+  Native display launch, other Linux distributions, Windows verification,
+  real-data calibration and the proposed spec edits remain open.

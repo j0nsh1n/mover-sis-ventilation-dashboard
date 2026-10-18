@@ -143,6 +143,9 @@ to publish.
 - Signal- and unit-aware number grounding (coincidental matches with unrelated
   source numbers): implemented and independently reviewed locally on the v0.15
   branch, 2026-10-17; publication is pending.
+- A local v0.15.0 Linux AppImage was built and independently reviewed on
+  2026-10-17. Manual replacement and Bash packaging were selected. Two minor
+  fixes passed focused tests; the final rebuild and publication remain pending.
 - On Windows, a minimum window width of about 1,060 px (the 900 px layout tests
   skip there)
 - The per-size chart image cache grows on each resize until the next case opens

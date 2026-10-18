@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-17
+
+This version combines the v0.14 desktop fixes and v0.15 number-grounding work.
+The local v0.14 Linux candidate was not published separately.
+
+- A Linux AppImage packages the desktop as one executable file. It keeps saved
+  data paths, defaults new outputs to the user's data directory, and uses manual
+  AppImage replacement for updates.
+
 - The number check ties each number in an answer to the signal it describes: "PIP reached 23" must match a PIP figure in the sources (or a threshold in PIP's unit), not the patient's age 23 or a heart-rate value. A number is tied to the signals named just before it in its sentence, or to its column's header in a table of rows; with no signal named, a number with a measurement unit (cmH2O, mmHg, mL, mL/kg, bpm, /min, vol%) must match a source figure in that unit. Counts, times, dates, ages, doses and figure numbers, and every number in article abstracts, are compared as before. On the eval's three seed-8 extracts, made-up PIP, PEEP, tidal volume, ETCO2, heart-rate, SpO2 and FiO2 values that passed by coincidence fell from 52% to none, and every figure the extracts print still passes; the eval reports both as `coincidental_pass_rate` and `true_claim_pass_rate`. The "Ask about this minute" extract names the signal on its "Mean flagged value" line when the rule watches one signal.
 
 - Article number checks recognize catalog headers with parenthesized publication years and periods in titles. Abstract figures retain their existing value-only check, while unsupported figures are still rewritten or removed.

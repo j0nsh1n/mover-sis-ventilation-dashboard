@@ -79,6 +79,9 @@ def data_dir() -> Path:
         return Path(override).expanduser().resolve()
     if _session_data_dir is not None:
         return _session_data_dir
+    if os.environ.get("MOVER_APPIMAGE") == "1":
+        xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+        return (Path(xdg).expanduser() / "mover-sis-monitor" / "data").resolve()
     return app_dir() / "data"
 
 
