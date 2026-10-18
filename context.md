@@ -7,8 +7,9 @@
 - **Local release candidates:** v0.14.0 Linux archive from merged PR #37
   (`b9dbcb9`) is preserved under `~/mover-sis-work/release-v0.14.0/`. The combined
   v0.15.0 Linux AppImage is under `~/mover-sis-work/release-v0.15.0/`. Its first
-  reviewed image passed startup and a 19-case scan. Final rebuild is pending
-  after two minor review fixes. No local Windows archive was built.
+  reviewed image is preserved. The final image was rebuilt after two minor
+  fixes and passed startup, a 19-case scan and all 13 packaging checks. No local
+  Windows archive was built.
 - **Branch:** `feat/v0.15-signal-grounding`, with the existing grounding changes
   preserved and the merged v0.14 base integrated locally. The integrated result
   passed validation and independent review. Two working branch names exist.
@@ -27,6 +28,8 @@
   day. Frozen tests in this checkout skipped because the bundle was built in
   the release snapshot. Actual v0.15 AppImage startup and scan passed, and
   scripted source UI Research, minute follow-up and article flows passed.
+  The final image's data_dir bytecode matches the reviewed source; its inner
+  executable matches the verified frozen bundle, and its portable checksum passed.
   Real-wave tests remained opt-in and did not run. No real research data was read.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
@@ -238,10 +241,12 @@ Wave root (optional) ──► wave_decode                   │
   take precedence; new outputs default to writable user data outside the image.
   Grok round 1 returned PASS+NOTES. Its checksum relocation and empty-XDG notes
   are fixed and passed 13 focused tests. Round 2 returned PASS+NOTES with no new
-  defects. The final rebuild is pending the machine's available-memory floor.
+  defects. The final rebuild and artifact checks passed after available memory
+  recovered above 8 GiB. Source commit is `44adc9a` and the tree is local only.
   GLM's raw resource readings were usable, but its summary again mislabeled a
-  minimum; that reporting attempt stopped. The full test gate exited normally.
-- **Next:** finish the local AppImage refresh when memory allows. Release records
+  minimum; that reporting attempt stopped. A fresh GLM raw-only collector then
+  completed successfully. The full test gate exited normally.
+- **Next:** manual native-display review of the local AppImage. Release records
   are under `~/mover-sis-work/release-v0.15.0/`; numeric-grounding records and the
   corrected spec proposal remain under `~/mover-sis-work/v0.15/`. The spec has
   not changed. No push, PR, installed-app replacement or publication occurred.
