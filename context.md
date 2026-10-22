@@ -2,11 +2,32 @@
 
 ## Current State
 
+- **Audit remediation committed locally (2026-10-22):** Grok Bot's confirmed
+  release blockers and Fix first items are fixed: EMR output overlap,
+  processed-source identity, absent-signal numbers, heart-rate units, safe error
+  messages with an owner-only local log, accessibility and layout. Codex
+  (gpt-6-luna) reviewed the full change; its one finding, an existing log keeping
+  wider permissions, is fixed and covered by a Rust contract shown to fail without
+  the fix. Two grounding gaps from the earlier Phase 11 review (list components,
+  question values as difference operands) are fixed with tests. Full Python gate:
+  1247 passed, 2 skipped, 5 real-data deselected; ruff and mypy clean. Rust:
+  10 desktop and 2 parser contracts pass, the frozen-bundle check awaits a build.
+- **Native AppImage QA:** the unchanged v0.15 image passed visible setup,
+  processing, cases/charts, Rules filtering, fictional article import and
+  settings/data persistence. Case detail and live AI remain incomplete. User
+  approved holo9b-16k:latest through local Ollama and confined mouse input;
+  model selection still shows qwen2.5:14b after two attempts, and no model was
+  invoked. Live AI testing is paused at the user's request. Evidence is under
+  `~/Projects/medical/mover/_work/appimage-human-20261018-r1/`.
+- **Portable build preparation:** the original frozen dependencies require up
+  to GLIBC 2.43. A separate local Ubuntu 24.04 container now has Python 3.14.7,
+  PySide6 6.11.2 and the existing pinned dependencies on GLIBC 2.39. No repaired
+  app has been built yet. Files are under `~/Projects/medical/mover/_work/appimage-fix-first/`.
 - **Version:** source is 0.15.0, prepared locally on 2026-10-17. Published version
   remains 0.13.0, released 2026-10-16. No installed app was replaced.
 - **Local release candidates:** v0.14.0 Linux archive from merged PR #37
-  (`b9dbcb9`) is preserved under `~/mover-sis-work/release-v0.14.0/`. The combined
-  v0.15.0 Linux AppImage is under `~/mover-sis-work/release-v0.15.0/`. Its first
+  (`b9dbcb9`) is preserved under `~/Projects/medical/mover/_work/release-v0.14.0/`. The combined
+  v0.15.0 Linux AppImage is under `~/Projects/medical/mover/_work/release-v0.15.0/`. Its first
   reviewed image is preserved. The final image was rebuilt after two minor
   fixes and passed startup, a 19-case scan and all 13 packaging checks. No local
   Windows archive was built.
@@ -125,6 +146,7 @@
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
 | `packaging/` | PyInstaller spec (targeted collection + path filters), entry, rthooks |
 | `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
+| `rust-desktop-tests/` | Rust-owned desktop regression contracts with a bounded Python/Qt observation bridge |
 | `src/update.py`, `src/desktop/updates.py` | Signed checks, staging, apply, rollback |
 | `tools/update-manifest/` | Rust release manifest signer |
 | `.github/workflows/` | CI and release jobs, including Pages deployment |
@@ -224,10 +246,10 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-10-17
+- **Date:** 2026-10-18
 - **Release preparation:** local v0.14.0 Linux candidate, checksum, metadata patch,
   independent review and validation report are under
-  `~/mover-sis-work/release-v0.14.0/`. Published version remains v0.13.0.
+  `~/Projects/medical/mover/_work/release-v0.14.0/`. Published version remains v0.13.0.
 - **Grounding:** local merge `9e7ebac` combines the existing v0.15 changes with
   merged main `b9dbcb9`. GLM completed the source map; Composer 2.5 through
   Cursor CLI with Fast off wrote review notes and proposed spec wording.
@@ -246,9 +268,24 @@ Wave root (optional) ──► wave_decode                   │
   GLM's raw resource readings were usable, but its summary again mislabeled a
   minimum; that reporting attempt stopped. A fresh GLM raw-only collector then
   completed successfully. The full test gate exited normally.
-- **Next:** manual native-display review of the local AppImage. Release records
-  are under `~/mover-sis-work/release-v0.15.0/`; numeric-grounding records and the
-  corrected spec proposal remain under `~/mover-sis-work/v0.15/`. The spec has
-  not changed. No push, PR, installed-app replacement or publication occurred.
-  Native display launch, other Linux distributions, Windows verification,
-  real-data calibration and the proposed spec edits remain open.
+- **Current audit work:** `.handoff/audit-fix-first.md` records the sealed slices,
+  chosen interfaces, delegated GLM source map and raw resource task IDs. Source
+  edits are uncommitted on `feat/v0.15-signal-grounding` at base `887d5b6`.
+  The approved Rust harness and four Python expectation updates are implemented.
+  Nine Rust source contracts pass and all nine failed behaviorally on the original
+  source. Grounding/advice has175 passes after the FiO2 correction. Ruff and mypy
+  passed. The initial full Python gate finished1222 passed/7 skipped/21 failed
+  on pre-correction imports. Its19 preset/hash failures and one grounding/advice
+  failure now pass focused checks; the fifth minute-error expectation was approved
+  and passes. Full rerun r2 is underway on the held source.
+  Updater10 and manifest signer8 tests also pass. The separate frozen-bundle parser
+  now handles named ABI tags explicitly and rejects the original bundle for2.42,
+  2.43 and ABI_GNU2_TLS. All follow-up choices are resolved.
+  A real-filesystem probe verified the safe-error fallback when settings lookup
+  fails. GLM's six raw resource samples completed; no independent code review yet.
+- **Next:** build and exercise a separate portable AppImage candidate in the
+  Ubuntu 24.04 builder, run the frozen-bundle check and `CANDIDATE-QA.md`. The
+  original reviewed AppImage is unchanged. Release records remain under
+  `~/Projects/medical/mover/_work/release-v0.15.0/`. The spec is unchanged. No
+  push, PR, installed-app replacement or publication occurred. Windows and
+  real-data checks remain open.

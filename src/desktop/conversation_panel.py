@@ -168,6 +168,7 @@ class ConversationPanel(QScrollArea):
         super().__init__(parent)
         self.setObjectName("conversationPanel")
         self.setWidgetResizable(True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setMinimumSize(290, 180)
         self.turns: list[Turn] = []

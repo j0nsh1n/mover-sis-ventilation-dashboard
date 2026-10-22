@@ -117,6 +117,8 @@ def test_a_value_in_another_unit_is_not_grounded(extract, unit):
         ("peaked at 20 cmH2O", "max 19.2 cmH2O", False),
         ("peaked at about 25 cmH2O", "max 22.09 cmH2O", False),
         ("FiO2 of 40%", "FiO2: median 40.0 %", True),
+        ("FiO2 was 1.0", "FiO2 weaned over 20 minutes to 1.0.", True),
+        ("FiO2 was 20", "FiO2 weaned over 20 minutes to 1.0.", False),
         ("a volume of 1,200 mL", "volume 1200 mL", True),
         ("a volume of 1200 mL", "volume 1,200 mL", True),
         ("a volume of 1,300 mL", "volume 1200 mL", False),
@@ -554,6 +556,35 @@ def test_the_question_grounds_a_value_for_any_signal():
     assert find_ungrounded_numbers("PIP never exceeded 35 cmH2O.", [CASE], "Was PIP above 35?") == []
 
 
+def test_question_values_are_not_operands_for_a_signal_difference():
+    assert find_ungrounded_numbers("PIP rose by 33 cmH2O.", ["PIP 22 cmH2O"], "Was the patient aged 55?") == ["33"]
+    assert find_ungrounded_numbers("PIP rose by 3 cmH2O.", ["PIP 22 then PIP 25 cmH2O"], "Was PIP 25?") == []
+
+
+@pytest.mark.parametrize(("answer", "value"), [
+    ("ETCO2 reached 61 mmHg.", "61"),
+    ("SpO2 fell to 88%.", "88"),
+    ("PEEP was 22.", "22"),
+    ("ETCO2 rose by 28 mmHg.", "28"),
+])
+def test_absent_signals_cannot_borrow_other_source_numbers(answer, value):
+    source = "Age 61. Heart rate: min 60, max 88 bpm. Peak inspiratory pressure: max 22 cmH2O."
+    assert find_ungrounded_numbers(answer, [source]) == [value]
+
+
+@pytest.mark.parametrize("unit", ["bpm", "/min"])
+def test_heart_rate_thresholds_accept_both_rate_units(unit):
+    source = "Heart rate: min 60, max 88 bpm.\nwarn at least 100 /min"
+    assert find_ungrounded_numbers(f"Heart rate crossed its warn threshold of 100 {unit}.", [source]) == []
+
+
+@pytest.mark.parametrize(("source_unit", "answer_unit"), [("bpm", "/min"), ("/min", "bpm")])
+def test_heart_rate_values_accept_equivalent_units_without_borrowing_rr(source_unit, answer_unit):
+    source = f"Heart rate: max 101 {source_unit}.\nRR: max 22 /min."
+    assert find_ungrounded_numbers(f"HR peaked at 101 {answer_unit}.", [source]) == []
+    assert find_ungrounded_numbers(f"HR peaked at 22 {answer_unit}.", [source]) == ["22"]
+
+
 def test_sources_without_a_labeled_signal_fall_back_to_any_value():
     abstract = "[A1] Smith et al. 2019. Airway pressure stayed at 25 in lean adults."
     assert find_ungrounded_numbers("PIP was 25 cmH2O in lean adults [A1].", [abstract]) == []
@@ -600,6 +631,7 @@ EPISODE = (
         ("HR was 71 at the selected minute.", ["At the selected minute: PIP 22; ETCO2 38; HR 71\nSOURCE ROWS from 30 to 31 min\n"]),
         ("SpO2 was below 90% for 6% of minutes.", [CASE + "- spo2_low [warn]: 6 minute-flags\n- SpO2 below 90 %\n"]),
         ("She received 500 mL of Lactated Ringer.", [CASE + "- Lactated Ringer dose samples: 500, 1000 mL\n"]),
+        ("Heart rate was 120 bpm.", ["Heart rates were 120,130 bpm."]),
         ("PEEP of 10 cmH2O was used [A2].", [
             "[A1] Lee et al. 2020. PEEP of 5 cmH2O was used.",
             "[A2] Kim et al. 2021. Patients received 10 cmH2O of PEEP or 4 cmH2O PEEP.",

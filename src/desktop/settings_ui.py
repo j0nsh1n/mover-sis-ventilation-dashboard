@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -50,6 +52,23 @@ from src.user_settings import (
 def _browse_dir(parent: QWidget, start: str = "") -> str:
     path = QFileDialog.getExistingDirectory(parent, "Select folder", start or str(Path.home()))
     return path or ""
+
+
+def _scroll_panel(content: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    scroll.setWidget(content)
+    return scroll
+
+
+def _size_dialog(dialog: QDialog, width: int, height: int, minimum_width: int) -> None:
+    screen = dialog.screen()
+    available = screen.availableGeometry() if screen is not None else None
+    dialog.setMinimumWidth(min(minimum_width, available.width()) if available else minimum_width)
+    dialog.resize(min(width, available.width()) if available else width,
+                  min(height, available.height()) if available else height)
 
 
 class PathsForm(QWidget):
@@ -167,7 +186,10 @@ class PathsForm(QWidget):
     def _row(self, label: str, edit: QLineEdit, browse_slot) -> QVBoxLayout:
         wrap = QVBoxLayout()
         wrap.setSpacing(2)
-        wrap.addWidget(QLabel(label))
+        field_label = QLabel(label)
+        field_label.setBuddy(edit)
+        edit.setAccessibleName(label)
+        wrap.addWidget(field_label)
         row = QHBoxLayout()
         row.addWidget(edit, stretch=1)
         btn = QPushButton("Browse…")
@@ -331,13 +353,11 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(560)
-        self.resize(620, 560)
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
         self.form = PathsForm(self)
-        tabs.addTab(self.form, "General")
+        tabs.addTab(_scroll_panel(self.form), "General")
         layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(
@@ -347,6 +367,7 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        _size_dialog(self, 620, 560, 560)
 
     def _save(self) -> None:
         try:
@@ -381,8 +402,8 @@ class _WelcomePage(QWizardPage):
         )
         body.setWordWrap(True)
         body.setTextFormat(Qt.TextFormat.RichText)
-        lay.addWidget(body)
-        lay.addStretch(1)
+        body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        lay.addWidget(_scroll_panel(body))
 
 
 class _ConfigPage(QWizardPage):
@@ -392,7 +413,7 @@ class _ConfigPage(QWizardPage):
         self.setSubTitle("Browse to your MOVER data and LLM models directory.")
         lay = QVBoxLayout(self)
         self.form = PathsForm(self, compact=True)
-        lay.addWidget(self.form)
+        lay.addWidget(_scroll_panel(self.form))
 
     def validatePage(self) -> bool:  # noqa: N802
         try:
@@ -410,13 +431,13 @@ class _DonePage(QWizardPage):
         self.setTitle("Ready")
         self.setSubTitle("Setup is complete.")
         lay = QVBoxLayout(self)
-        lay.addWidget(
-            QLabel(
-                "You can re-open this wizard anytime from "
-                "File → Setup…, or change individual options under "
-                "the ⚙ Settings icon (Ctrl+,)."
-            )
+        body = QLabel(
+            "You can re-open this wizard anytime from "
+            "File → Setup…, or change individual options under "
+            "the ⚙ Settings icon (Ctrl+,)."
         )
+        body.setWordWrap(True)
+        lay.addWidget(body)
         lay.addStretch(1)
 
 
@@ -430,8 +451,6 @@ class SetupWizard(QWizard):
         self.setWindowTitle("MOVER SIS Monitor — Setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
-        self.setMinimumWidth(640)
-        self.resize(680, 620)
 
         self._welcome = _WelcomePage()
         self._config = _ConfigPage()
@@ -441,6 +460,7 @@ class SetupWizard(QWizard):
         self.addPage(self._done)
 
         self.finished.connect(self._on_finished)
+        _size_dialog(self, 680, 620, 640)
 
     def _on_finished(self, result: int) -> None:
         if result == QDialog.DialogCode.Accepted:

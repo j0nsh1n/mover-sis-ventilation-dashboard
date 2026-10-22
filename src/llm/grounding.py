@@ -5,8 +5,8 @@ The answer gate already checks ages, PIDs and doses. A fabricated measurement
 so each number is compared with the source extracts (or article abstracts) and the
 question.
 
-A number is compared with the values of the signal it is about when the sources
-label that signal: "PIP reached 23" must match a PIP figure (or a threshold in
+A number about a named signal is compared with that signal's values:
+"PIP reached 23" must match a PIP figure (or a threshold in
 PIP's unit), not the age 23. A number is about the signals named since the
 previous number in its sentence, when it sits within a few words of them ("PIP and
 PEEP were 18.6 and 8.0"); in a pipe table, about its column's header signal. Counts,
@@ -133,6 +133,10 @@ _SIGNAL_MENTION = re.compile(
     + r")(?![A-Za-z0-9_])"
 )
 _SIGNAL_UNIT = {key: unit for key, (unit, _, _) in _SIGNALS.items()}
+_SIGNAL_UNITS = {
+    key: frozenset((unit, "/min")) if key == "HR" else frozenset((unit,))
+    for key, unit in _SIGNAL_UNIT.items()
+}
 _MEASURE_UNITS = frozenset(unit for unit in _SIGNAL_UNIT.values() if unit and unit != "%")
 # A sentence ends at a line break or at ". " before a capital; decimals never end one.
 # In an answer a semicolon ends one too: "PIP was 18.6; fentanyl 100 mcg was given".
@@ -252,14 +256,14 @@ def _attribute(text: str, numbers: Sequence[_Found], *, answer: bool) -> dict[in
             consumed, previous, previous_excluded = True, number, False
             continue
         carried = previous is not None and previous_excluded and (
-            _RANGE_ONLY.search(text[previous.end:number.start]) is not None
+            _RANGE_ONLY.fullmatch(text[previous.end:number.start]) is not None
             or (_LIST_JOIN.search(text[previous.end:number.start]) is not None and plural_index)
         )
         excluded = _not_a_value(text, number, clock) or carried
         keys = set(run)
         unit = _kind(text, number)
         if unit:
-            keys = {k for k in keys if _SIGNAL_UNIT[k] == unit}
+            keys = {k for k in keys if unit in _SIGNAL_UNITS[k]}
         if answer and number.start - anchor > _ANSWER_REACH:
             keys = set()
         if keys and not excluded:
@@ -281,6 +285,11 @@ class _Found:
     negative: bool
     hedged: bool
     parts: tuple["_Found", ...] = ()
+
+
+def _values_of(number: _Found) -> set[Decimal]:
+    """``number``'s value and, for a list such as "120,130", each listed value."""
+    return {number.value, *(part.value for part in number.parts)}
 
 
 def _sign_at(text: str, start: int) -> bool:
@@ -430,13 +439,13 @@ class _SourceValues:
                 kind = _kind(text, number)
                 # "500, 1000 mL": the unit belongs to the whole list
                 for item in listed if kind else ():
-                    kinds.setdefault(kind, set()).add(item.value)
+                    kinds.setdefault(kind, set()).update(_values_of(item))
                     if kind in _MEASURE_UNITS and item.start not in attributed:
-                        loose.setdefault(kind, set()).add(item.value)
+                        loose.setdefault(kind, set()).update(_values_of(item))
                 if kind:
                     listed = []
                 for key in attributed.get(number.start, ()):
-                    signals.setdefault(key, set()).add(number.value)
+                    signals.setdefault(key, set()).update(_values_of(number))
                 for part in number.parts:
                     values.add(part.value)
             for match in _TIME.finditer(text):
@@ -452,15 +461,17 @@ class _SourceValues:
         self.question_values = {number.value for number in _scan(question)}
         values.update(self.question_values)
         self.values = values
+        self.article_only = bool(texts) and all(_ARTICLE_HEADER.search(text) for text in texts)
         # A signal's pool also holds the unattributed values in its unit (thresholds)
         self.signals = {
-            key: found | loose.get(_SIGNAL_UNIT[key], set()) for key, found in signals.items()
+            key: found.union(*(loose.get(unit, set()) for unit in _SIGNAL_UNITS[key]))
+            for key, found in signals.items()
         }
         # A unit's values include those of every signal measured in it, since a table
         # header or "PIP 22" can carry the unit away from the number
         self.units = {
             unit: set(kinds.get(unit, ())).union(
-                *(signals.get(key, set()) for key, own in _SIGNAL_UNIT.items() if own == unit)
+                *(signals.get(key, set()) for key, units in _SIGNAL_UNITS.items() if unit in units)
             )
             for unit in _MEASURE_UNITS
         }
@@ -484,13 +495,14 @@ class _SourceValues:
         return cached
 
     def pool(self, keys: frozenset[str] | None, unit: str) -> set[Decimal] | None:
-        """The values ``number`` may match: its signals', else its unit's; None means all."""
+        """The source values ``number`` may match: its signals', else its unit's; None means all."""
         if keys:
-            named = [self.signals[key] for key in keys if key in self.signals]
-            if named:
-                return set().union(*named, self.question_values)
+            if all(key in self.signals for key in keys):
+                return set().union(*(self.signals[key] for key in keys))
+            if not self.article_only:
+                return set()
         if unit in _MEASURE_UNITS and self.units.get(unit):
-            return self.units[unit] | self.question_values
+            return set(self.units[unit])
         return None
 
     def has(self, number: _Found, pool: set[Decimal] | None = None) -> bool:
@@ -567,8 +579,13 @@ def _ungrounded(
         if pool is None:
             if index.has(number) or index.derived(number, answer):
                 continue
-        elif index.has(number, pool) or index.difference(number, answer, pool):
-            continue
+        else:
+            # The question's own values match directly but are never a difference operand
+            if index.difference(number, answer, pool):
+                continue
+            pool = pool | index.question_values
+            if index.has(number, pool):
+                continue
         if number.parts and all(index.has(part, pool) for part in number.parts):
             continue
         bad.append(number)

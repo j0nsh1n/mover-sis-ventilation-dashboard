@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 
-from src.guardrails.exceptions import GuardrailError
+from src.guardrails.exceptions import DataValidationError, GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.guardrails.validate_data import validate_pipeline_outputs
 from src.pipeline.run import run_pipeline
@@ -21,6 +22,7 @@ def load_processed(
     processed_dir: Path | str | None = None,
     *,
     validate: bool = True,
+    expected_emr: Path | str | None = None,
 ):
     """
     Load pipeline outputs.
@@ -32,6 +34,14 @@ def load_processed(
         pass False for speed after the pipeline has already validated on write.
     """
     p = Path(processed_dir) if processed_dir is not None else default_processed_dir()
+    if expected_emr is not None and (p / "run_meta.json").is_file():
+        meta = json.loads((p / "run_meta.json").read_text())
+        recorded_emr = meta.get("emr_dir") if isinstance(meta, dict) else None
+        if recorded_emr and Path(recorded_emr).expanduser().resolve() != Path(expected_emr).expanduser().resolve():
+            raise DataValidationError(
+                "This analyzed sample was built from a different EMR folder. "
+                "Run the pipeline again for the selected EMR."
+            )
     required = ["cases.parquet", "timeseries.parquet", "flags.parquet"]
     missing = [f for f in required if not (p / f).is_file()]
     if missing:
@@ -110,4 +120,4 @@ def ensure_data(
             seed=seed,
             write_sample_csv=False,
         )
-    return load_processed(out)
+    return load_processed(out, expected_emr=emr)

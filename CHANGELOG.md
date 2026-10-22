@@ -7,6 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pipeline and full-EMR scan outputs are refused inside the source EMR tree,
+  including when external output paths are enabled. Exports with other folder
+  names default to a separate processed folder.
+- Desktop reloads clear the previous analyzed sample and check the recorded EMR
+  source before loading cached data. Results from jobs for another folder are
+  discarded.
+- A number attributed to an absent case signal cannot borrow an age or another
+  signal's value. Heart-rate readings and thresholds accept both bpm and /min.
+- Load, pipeline, case and research failures show short codes. Full diagnostic
+  details go to a local app-errors.log in the settings folder, readable only by
+  the user, including when the log already existed.
+- Research controls have field names and button names that match their labels.
+  Status changes and completed answers emit accessibility announcements. Empty
+  scroll containers no longer take keyboard focus, and dropdowns show a focus
+  border and visible chevrons.
+- Signal charts have an accessible description and distinguish flag severities
+  by marker shape. The ready-state question card fits at the default size.
+  Initial windows fit the available screen, and Setup and Settings contents
+  scroll when space is limited.
+
 ## [0.15.0] - 2026-10-17
 
 This version combines the v0.14 desktop fixes and v0.15 number-grounding work.

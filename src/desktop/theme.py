@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QCoreApplication, Qt
+from pathlib import Path
+
+from PySide6.QtCore import QCoreApplication, QDir, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -125,20 +127,16 @@ QComboBox::drop-down {{
     width: 28px;
     border: none;
     border-left: 1px solid {border};
-    background: {hover};
+    background: transparent;
 }}
 QComboBox::drop-down:hover {{
     background: {border_strong};
 }}
+QComboBox:focus {{ border: 2px solid #8c739f; }}
 QComboBox::down-arrow {{
-    /* CSS triangle — visible without image assets */
-    image: none;
-    width: 0px;
-    height: 0px;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid {muted};
-    margin-right: 8px;
+    image: url(movericons:{combo_arrow});
+    width: 12px;
+    height: 12px;
 }}
 QComboBox QAbstractItemView {{
     background: {surface};
@@ -417,6 +415,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{
 """
 
 _LIGHT = {
+    "combo_arrow": "chevron-dark.svg",
     "bg": "#f1f5f9",
     "surface": "#ffffff",
     "input_bg": "#ffffff",
@@ -444,6 +443,7 @@ _LIGHT = {
 }
 
 _DARK = {
+    "combo_arrow": "chevron-light.svg",
     "bg": "#0b1220",
     "surface": "#151e2e",
     "input_bg": "#0f172a",
@@ -475,6 +475,7 @@ def _build_stylesheet(tokens: dict[str, str]) -> str:
     return _STRUCTURE.format(**tokens)
 
 
+QDir.addSearchPath("movericons", str(Path(__file__).parent / "assets"))
 LIGHT_STYLESHEET = _build_stylesheet(_LIGHT)
 DARK_STYLESHEET = _build_stylesheet(_DARK)
 

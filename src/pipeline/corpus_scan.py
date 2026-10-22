@@ -458,7 +458,7 @@ def scan_corpus(
     emr_path = validate_emr_dir(emr_dir if emr_dir is not None else resolve_emr_dir(None))
     # Taken before any input is read, and checked again before anything is written
     fingerprint = emr_fingerprint(emr_path)
-    out_path = resolve_output_dir(output_dir, create=True)
+    out_path = resolve_output_dir(output_dir, create=True, source_emr=emr_path)
     thresholds = load_thresholds(preset, validate=True)
     file_hash = thresholds_sha256()
 

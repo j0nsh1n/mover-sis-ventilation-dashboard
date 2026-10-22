@@ -113,6 +113,7 @@ def resolve_output_dir(
     output_dir: Path | str | None = None,
     *,
     create: bool = True,
+    source_emr: Path | str | None = None,
 ) -> Path:
     """
     Resolve output directory for processed pipeline artifacts.
@@ -126,7 +127,7 @@ def resolve_output_dir(
 
     Set MOVER_ALLOW_EXTERNAL_OUTPUT=1 to allow any path.
     """
-    from src.runtime_paths import app_dir, data_dir, emr_dir
+    from src.runtime_paths import app_dir, data_dir, emr_dir, validate_output_location
     from src.runtime_paths import processed_dir as default_processed
 
     if output_dir is None:
@@ -134,7 +135,7 @@ def resolve_output_dir(
     else:
         out = Path(output_dir)
 
-    candidate = _normalize_candidate(out)
+    candidate = validate_output_location(_normalize_candidate(out), source_emr=source_emr)
 
     if not allow_external_output():
         allowed_roots: list[Path] = [app_dir()]

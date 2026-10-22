@@ -383,7 +383,8 @@ def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     try:
         win._load_corpus_scan()
         assert win.corpus_scan is None
-        assert len(dialogs) == 1 and str(cases) in dialogs[0]
+        assert len(dialogs) == 1 and "scan-load:ArrowInvalid" in dialogs[0]
+        assert str(cases) not in dialogs[0]
     finally:
         win.close()
 
@@ -401,7 +402,9 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
-        assert str(tmp_path / "missing") in dialogs[0]
+        assert "Missing processed files: cases.parquet" in dialogs[0]
+        assert "File > Run pipeline" in dialogs[0]
+        assert str(tmp_path / "missing") not in dialogs[0]
     finally:
         win.close()
 

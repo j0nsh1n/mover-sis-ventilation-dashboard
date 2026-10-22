@@ -30,7 +30,7 @@ datas = [
     (str(root / "data" / "README.md"), "data"),
 ]
 datas += shiboken_datas
-datas += collect_data_files("src", includes=["**/*.yaml"])
+datas += collect_data_files("src", includes=["**/*.yaml", "desktop/assets/*.svg"])
 
 binaries = list(shiboken_binaries)
 

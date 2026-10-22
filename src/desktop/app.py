@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -74,6 +73,7 @@ class DataLoadWorker(QThread):
     def __init__(self, processed: Path | None = None, parent=None):
         super().__init__(parent)
         self.processed = processed
+        self.emr = emr_dir()
 
     def run(self) -> None:
         try:
@@ -81,10 +81,12 @@ class DataLoadWorker(QThread):
 
             if self.processed is None:
                 self.processed = processed_dir()
-            data = load_processed(self.processed, validate=False)
+            data = load_processed(self.processed, validate=False, expected_emr=self.emr)
             self.finished_ok.emit(data)
         except Exception as e:
-            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("load", e))
 
 
 class PipelineWorker(QThread):
@@ -104,7 +106,7 @@ class PipelineWorker(QThread):
         self.n_cases = n_cases
         self.preset = preset
         self.force = force
-        self.emr = emr
+        self.emr = emr if emr is not None else emr_dir()
         self.processed = processed
 
     def run(self) -> None:
@@ -120,7 +122,9 @@ class PipelineWorker(QThread):
             )
             self.finished_ok.emit(data)
         except Exception as e:
-            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("pipeline", e))
 
 
 class CorpusScanWorker(QThread):
@@ -241,6 +245,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._refresh_rule_reference()
         self.setStatusBar(QStatusBar())
+        from src.desktop.accessibility import announce
+
+        self.statusBar().messageChanged.connect(lambda message: announce(self.statusBar(), message))
         self._update_status_paths("Ready")
         self._updates = UpdateController(self._version, self)
         self._updates.found.connect(self._on_update_found)
@@ -444,6 +451,7 @@ class MainWindow(QMainWindow):
     def _autoload_processed(self) -> None:
         # Even when a job is running and the reload has to wait, an old scan must go now
         self._drop_stale_scan()
+        self._clear_loaded_sample()
         proc = processed_dir()
         if not (proc / "cases.parquet").exists():
             self._update_status_paths(
@@ -456,25 +464,44 @@ class MainWindow(QMainWindow):
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
         if self._worker and self._worker.isRunning():
-            if isinstance(self._worker, CorpusScanWorker):
-                self._reload_after_scan = True
+            self._reload_after_scan = True
             return
         self._update_status_paths("Loading data…")
         self._worker = DataLoadWorker(processed=proc, parent=self)
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_load_fail)
+        self._worker.finished.connect(self._after_data_job)
         self._worker.start()
 
+    def _clear_loaded_sample(self) -> None:
+        self.cases = self.ts = self.flags = self.episodes = self.events = None
+        self._analysis_facts = {}
+        self._thresholds_sha256 = None
+        self.research.invalidate_case_data()
+        self._set_loaded_preset(self._next_run_preset(), recorded=True)
+        self._data_changed()
+
+    def _after_data_job(self) -> None:
+        if self.sender() is not None and self.sender() is not self._worker:
+            return
+        if self._reload_after_scan:
+            self._reload_after_scan = False
+            self._autoload_processed()
+
     def _on_load_fail(self, msg: str) -> None:
+        if not self._data_job_is_current():
+            return
+        self._clear_loaded_sample()
         self._update_status_paths("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
-        self._warn("Load error", f"Processed data: {processed_dir()}\n\n{msg[:2000]}")
+        self._warn("Load error", f"{msg}\n\nRun File > Run pipeline to rebuild the analyzed sample for this EMR.")
 
     def _warn(self, title: str, text: str) -> None:
         # Not modal: this can fire during startup, where a modal box would hold the
         # window back until the user dismissed it.
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.finished.connect(lambda _result: self.research.question_edit.setFocus())
         box.open()
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -598,6 +625,7 @@ class MainWindow(QMainWindow):
         if wiz.result():
             self._autoload_processed()
             self._refresh_ollama_models()
+            self.research.question_edit.setFocus()
 
     def _open_settings(self) -> None:
         from src.desktop.settings_ui import SettingsDialog
@@ -671,6 +699,7 @@ class MainWindow(QMainWindow):
         )
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_pipeline_fail)
+        self._worker.finished.connect(self._after_data_job)
         self._worker.start()
 
     def _run_corpus_scan(self) -> None:
@@ -771,17 +800,31 @@ class MainWindow(QMainWindow):
             self.corpus_scan = load_corpus_scan(processed_dir(), emr_dir())
             self._corpus_scan_dir = processed_dir() if self.corpus_scan is not None else None
         except Exception as exc:
+            from src.desktop.errors import error_message
+
             self.corpus_scan = None
             self._corpus_scan_dir = None
-            root = processed_dir()
             self._warn(
                 "Saved full-EMR scan could not load",
-                f"Could not read saved scan files in {root}:\n"
-                f"{root / 'corpus_cases.parquet'}\n{root / 'corpus_episodes.parquet'}\n"
-                f"{root / 'corpus_meta.json'}\n\n{exc}",
+                error_message("scan-load", exc),
             )
 
+    def _data_job_is_current(self) -> bool:
+        origin = self.sender()
+        if origin is None:
+            return True
+        if origin is not self._worker:
+            return False
+        worker = origin
+        if isinstance(worker, (PipelineWorker, DataLoadWorker)):
+            return (worker.emr.resolve() == emr_dir().resolve()
+                    and (worker.processed is None
+                         or worker.processed.resolve() == processed_dir().resolve()))
+        return True
+
     def _on_pipeline_ok(self, data) -> None:
+        if not self._data_job_is_current():
+            return
         self.cases, self.ts, self.flags, self.episodes, self.events = data
         from src.services.retrieval import build_analysis_facts
 
@@ -819,6 +862,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_pipeline_fail(self, msg: str) -> None:
+        if not self._data_job_is_current():
+            return
         self._update_status_paths("Pipeline failed")
         QMessageBox.critical(
             self,
@@ -1305,10 +1350,13 @@ def main() -> int:
     apply_theme(app)
 
     win = MainWindow()
+    screen = QGuiApplication.primaryScreen()
+    if screen is not None:
+        available = screen.availableGeometry()
+        win.resize(min(win.width(), available.width()), min(win.height(), available.height()))
     win.show()
     win.raise_()
     win.activateWindow()
-    screen = QGuiApplication.primaryScreen()
     if screen is not None:
         geo = screen.availableGeometry()
         frame = win.frameGeometry()

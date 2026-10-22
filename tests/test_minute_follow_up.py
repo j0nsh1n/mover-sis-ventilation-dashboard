@@ -328,7 +328,10 @@ def test_a_failed_request_is_reported_under_the_field(workspace, qapp, monkeypat
 
     use_client(monkeypatch, Broken())
     ask(workspace, qapp)
-    assert workspace.follow_up_answer.toPlainText() == "The question could not be answered: the model is not running"
+    message = workspace.follow_up_answer.toPlainText()
+    assert message.startswith("The question could not be answered:")
+    assert "minute-question:OllamaError" in message
+    assert "the model is not running" not in message
     assert workspace.follow_up_button.isEnabled()
 
 

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.cases_overview import CasesOverview
+from src.desktop.accessibility import announce
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
 from src.desktop.research_workers import MinuteQuestionWorker
@@ -215,7 +216,10 @@ class ResearchWorkspace(QWidget):
             QFrame#questionNode QTextEdit { background: #493956; color: #fff9f4;
                 border: 1px solid #8c739f; border-radius: 5px; padding: 8px; }
             QFrame#questionNode QLineEdit:disabled { color: #d3c6d9; }
-            QFrame#questionNode QLineEdit:focus { border: 2px solid #fff9f4; padding: 7px; }
+            QFrame#questionNode QLineEdit:focus,
+            QFrame#questionNode QComboBox:focus { border: 2px solid #fff9f4; padding: 7px; }
+            QFrame#questionNode QComboBox::down-arrow { image: url(movericons:chevron-light.svg);
+                width: 12px; height: 12px; }
             QFrame#questionNode QPushButton#primaryBtn { background: #f5e2cb; color: #332941;
                 border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
             QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
@@ -234,6 +238,7 @@ class ResearchWorkspace(QWidget):
                 border: 1px solid #b4afba; border-radius: 5px; padding: 8px 12px; }
             QWidget#evidencePage QTableWidget { background: #fffefa; color: #302b35;
                 gridline-color: #ddd6dd; border: 1px solid #ddd6dd; }
+            QWidget#evidencePage QTableWidget:focus { border: 2px solid #755390; }
             QWidget#evidencePage QHeaderView::section { background: #f1ecef; color: #4d4154;
                 border: 0; border-bottom: 1px solid #d7ccd9; padding: 7px; }
             QScrollArea#conversationPanel, QWidget#conversationPage { background: #ebe9e3; color: #302b35; }
@@ -286,6 +291,7 @@ class ResearchWorkspace(QWidget):
         scroll = QScrollArea()
         scroll.setObjectName("evidenceScroll")
         scroll.setWidgetResizable(True)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         page = QWidget()
         page.setObjectName("evidencePage")
@@ -313,19 +319,23 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button.clicked.connect(self._add_comparison)
         self.cases_button = _button("Cases")
         self.cases_button.setObjectName("outlineAction")
-        self.cases_button.setAccessibleName("Open the cases overview")
+        self.cases_button.setAccessibleName("Cases")
+        self.cases_button.setAccessibleDescription("Open the cases overview")
         self.cases_button.clicked.connect(self.show_cases)
         self.new_question_button = _button("New question")
         self.new_question_button.setObjectName("outlineAction")
-        self.new_question_button.setAccessibleName("Clear the board and keep the conversation")
+        self.new_question_button.setAccessibleName("New question")
+        self.new_question_button.setAccessibleDescription("Clear the board and keep the conversation")
         self.new_question_button.clicked.connect(self._new_question)
         self.reset_button = _button("Reset")
         self.reset_button.setObjectName("outlineAction")
-        self.reset_button.setAccessibleName("Clear the conversation and the board")
+        self.reset_button.setAccessibleName("Reset")
+        self.reset_button.setAccessibleDescription("Clear the conversation and the board")
         self.reset_button.clicked.connect(self._reset_canvas)
         self.rules_button = _button("Rules")
         self.rules_button.setObjectName("outlineAction")
-        self.rules_button.setAccessibleName("Open rules drawer")
+        self.rules_button.setAccessibleName("Rules")
+        self.rules_button.setAccessibleDescription("Open rules drawer")
         self.rules_button.setToolTip("Search the rules (Ctrl+R)")
         self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
         self._header_buttons = (self.add_comparison_button, self.cases_button, self.new_question_button,
@@ -348,6 +358,7 @@ class ResearchWorkspace(QWidget):
         content.setHorizontalSpacing(24)
         content.setVerticalSpacing(20)
         question_card, question_layout = _card("01 / YOUR QUESTION")
+        question_layout.setSpacing(5)
         question_card.setObjectName("questionNode")
         _name_kicker(question_layout)
         question_title = _wrap("Start with what you want to know.")
@@ -360,6 +371,7 @@ class ResearchWorkspace(QWidget):
         question_layout.addWidget(self.scope_combo)
         question_layout.addWidget(QLabel("Research question"))
         self.question_edit = QLineEdit()
+        self.question_edit.setAccessibleName("Research question")
         self.question_edit.setPlaceholderText("Try: Where does pressure peak in laparoscopic cases?")
         self.question_edit.setMinimumHeight(44)
         self.question_edit.returnPressed.connect(self._submit_question)
@@ -377,6 +389,7 @@ class ResearchWorkspace(QWidget):
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
         self.model_combo = QComboBox()
+        self.model_combo.setAccessibleName("Local AI")
         self.model_combo.setMinimumHeight(44)
         self.model_combo.currentTextChanged.connect(self.model_changed)
         model_row.addWidget(self.model_combo, stretch=1)
@@ -416,6 +429,7 @@ class ResearchWorkspace(QWidget):
         self.answer_text.hide()
         question_layout.addStretch(1)
         content.addWidget(question_card, 0, 0, 2, 1)
+        content.setAlignment(question_card, Qt.AlignmentFlag.AlignTop)
 
         finding_card, finding_layout = _card("02 / OBSERVATION")
         finding_card.setObjectName("findingNode")
@@ -495,6 +509,7 @@ class ResearchWorkspace(QWidget):
         self.case_shortlist_card = candidate_card
         _name_kicker(candidate_layout)
         self.candidate_table = _ShortlistTable(0, 3)
+        self.candidate_table.setAccessibleName("Retrieved cases")
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
         self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.candidate_table.setWordWrap(False)
@@ -539,7 +554,12 @@ class ResearchWorkspace(QWidget):
         self.board_splitter.setStretchFactor(0, 1)
         self.board_splitter.setStretchFactor(1, 0)
         self.board_splitter.setSizes([1000, 340])
-        self.stack.addWidget(self.board_splitter)
+        self.canvas_scroll = QScrollArea()
+        self.canvas_scroll.setWidgetResizable(True)
+        self.canvas_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.canvas_scroll.setWidget(self.board_splitter)
+        self.stack.addWidget(self.canvas_scroll)
         self._set_case_actions(False)
 
     def _build_signal_detail(self) -> None:
@@ -606,6 +626,8 @@ class ResearchWorkspace(QWidget):
         self.detail_chart.minute_clicked.connect(self._select_flag_minute)
         self.detail_chart.setMinimumHeight(220)
         shell_layout.addWidget(self.detail_chart, stretch=1)
+        flag_legend = _wrap("Flag marks: circle = info; triangle = warn; diamond = critical.")
+        shell_layout.addWidget(flag_legend)
         self.minute_label = _wrap()
         shell_layout.addWidget(self.minute_label)
         self.minute_slider = QSlider(Qt.Orientation.Horizontal)
@@ -784,12 +806,16 @@ class ResearchWorkspace(QWidget):
         """Re-flow the board and conversation for the width left beside the rules drawer."""
         board_width = self.width() - (self.rules_drawer.width() if self.rules_drawer.is_open else 0)
         stacked = board_width < 1100
+        self.board_splitter.setMinimumHeight(640 if stacked else 0)
         orientation = Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
         if self.board_splitter.orientation() != orientation:
             self.board_splitter.setOrientation(orientation)
             self.board_splitter.setSizes([max(300, self.height() - 360), 340] if stacked
                                          else [max(600, board_width - 340), 340])
         mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
+        header = self._header_layout.parentWidget()
+        if header is not None:
+            header.setMaximumWidth(max(1, board_width - 32) if mode == "single" else board_width)
         if mode == self._layout_mode:
             return
         self._layout_mode = mode
@@ -812,7 +838,7 @@ class ResearchWorkspace(QWidget):
         )
         self._header_layout.setContentsMargins(*((16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)))
         # One row of five buttons is wider than a one-column board beside the drawer.
-        self._place_header_actions(3 if mode == "single" else len(self._header_buttons))
+        self._place_header_actions((1 if board_width < 440 else 2) if mode == "single" else len(self._header_buttons))
         if self.scope == "Articles":
             self._evidence_grid.removeWidget(self._evidence_cards[0])
             self._evidence_grid.addWidget(self._evidence_cards[0], 0, 0, 1, 3)
@@ -1003,6 +1029,7 @@ class ResearchWorkspace(QWidget):
     def set_status(self, message: str) -> None:
         self._status_is_progress = False
         self.status_label.setText(message)
+        announce(self.status_label, message)
         self._save_board()
         if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
             self._cases_overview.set_message(message)
@@ -1249,6 +1276,7 @@ class ResearchWorkspace(QWidget):
                                     if re.search(r"(?<!\w)" + re.escape(candidate.pid) + r"(?!\w)", answer))
             self._save_board()
             self.conversation.update_turn(turn)
+            announce(self.conversation, f"Research answer ready for {turn.question}.")
 
     def set_case_data(
         self,
