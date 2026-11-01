@@ -170,15 +170,35 @@ milestone complete.
   `pytest --cov=src` exited 0: 1259 passed, 7 skipped, 853 warnings in
   964.83s; TOTAL 11909 statements, 1898 missed, 84%. All six recorded
   source/test hashes match. Source-shell scope and closeout are complete;
-  frozen-artifact section 11 remains UNRUN. Later suite phases are unstarted.
+  frozen-artifact section 11 remains UNRUN. Phase 3 follows.
 
-### Later authorized phases (plan only)
+### Phase 3 — Shared data context (authorized 2026-11-01)
+
+- One context records the selected source, processed directory, preset,
+  threshold identity, and a generation for pipeline, load, and scan jobs
+- Case-fetch cache keys include the EMR path, preset, and threshold hash
+- Status: implemented on 2026-11-01 on `feat/v0.15-signal-grounding`.
+  Terra and Opus 5.5 reviewed the first draft. Their findings are fixed:
+  a scan uses the stamp of the worker that finished, fetches do not
+  refill a cleared cache, a missing threshold hash does not bump the
+  generation, a fetch keeps its starting EMR path, and a reload during
+  the first pipeline run is queued. Full offscreen `pytest -q` exited 0
+  after those fixes. Not pushed. Native AI stays paused.
+
+### Folder rename (authorized 2026-11-01, not performed)
+
+The destination `/home/jonathans/Projects/medical/mover/mover-suite` does
+not exist. The July preserved virtualenv was moved, not deleted, to
+`/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
+The live `.venv` stayed. Preflight stopped because this session’s
+processes use the repository as their working directory. `lsof.err` is
+Docker overlay and netns warnings only. Do not move the folder until a
+later preflight shows it unused.
+
+### Later phases (plan only)
 
 These stay future work until each is named and approved:
 
-- Shared data context and services, including source and preset invalidation
-  of stale caches and background jobs
-- Repository folder rename as its own operation
 - Trainer import after review confirmation
 - Medication and vitals explorer after its display contract
 - Fictional WHO simulator after content and checklist source

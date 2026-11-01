@@ -43,6 +43,7 @@ from src.desktop.suite_chrome import install_suite_chrome
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
+from src.services.data_context import current_context
 from src.desktop.theme import apply_theme
 from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
@@ -75,6 +76,7 @@ class DataLoadWorker(QThread):
         super().__init__(parent)
         self.processed = processed
         self.emr = emr_dir()
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         try:
@@ -109,6 +111,7 @@ class PipelineWorker(QThread):
         self.force = force
         self.emr = emr if emr is not None else emr_dir()
         self.processed = processed
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         try:
@@ -149,6 +152,7 @@ class CorpusScanWorker(QThread):
         self.processed = processed
         self.preset = preset
         self.workers = workers  # None = automatic (CPU cores minus one)
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         from src.pipeline.corpus_scan import ScanCancelled, scan_corpus, scan_failure_message
@@ -211,6 +215,7 @@ class MainWindow(QMainWindow):
         self._active_preset = str(load_settings().get("preset") or "default")
         self._preset_recorded = True
         self._thresholds_sha256: str | None = None
+        self._bind_data_context()
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
@@ -460,11 +465,43 @@ class MainWindow(QMainWindow):
         self._autoload_processed()
 
     # ----- workers -----
+    def _bind_data_context(self) -> None:
+        """Copy the live folders, preset, and local models into the shared context."""
+        context = current_context()
+        context.note_paths(emr_dir(), processed_dir())
+        context.note_preset(
+            self._active_preset,
+            recorded=self._preset_recorded,
+            thresholds_sha256=self._thresholds_sha256,
+        )
+        settings = load_settings()
+        embed_changed = context.note_models(
+            chat_model=str(settings.get("ollama_model") or "") or None,
+            embed_model=str(settings.get("ollama_embed_model") or "nomic-embed-text"),
+        )
+        if embed_changed and getattr(self, "_research_engine", None) is not None:
+            self._research_engine = None
+
     def _autoload_processed(self) -> None:
         # Even when a job is running and the reload has to wait, an old scan must go now
+        self._bind_data_context()
         self._drop_stale_scan()
         self._clear_loaded_sample()
         proc = processed_dir()
+        worker = self._worker
+        running = worker is not None and bool(getattr(worker, "isRunning", lambda: False)())
+        if running:
+            # The job may be writing the first cache. Reload when it finishes
+            # instead of dropping its result with no follow-up load.
+            self._reload_after_scan = True
+            if not (proc / "cases.parquet").exists():
+                self._update_status_paths(
+                    "No processed cache — run the pipeline or pick another folder"
+                )
+                self.research.set_status(
+                    "No analyzed case cache. Indexed surgery search is available after setup."
+                )
+            return
         if not (proc / "cases.parquet").exists():
             self._update_status_paths(
                 "No processed cache — run the pipeline or pick another folder"
@@ -474,9 +511,6 @@ class MainWindow(QMainWindow):
             self._push_cases_overview()
             if not needs_first_run_setup():
                 self._on_load_fail("Missing processed files: cases.parquet")
-            return
-        if self._worker and self._worker.isRunning():
-            self._reload_after_scan = True
             return
         self._update_status_paths("Loading data…")
         self._worker = DataLoadWorker(processed=proc, parent=self)
@@ -706,6 +740,7 @@ class MainWindow(QMainWindow):
         n_cases = max(MIN_N_CASES, min(int(n_cases), min(200, MAX_N_CASES)))
         if preset not in ALLOWED_PRESETS:
             preset = "default"
+        self._bind_data_context()
         self._update_status_paths("Running pipeline…")
         self._worker = PipelineWorker(
             n_cases=n_cases,
@@ -734,10 +769,15 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        self._bind_data_context()
         self._update_status_paths("Scanning full EMR…")
         worker = CorpusScanWorker(emr_dir(), processed_dir(), preset=self._next_run_preset(), parent=self)
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
-        worker.finished_ok.connect(lambda result: self._on_corpus_scan_ok(result, worker.processed))
+        worker.finished_ok.connect(
+            lambda result, finished=worker: self._on_corpus_scan_ok(
+                result, finished.processed, finished
+            )
+        )
         worker.failed.connect(self._on_corpus_scan_fail)
         worker.cancelled.connect(self._on_corpus_scan_cancelled)
         worker.finished.connect(self._scan_cancel_button.hide)
@@ -753,9 +793,23 @@ class MainWindow(QMainWindow):
             self._scan_cancel_button.setEnabled(False)
             self.statusBar().showMessage("Cancelling full-EMR scan…")
 
-    def _on_corpus_scan_ok(self, result, processed: Path | None = None) -> None:
+    def _on_corpus_scan_ok(
+        self,
+        result,
+        processed: Path | None = None,
+        worker: QThread | None = None,
+    ) -> None:
         from src.pipeline.corpus_scan import scan_matches_emr
 
+        # A direct call has no producing worker and still applies. A queued
+        # signal carries the worker that finished, not whichever job is current.
+        if worker is not None:
+            stamp = getattr(worker, "job_stamp", None)
+            if stamp is not None and not current_context().accepts(stamp):
+                self._update_status_paths(
+                    "Full-EMR scan finished for a previous data folder; it was not loaded."
+                )
+                return
         if (processed is not None and processed != processed_dir()) or not scan_matches_emr(result.meta, emr_dir()):
             # The EMR or processed folder changed while the scan ran
             self._update_status_paths("Full-EMR scan finished for a previous data folder; it was not loaded.")
@@ -834,6 +888,9 @@ class MainWindow(QMainWindow):
         if origin is not self._worker:
             return False
         worker = origin
+        stamp = getattr(worker, "job_stamp", None)
+        if stamp is not None and not current_context().accepts(stamp):
+            return False
         if isinstance(worker, (PipelineWorker, DataLoadWorker)):
             return (worker.emr.resolve() == emr_dir().resolve()
                     and (worker.processed is None
@@ -1050,6 +1107,10 @@ class MainWindow(QMainWindow):
             from src.user_settings import update_settings
 
             update_settings(ollama_model=text)
+            current_context().note_models(
+                chat_model=text,
+                embed_model=current_context().embed_model,
+            )
 
     def _make_session_snapshot(self):
         from src.llm.tools import SessionState
@@ -1103,11 +1164,10 @@ class MainWindow(QMainWindow):
         from src.llm.ollama_client import OllamaEmbedder
         from src.services.retrieval import RetrievalEngine
 
-        embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
         return RetrievalEngine(
             emr=source,
             cache_path=settings_path().parent / "case_embeddings.sqlite3",
-            embedder=OllamaEmbedder(embed_model),
+            embedder=OllamaEmbedder(current_context().embed_model),
             preset=self._active_preset,
             analysis_facts=self._analysis_facts,
             case_agents=self._case_agents(),
@@ -1123,14 +1183,18 @@ class MainWindow(QMainWindow):
         if articles:
             if self._article_catalog is None:
                 return
-            embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
-            engine = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3", OllamaEmbedder(embed_model))
+            self._bind_data_context()
+            engine = ArticleCatalog(
+                settings_path().parent / "case_embeddings.sqlite3",
+                OllamaEmbedder(current_context().embed_model),
+            )
         else:
             try:
                 source = validate_emr_dir(emr_dir())
             except Exception as exc:
                 self.research.set_status(f"EMR setup required: {exc}")
                 return
+            self._bind_data_context()
             if (self._research_engine is None or self._research_engine.emr != source
                     or any(worker.isRunning() for worker in self._research_workers.values())):
                 self._research_engine = self._new_research_engine(source)
@@ -1165,6 +1229,11 @@ class MainWindow(QMainWindow):
         """Make ``preset`` the one every reader uses; True when it changed."""
         changed = (preset, recorded) != (self._active_preset, self._preset_recorded)
         self._active_preset, self._preset_recorded = preset, recorded
+        current_context().note_preset(
+            preset,
+            recorded=recorded,
+            thresholds_sha256=self._thresholds_sha256,
+        )
         self._refresh_rule_reference()
         if changed:
             self._data_changed()

@@ -2,9 +2,10 @@
 
 ## Current State
 
-- **Phase (2026-10-27 local / 2026-10-28 UTC):** Phase 1 documentation is
-  complete. Phase 2 Monitoring shell is implemented and committed locally
-  on 2026-11-01. It is not pushed. The
+- **Phase (2026-11-01):** Phase 1 documentation and the Phase 2 Monitoring
+  shell are committed locally as `bf73b41` and not pushed. Phase 3 shared
+  data context is implemented on the same branch. Terra and Opus 5.5
+  reviewed the first draft, and their findings are fixed. The
   window title names MOVER Suite and MOVER SIS Monitor, and one
   non-interactive Monitoring label sits in the menu bar. ResearchWorkspace
   remains the central widget. Kimi's independent implementation review found
@@ -13,11 +14,22 @@
   recorded No issues found. Native source QA E1, E2, and sections 1–10 PASS
   except 3.3 DEFERRED. Rechecks 1.5, 6.1, 7.1, 8.2, 8.3, and 10.2 PASS;
   later 6.1 and 8.2 PASS. Section 11 candidate, GLIBC, artifact, and Windows
-  checks remain UNRUN. Final Python coverage exited 0: 1259 passed,
-  7 skipped, 853 warnings; TOTAL 11909 statements, 1898 missed, 84%.
-  All six recorded source/test hashes match. Phase 2 source-shell work
-  and its closeout are COMPLETE. The local commit's parent is
-  `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`. Nothing is pushed.
+  checks remain UNRUN. Final Python coverage for the Phase 2 tree exited 0:
+  1259 passed, 7 skipped, 853 warnings; TOTAL 11909 statements, 1898 missed,
+  84%. Those six source hashes match `bf73b41`. Phase 3 then edits the
+  desktop and case-fetch cache, so that hash list is the Phase 2 record.
+  Phase 2 source-shell work and its closeout are COMPLETE. The local
+  commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`. Nothing
+  is pushed. The repository folder rename was authorized on 2026-11-01
+  and was not performed. The July preserved virtualenv (Python 3.14.6,
+  created under “Monitoring Dashboard (MOVER SIS)”) was moved, not
+  deleted, to
+  `/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
+  The live `.venv` (Python 3.14.7) stayed. Preflight found the target
+  `mover-suite` absent, added `.venv.old-premove/` to the local git
+  exclude, and then stopped: `lsof +D` lists this session’s processes
+  with the repository as their working directory. `lsof.err` contains
+  only Docker overlay and netns stat warnings.
 - **Branch:** `feat/v0.15-signal-grounding`, explicit user override for this
   work. The root
   checkout contains the integrated Phase 1 and Phase 2 edits. Grok's separate
@@ -279,19 +291,23 @@ Wave root (optional) ──► wave_decode                   │
   `/home/jonathans/.t3/worktrees/mover-sis-monitor/t3-ce2f3b2a`. Other
   branch `feat/v0.14-desktop-fixes` and untracked
   `rust-desktop-tests/target/` are preserved.
-- **Task:** Phase 2 documentation closeout. Shell implementation is already
-  integrated. Native source QA PASS except 3.3 DEFERRED. Fresh ruff, mypy,
-  and `git diff --check` exited 0 after the type fixes. Final coverage exited
-  0: 1259 passed, 7 skipped, 84%; all six hashes match. Phase 2 source-shell
-  scope and closeout are COMPLETE. Frozen-artifact checks remain UNRUN.
+- **Task:** Phase 3 shared data context records source, preset, threshold
+  identity, job generation, and the saved chat and embedding models.
+  Review findings are fixed. Full offscreen `pytest -q` exited 0 after
+  those fixes. The folder rename (plan step 4) was then
+  authorized. It stopped before `mv`: the July virtualenv is parked at
+  `_scratch/suite-move/venv-july-3.14.6`, and this session holds the
+  repository directory. Phase 2 source-shell scope and closeout stay
+  COMPLETE. Frozen-artifact checks remain UNRUN.
 - **Review:** Grok 4.7 and 4.6 produced designs; GPT-6.1 Terra cross-judged
   them. Grok 4.7 implemented the selected design. Kimi reviewed the
   integrated source and found no code issues. Terra's final narrow code
   review recorded No issues found. Those reviews are history.
-- **Next:** Phase 2 is closed; results are in
-  `.handoff/mover-suite-phase-2/closeout-report.md`. The local commit is
-  done. Later phases, a new candidate, and push or publication remain
-  unstarted and unauthorized.
+- **Next:** Do not rename the repository from a session whose working
+  directory is inside it. Trainer import still needs a grading contract;
+  the trainer repo is only an M0 scaffold. Medication, WHO, a new
+  candidate, and push or publication are not started. Phase 2 results
+  stay in `.handoff/mover-suite-phase-2/closeout-report.md`.
 - **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
   2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
   Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain

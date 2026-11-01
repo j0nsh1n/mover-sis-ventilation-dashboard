@@ -16,6 +16,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A case fetch is reused only for the same EMR folder, rule preset, and
+  threshold hash. The same surgery id in another folder is computed again.
+  A pipeline load or full-EMR scan that finishes after the data folders
+  change is not applied, including when the folders are switched back.
+  The saved chat model and embedding model are part of that shared record.
+  A new embedding model applies to the next search and leaves the analyzed
+  sample in place. Reloading without a recorded threshold hash does not
+  count as a new threshold identity. A fetch keeps the EMR path it
+  started with, and a reload requested while a pipeline is still writing
+  the first cache runs again when that job finishes.
 - Dismissing the startup load warning puts keyboard focus on the research question.
 - A failed pipeline keeps folder paths off the status bar for the whole error
   dialog, including when a reload changes the status while that dialog is open.

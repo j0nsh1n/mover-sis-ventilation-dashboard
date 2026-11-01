@@ -320,12 +320,21 @@ do not appear as empty functional tabs.
 
 ### Shared source, preset, and generation
 
-A later authorized slice introduces one shared data context used by real-data
-modules. It records the selected source, processed directory, preset and threshold
-identity, and a generation number for background work. A source or threshold change
-invalidates the relevant shared caches, clears incompatible analyzed results, and
-rejects results from older background-job generations. Indexed surgeries stay
-distinct from analyzed cases.
+Real-data modules share one data context, `src/services/data_context.py`. It
+records the selected source, processed directory, preset and threshold identity,
+and a generation number for background work. A source change, a preset
+change, or a new recorded threshold hash invalidates the shared fetch caches.
+A missing hash does not. The desktop clears incompatible analyzed
+results through its existing reload path. Pipeline, load, and full-EMR scan
+results carry the generation from when they started. A newer generation rejects
+them, including when the folders are switched away and then back. Case-fetch
+cache keys include the EMR path, the preset, and the threshold hash, so the same
+surgery id in two sources cannot reuse the other source's frames. A fetch
+resolves that EMR path once and uses it for the whole call. The context
+also records the saved chat model and embedding model. Changing the embedding
+model drops the prepared search engine and does not discard analyzed cases or
+case fetches. Indexed surgeries stay distinct from analyzed cases. The context
+is not a second loader.
 
 The WHO simulator uses authored fictional fixtures only. It uses no EMR path,
 real-case picker, retrieval engine, or patient-derived prompts.
