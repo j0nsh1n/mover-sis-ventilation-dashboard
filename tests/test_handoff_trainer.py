@@ -93,6 +93,43 @@ def test_nasal_phenylephrine_is_not_a_vasopressor_event():
     assert ("unsupported", "medication") in _statuses(case, "Phenylephrine 100 mcg was given.")
 
 
+def test_a_wrong_minute_or_a_normal_saturation_does_not_mention_the_episode():
+    arterial = _case(tuple(Sample(minute, map_art=60, spo2=98) for minute in range(10, 17)))
+    wrong = _statuses(arterial, "hypotension at minute 99")
+    assert ("mentioned", "hypotension") not in wrong
+    assert ("unsupported", "hypotension") in wrong
+    assert ("missed", "hypotension") in wrong
+    assert ("mentioned", "hypotension") in _statuses(arterial, "Hypotension at minute 12.")
+    desat = _case((Sample(20, spo2=88, map_art=80), Sample(21, spo2=86, map_art=80)))
+    normal = _statuses(desat, "SpO2 was 98%")
+    assert ("mentioned", "desaturation") not in normal
+    assert ("unsupported", "desaturation") in normal
+    assert ("missed", "desaturation") in normal
+    assert ("mentioned", "desaturation") in _statuses(desat, "Desaturation from minute 20 to minute 21.")
+
+
+def test_generic_words_do_not_count_as_a_handoff_detail():
+    case = _case(tuple(Sample(minute, map_art=60, spo2=98) for minute in range(10, 17)))
+    for text in ("hypotension sustained", "arterial hypotension", "hypotension for a minute"):
+        assert _statuses(case, text) == [("missed", "hypotension")]
+
+
+def test_spo2_missing_names_the_gap_and_is_not_a_desaturation_claim():
+    case = _case(tuple(Sample(minute, map_art=82) for minute in range(0, 4)))
+    assert _statuses(case, "SpO2 missing") == [("mentioned", "missing_spo2")]
+
+
+def test_an_empty_timeline_misses_both_series():
+    case = _case(())
+    assert [event.kind for event in detect(case)] == ["missing_map", "missing_spo2"]
+    assert _statuses(case, "Nothing to add.") == [("missed", "missing_map"), ("missed", "missing_spo2")]
+
+
+def test_two_low_saturations_in_the_same_minute_do_not_count():
+    same = _case((Sample(20, spo2=88, map_art=80), Sample(20, spo2=86, map_art=80)))
+    assert detect(same) == ()
+
+
 def test_missing_saturation_can_be_named_and_a_normal_claim_is_unsupported():
     case = _case(tuple(Sample(minute, map_art=82) for minute in range(0, 4)))
     assert [event.kind for event in detect(case)] == ["missing_spo2"]

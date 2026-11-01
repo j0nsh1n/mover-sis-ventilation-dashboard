@@ -35,12 +35,18 @@ CUFF_MAX_GAP = 6
 SPO2_MAX_GAP = 1
 
 _HYPO_CONCEPT = ("hypotension", "low map", "low blood pressure", "map under 65", "map below 65")
-_HYPO_ANCHOR = ("minute", "min", "sustained", "65", "arterial", "noninvasive", "cuff", "mmhg")
-_DESAT_CONCEPT = ("desatur", "spo2", "sp02", "oxygen saturation", "low oxygen")
-_DESAT_ANCHOR = ("90", "minute", "min", "sustained", "percent", "%")
+_DESAT_CONCEPT = ("desatur", "low oxygen")
 _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
 _SPO2_NUMBER = re.compile(r"\b(spo2|sp02|saturation)\b[^\n.]{0,30}\d")
 _MAP_NUMBER = re.compile(r"\b(map|blood pressure)\b[^\n.]{0,30}\d")
+_MINUTE_CLAIM = re.compile(
+    r"\b(?:minutes|minute|mins|min)\s+(\d+)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+))?"
+)
+_SPO2_SERIES = ("spo2", "sp02", "oxygen saturation", "saturation")
+_MAP_SERIES = ("blood pressure", "map")
+_GAP_WORDS = re.compile(
+    r"\b(?:missing|unavailable|absent|unrecorded|not recorded|not measured|no reading|none recorded|not available)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,9 @@ class TimelineEvent:
     evidence: str
     drug: str | None = None
     dose_kind: str | None = None
+    start_minute: int | None = None
+    end_minute: int | None = None
+    values: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,16 +107,14 @@ def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     events = detect(case)
     items: list[Grade] = []
     for event in events:
-        if event.kind == "hypotension":
-            items.extend(_grade_episode(event, text, _HYPO_CONCEPT, _HYPO_ANCHOR))
-        elif event.kind == "desaturation":
-            items.extend(_grade_episode(event, text, _DESAT_CONCEPT, _DESAT_ANCHOR))
+        if event.kind in {"hypotension", "desaturation"}:
+            items.extend(_grade_episode(event, text))
         elif event.kind in {"vasopressor", "inotrope"} and event.drug is not None:
             items.extend(_grade_drug(event, text))
         elif event.kind == "missing_map":
-            items.append(_grade_gap(event, text, ("map was not recorded", "blood pressure was not recorded", "no map reading"), _map_value_claim))
+            items.append(_grade_gap(event, text, _MAP_SERIES, _map_value_claim))
         elif event.kind == "missing_spo2":
-            items.append(_grade_gap(event, text, ("spo2 was not recorded", "sp02 was not recorded", "oxygen saturation was not recorded", "no spo2 reading"), _spo2_value_claim))
+            items.append(_grade_gap(event, text, _SPO2_SERIES, _spo2_value_claim))
     items.extend(_unsupported_absent(text, events))
     return tuple(items)
 
@@ -140,41 +147,31 @@ def _pressure_events(samples: tuple[Sample, ...]) -> tuple[TimelineEvent, ...]:
     arterial = _usable(samples, lambda sample: sample.map_art, MAP_RANGE)
     if arterial:
         runs = _low_runs(arterial, MAP_LOW, ART_MAX_GAP, HYPO_SPAN_MINUTES, minimum_count=2)
-        return tuple(
-            TimelineEvent(
-                "hypotension",
-                f"Arterial MAP stayed under 65 mmHg from minute {run[0][0]} to minute {run[-1][0]}.",
-            )
-            for run in runs
-        )
+        return tuple(_span_event("hypotension", "Arterial MAP stayed under 65 mmHg", run) for run in runs)
     cuff = _usable(samples, lambda sample: sample.nmap, MAP_RANGE)
     if cuff:
         runs = _low_runs(cuff, MAP_LOW, CUFF_MAX_GAP, HYPO_SPAN_MINUTES, minimum_count=2)
-        return tuple(
-            TimelineEvent(
-                "hypotension",
-                f"Noninvasive MAP stayed under 65 mmHg from minute {run[0][0]} to minute {run[-1][0]}.",
-            )
-            for run in runs
-        )
-    if samples and not arterial and not cuff:
-        return (TimelineEvent("missing_map", "No usable MAP reading is on this timeline."),)
-    return ()
+        return tuple(_span_event("hypotension", "Noninvasive MAP stayed under 65 mmHg", run) for run in runs)
+    return (TimelineEvent("missing_map", "No usable MAP reading is on this timeline."),)
 
 
 def _saturation_events(samples: tuple[Sample, ...]) -> tuple[TimelineEvent, ...]:
     usable = _usable(samples, lambda sample: sample.spo2, SPO2_RANGE)
     if not usable:
-        if samples:
-            return (TimelineEvent("missing_spo2", "No usable SpO2 reading is on this timeline."),)
-        return ()
+        return (TimelineEvent("missing_spo2", "No usable SpO2 reading is on this timeline."),)
     runs = _low_runs(usable, SPO2_LOW, SPO2_MAX_GAP, 0, minimum_count=2)
-    return tuple(
-        TimelineEvent(
-            "desaturation",
-            f"SpO2 stayed under 90% from minute {run[0][0]} to minute {run[-1][0]}.",
-        )
-        for run in runs
+    return tuple(_span_event("desaturation", "SpO2 stayed under 90%", run) for run in runs)
+
+
+def _span_event(kind: str, prefix: str, run: list[tuple[int, float]]) -> TimelineEvent:
+    start = run[0][0]
+    end = run[-1][0]
+    return TimelineEvent(
+        kind,
+        f"{prefix} from minute {start} to minute {end}.",
+        start_minute=start,
+        end_minute=end,
+        values=tuple(value for _, value in run),
     )
 
 
@@ -269,15 +266,27 @@ def _dose_kind(dose: Dose) -> str:
     return "end time is before the start time"
 
 
-def _grade_episode(
-    event: TimelineEvent,
-    text: str,
-    concepts: tuple[str, ...],
-    anchors: tuple[str, ...],
-) -> tuple[Grade, ...]:
-    if _positive(text, concepts) and _positive(text, anchors):
+def _grade_episode(event: TimelineEvent, text: str) -> tuple[Grade, ...]:
+    if event.kind == "hypotension":
+        named = _names_hypotension(text)
+        denied = _negated(text, _HYPO_CONCEPT)
+        supported, contradicted = _hypotension_detail(text, event)
+    else:
+        named = _names_desaturation(text, event)
+        denied = _negated(text, _DESAT_CONCEPT)
+        supported, contradicted = _desaturation_detail(text, event)
+    if named and not denied and supported and not contradicted:
         return (Grade("mentioned", event.kind, event.evidence),)
-    if _negated(text, concepts):
+    if contradicted:
+        return (
+            Grade(
+                "unsupported",
+                event.kind,
+                f"The handoff gives a detail this timeline does not show. {event.evidence}",
+            ),
+            Grade("missed", event.kind, event.evidence),
+        )
+    if denied:
         return (
             Grade("unsupported", event.kind, f"The handoff says this was absent. {event.evidence}"),
             Grade("missed", event.kind, event.evidence),
@@ -297,10 +306,10 @@ def _grade_drug(event: TimelineEvent, text: str) -> tuple[Grade, ...]:
     return (Grade("missed", event.kind, event.evidence),)
 
 
-def _grade_gap(event: TimelineEvent, text: str, acknowledgements: tuple[str, ...], value_claim) -> Grade:
+def _grade_gap(event: TimelineEvent, text: str, series: tuple[str, ...], value_claim) -> Grade:
     if value_claim(text):
         return Grade("unsupported", event.kind, f"The handoff states a value. {event.evidence}")
-    if any(phrase in text for phrase in acknowledgements):
+    if _acknowledges_gap(text, series):
         return Grade("mentioned", event.kind, event.evidence)
     return Grade("missed", event.kind, event.evidence)
 
@@ -360,18 +369,116 @@ def _names_drug(text: str, drug: str, *, negated: bool) -> bool:
 
 
 def _claims_desat(text: str) -> bool:
-    acknowledged = any(
-        phrase in text
-        for phrase in (
-            "spo2 was not recorded",
-            "sp02 was not recorded",
-            "oxygen saturation was not recorded",
-            "no spo2 reading",
-        )
-    )
-    if acknowledged and not _positive(text, ("desatur", "low oxygen")) and _SPO2_NUMBER.search(text) is None:
+    low_values = [value for value in _numbers_after(text, ("spo2", "sp02", "saturation")) if value < SPO2_LOW]
+    if _acknowledges_gap(text, _SPO2_SERIES) and not _positive(text, _DESAT_CONCEPT) and not low_values:
         return False
-    return _positive(text, _DESAT_CONCEPT)
+    if _positive(text, _DESAT_CONCEPT):
+        return True
+    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+        return True
+    return bool(low_values)
+
+
+def _names_hypotension(text: str) -> bool:
+    return _positive(text, _HYPO_CONCEPT)
+
+
+def _names_desaturation(text: str, event: TimelineEvent) -> bool:
+    if _positive(text, _DESAT_CONCEPT):
+        return True
+    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+        return True
+    return any(
+        value < SPO2_LOW and any(abs(value - known) < 0.01 for known in event.values)
+        for value in _numbers_after(text, ("spo2", "sp02", "saturation"))
+    )
+
+
+def _hypotension_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
+    minutes_ok, minutes_bad = _minute_fit(text, event)
+    body = _without_minute_claims(text)
+    matched, contradicted = _stated_values(body, ("map", "blood pressure"), event.values, MAP_LOW)
+    threshold = _has_standalone(body, 65)
+    return minutes_ok or threshold or matched, minutes_bad or contradicted
+
+
+def _desaturation_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
+    minutes_ok, minutes_bad = _minute_fit(text, event)
+    body = _without_minute_claims(text)
+    under_ninety = re.search(r"(?:under|below|<)\s*90\b", body) is not None
+    stated = [
+        value
+        for value in _numbers_after(body, ("spo2", "sp02", "saturation"))
+        if not (under_ninety and abs(value - 90.0) < 0.01)
+    ]
+    matched = any(any(abs(value - known) < 0.01 for known in event.values) for value in stated)
+    contradicted = any(not any(abs(value - known) < 0.01 for known in event.values) for value in stated)
+    threshold = under_ninety or (_has_standalone(body, 90) and not stated)
+    return minutes_ok or threshold or matched, minutes_bad or contradicted
+
+
+def _stated_values(
+    text: str,
+    words: tuple[str, ...],
+    known: tuple[float, ...],
+    threshold: float | None,
+) -> tuple[bool, bool]:
+    matched = False
+    contradicted = False
+    for value in _numbers_after(text, words):
+        if threshold is not None and abs(value - threshold) < 0.01:
+            matched = True
+        elif any(abs(value - item) < 0.01 for item in known):
+            matched = True
+        else:
+            contradicted = True
+    return matched, contradicted
+
+
+def _minute_fit(text: str, event: TimelineEvent) -> tuple[bool, bool]:
+    claimed = _minute_numbers(text)
+    if not claimed or event.start_minute is None or event.end_minute is None:
+        return False, False
+    outside = [number for number in claimed if number < event.start_minute or number > event.end_minute]
+    inside = [number for number in claimed if event.start_minute <= number <= event.end_minute]
+    return bool(inside) and not outside, bool(outside)
+
+
+def _minute_numbers(text: str) -> tuple[int, ...]:
+    found: list[int] = []
+    for match in _MINUTE_CLAIM.finditer(text):
+        found.append(int(match.group(1)))
+        if match.group(2):
+            found.append(int(match.group(2)))
+    return tuple(found)
+
+
+def _without_minute_claims(text: str) -> str:
+    return _MINUTE_CLAIM.sub(" ", text)
+
+
+def _has_standalone(text: str, number: int) -> bool:
+    return re.search(rf"(?<!\d){number}(?!\d)", text) is not None
+
+
+def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
+    pattern = (
+        r"\b(?:"
+        + "|".join(re.escape(word) for word in words)
+        + r")\b[^\n.]{0,24}(?<!\d)(\d+(?:\.\d+)?)(?!\d)"
+    )
+    return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
+
+
+def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
+    for sentence in re.split(r"[.\n;]", text):
+        if not any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", sentence) for word in series):
+            continue
+        if _GAP_WORDS.search(sentence):
+            return True
+        if any(re.search(rf"\bno\s+{re.escape(word)}\b", sentence) for word in series):
+            return True
+    return False
 
 
 def _spo2_value_claim(text: str) -> bool:

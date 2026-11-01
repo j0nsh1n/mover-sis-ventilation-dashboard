@@ -364,16 +364,19 @@ Handoff grading:
   minute) is used when any usable arterial reading exists. Otherwise
   noninvasive MAP is used (gap at most 6 minutes, at least two readings).
 - Desaturation: SpO2 under 90% on at least two usable readings (`SP02`,
-  50–100%) at most 1 minute apart.
+  50–100%) at most 1 minute apart. The first and last of those readings
+  are on different minutes, so two readings in the same minute do not count.
 - Vasopressors: Phenylephrine, Ephedrine, Vasopressin, Epinephrine,
   Norepinephrine. Inotropes: Dopamine, Dobutamine, Milrinone, Isoproterenol.
   Phenylephrine nasal is excluded. A missing end time is a bolus. A later end
   time is an infusion.
-- A mentioned item names the finding and one concrete detail such as the drug,
-  the minute span, or 65 / 90. A keyword alone is missed. A claim the timeline
-  does not support is unsupported. A missing MAP or SpO2 series is its own
-  item: name the gap, or the grade is missed; stating a value for a missing
-  series is unsupported.
+- A mentioned item names the finding and one concrete detail the timeline
+  supports, such as the drug, a minute inside the episode, or 65 / 90. A
+  keyword, or a generic word such as sustained, arterial, or minute, is
+  missed. A minute or value the episode does not show is unsupported, and
+  that episode stays missed. A missing MAP or SpO2 series, including an
+  empty timeline, is its own item: name the gap, for example "SpO2 missing",
+  or the grade is missed. Stating a value for a missing series is unsupported.
 - The page does not recommend treatment. A real-case practice path is not
   included.
 

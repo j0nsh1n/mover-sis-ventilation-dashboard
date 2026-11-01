@@ -23,6 +23,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Handoff practice accepts a minute or a saturation value only when that
+  detail is on the fictional episode. A wrong minute, a normal saturation,
+  or a generic word such as "sustained" does not count as mentioning the
+  event. "SpO2 missing" names a missing series. An empty timeline still
+  reports the missing MAP and SpO2 series.
 - A case fetch is reused only for the same EMR folder, rule preset, and
   threshold hash. The same surgery id in another folder is computed again.
   A pipeline load or full-EMR scan that finishes after the data folders
