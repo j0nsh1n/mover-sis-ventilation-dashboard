@@ -1,0 +1,4 @@
+PID,Start_time,End_time,Dose,Drug_name,Drug_units
+FAKE0001,1/1/00 8:40,\N,100,Phenylephrine,mcg
+FAKE0001,1/1/00 8:50,1/1/00 10:00,50,Norepinephrine,mcg
+FAKE0002,1/2/00 1:10,\N,2,Midazolam,mg
