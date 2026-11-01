@@ -351,11 +351,11 @@ stay unchanged and UNRUN. Suite results do not mark that candidate passed.
 ### Decided practice contracts (2026-11-01)
 
 The tracked trainer tree at `a9a6e5d` is an M0 scaffold. Its fixtures use the
-fictional id `FAKE0001` only. No separate review document was found. History is
-imported with `git subtree` at `imports/handoff-trainer` and does not take the
-untracked `core/Cargo.lock`. The Rust placeholder is not built. The import
-prefix stays intact so its own fixture paths keep working. Cases used for
-grading are fictional.
+fictional id `FAKE0001` only. No separate review document was found. History is at `imports/handoff-trainer` from `a9a6e5d`. `git subtree` is not
+installed, so the import is an unsquashed merge that reads the trainer files
+into that prefix. It does not take the untracked `core/Cargo.lock`. The Rust
+placeholder is not built. The import prefix stays intact so its own fixture
+paths keep working. Cases used for grading are fictional.
 
 Handoff grading:
 

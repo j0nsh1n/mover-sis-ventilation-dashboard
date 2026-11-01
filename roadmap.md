@@ -198,8 +198,8 @@ later preflight shows it unused.
 ### Practice modules (2026-11-01)
 
 - Handoff grading, medication and vital rows, and fictional WHO checklist
-  practice are in the desktop. Cases and cards are fictional. The trainer
-  history import is a separate commit when the tree is clean. The original
+  practice are in the desktop. Cases and cards are fictional. Trainer history
+  is imported at `6c64f11` under `imports/handoff-trainer`. The original
   trainer repo stays where it is.
 - The folder rename is still not performed. This session is using the
   repository as its working directory.
