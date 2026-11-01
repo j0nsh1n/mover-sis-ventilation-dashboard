@@ -207,8 +207,11 @@ later preflight shows it unused.
   found to copy, and a host build is not a substitute. Native QA on a new
   artifact remains UNRUN.
 
-Independent different-model review still applies to these modules. A review
-that has not returned does not close that gate.
+GPT-6.1 Terra reviewed the practice pages and did not accept the first
+grader. The fix is local commit `eb09044`. Terra's re-review accepted it:
+a wrong minute, a normal saturation, and a generic word no longer count
+as a completed mention, and an empty timeline still reports the missing
+MAP and SpO2 series. Not pushed.
 
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference

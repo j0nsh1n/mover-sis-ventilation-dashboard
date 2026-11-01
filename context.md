@@ -309,8 +309,10 @@ Wave root (optional) ──► wave_decode                   │
   the fictional WHO checklist are in the desktop on fictional data. Trainer
   history is imported at `6c64f11` and the standalone repo is not archived.
   A new suite candidate was not built: no portable container command was
-  found to copy. Push and publication are not started. Phase 2 results stay
-  in `.handoff/mover-suite-phase-2/closeout-report.md`.
+  found to copy. Push and publication are not started. GPT-6.1 Terra
+  accepted the handoff grader at local commit `eb09044` after an earlier
+  not-accept. Phase 2 results stay in
+  `.handoff/mover-suite-phase-2/closeout-report.md`.
 - **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
   2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
   Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain
