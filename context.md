@@ -84,8 +84,9 @@
 - **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.7.
 - **EMR:** `/var/mnt/games/EMR` remains local, read-only, and unopened. No
   actual patient values were written into Phase 1 files.
-- **Trainer:** `/home/jonathans/Projects/anesthesia-handoff-trainer` review
-  completion is unknown. Untracked `core/Cargo.lock` stays in that repo.
+- **Trainer:** `/home/jonathans/Projects/anesthesia-handoff-trainer` is still
+  the standalone M0 scaffold at `a9a6e5d`. Untracked `core/Cargo.lock` stays
+  there. Suite grading uses fictional cases. The standalone repo is not archived.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
 - **Desktop implementation:** G is the central `ResearchWorkspace` after
@@ -304,10 +305,12 @@ Wave root (optional) ──► wave_decode                   │
   integrated source and found no code issues. Terra's final narrow code
   review recorded No issues found. Those reviews are history.
 - **Next:** Do not rename the repository from a session whose working
-  directory is inside it. Trainer import still needs a grading contract;
-  the trainer repo is only an M0 scaffold. Medication, WHO, a new
-  candidate, and push or publication are not started. Phase 2 results
-  stay in `.handoff/mover-suite-phase-2/closeout-report.md`.
+  directory is inside it. Handoff practice, medication and vital rows, and
+  the fictional WHO checklist are in the desktop on fictional data. The
+  trainer history import follows once this tree is clean. A new suite
+  candidate was not built: no portable container command was found to copy.
+  Push and publication are not started. Phase 2 results stay in
+  `.handoff/mover-suite-phase-2/closeout-report.md`.
 - **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
   2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
   Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain

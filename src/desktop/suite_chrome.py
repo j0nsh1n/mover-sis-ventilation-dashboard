@@ -11,13 +11,18 @@ _MODULE_LABEL = "Monitoring"
 
 
 def install_suite_chrome(window: QMainWindow, version: str) -> None:
-    """Set the suite title and one non-interactive Monitoring label."""
+    """Set the suite title and the Monitoring label."""
     window.setWindowTitle(f"{_PRODUCT_NAME} — {_MONITOR_TITLE.format(version=version)}")
+    set_module_label(window, _MODULE_LABEL)
+
+
+def set_module_label(window: QMainWindow, label_text: str) -> None:
+    """Show which suite module is open. The label is not a control."""
     bar = window.menuBar()
     current = bar.cornerWidget(Qt.Corner.TopLeftCorner)
     label = current if isinstance(current, QLabel) else QLabel(bar)
-    label.setText(_MODULE_LABEL)
-    label.setAccessibleName(_MODULE_LABEL)
+    label.setText(label_text)
+    label.setAccessibleName(label_text)
     label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
     if current is not label:

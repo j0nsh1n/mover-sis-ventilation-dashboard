@@ -60,7 +60,8 @@ def detail(qapp):
 
 
 def test_research_is_central_and_lifecycle_uses_its_controls(window, monkeypatch):
-    assert window.centralWidget() is window.research
+    assert window.centralWidget() is window.module_stack
+    assert window.module_stack.currentWidget() is window.research
     assert not hasattr(window, "tabs") and not hasattr(window, "chat_history")
     window._apply_ollama_status(OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], "http://127.0.0.1:11434"))
     research = window.research

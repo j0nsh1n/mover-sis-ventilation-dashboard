@@ -18,6 +18,7 @@ import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QGuiApplication,
     QIcon,
     QPainter,
@@ -27,11 +28,14 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QStatusBar,
     QToolButton,
+    QWidget,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +43,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
-from src.desktop.suite_chrome import install_suite_chrome
+from src.desktop.suite_chrome import install_suite_chrome, set_module_label
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
@@ -330,6 +334,26 @@ class MainWindow(QMainWindow):
         self.update_act.triggered.connect(self._restart_for_update)
         help_menu.addAction(self.update_act)
 
+        self._module_group = QActionGroup(self)
+        self._module_group.setExclusive(True)
+        self._module_actions: dict[str, QAction] = {}
+        view_menu.addSeparator()
+        for key, label, shortcut in (
+            ("monitoring", "Monitoring", "Ctrl+1"),
+            ("handoff", "Handoff practice", "Ctrl+2"),
+            ("medications", "Medication and vitals", "Ctrl+3"),
+            ("who", "WHO checklist", "Ctrl+4"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setShortcut(shortcut)
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.setObjectName(f"suite-module-{key}")
+            action.triggered.connect(lambda _checked=False, name=key: self._show_suite_module(name))
+            self._module_group.addAction(action)
+            view_menu.addAction(action)
+            self._module_actions[key] = action
+
         # Settings lives on a gear icon in the menu-bar corner, not under Edit
         self.settings_act = QAction(self._gear_icon(), "Settings…", self)
         self.settings_act.setShortcut("Ctrl+,")
@@ -388,7 +412,14 @@ class MainWindow(QMainWindow):
         self.research.model_changed.connect(self._on_ollama_model_changed)
         self.research.model_stop_requested.connect(self._ollama_stop)
         self.research.model_unload_requested.connect(self._ollama_unload)
-        self.setCentralWidget(self.research)
+        self.module_stack = QStackedWidget()
+        self.module_stack.setObjectName("suite-modules")
+        self.module_stack.setFrameShape(QFrame.Shape.NoFrame)
+        self.module_stack.setContentsMargins(0, 0, 0, 0)
+        self.module_stack.addWidget(self.research)
+        self._suite_pages: dict[str, QWidget] = {"monitoring": self.research}
+        self.setCentralWidget(self.module_stack)
+        self._show_suite_module("monitoring")
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -1421,6 +1452,78 @@ class MainWindow(QMainWindow):
         self.research.set_rule_catalog(catalog, recorded=self._preset_recorded,
                                        thresholds_sha256=self._thresholds_sha256)
         self.research.rules_drawer.set_explanations(cfg)
+
+    def _show_suite_module(self, name: str) -> None:
+        stack = getattr(self, "module_stack", None)
+        if stack is None:
+            return
+        page = self._suite_page(name)
+        stack.setCurrentWidget(page)
+        labels = {
+            "monitoring": "Monitoring",
+            "handoff": "Handoff",
+            "medications": "Medications",
+            "who": "Checklist",
+        }
+        set_module_label(self, labels[name])
+        action = self._module_actions.get(name)
+        if action is not None:
+            action.setChecked(True)
+        if name == "medications":
+            self._offer_open_case_to_medication()
+
+    def _suite_page(self, name: str) -> QWidget:
+        pages = self._suite_pages
+        if name in pages:
+            return pages[name]
+        if name == "handoff":
+            from src.modules.handoff_trainer.panel import HandoffPanel
+
+            page: QWidget = HandoffPanel()
+        elif name == "medications":
+            from src.modules.medication_vitals.panel import MedicationVitalsPanel
+
+            page = MedicationVitalsPanel()
+        elif name == "who":
+            from src.modules.who_checklist.panel import WhoPanel
+
+            page = WhoPanel()
+        else:
+            page = self.research
+        self.module_stack.addWidget(page)
+        pages[name] = page
+        return page
+
+    def _offer_open_case_to_medication(self) -> None:
+        from src.modules.medication_vitals.panel import MedicationVitalsPanel
+
+        panel = self._suite_pages.get("medications")
+        if not isinstance(panel, MedicationVitalsPanel):
+            return
+        pid = self.research._current_pid
+        view = self.research._case_views.get(pid) if pid else None
+        if pid is None or view is None:
+            panel.show_fictional()
+            return
+        from src.llm.case_context import load_case_medications
+
+        origin = _case_origin(view.cases, pid)
+        panel.show_case(str(pid), load_case_medications(pid), view.timeseries, origin=origin)
+
+
+def _case_origin(cases: pd.DataFrame, pid: str):
+    if cases is None or cases.empty or "PID" not in cases.columns or "t_start" not in cases.columns:
+        return None
+    rows = cases[cases["PID"].astype(str) == str(pid)]
+    if rows.empty:
+        return None
+    value = rows.iloc[0].get("t_start")
+    if value is None or pd.isna(value):
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime()
 
 
 def main() -> int:

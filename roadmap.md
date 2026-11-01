@@ -195,17 +195,20 @@ processes use the repository as their working directory. `lsof.err` is
 Docker overlay and netns warnings only. Do not move the folder until a
 later preflight shows it unused.
 
-### Later phases (plan only)
+### Practice modules (2026-11-01)
 
-These stay future work until each is named and approved:
+- Handoff grading, medication and vital rows, and fictional WHO checklist
+  practice are in the desktop. Cases and cards are fictional. The trainer
+  history import is a separate commit when the tree is clean. The original
+  trainer repo stays where it is.
+- The folder rename is still not performed. This session is using the
+  repository as its working directory.
+- A new suite candidate was not built. No portable container command was
+  found to copy, and a host build is not a substitute. Native QA on a new
+  artifact remains UNRUN.
 
-- Trainer import after review confirmation
-- Medication and vitals explorer after its display contract
-- Fictional WHO simulator after content and checklist source
-- New suite candidate packaging and carried native QA on that artifact
-
-Independent different-model review applies to later implementation
-milestones. This documentation phase does not satisfy those gates.
+Independent different-model review still applies to these modules. A review
+that has not returned does not close that gate.
 
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference

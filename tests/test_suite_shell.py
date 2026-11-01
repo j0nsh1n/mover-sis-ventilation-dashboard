@@ -47,7 +47,8 @@ def test_main_window_shows_the_suite_title_and_one_monitoring_label(window):
     assert window.windowTitle() == _suite_title()
     assert "MOVER Suite" in window.windowTitle()
     assert "MOVER SIS" in window.windowTitle()
-    assert window.centralWidget() is window.research
+    assert window.centralWidget() is window.module_stack
+    assert window.module_stack.currentWidget() is window.research
 
     labels = _monitoring_labels(window)
     assert len(labels) == 1
@@ -110,7 +111,8 @@ def test_repeated_install_leaves_one_label_and_the_same_title(window, qapp):
     assert window.windowTitle() == title == _suite_title()
     assert [action.text() for action in window.menuBar().actions()] == menus
     assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is gear
-    assert window.centralWidget() is research
+    assert window.centralWidget() is window.module_stack
+    assert window.module_stack.currentWidget() is research
     labels = _monitoring_labels(window)
     assert labels == [window.menuBar().cornerWidget(Qt.Corner.TopLeftCorner)]
     assert len(labels) == 1

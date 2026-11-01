@@ -9,6 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- View can open Handoff practice, Medication and vitals, or a fictional WHO
+  checklist. Monitoring still opens first. Handoff practice grades fictional
+  timelines as mentioned, missed, or unsupported. The medication page shows
+  units, time, bolus versus infusion, and source, and it does not recommend
+  treatment. The checklist page walks Sign in, Time out, and Sign out on
+  authored cards and can save that practice on this computer.
+
 - The desktop window title reads "MOVER Suite — MOVER SIS Monitor" with the
   version and "Ventilation & Anesthesia". A Monitoring label sits on the left
   of the menu bar. The research workspace, menus, and Settings gear stay in

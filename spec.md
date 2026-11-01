@@ -305,18 +305,17 @@ Exactly four tools:
 
 1. SIS Monitor (Monitoring): wrap today's G and F Research workspace, Cases, and
    Rules.
-2. Handoff trainer: practice workflow after trainer review is confirmed.
-3. Medication and vitals explorer: aligned drug events and measured vital signs for
-   a selected case.
+2. Handoff trainer: fictional practice cases, handoff text, and grading.
+3. Medication and vitals explorer: aligned drug events and measured vital signs.
 4. Fictional WHO checklist simulator: authored fictional scenarios only.
 
 Desktop UI stays PySide6. Python 3.14 remains the language for the UI and existing
 processing. No new Rust component and no port of tests into Rust is granted.
 Existing Rust updater, signer, and desktop contract suites stay as they are.
 
-The first implementation slice, once Phase 2 is authorized, wraps the current
-workspace as Monitoring inside a suite shell with one live module. Unfinished tools
-do not appear as empty functional tabs.
+Monitoring opens first. View can switch to Handoff practice, Medication and
+vitals, or the WHO checklist. Those pages are working practice tools, not empty
+tabs. The corner label names the page that is open.
 
 ### Shared source, preset, and generation
 
@@ -349,21 +348,67 @@ Carry native QA into the suite record. The original candidate AppImage and
 `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`
 stay unchanged and UNRUN. Suite results do not mark that candidate passed.
 
+### Decided practice contracts (2026-11-01)
+
+The tracked trainer tree at `a9a6e5d` is an M0 scaffold. Its fixtures use the
+fictional id `FAKE0001` only. No separate review document was found. History is
+imported with `git subtree` at `imports/handoff-trainer` and does not take the
+untracked `core/Cargo.lock`. The Rust placeholder is not built. The import
+prefix stays intact so its own fixture paths keep working. Cases used for
+grading are fictional.
+
+Handoff grading:
+
+- Hypotension: MAP under 65 mmHg on consecutive usable readings whose span is
+  more than 5 minutes. Arterial MAP (`MAP_ART`, 20–200 mmHg, gap at most 1
+  minute) is used when any usable arterial reading exists. Otherwise
+  noninvasive MAP is used (gap at most 6 minutes, at least two readings).
+- Desaturation: SpO2 under 90% on at least two usable readings (`SP02`,
+  50–100%) at most 1 minute apart.
+- Vasopressors: Phenylephrine, Ephedrine, Vasopressin, Epinephrine,
+  Norepinephrine. Inotropes: Dopamine, Dobutamine, Milrinone, Isoproterenol.
+  Phenylephrine nasal is excluded. A missing end time is a bolus. A later end
+  time is an infusion.
+- A mentioned item names the finding and one concrete detail such as the drug,
+  the minute span, or 65 / 90. A keyword alone is missed. A claim the timeline
+  does not support is unsupported. A missing MAP or SpO2 series is its own
+  item: name the gap, or the grade is missed; stating a value for a missing
+  series is unsupported.
+- The page does not recommend treatment. A real-case practice path is not
+  included.
+
+Medication and vitals display:
+
+- Rows show the drug or measurement, the value, the unit, bolus versus
+  infusion, the time, and the source (`patient_medication.csv` or the case
+  timeseries). A missing dose or measurement stays missing.
+- Drug clocks and vital minutes share an axis only when the medication rows
+  already use minutes or a case start is known. Otherwise both times are shown
+  and the page says they are not shifted.
+- The page says it does not explain why a drug was given and does not say what
+  to do next. With no open Monitoring case, it shows a fictional demo. An open
+  case reuses `load_case_medications` and the timeseries already on screen.
+
+WHO checklist practice:
+
+- Two authored cards use the stage order Sign in, Time out, Sign out. Item
+  wording is practice text for those cards, not a copy of a published checklist
+  and not a patient record.
+- A later stage stays closed until the open stage is complete. An item that is
+  not on a card must be marked that way. Saving writes local practice state.
+  This module does not import the EMR, retrieval, or data-context stack.
+
 ### Deferred decisions
 
-These remain open. This spec does not invent feature contracts for them:
+These remain open:
 
-- Trainer review completion is unconfirmed. Do not import or move the trainer until
-  that confirmation.
-- Handoff grading contract and allowed case sources.
-- Medication and vitals display contract, including the first field set, bolus versus
-  infusion, and time alignment.
-- WHO checklist version, source terms, and scoring. Fixtures stay fictional.
-- Timing of the repository folder rename.
+- The repository folder rename. It was authorized and then blocked because this
+  session's working directory is the repository.
 - Whether to later add `.venv.old-premove/` to the committed `.gitignore`.
 - Any new Rust function or test-language port.
-- Named different-model reviewer at each implementation milestone.
-- Permission for each commit, push, delete, publication, or remote rename.
+- A new suite candidate. The portable-build record does not contain a container
+  command to copy, so no host build is substituted.
+- Push, publication, and remote rename.
 
 Live AI in native QA stays paused. Plan approval does not resume paused model calls.
 
