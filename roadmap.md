@@ -128,6 +128,65 @@ to publish.
 - Status: [x] 2026-10-17 — merged in #37 with Linux and Windows CI passing.
   A local v0.14.0 Linux candidate is built and validated; publication is pending.
 
+## MOVER Suite migration (approved 2026-10-27)
+
+Plans and authorization state only. The sequence is the approved plan in
+`/home/jonathans/Projects/medical/mover/_work/mover-suite/MOVER-SUITE-PLAN.md`.
+This subsection does not mark an independently reviewed implementation
+milestone complete.
+
+### Phase 1 — Baseline and spec (authorized 2026-10-27)
+
+- Record checkout, HEAD, candidate AppImage, original checklist hashes, and
+  tooling versions
+- Update `spec.md` for PySide6, four tools, retired legacy tabs, shared
+  source and generation boundaries, and deferred decisions
+- Write the suite native QA record, UNRUN except the carried deferred keyboard
+  route, with the original candidate
+  checklist left UNRUN
+- Write `.handoff/mover-suite/phase-1.md`
+- Status: [x] 2026-10-27 — documentation complete on `feat/v0.15-signal-grounding`
+  at baseline `1bca1ce`. No Phase 1 commit exists yet. Main lightweight
+  Ruff, diff, and document checks passed. Heavy Python, coverage, and Rust
+  checks were resource-deferred; native suite QA awaits the suite target.
+  Approved GPT-6.1 Terra review through T3 Codex returned PASS after three
+  documentation fixes were applied and independently confirmed. This
+  closes the documentation phase only.
+
+### Phase 2 — Monitoring shell (authorized 2026-10-27)
+
+- Add suite navigation with one live module: today's G and F workspace
+- Preserve Monitoring behavior. Unfinished trainer, medication, and WHO
+  tools stay off the shell
+- Carry native suite checks for Setup, Cases, source rows, Rules, keyboard
+  use, scaling, safe errors, and persistence
+- Status: [x] 2026-10-27 local / 2026-10-28 UTC — Monitoring shell is
+  implemented on `feat/v0.15-signal-grounding`. Committed locally on
+  2026-11-01; parent `1bca1ce`. Not pushed. Independent reviews recorded
+  no remaining code issues. Native
+  source QA E1–E2 and sections 1–10 PASS except 3.3 DEFERRED; section 11
+  UNRUN. Historical full source gate FAIL was two mypy errors, later
+  fixed; ruff, mypy, and `git diff --check` then exited 0. Final
+  `pytest --cov=src` exited 0: 1259 passed, 7 skipped, 853 warnings in
+  964.83s; TOTAL 11909 statements, 1898 missed, 84%. All six recorded
+  source/test hashes match. Source-shell scope and closeout are complete;
+  frozen-artifact section 11 remains UNRUN. Later suite phases are unstarted.
+
+### Later authorized phases (plan only)
+
+These stay future work until each is named and approved:
+
+- Shared data context and services, including source and preset invalidation
+  of stale caches and background jobs
+- Repository folder rename as its own operation
+- Trainer import after review confirmation
+- Medication and vitals explorer after its display contract
+- Fictional WHO simulator after content and checklist source
+- New suite candidate packaging and carried native QA on that artifact
+
+Independent different-model review applies to later implementation
+milestones. This documentation phase does not satisfy those gates.
+
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
   into G/F (prototype built: `docs/prototypes/consolidated-workspace.html`, #21;

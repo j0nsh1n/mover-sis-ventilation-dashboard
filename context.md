@@ -2,66 +2,91 @@
 
 ## Current State
 
-- **Audit remediation committed locally (2026-10-22):** Grok Bot's confirmed
-  release blockers and Fix first items are fixed: EMR output overlap,
-  processed-source identity, absent-signal numbers, heart-rate units, safe error
-  messages with an owner-only local log, accessibility and layout. Codex
-  (gpt-6-luna) reviewed the full change; its one finding, an existing log keeping
-  wider permissions, is fixed and covered by a Rust contract shown to fail without
-  the fix. Two grounding gaps from the earlier Phase 11 review (list components,
-  question values as difference operands) are fixed with tests. Full Python gate:
-  1247 passed, 2 skipped, 5 real-data deselected; ruff and mypy clean. Rust:
-  10 desktop and 2 parser contracts pass, the frozen-bundle check awaits a build.
-- **Native AppImage QA:** the unchanged v0.15 image passed visible setup,
-  processing, cases/charts, Rules filtering, fictional article import and
-  settings/data persistence. Case detail and live AI remain incomplete. User
-  approved holo9b-16k:latest through local Ollama and confined mouse input;
-  model selection still shows qwen2.5:14b after two attempts, and no model was
-  invoked. Live AI testing is paused at the user's request. Evidence is under
-  `~/Projects/medical/mover/_work/appimage-human-20261018-r1/`.
-- **Portable build preparation:** the original frozen dependencies require up
-  to GLIBC 2.43. A separate local Ubuntu 24.04 container now has Python 3.14.7,
-  PySide6 6.11.2 and the existing pinned dependencies on GLIBC 2.39. No repaired
-  app has been built yet. Files are under `~/Projects/medical/mover/_work/appimage-fix-first/`.
-- **Version:** source is 0.15.0, prepared locally on 2026-10-17. Published version
-  remains 0.13.0, released 2026-10-16. No installed app was replaced.
-- **Local release candidates:** v0.14.0 Linux archive from merged PR #37
-  (`b9dbcb9`) is preserved under `~/Projects/medical/mover/_work/release-v0.14.0/`. The combined
-  v0.15.0 Linux AppImage is under `~/Projects/medical/mover/_work/release-v0.15.0/`. Its first
-  reviewed image is preserved. The final image was rebuilt after two minor
-  fixes and passed startup, a 19-case scan and all 13 packaging checks. No local
+- **Phase (2026-10-27 local / 2026-10-28 UTC):** Phase 1 documentation is
+  complete. Phase 2 Monitoring shell is implemented and committed locally
+  on 2026-11-01. It is not pushed. The
+  window title names MOVER Suite and MOVER SIS Monitor, and one
+  non-interactive Monitoring label sits in the menu bar. ResearchWorkspace
+  remains the central widget. Kimi's independent implementation review found
+  no code issues. Terra reviews drove nested-dialog, direct-status, and
+  combobox-notification corrections; the final narrow Terra code review
+  recorded No issues found. Native source QA E1, E2, and sections 1–10 PASS
+  except 3.3 DEFERRED. Rechecks 1.5, 6.1, 7.1, 8.2, 8.3, and 10.2 PASS;
+  later 6.1 and 8.2 PASS. Section 11 candidate, GLIBC, artifact, and Windows
+  checks remain UNRUN. Final Python coverage exited 0: 1259 passed,
+  7 skipped, 853 warnings; TOTAL 11909 statements, 1898 missed, 84%.
+  All six recorded source/test hashes match. Phase 2 source-shell work
+  and its closeout are COMPLETE. The local commit's parent is
+  `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`. Nothing is pushed.
+- **Branch:** `feat/v0.15-signal-grounding`, explicit user override for this
+  work. The root
+  checkout contains the integrated Phase 1 and Phase 2 edits. Grok's separate
+  implementation worktree remains at
+  `/home/jonathans/.t3/worktrees/mover-sis-monitor/t3-ce2f3b2a`. The other
+  working branch `feat/v0.14-desktop-fixes` is preserved.
+- **Audit source:** the v0.15 audit fixes are already committed at that HEAD.
+  Older handoff text about uncommitted audit edits is stale.
+- **Version:** source is 0.15.0, prepared locally. Published version remains
+  0.13.0. No installed app was replaced.
+- **Tooling verified 2026-10-27:** Python 3.14.7, Ruff 0.16.9, mypy 2.3.1.
+  These are installed-version checks.
+- **Checks 2026-10-27/28:** After the research_workspace type fixes, main
+  ran `.venv/bin/ruff check .` (exit 0, All checks passed!),
+  `nice -n 10 .venv/bin/mypy` (exit 0, Success: no issues found in 65 source
+  files), and `git diff --check` (exit 0). No source changed in this
+  closeout. The 2026-10-27 comprehensive source gate failed solely on two
+  mypy errors; its Python 1259 passed, 7 skipped, and coverage 84% TOTAL
+  11907 statements, 1897 missed, are pre-type-fix. Thresholds, packaging,
+  and Rust checks in that gate exited 0. Later recovery logs
+  `final-pytest-q.log` and `final-pytest-cov.log` have no terminal summary.
+  Main's final coverage run completed under
+  `/home/jonathans/Projects/medical/mover/_scratch/suite-verify/phase2-closeout/`
+  (2026-10-28T03:31:37Z to 03:47:44Z). Terminal exit 0; 1259 passed,
+  7 skipped, 853 warnings in 964.83s; TOTAL 11909 statements, 1898 missed,
+  84%. All six source/test hashes recorded during the run still match.
+  The incomplete recovery runs are superseded by this result. Closeout record:
+  `.handoff/mover-suite-phase-2/closeout-report.md`. Native source QA is in
+  `/home/jonathans/Projects/medical/mover/_work/mover-suite/SUITE-QA.md`.
+  Frozen-artifact section 11 and new frozen smoke await a suite candidate.
+- **Historical 2026-10-22 gate (not rerun 2026-10-27):** 1247 Python passed,
+  2 skipped, 5 real-data deselected; Ruff and mypy passed; 10 desktop Rust
+  and 2 parser checks passed. Portable frozen smoke and GLIBC 2.39-or-lower
+  compatibility are also historical.
+- **AppImage candidate (preserved):**
+  `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/candidate-r1/src/dist/MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage`,
+  SHA256 `12a2a835840d17e1f878f111098c9f8977aa17f453f0f9e74a47f5182dde6ff6`.
+- **Original native checklist (preserved, UNRUN):**
+  `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`,
+  SHA256 `80642f761e714d2c3f8491953267357ad8afa12f147d2f5f35b8184f30560ad3`.
+- **Historical 2026-10-18 human QA** of an earlier v0.15 image is recorded
+  under `~/Projects/medical/mover/_work/appimage-human-20261018-r1/`. That
+  record is separate from the UNRUN candidate checklist. Live AI testing
+  remains paused.
+- **Local release candidates (historical):** v0.14.0 Linux archive under
+  `~/Projects/medical/mover/_work/release-v0.14.0/`; combined v0.15.0 Linux
+  AppImage under `~/Projects/medical/mover/_work/release-v0.15.0/`. No local
   Windows archive was built.
-- **Branch:** `feat/v0.15-signal-grounding`, with the existing grounding changes
-  preserved and the merged v0.14 base integrated locally. The integrated result
-  passed validation and independent review. Two working branch names exist.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
-  Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
-  manifest are live.
-- **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** the v0.15 AppImage gate passed 1,233 tests with seven skipped on
-  Python 3.14.7, 2026-10-17. After two minor review fixes, 13 focused path,
-  launcher and version cases, ruff and mypy passed. Available ruff 0.16.6 and
-  mypy 2.3.0 are below spec pins 0.16.9 and 2.3.1.
-  The recorded eval has zero mismatches, a 100% catch rate and no false flags.
-  Rust updater and signer suites passed on the unchanged v0.14 trees the same
-  day. Frozen tests in this checkout skipped because the bundle was built in
-  the release snapshot. Actual v0.15 AppImage startup and scan passed, and
-  scripted source UI Research, minute follow-up and article flows passed.
-  The final image's data_dir bytecode matches the reviewed source; its inner
-  executable matches the verified frozen bundle, and its portable checksum passed.
-  Real-wave tests remained opt-in and did not run. No real research data was read.
+- **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.7.
+- **EMR:** `/var/mnt/games/EMR` remains local, read-only, and unopened. No
+  actual patient values were written into Phase 1 files.
+- **Trainer:** `/home/jonathans/Projects/anesthesia-handoff-trainer` review
+  completion is unknown. Untracked `core/Cargo.lock` stays in that repo.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
-- **Desktop implementation:** G is the first tab after setup; local embedding
-  retrieval indexes one short record per surgery, plus short facts (signals,
-  flagged rules, signal gaps) for analyzed cases, and gives up to three case
-  extracts to the local AI. Keyword search matches whole words and works
-  without the embedding model. G has a Rules drawer (Ctrl+R), a Cases
-  overview and a conversation panel beside the evidence board. F shows the
-  three signal tracks, source rows, flag episodes, a flag lane and rule detail
-  with current thresholds.
+- **Desktop implementation:** G is the central `ResearchWorkspace` after
+  setup. Suite chrome adds the MOVER Suite title and one non-interactive
+  Monitoring menu-bar label. Local embedding retrieval indexes one short
+  record per surgery, plus
+  short facts (signals, flagged rules, signal gaps) for analyzed cases, and
+  gives up to three case extracts to the local AI. Keyword search matches
+  whole words and works without the embedding model. G has a Rules drawer
+  (Ctrl+R), a Cases overview and a conversation panel beside the evidence
+  board. F shows the three signal tracks, source rows, flag episodes, a flag
+  lane and rule detail with current thresholds. The Ask, Summary, Case
+  timeline, and Rule reference tabs are retired.
 - **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
   design and a future article-search proposal based on `HealthDatabaseAccess`.
 - **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
@@ -181,8 +206,9 @@ Wave root (optional) ──► wave_decode                   │
   mypy checks `src/` without `pandas-stubs`, so adoption finds real bugs without
   reformatting the codebase or drowning in stub false positives. Widening either
   is a possible later step.
-- **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
-  and Rule reference remain available as secondary tabs.
+- **Question-first UI:** G opens after setup as the central widget. Equivalent
+  functions live in G, F, Cases, and the Rules drawer. The Ask, Summary, Case
+  timeline, and Rule reference tabs are retired.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
   (compute-now vs full corpus precompute).
 - **Research answer gate:** one rewrite round on directive phrasing, a wrong age
@@ -205,7 +231,7 @@ Wave root (optional) ──► wave_decode                   │
   for one shard, so Cancel can terminate the worker; CLI scans with one worker
   stay in-process.
 - **Research isolation:** G disables legacy agent tools and uses a session limited
-  to retrieved PIDs, so prior Ask-tab selections cannot enter its prompt.
+  to retrieved PIDs, so prior case selections cannot enter its prompt.
 - **Ollama local-only by default:** remote base URL needs explicit allow env.
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
@@ -246,46 +272,27 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-10-18
-- **Release preparation:** local v0.14.0 Linux candidate, checksum, metadata patch,
-  independent review and validation report are under
-  `~/Projects/medical/mover/_work/release-v0.14.0/`. Published version remains v0.13.0.
-- **Grounding:** local merge `9e7ebac` combines the existing v0.15 changes with
-  merged main `b9dbcb9`. GLM completed the source map; Composer 2.5 through
-  Cursor CLI with Fast off wrote review notes and proposed spec wording.
-  Grok 4.6 through Grok CLI at xhigh returned PASS+NOTES after its article-header
-  finding was fixed with four cases. On three seed-8 extracts, made-up signal
-  claims passed 51.67% on the v0.14 checker and 0% on this checker; true printed
-  figures passed 100% on both. No live-model or real-data evaluation ran.
-  Task IDs and sealed briefs are in `.handoff/v015-orchestration.md`.
-- **AppImage:** local v0.15.0 packaging uses the existing Bash frozen build,
-  explicit pinned AppImage tools and manual file replacement. Saved/env paths
-  take precedence; new outputs default to writable user data outside the image.
-  Grok round 1 returned PASS+NOTES. Its checksum relocation and empty-XDG notes
-  are fixed and passed 13 focused tests. Round 2 returned PASS+NOTES with no new
-  defects. The final rebuild and artifact checks passed after available memory
-  recovered above 8 GiB. Source commit is `44adc9a` and the tree is local only.
-  GLM's raw resource readings were usable, but its summary again mislabeled a
-  minimum; that reporting attempt stopped. A fresh GLM raw-only collector then
-  completed successfully. The full test gate exited normally.
-- **Current audit work:** `.handoff/audit-fix-first.md` records the sealed slices,
-  chosen interfaces, delegated GLM source map and raw resource task IDs. Source
-  edits are uncommitted on `feat/v0.15-signal-grounding` at base `887d5b6`.
-  The approved Rust harness and four Python expectation updates are implemented.
-  Nine Rust source contracts pass and all nine failed behaviorally on the original
-  source. Grounding/advice has175 passes after the FiO2 correction. Ruff and mypy
-  passed. The initial full Python gate finished1222 passed/7 skipped/21 failed
-  on pre-correction imports. Its19 preset/hash failures and one grounding/advice
-  failure now pass focused checks; the fifth minute-error expectation was approved
-  and passes. Full rerun r2 is underway on the held source.
-  Updater10 and manifest signer8 tests also pass. The separate frozen-bundle parser
-  now handles named ABI tags explicitly and rejects the original bundle for2.42,
-  2.43 and ABI_GNU2_TLS. All follow-up choices are resolved.
-  A real-filesystem probe verified the safe-error fallback when settings lookup
-  fails. GLM's six raw resource samples completed; no independent code review yet.
-- **Next:** build and exercise a separate portable AppImage candidate in the
-  Ubuntu 24.04 builder, run the frozen-bundle check and `CANDIDATE-QA.md`. The
-  original reviewed AppImage is unchanged. Release records remain under
-  `~/Projects/medical/mover/_work/release-v0.15.0/`. The spec is unchanged. No
-  push, PR, installed-app replacement or publication occurred. Windows and
-  real-data checks remain open.
+- **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
+- **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
+  Phase 2 commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`.
+  The branch is not pushed. Grok's implementation worktree remains at
+  `/home/jonathans/.t3/worktrees/mover-sis-monitor/t3-ce2f3b2a`. Other
+  branch `feat/v0.14-desktop-fixes` and untracked
+  `rust-desktop-tests/target/` are preserved.
+- **Task:** Phase 2 documentation closeout. Shell implementation is already
+  integrated. Native source QA PASS except 3.3 DEFERRED. Fresh ruff, mypy,
+  and `git diff --check` exited 0 after the type fixes. Final coverage exited
+  0: 1259 passed, 7 skipped, 84%; all six hashes match. Phase 2 source-shell
+  scope and closeout are COMPLETE. Frozen-artifact checks remain UNRUN.
+- **Review:** Grok 4.7 and 4.6 produced designs; GPT-6.1 Terra cross-judged
+  them. Grok 4.7 implemented the selected design. Kimi reviewed the
+  integrated source and found no code issues. Terra's final narrow code
+  review recorded No issues found. Those reviews are history.
+- **Next:** Phase 2 is closed; results are in
+  `.handoff/mover-suite-phase-2/closeout-report.md`. The local commit is
+  done. Later phases, a new candidate, and push or publication remain
+  unstarted and unauthorized.
+- **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
+  2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
+  Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain
+  open. No push, PR, installed-app replacement, or publication occurred.

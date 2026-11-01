@@ -7,7 +7,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The desktop window title reads "MOVER Suite — MOVER SIS Monitor" with the
+  version and "Ventilation & Anesthesia". A Monitoring label sits on the left
+  of the menu bar. The research workspace, menus, and Settings gear stay in
+  place.
+
 ### Fixed
+
+- Dismissing the startup load warning puts keyboard focus on the research question.
+- A failed pipeline keeps folder paths off the status bar for the whole error
+  dialog, including when a reload changes the status while that dialog is open.
+  Closing it preserves a newer direct message or restores the latest path line.
+- At the default window size, the question card and its indexed-surgeries line
+  stay fully visible after a failed local-model check. A longer status still
+  wraps instead of being cut off inside the card.
+- The question-scope and Local AI dropdowns use their purpose as the accessible
+  name and the current choice as the accessible value. A new choice, including
+  a model-list refresh, updates that value. The selected model is unchanged.
 
 - Pipeline and full-EMR scan outputs are refused inside the source EMR tree,
   including when external output paths are enabled. Exports with other folder

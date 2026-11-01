@@ -858,6 +858,158 @@ def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(e
     assert seen["TV"] and not seen["SPO2"] and not seen["PEEP"]
 
 
+def _value_events(seen, combo):
+    from PySide6.QtGui import QAccessible
+
+    return [
+        value
+        for kind, obj, value in seen
+        if kind == QAccessible.Event.ValueChanged and obj is combo
+    ]
+
+
+def test_main_combos_publish_purpose_before_the_current_item(qapp):
+    from PySide6.QtGui import QAccessible
+
+    view = ResearchWorkspace()
+    view.model_combo.addItem("(Ollama stopped — click Start)")
+    view.show()
+    qapp.processEvents()
+    try:
+        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
+        model = QAccessible.queryAccessibleInterface(view.model_combo)
+        assert scope.text(QAccessible.Text.Name) == "Question scope"
+        assert scope.text(QAccessible.Text.Value) == "Cases"
+        assert model.text(QAccessible.Text.Name) == "Local AI"
+        assert model.text(QAccessible.Text.Value) == "(Ollama stopped — click Start)"
+        assert view.scope_combo.currentText() == "Cases"
+        assert view.selected_model() is None
+        view.model_combo.setItemText(0, "qwen3:14b")
+        assert view.selected_model() == "qwen3:14b"
+        renamed = QAccessible.queryAccessibleInterface(view.model_combo)
+        assert renamed.text(QAccessible.Text.Name) == "Local AI"
+        assert renamed.text(QAccessible.Text.Value) == "qwen3:14b"
+        assert "ShowMenu" in scope.actionNames()
+        assert scope.childCount() == 1
+    finally:
+        view.close()
+
+
+def test_purpose_combos_notify_value_when_the_selection_changes(qapp, monkeypatch):
+    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+
+    seen = []
+
+    def capture(event):
+        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
+        seen.append((event.type(), event.object(), value))
+
+    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
+    view = ResearchWorkspace()
+    view.model_combo.addItem("(Ollama stopped — click Start)")
+    view.model_combo.addItem("qwen3:14b")
+    view.show()
+    qapp.processEvents()
+    try:
+        seen.clear()
+        view.scope_combo.setCurrentIndex(1)
+        scope_values = _value_events(seen, view.scope_combo)
+        assert scope_values == ["Articles"]
+        assert not any(
+            kind == QAccessible.Event.NameChanged and obj is view.scope_combo
+            for kind, obj, _value in seen
+        )
+        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
+        assert scope.text(QAccessible.Text.Name) == "Question scope"
+        assert scope.text(QAccessible.Text.Value) == "Articles"
+        assert view.scope == "Articles"
+        seen.clear()
+        view.model_combo.setCurrentIndex(1)
+        assert _value_events(seen, view.model_combo) == ["qwen3:14b"]
+        assert view.selected_model() == "qwen3:14b"
+        model = QAccessible.queryAccessibleInterface(view.model_combo)
+        assert model.text(QAccessible.Text.Name) == "Local AI"
+        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
+        assert "ShowMenu" in scope.actionNames()
+        assert scope.childCount() == 1
+    finally:
+        view.close()
+
+
+def test_apply_ollama_status_notifies_value_while_combo_signals_are_blocked(qapp, monkeypatch, tmp_path):
+    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+    from src.desktop.app import MainWindow
+    from src.llm.service import OllamaStatus
+
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "emr"))
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    seen = []
+
+    def capture(event):
+        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
+        seen.append((event.type(), event.object(), value))
+
+    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
+    win = MainWindow()
+    combo = win.research.model_combo
+    signals = []
+    combo.currentTextChanged.connect(signals.append)
+    try:
+        seen.clear()
+        win._apply_ollama_status(
+            OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], "http://127.0.0.1:11434")
+        )
+        assert signals == []
+        assert _value_events(seen, combo) == ["synthetic:a"]
+        iface = QAccessible.queryAccessibleInterface(combo)
+        assert iface.text(QAccessible.Text.Name) == "Local AI"
+        assert iface.text(QAccessible.Text.Value) == "synthetic:a"
+        assert win.research.selected_model() == "synthetic:a"
+        seen.clear()
+        win._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
+        assert signals == []
+        assert _value_events(seen, combo) == ["(Ollama stopped — click Start)"]
+        assert win.research.selected_model() is None
+        assert QAccessible.queryAccessibleInterface(combo).text(QAccessible.Text.Value) == (
+            "(Ollama stopped — click Start)"
+        )
+    finally:
+        win.close()
+
+
+def test_purpose_combo_names_survive_repeated_creation(qapp):
+    from PySide6.QtGui import QAccessible
+
+    first = ResearchWorkspace()
+    first.show()
+    qapp.processEvents()
+    first.close()
+    first.deleteLater()
+    qapp.processEvents()
+    second = ResearchWorkspace()
+    second.model_combo.addItem("qwen3:14b")
+    second.show()
+    qapp.processEvents()
+    try:
+        scope = QAccessible.queryAccessibleInterface(second.scope_combo)
+        model = QAccessible.queryAccessibleInterface(second.model_combo)
+        assert scope.text(QAccessible.Text.Name) == "Question scope"
+        assert scope.text(QAccessible.Text.Value) == "Cases"
+        assert model.text(QAccessible.Text.Name) == "Local AI"
+        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
+        assert "ShowMenu" in scope.actionNames()
+        second.scope_combo.setCurrentIndex(1)
+        assert scope.text(QAccessible.Text.Name) == "Question scope"
+        assert scope.text(QAccessible.Text.Value) == "Articles"
+        assert second.selected_model() == "qwen3:14b"
+    finally:
+        second.close()
+        second.deleteLater()
+        qapp.processEvents()
+
+
 def test_a_chosen_signal_without_samples_gets_a_note_not_an_empty_track(episode_view, monkeypatch):
     view, fetched = episode_view
     _choose_extras(view, monkeypatch, "TV")

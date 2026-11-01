@@ -19,10 +19,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
 - Desktop UI is primary. On first run or with an invalid EMR folder, a modal Setup
   wizard validates the folder before data loading. Canceling first-run setup leaves
-  the data tabs disabled until setup is completed.
-- The first desktop tab is the **Research** evidence workspace (G). The existing Ask,
-  Summary, Case timeline, and Rule reference tabs remain available.
-- The Rule reference tab, the co-pilot rule lookup, the Streamlit rule table and the
+  the Research workspace in the setup-required state until setup is completed.
+- The desktop central widget is the **Research** evidence workspace (G) in
+  `ResearchWorkspace`, set from `src/desktop/app.py` `_build_ui`. The Ask, Summary,
+  Case timeline, and Rule reference tabs are retired. Equivalent functions remain
+  required in G, the focused signal view (F), the Cases list, and the Rules drawer.
+- The Rules drawer, the co-pilot rule lookup, the Streamlit rule table and the
   calibration profile read one rule catalog (`src/rules.py`) built from
   `thresholds.yaml`. They show the preset the loaded flags were computed with, list
   each rule's skipped phases, and say when the data did not record its preset (it is
@@ -72,11 +74,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   case in F; Back or Escape returns to the list. Opening a case from the Cases list
   does not change the question's evidence board.
 - Reloading processed data, or loading data with a different preset, closes any open
-  case, cancels pending searches and case fetches, and discards a late Ask answer with
-  a note. The question and the conversation stay; saved cases must be reopened for
+  case, cancels pending searches and case fetches, and discards a late research answer
+  with a note. The question and the conversation stay; saved cases must be reopened for
   current data.
-- Ask tab case analysis: user describes a patient or scenario; the app pre-fetches
-  tools, then a local model answers from **grounded** extracts only.
+- Research workspace (G) case and scenario questions: the user describes a patient or
+  scenario; a local model answers from at most three retrieved, **grounded** source
+  extracts. The answer path skips heuristic prefetch and disables corpus tools.
 - Ollama lifecycle: Start / Stop / Unload / Refresh; models dir via settings → `OLLAMA_MODELS`.
 - Ollama HTTP must default to **loopback only** (case text stays local unless an explicit
   env override is set for remote).
@@ -120,7 +123,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Example: complete Setup → ask about pressure in laparoscopic cases in Research
   → inspect a retrieved case in F → return to the same question and comparison.
   With a selected local chat model, the answer uses bounded source extracts.
-- The Ask tab remains available for case analysis. For example, type
+- In Research (G), type
   `55y woman, hysterectomy, sevoflurane, elevated PIP` to request a grounded
   research answer about similar cases and documented management patterns.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
@@ -136,9 +139,9 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   rule preset for new runs, theme). Setup opens before the app loads data on first run
   or for an invalid EMR path.
 - File > Run pipeline and File > Scan full EMR use the saved rule preset (`default`
-  when unset). Rule reference, Ask, Research and case fetches use the preset recorded
-  with the loaded data, or the saved preset when no data is loaded; run the pipeline
-  again to apply a new preset to loaded data.
+  when unset). The Rules drawer, Research questions, and case fetches use the preset
+  recorded with the loaded data, or the saved preset when no data is loaded; run the
+  pipeline again to apply a new preset to loaded data.
 - Ctrl+R reloads processed data, except inside the Research workspace, where it opens
   the Rules drawer.
 - Themes: light / dark / system. Charts are matplotlib (theme-aware); tall timelines scroll.
@@ -263,11 +266,107 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Update `context.md` (state + handoff) and `CHANGELOG.md` (user-visible history) per `agents.md`.
 - Do not put policy rules in `context.md` or `CHANGELOG.md`.
 
+## MOVER Suite migration (approved 2026-10-27)
+
+This section records the approved product target. Phase 1 of the approved plan
+authorizes this spec update and the baseline, suite QA, and phase-handoff
+documents. Application implementation, a Monitoring shell, trainer import,
+commits, pushes, folder moves, and publication remain later permissions.
+
+### Authorization and branch
+
+- Suite documentation work uses the existing working branch
+  `feat/v0.15-signal-grounding`. That branch is an explicit user override of opening
+  a new task branch. The other working branch `feat/v0.14-desktop-fixes` stays.
+  A third working branch is not opened for this work.
+- Phase 1 scope is record the baseline, update this spec, write the suite QA record,
+  and write the phase handoff. The Phase 2 Monitoring shell waits for a later named
+  approval.
+- Each commit, push, folder move, trainer import, publication, and remote rename
+  needs its own later permission.
+
+### Current implemented behavior
+
+The desktop is a PySide6 Python 3.14 app in this existing repository.
+`src/desktop/app.py` `_build_ui` sets `ResearchWorkspace` as the central widget.
+Required G, F, Cases, Rules, pipeline, one rule catalog, guardrail, updater, and
+optional Streamlit behavior in this spec remains in force. Language, runtime, and
+Validation & Tooling commands stay as written above. This section adds no validation
+commands and changes no dependency pins.
+
+### Approved suite target
+
+Grow this repository into a local MOVER Suite desktop. The working product name is
+MOVER Suite. A later approved folder rename may use `mover-suite`. That rename, on
+its own, leaves GitHub, settings, the shipped executable, and updater identity
+unchanged.
+
+Exactly four tools:
+
+1. SIS Monitor (Monitoring): wrap today's G and F Research workspace, Cases, and
+   Rules.
+2. Handoff trainer: practice workflow after trainer review is confirmed.
+3. Medication and vitals explorer: aligned drug events and measured vital signs for
+   a selected case.
+4. Fictional WHO checklist simulator: authored fictional scenarios only.
+
+Desktop UI stays PySide6. Python 3.14 remains the language for the UI and existing
+processing. No new Rust component and no port of tests into Rust is granted.
+Existing Rust updater, signer, and desktop contract suites stay as they are.
+
+The first implementation slice, once Phase 2 is authorized, wraps the current
+workspace as Monitoring inside a suite shell with one live module. Unfinished tools
+do not appear as empty functional tabs.
+
+### Shared source, preset, and generation
+
+A later authorized slice introduces one shared data context used by real-data
+modules. It records the selected source, processed directory, preset and threshold
+identity, and a generation number for background work. A source or threshold change
+invalidates the relevant shared caches, clears incompatible analyzed results, and
+rejects results from older background-job generations. Indexed surgeries stay
+distinct from analyzed cases.
+
+The WHO simulator uses authored fictional fixtures only. It uses no EMR path,
+real-case picker, retrieval engine, or patient-derived prompts.
+
+### Identity, packaging, and QA
+
+Keep current packaging, settings path `~/.config/mover-sis-monitor/`, executable
+names, and updater identity at first. Optional Streamlit in `src/dashboard/` stays
+during migration.
+
+Carry native QA into the suite record. The original candidate AppImage and
+`/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`
+stay unchanged and UNRUN. Suite results do not mark that candidate passed.
+
+### Deferred decisions
+
+These remain open. This spec does not invent feature contracts for them:
+
+- Trainer review completion is unconfirmed. Do not import or move the trainer until
+  that confirmation.
+- Handoff grading contract and allowed case sources.
+- Medication and vitals display contract, including the first field set, bolus versus
+  infusion, and time alignment.
+- WHO checklist version, source terms, and scoring. Fixtures stay fictional.
+- Timing of the repository folder rename.
+- Whether to later add `.venv.old-premove/` to the committed `.gitignore`.
+- Any new Rust function or test-language port.
+- Named different-model reviewer at each implementation milestone.
+- Permission for each commit, push, delete, publication, or remote rename.
+
+Live AI in native QA stays paused. Plan approval does not resume paused model calls.
+
+Every module keeps the research-and-education framing. The suite is not a medical
+device and is not clinical decision support.
+
 ## Acceptance Criteria
 
 - [ ] Desktop opens Setup before data loading when the EMR folder is unconfigured or
-      invalid, then opens Research (G) with Ask, Summary, Case timeline, and Rule
-      reference available.
+      invalid, then opens Research (G) as the central workspace. Equivalent G, F,
+      Cases, and Rules functions remain available. The Ask, Summary, Case timeline,
+      and Rule reference tabs stay retired.
 - [ ] A research question searches indexed surgery metadata, plus analysis facts for
       analyzed cases, with cached embeddings when available and whole-word keyword
       fallback otherwise, including when processed parquet is absent (then without

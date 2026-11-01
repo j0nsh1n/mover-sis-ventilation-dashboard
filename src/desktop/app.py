@@ -38,7 +38,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.desktop.research_workspace import ResearchWorkspace
+from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
+from src.desktop.suite_chrome import install_suite_chrome
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
@@ -203,9 +204,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._version = get_version()
-        self.setWindowTitle(
-            f"MOVER SIS Monitor v{self._version} — Ventilation & Anesthesia"
-        )
         self.resize(1380, 860)
 
         apply_persisted_settings()
@@ -227,6 +225,11 @@ class MainWindow(QMainWindow):
         # A data reload asked for while a scan ran; it runs when the scan ends
         self._reload_after_scan = False
         self._worker: QThread | None = None
+        # While a path-free error dialog is modal, remember the latest prefix and
+        # show it without folder paths. The prefix is published with paths after.
+        self._status_path_prefix = ""
+        self._status_paths_hidden = 0
+        self._status_hidden_message: str | None = None
         self._ollama_worker: OllamaWorker | None = None
         self._ollama_available = False
         self._ollama_button_label: str | None = None
@@ -242,6 +245,7 @@ class MainWindow(QMainWindow):
         self._queued_case: tuple[str, bool, bool, bool] | None = None
 
         self._build_menu()
+        install_suite_chrome(self, self._version)
         self._build_ui()
         self._refresh_rule_reference()
         self.setStatusBar(QStatusBar())
@@ -387,13 +391,21 @@ class MainWindow(QMainWindow):
         self._update_status_paths()
 
     def _update_status_paths(self, prefix: str = "") -> None:
+        self._status_path_prefix = prefix
+        self._publish_status_paths()
+
+    def _publish_status_paths(self) -> None:
+        prefix = self._status_path_prefix
+        if self._status_paths_hidden:
+            self._status_hidden_message = prefix
+            self.statusBar().showMessage(prefix)
+            return
         wave = wave_dir()
         wave_s = str(wave) if wave else "—"
-        msg = (
+        self.statusBar().showMessage(
             f"{prefix}  ·  EMR: {emr_dir()}  ·  Wave: {wave_s}  ·  "
             f"Processed: {processed_dir()}"
         )
-        self.statusBar().showMessage(msg)
 
     def _browse_emr_folder(self) -> None:
         start = str(emr_dir())
@@ -497,12 +509,18 @@ class MainWindow(QMainWindow):
         self._warn("Load error", f"{msg}\n\nRun File > Run pipeline to rebuild the analyzed sample for this EMR.")
 
     def _warn(self, title: str, text: str) -> None:
-        # Not modal: this can fire during startup, where a modal box would hold the
-        # window back until the user dismissed it.
+        # open() returns immediately. exec() would hold startup until the box closed.
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        box.finished.connect(lambda _result: self.research.question_edit.setFocus())
+        box.destroyed.connect(lambda *_args: QTimer.singleShot(0, self._focus_research_question))
         box.open()
+
+    def _focus_research_question(self) -> None:
+        edit = self.research.question_edit
+        if not edit.isEnabled() or not edit.isVisible():
+            return
+        self.activateWindow()
+        edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -864,16 +882,26 @@ class MainWindow(QMainWindow):
     def _on_pipeline_fail(self, msg: str) -> None:
         if not self._data_job_is_current():
             return
-        self._update_status_paths("Pipeline failed")
-        QMessageBox.critical(
-            self,
-            "Pipeline / guardrail error",
-            msg[:4000]
-            + (
-                "\n\nEnsure the EMR folder has patient_information, "
-                "patient_ventilator, and patient_vitals CSVs."
-            ),
-        )
+        # critical() runs a nested loop. A queued reload may replace the prefix
+        # while the dialog is open; paths stay off until that loop returns.
+        self._status_paths_hidden += 1
+        try:
+            self._update_status_paths("Pipeline failed")
+            QMessageBox.critical(
+                self,
+                "Pipeline / guardrail error",
+                msg[:4000]
+                + (
+                    "\n\nEnsure the EMR folder has patient_information, "
+                    "patient_ventilator, and patient_vitals CSVs."
+                ),
+            )
+        finally:
+            self._status_paths_hidden = max(0, self._status_paths_hidden - 1)
+            if not self._status_paths_hidden:
+                if self.statusBar().currentMessage() == self._status_hidden_message:
+                    self._publish_status_paths()
+                self._status_hidden_message = None
 
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         self._start_ollama_worker("ensure" if start_if_needed else "probe")
@@ -887,6 +915,7 @@ class MainWindow(QMainWindow):
         if not status.available:
             self.research.model_combo.addItem("(Ollama stopped — click Start)")
             self.research.model_combo.blockSignals(False)
+            notify_purpose_combo_value(self.research.model_combo)
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -917,6 +946,7 @@ class MainWindow(QMainWindow):
                     self.research.model_combo.setCurrentIndex(idx)
                     break
         self.research.model_combo.blockSignals(False)
+        notify_purpose_combo_value(self.research.model_combo)
         self._set_ollama_status_ui(status)
         if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
             self.statusBar().showMessage(ollama_status_summary(status))

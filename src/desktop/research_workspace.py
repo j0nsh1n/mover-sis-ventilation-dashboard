@@ -8,8 +8,18 @@ from dataclasses import dataclass, field, replace
 
 import pandas as pd
 from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QAccessible,
+    QAccessibleValueChangeEvent,
+    QColor,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
+    QAccessibleWidget,
     QBoxLayout,
     QComboBox,
     QDialog,
@@ -24,6 +34,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -106,6 +117,100 @@ def _wrap(text: str = "") -> QLabel:
     label.setWordWrap(True)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return label
+
+
+_COMBO_INTERFACES: dict[int, QAccessibleWidget] = {}
+_COMBO_FACTORY_INSTALLED = False
+
+
+def notify_purpose_combo_value(combo: QComboBox) -> None:
+    """Publish the current choice. The accessible name stays the purpose."""
+    if not combo.property("purposeName"):
+        return
+    QAccessible.updateAccessibility(QAccessibleValueChangeEvent(combo, combo.currentText()))
+
+
+class PurposeComboAccessible(QAccessibleWidget):
+    """Purpose is the name. The current choice is the value. Qt otherwise publishes only the item."""
+
+    def text(self, kind: QAccessible.Text) -> str:
+        widget = self.widget()
+        if isinstance(widget, QComboBox):
+            if kind == QAccessible.Text.Name:
+                purpose = widget.property("purposeName")
+                if isinstance(purpose, str) and purpose:
+                    return purpose
+                return widget.accessibleName()
+            if kind == QAccessible.Text.Value:
+                return widget.currentText()
+        return super().text(kind)
+
+    def state(self) -> QAccessible.State:
+        state = super().state()
+        state.expandable = True
+        widget = self.widget()
+        view = widget.view() if isinstance(widget, QComboBox) else None
+        state.expanded = bool(view is not None and view.isVisible())
+        return state
+
+    def actionNames(self) -> list[str]:
+        return [self.showMenuAction(), self.pressAction()]
+
+    def doAction(self, action: str) -> None:
+        widget = self.widget()
+        if isinstance(widget, QComboBox) and action in (self.showMenuAction(), self.pressAction()):
+            widget.showPopup()
+            return
+        super().doAction(action)
+
+    def childCount(self) -> int:
+        widget = self.widget()
+        return 1 if isinstance(widget, QComboBox) and widget.view() is not None else 0
+
+    def child(self, index: int):
+        widget = self.widget()
+        if index != 0 or not isinstance(widget, QComboBox) or widget.view() is None:
+            return None
+        return QAccessible.queryAccessibleInterface(widget.view())
+
+    def indexOfChild(self, child) -> int:
+        widget = self.widget()
+        if child is None or not isinstance(widget, QComboBox) or widget.view() is None:
+            return -1
+        return 0 if child.object() is widget.view() else -1
+
+
+def _combo_factory(classname: str, obj: QWidget):
+    if classname != "QComboBox" or not isinstance(obj, QComboBox) or not obj.property("purposeName"):
+        return None
+    iface = PurposeComboAccessible(obj, QAccessible.Role.ComboBox)
+    _COMBO_INTERFACES[id(obj)] = iface
+    return iface
+
+
+def _install_combo_factory() -> None:
+    global _COMBO_FACTORY_INSTALLED
+    if _COMBO_FACTORY_INSTALLED:
+        return
+    QAccessible.installFactory(_combo_factory)
+    _COMBO_FACTORY_INSTALLED = True
+
+
+def _name_combo(combo: QComboBox, purpose: str) -> None:
+    """Publish a purpose-first name. Qt's combo interface ignores accessibleName once an item exists."""
+    _install_combo_factory()
+    combo.setProperty("purposeName", purpose)
+    combo.setAccessibleName(purpose)
+    combo.currentTextChanged.connect(lambda _text, box=combo: notify_purpose_combo_value(box))
+    current = QAccessible.queryAccessibleInterface(combo)
+    if not isinstance(current, PurposeComboAccessible):
+        if current is not None:
+            QAccessible.deleteAccessibleInterface(QAccessible.uniqueId(current))
+        current = QAccessible.queryAccessibleInterface(combo)
+    assert isinstance(current, PurposeComboAccessible)
+    combo_key = id(combo)
+    combo.destroyed.connect(lambda _obj=None, key=combo_key: _COMBO_INTERFACES.pop(key, None))
+    _COMBO_INTERFACES[combo_key] = current
 
 
 def _button(text: str, *, primary: bool = False) -> QPushButton:
@@ -360,13 +465,16 @@ class ResearchWorkspace(QWidget):
         question_card, question_layout = _card("01 / YOUR QUESTION")
         question_layout.setSpacing(5)
         question_card.setObjectName("questionNode")
+        # Hug the question content. A two-row span in the narrow column clipped the
+        # scope line under the status bar once the local-model error wrapped.
+        question_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         _name_kicker(question_layout)
         question_title = _wrap("Start with what you want to know.")
         question_title.setObjectName("nodeTitle")
         question_layout.addWidget(question_title)
         self.scope_combo = QComboBox()
+        _name_combo(self.scope_combo, "Question scope")
         self.scope_combo.addItems(["Cases", "Articles"])
-        self.scope_combo.setAccessibleName("Question scope: Cases or Articles")
         self.scope_combo.currentTextChanged.connect(self._change_scope)
         question_layout.addWidget(self.scope_combo)
         question_layout.addWidget(QLabel("Research question"))
@@ -389,7 +497,7 @@ class ResearchWorkspace(QWidget):
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
         self.model_combo = QComboBox()
-        self.model_combo.setAccessibleName("Local AI")
+        _name_combo(self.model_combo, "Local AI")
         self.model_combo.setMinimumHeight(44)
         self.model_combo.currentTextChanged.connect(self.model_changed)
         model_row.addWidget(self.model_combo, stretch=1)
@@ -428,8 +536,7 @@ class ResearchWorkspace(QWidget):
         self.answer_text.setReadOnly(True)
         self.answer_text.hide()
         question_layout.addStretch(1)
-        content.addWidget(question_card, 0, 0, 2, 1)
-        content.setAlignment(question_card, Qt.AlignmentFlag.AlignTop)
+        content.addWidget(question_card, 0, 0, 1, 2, Qt.AlignmentFlag.AlignTop)
 
         finding_card, finding_layout = _card("02 / OBSERVATION")
         finding_card.setObjectName("findingNode")
@@ -446,7 +553,7 @@ class ResearchWorkspace(QWidget):
         self.finding_open.setObjectName("textAction")
         self.finding_open.clicked.connect(self._inspect_primary)
         finding_layout.addWidget(self.finding_open)
-        content.addWidget(finding_card, 0, 1)
+        content.addWidget(finding_card, 0, 2)
 
         source_card, source_layout = _card("03 / ORIGINAL SAMPLES")
         source_card.setObjectName("sourceNode")
@@ -461,7 +568,7 @@ class ResearchWorkspace(QWidget):
         source_button.clicked.connect(self._show_primary_source)
         source_layout.addStretch(1)
         source_layout.addWidget(source_button)
-        content.addWidget(source_card, 0, 2)
+        content.addWidget(source_card, 1, 2)
 
         self.comparison_hint, hint_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_hint.setObjectName("comparisonHint")
@@ -471,7 +578,7 @@ class ResearchWorkspace(QWidget):
         self.hint_button.setObjectName("outlineAction")
         self.hint_button.clicked.connect(self._add_comparison)
         hint_layout.addWidget(self.hint_button)
-        content.addWidget(self.comparison_hint, 1, 1)
+        content.addWidget(self.comparison_hint, 1, 0, 1, 2)
 
         self.comparison_card, compare_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_card.setObjectName("comparisonNode")
@@ -482,7 +589,7 @@ class ResearchWorkspace(QWidget):
         compare_button.setObjectName("textAction")
         compare_button.clicked.connect(self._inspect_comparison)
         compare_layout.addWidget(compare_button)
-        content.addWidget(self.comparison_card, 1, 1)
+        content.addWidget(self.comparison_card, 1, 0, 1, 2)
         self.comparison_card.hide()
 
         limit_card, limit_layout = _card("WHAT THIS DOES NOT ESTABLISH")
@@ -494,7 +601,7 @@ class ResearchWorkspace(QWidget):
         self.limit_label = _wrap("A retrieved case can show a pattern, but its measurements alone do not establish a cause or a treatment decision. Missing values remain unknown.")
         limit_layout.addWidget(self.limit_label)
         limit_layout.addStretch(1)
-        content.addWidget(limit_card, 1, 2)
+        content.addWidget(limit_card, 2, 0, 1, 3)
         content.setColumnStretch(0, 10)
         content.setColumnStretch(1, 11)
         content.setColumnStretch(2, 10)
@@ -725,6 +832,7 @@ class ResearchWorkspace(QWidget):
         else:
             self.model_combo.addItem("(AI unavailable · search still works)")
         self.model_combo.blockSignals(False)
+        notify_purpose_combo_value(self.model_combo)
 
     @property
     def scope(self) -> str:
@@ -820,14 +928,17 @@ class ResearchWorkspace(QWidget):
             return
         self._layout_mode = mode
         positions = {
-            "wide": ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1)),
+            # The question card takes two columns on one row so its error and scope
+            # lines stay above the status bar at 1380x860. One narrow column does not.
+            "wide": ((0, 0, 1, 2), (0, 2, 1, 1), (1, 2, 1, 1), (1, 0, 1, 2), (2, 0, 1, 3)),
             "narrow": ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)),
             "single": ((0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 1, 1), (3, 0, 1, 1), (4, 0, 1, 1)),
         }[mode]
         for card in (*self._evidence_cards, self.comparison_hint):
             self._evidence_grid.removeWidget(card)
         for card, position in zip(self._evidence_cards, positions, strict=True):
-            self._evidence_grid.addWidget(card, *position)
+            alignment = Qt.AlignmentFlag.AlignTop if card is self._evidence_cards[0] else Qt.AlignmentFlag(0)
+            self._evidence_grid.addWidget(card, *position, alignment)
         # The hint stands in for the comparison card until one is added.
         self._evidence_grid.addWidget(self.comparison_hint, *positions[3])
         stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
@@ -941,6 +1052,7 @@ class ResearchWorkspace(QWidget):
             self.scope_combo.blockSignals(True)
             self.scope_combo.setCurrentText(state.scope)
             self.scope_combo.blockSignals(False)
+            notify_purpose_combo_value(self.scope_combo)
             self._clear_board()
             if state.article_result is not None:
                 self.set_article_results(state.article_result)
