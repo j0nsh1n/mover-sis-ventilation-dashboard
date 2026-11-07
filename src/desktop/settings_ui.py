@@ -34,6 +34,7 @@ from src.runtime_paths import (
     processed_dir,
     wave_dir,
 )
+from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.guardrails.validate_io import validate_emr_dir
 from src.user_settings import (
     THEME_CHOICES,
@@ -118,7 +119,7 @@ class PathsForm(QWidget):
             root.addWidget(advanced)
 
         run_form = QFormLayout()
-        self.combo_preset = QComboBox()
+        self.combo_preset = ScrollSafeComboBox()
         for label, preset in (("Default", "default"), ("Lenient", "lenient"), ("Strict", "strict")):
             self.combo_preset.addItem(label, preset)
         run_form.addRow("Rule preset for new runs", self.combo_preset)
@@ -157,7 +158,7 @@ class PathsForm(QWidget):
         )
 
         form = QFormLayout()
-        self.combo_default_model = QComboBox()
+        self.combo_default_model = ScrollSafeComboBox()
         self.combo_default_model.setEditable(True)
         self.combo_default_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         form.addRow("Preferred model", self.combo_default_model)
@@ -173,7 +174,7 @@ class PathsForm(QWidget):
         # --- Appearance ---
         theme_box = QGroupBox("Appearance")
         tf = QFormLayout(theme_box)
-        self.combo_theme = QComboBox()
+        self.combo_theme = ScrollSafeComboBox()
         self.combo_theme.addItem("Light", THEME_LIGHT)
         self.combo_theme.addItem("Dark", THEME_DARK)
         self.combo_theme.addItem("System (follow OS)", THEME_SYSTEM)

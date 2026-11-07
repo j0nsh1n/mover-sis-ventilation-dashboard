@@ -15,8 +15,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QRect, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QColor, QImage, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
 from shiboken6 import delete
@@ -361,6 +361,47 @@ def test_header_buttons_wrap_beside_the_drawer_at_900_px(view, qapp):
     view.resize(1400, 900)
     qapp.processEvents()
     assert len({button.y() for button in buttons}) == 1
+
+
+def test_header_buttons_keep_their_full_labels_on_a_small_screen(view, qapp):
+    # 700 logical px is a 1400 px screen at double scale; the buttons used to shrink to "d a compar".
+    view.resize(700, 450)
+    qapp.processEvents()
+    viewport = view.board_splitter.widget(0).viewport()
+    for button in view._header_buttons:
+        assert button.width() >= button.sizeHint().width(), button.text()
+        origin = button.mapTo(viewport, button.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + button.width() <= viewport.width(), button.text()
+
+
+def _wheel(widget, steps: int) -> QWheelEvent:
+    centre = QPointF(widget.rect().center())
+    event = QWheelEvent(centre, QPointF(widget.mapToGlobal(widget.rect().center())), QPoint(),
+                        QPoint(0, -120 * steps), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(widget, event)
+    return event
+
+
+def test_scrolling_the_board_past_a_combo_leaves_its_choice_alone(view, qapp):
+    for combo in (view.scope_combo, view.model_combo):
+        if combo.count() < 2:
+            combo.addItems(["first", "second"])
+        combo.setCurrentIndex(0)
+        view.question_edit.setFocus()
+        qapp.processEvents()
+        event = _wheel(combo, 1)
+        assert combo.currentIndex() == 0, combo.accessibleName()
+        assert not event.isAccepted(), combo.accessibleName()
+        assert not combo.hasFocus(), combo.accessibleName()
+
+
+def test_a_focused_combo_still_follows_the_wheel(view, qapp):
+    view.scope_combo.setCurrentIndex(0)
+    view.scope_combo.setFocus()
+    qapp.processEvents()
+    _wheel(view.scope_combo, 1)
+    assert view.scope_combo.currentIndex() == 1
 
 
 def test_the_board_regains_its_layout_when_the_drawer_closes(view, qapp):

@@ -28,6 +28,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   or a generic word such as "sustained" does not count as mentioning the
   event. "SpO2 missing" names a missing series. An empty timeline still
   reports the missing MAP and SpO2 series.
+- Scrolling the research board or Settings with the mouse wheel no longer
+  changes a dropdown that passes under the pointer, such as the question
+  scope. A dropdown follows the wheel once it has focus.
+- On a small or high-scale screen the research header moves its buttons
+  below the title, wrapping them if needed, instead of cutting their
+  labels short.
 - Checking a long answer's numbers against its sources is faster again. It
   had been rescanning the whole answer for each number.
 - A case fetch is reused only for the same EMR folder, rule preset, and

@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -51,6 +52,7 @@ from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
+from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.llm.minute_context import build_minute_extract
 from src.pipeline.flags import collapse_episodes
 from src.rules import RuleCatalog
@@ -90,6 +92,8 @@ class QuestionState:
 FOLLOW_UP_NO_MODEL = "No AI answer. The minute's source rows are above."
 RULES_DRAWER_MAX_WIDTH = 420
 RULES_DRAWER_SHARE = 0.42
+# Width the wrapped title keeps beside the header actions before they move below it.
+HEADER_TITLE_ROOM = 200
 
 
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -445,7 +449,8 @@ class ResearchWorkspace(QWidget):
         self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
         self._header_buttons = (self.add_comparison_button, self.cases_button, self.new_question_button,
                                 self.reset_button, self.rules_button)
-        self._place_header_actions(len(self._header_buttons))
+        self._header_columns = len(self._header_buttons)
+        self._place_header_actions(self._header_columns)
         header_layout.addLayout(header_actions)
         layout.addWidget(header)
 
@@ -472,7 +477,7 @@ class ResearchWorkspace(QWidget):
         question_title = _wrap("Start with what you want to know.")
         question_title.setObjectName("nodeTitle")
         question_layout.addWidget(question_title)
-        self.scope_combo = QComboBox()
+        self.scope_combo = ScrollSafeComboBox()
         _name_combo(self.scope_combo, "Question scope")
         self.scope_combo.addItems(["Cases", "Articles"])
         self.scope_combo.currentTextChanged.connect(self._change_scope)
@@ -496,7 +501,7 @@ class ResearchWorkspace(QWidget):
         question_layout.addWidget(self.extract_budget_label)
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
-        self.model_combo = QComboBox()
+        self.model_combo = ScrollSafeComboBox()
         _name_combo(self.model_combo, "Local AI")
         self.model_combo.setMinimumHeight(44)
         self.model_combo.currentTextChanged.connect(self.model_changed)
@@ -924,6 +929,7 @@ class ResearchWorkspace(QWidget):
         header = self._header_layout.parentWidget()
         if header is not None:
             header.setMaximumWidth(max(1, board_width - 32) if mode == "single" else board_width)
+        self._fit_header(board_width, mode)
         if mode == self._layout_mode:
             return
         self._layout_mode = mode
@@ -944,15 +950,33 @@ class ResearchWorkspace(QWidget):
         stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
         for column, stretch in enumerate(stretches):
             self._evidence_grid.setColumnStretch(column, stretch)
-        self._header_layout.setDirection(
-            QBoxLayout.Direction.TopToBottom if mode == "single" else QBoxLayout.Direction.LeftToRight
-        )
-        self._header_layout.setContentsMargins(*((16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)))
-        # One row of five buttons is wider than a one-column board beside the drawer.
-        self._place_header_actions((1 if board_width < 440 else 2) if mode == "single" else len(self._header_buttons))
         if self.scope == "Articles":
             self._evidence_grid.removeWidget(self._evidence_cards[0])
             self._evidence_grid.addWidget(self._evidence_cards[0], 0, 0, 1, 3)
+
+    def _fit_header(self, board_width: int, mode: str) -> None:
+        """Place the title and actions so no button is narrower than its label."""
+        margins = (16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)
+        room = board_width - (32 if mode == "single" else 0) - margins[0] - margins[2]
+        spacing = self._header_actions.horizontalSpacing()
+        if spacing < 0:
+            spacing = self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
+        widths = [button.sizeHint().width() for button in self._header_buttons]
+
+        def row(columns: int) -> int:
+            return sum(max(widths[column::columns]) for column in range(columns)) + spacing * (columns - 1)
+
+        # One row of five buttons is wider than a one-column board beside the drawer.
+        most = (1 if board_width < 440 else 2) if mode == "single" else len(widths)
+        beside = mode != "single" and row(len(widths)) + spacing + HEADER_TITLE_ROOM <= room
+        columns = most if beside else next((c for c in (5, 3, 2) if c <= most and row(c) <= room), 1)
+        self._header_layout.setDirection(
+            QBoxLayout.Direction.LeftToRight if beside else QBoxLayout.Direction.TopToBottom
+        )
+        self._header_layout.setContentsMargins(*margins)
+        if columns != self._header_columns:
+            self._header_columns = columns
+            self._place_header_actions(columns)
 
     def _place_header_actions(self, columns: int) -> None:
         for button in self._header_buttons:
