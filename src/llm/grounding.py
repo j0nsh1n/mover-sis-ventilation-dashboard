@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from functools import lru_cache
 
 # MOVER PIDs are 16 hex characters; synthetic ones are SYN + 10 (src/pipeline/synthetic.py).
 # Anything looser reads counts and timestamps as PIDs.
@@ -58,6 +59,14 @@ _DIFFERENCE = re.compile(
     r"|(?:rose|fell|increased|decreased|climbed|dropped|declined|jumped|went (?:up|down)) by)\b",
     re.IGNORECASE,
 )
+
+
+@lru_cache(maxsize=8)
+def _mentions_difference(answer: str) -> bool:
+    # Checked once per answer, not once per number in it.
+    return _DIFFERENCE.search(answer) is not None
+
+
 _SIGNED_RANGE_LEAD = re.compile(r"(?:\d\s*[–—-]|\bto)\s*$")
 _ARTICLE_HEADER = re.compile(
     r"(?m)^\[[A-Za-z]\d+\][^\n]*(?:\([0-9]{1,4}\)|\b(?:19|20)\d{2})\."
@@ -524,7 +533,7 @@ class _SourceValues:
 
     def difference(self, number: _Found, answer: str, pool: set[Decimal]) -> bool:
         """``number`` is the gap between two of ``pool``'s values ("PIP rose by 3")."""
-        if number.value < 0 or not _DIFFERENCE.search(answer):
+        if number.value < 0 or not _mentions_difference(answer):
             return False
         quantum = Decimal(1).scaleb(-number.decimals)
         ordered = sorted(pool)
@@ -538,7 +547,7 @@ class _SourceValues:
         percentage = kind in ("%", "vol%")
         if percentage:
             values = self.source_values
-        elif kind and (kind in ("min", "sec", "hour") or _DIFFERENCE.search(answer)):
+        elif kind and (kind in ("min", "sec", "hour") or _mentions_difference(answer)):
             values = self.kinds.get(kind, [])
         else:
             return False

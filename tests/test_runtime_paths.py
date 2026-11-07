@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 
 import pytest
 
@@ -78,6 +79,7 @@ def test_appimage_preserves_saved_and_explicit_data_paths(monkeypatch, tmp_path)
     assert data_dir() == explicit
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="AppImage is Linux-only; Windows ignores HOME")
 @pytest.mark.parametrize("xdg_value", [None, ""])
 def test_appimage_defaults_to_home_when_xdg_is_unset_or_empty(monkeypatch, tmp_path, xdg_value):
     monkeypatch.setenv("MOVER_APPIMAGE", "1")

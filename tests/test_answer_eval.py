@@ -52,7 +52,8 @@ def test_corpus_covers_each_kind_of_answer(scripted):
     assert metrics["n_expected_to_fail"] >= 8
     assert metrics["n_clean"] >= 8
     assert 0 < metrics["rewrite_rate"] < 1
-    assert metrics["gate_latency_ms_p95"] >= metrics["gate_latency_ms_mean"] > 0
+    # One slow call can lift the mean above a nearest-rank p95, so only check both were recorded.
+    assert metrics["gate_latency_ms_p95"] > 0 and metrics["gate_latency_ms_mean"] > 0
     assert (metrics["seed"], metrics["n_cases"]) == (8, 30)
 
 

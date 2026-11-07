@@ -709,6 +709,8 @@ def test_narrow_shortlist_fits_all_columns_and_keeps_full_text(workspace):
     )
     workspace.set_results(RetrievalResult(candidates=(candidate,)))
     table = workspace.candidate_table
+    for _ in range(3):
+        QApplication.processEvents()
     wide_widths = [table.columnWidth(i) for i in range(3)]
     workspace.rules_button.click()
     for _ in range(3):
