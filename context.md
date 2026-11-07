@@ -20,8 +20,7 @@
   desktop and case-fetch cache, so that hash list is the Phase 2 record.
   Phase 2 source-shell work and its closeout are COMPLETE. The local
   commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`. Nothing
-  is pushed. The repository folder rename was authorized on 2026-11-01
-  and was not performed. The July preserved virtualenv (Python 3.14.6,
+  is pushed. The folder rename (plan step 4) is DONE as of 2026-11-01: the repository is now `/home/jonathans/Projects/medical/mover/mover-suite`. A compatibility symlink `mover-sis-monitor -> mover-suite` remains. The launcher, `.desktop` Path, T3 worktrees (`git worktree repair`), and `.venv` (rebuilt, Python 3.14) all use the real path. Product name, settings path and packaging names are unchanged until the branding step. Earlier history: The July preserved virtualenv (Python 3.14.6,
   created under “Monitoring Dashboard (MOVER SIS)”) was moved, not
   deleted, to
   `/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
@@ -295,8 +294,7 @@ Wave root (optional) ──► wave_decode                   │
 - **Task:** Phase 3 shared data context records source, preset, threshold
   identity, job generation, and the saved chat and embedding models.
   Review findings are fixed. Full offscreen `pytest -q` exited 0 after
-  those fixes. The folder rename (plan step 4) was then
-  authorized. It stopped before `mv`: the July virtualenv is parked at
+  those fixes. The folder rename (plan step 4) was later completed (see above); an earlier attempt stopped before `mv`: the July virtualenv is parked at
   `_scratch/suite-move/venv-july-3.14.6`, and this session holds the
   repository directory. Phase 2 source-shell scope and closeout stay
   COMPLETE. Frozen-artifact checks remain UNRUN.
@@ -304,8 +302,7 @@ Wave root (optional) ──► wave_decode                   │
   them. Grok 4.7 implemented the selected design. Kimi reviewed the
   integrated source and found no code issues. Terra's final narrow code
   review recorded No issues found. Those reviews are history.
-- **Next:** Do not rename the repository from a session whose working
-  directory is inside it. Handoff practice, medication and vital rows, and
+- **Next:** The folder rename is done; do not rename again. Handoff practice, medication and vital rows, and
   the fictional WHO checklist are in the desktop on fictional data. Trainer
   history is imported at `6c64f11` and the standalone repo is not archived.
   A new suite candidate was not built: no portable container command was

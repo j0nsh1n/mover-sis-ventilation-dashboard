@@ -185,10 +185,11 @@ milestone complete.
   the first pipeline run is queued. Full offscreen `pytest -q` exited 0
   after those fixes. Not pushed. Native AI stays paused.
 
-### Folder rename (authorized 2026-11-01, not performed)
+### Folder rename (done 2026-11-01)
 
-The destination `/home/jonathans/Projects/medical/mover/mover-suite` does
-not exist. The July preserved virtualenv was moved, not deleted, to
+The folder rename (plan step 4) is DONE as of 2026-11-01: the repository is now `/home/jonathans/Projects/medical/mover/mover-suite`. A compatibility symlink `mover-sis-monitor -> mover-suite` remains. The launcher, `.desktop` Path, T3 worktrees (`git worktree repair`), and `.venv` (rebuilt, Python 3.14) all use the real path. Product name, settings path and packaging names are unchanged until the branding step.
+
+Earlier history: a first attempt found the destination absent and stopped. The July preserved virtualenv was moved, not deleted, to
 `/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
 The live `.venv` stayed. Preflight stopped because this session’s
 processes use the repository as their working directory. `lsof.err` is
@@ -201,8 +202,7 @@ later preflight shows it unused.
   practice are in the desktop. Cases and cards are fictional. Trainer history
   is imported at `6c64f11` under `imports/handoff-trainer`. The original
   trainer repo stays where it is.
-- The folder rename is still not performed. This session is using the
-  repository as its working directory.
+- The folder rename is now done (path `mover-suite`); see above.
 - A new suite candidate was not built. No portable container command was
   found to copy, and a host build is not a substitute. Native QA on a new
   artifact remains UNRUN.

@@ -280,8 +280,8 @@ commits, pushes, folder moves, and publication remain later permissions.
   a new task branch. The other working branch `feat/v0.14-desktop-fixes` stays.
   A third working branch is not opened for this work.
 - Phase 1 scope is record the baseline, update this spec, write the suite QA record,
-  and write the phase handoff. The Phase 2 Monitoring shell waits for a later named
-  approval.
+  and write the phase handoff. Joo approved the Phase 2 Monitoring shell
+  (confirmed 2026-11-01; roadmap records it as authorized 2026-10-27).
 - Each commit, push, folder move, trainer import, publication, and remote rename
   needs its own later permission.
 
@@ -297,7 +297,7 @@ commands and changes no dependency pins.
 ### Approved suite target
 
 Grow this repository into a local MOVER Suite desktop. The working product name is
-MOVER Suite. A later approved folder rename may use `mover-suite`. That rename, on
+MOVER Suite. The repository folder was renamed to `mover-suite` on 2026-11-01. That rename, on
 its own, leaves GitHub, settings, the shipped executable, and updater identity
 unchanged.
 
@@ -405,8 +405,6 @@ WHO checklist practice:
 
 These remain open:
 
-- The repository folder rename. It was authorized and then blocked because this
-  session's working directory is the repository.
 - Whether to later add `.venv.old-premove/` to the committed `.gitignore`.
 - Any new Rust function or test-language port.
 - A new suite candidate. The portable-build record does not contain a container
