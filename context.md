@@ -302,14 +302,16 @@ Wave root (optional) ──► wave_decode                   │
   them. Grok 4.7 implemented the selected design. Kimi reviewed the
   integrated source and found no code issues. Terra's final narrow code
   review recorded No issues found. Those reviews are history.
-- **Next:** The folder rename is done; do not rename again. Handoff practice, medication and vital rows, and
-  the fictional WHO checklist are in the desktop on fictional data. Trainer
-  history is imported at `6c64f11` and the standalone repo is not archived.
-  A new suite candidate was not built: no portable container command was
-  found to copy. Push and publication are not started. GPT-6.1 Terra
-  accepted the handoff grader at local commit `eb09044` after an earlier
-  not-accept. Phase 2 results stay in
-  `.handoff/mover-suite-phase-2/closeout-report.md`.
+- **Next (2026-11-07):** The folder rename is done; do not rename again.
+  The suite AppImage (SHA256 `512bb077…`) was built in the preserved glibc 2.39
+  builder container; suite QA 11.1–11.4 PASS, with 11.4 on a hidden KWin
+  session on a private D-Bus (see TRIAGE.md). Section 12 practice-tool checks:
+  6 PASS, 3 FAIL (handoff grading charges a minute to the wrong episode; combo
+  and page names not exposed to screen readers; Tab traps in the handoff text
+  and medication table). `feat/v0.15-signal-grounding` is pushed with draft
+  PR #38, CI green. Open: those three practice-page defects, live AI (paused),
+  real-data calibration (roadmap Phase 6), release version and name,
+  publication. The goal audit is a private artifact, linked in the session.
 - **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
   2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
   Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain

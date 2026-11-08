@@ -207,6 +207,13 @@ later preflight shows it unused.
   found to copy, and a host build is not a substitute. Native QA on a new
   artifact remains UNRUN.
 
+Suite QA section 12 (2026-11-07, suite AppImage, hidden KWin session) passed
+6 of 9 practice-tool steps. It failed on: handoff grading charging a stated
+minute to the wrong episode (12.2); combo and page names not exposed to screen
+readers (12.1); Tab traps in the handoff text and the medication table (12.9).
+A goal audit of the same day ranks real-data calibration, a live-AI session,
+and a release as the largest open items.
+
 GPT-6.1 Terra reviewed the practice pages and did not accept the first
 grader. The fix is local commit `eb09044`. Terra's re-review accepted it:
 a wrong minute, a normal saturation, and a generic word no longer count

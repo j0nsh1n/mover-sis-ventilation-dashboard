@@ -250,6 +250,16 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   cargo clippy --workspace --all-targets --locked -- -D warnings
   cargo test --workspace --locked
   ```
+- Desktop contract checks, from `rust-desktop-tests/` (the harness uses `.venv/bin/python`):
+  ```bash
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+  QT_QPA_PLATFORM=offscreen cargo test --workspace --locked -- --test-threads=1
+  ```
+  The frozen Linux GLIBC and icons check is an ignored test. Run it after a
+  frozen onedir exists, with `MOVER_FROZEN_BUNDLE` pointing at that onedir, not
+  at an AppImage:
+  `MOVER_FROZEN_BUNDLE=/path/to/onedir cargo test --locked --test frozen_bundle frozen_bundle_runs_on_glibc_2_39_and_contains_icons -- --ignored`
 - Windows CI runs the Rust `windows_apply` integration test against the actual
   PowerShell install helper and rollback path, then builds and launches the
   frozen Windows app.
@@ -418,39 +428,62 @@ device and is not clinical decision support.
 
 ## Acceptance Criteria
 
-- [ ] Desktop opens Setup before data loading when the EMR folder is unconfigured or
+- [x] Desktop opens Setup before data loading when the EMR folder is unconfigured or
       invalid, then opens Research (G) as the central workspace. Equivalent G, F,
       Cases, and Rules functions remain available. The Ask, Summary, Case timeline,
-      and Rule reference tabs stay retired.
-- [ ] A research question searches indexed surgery metadata, plus analysis facts for
+      and Rule reference tabs stay retired. (suite QA 11.4 E2 and 1.1–1.5, 2026-11-07; tests)
+- [x] A research question searches indexed surgery metadata, plus analysis facts for
       analyzed cases, with cached embeddings when available and whole-word keyword
       fallback otherwise, including when processed parquet is absent (then without
       facts). Questions such as "Which cases have ETCO2 flags?" find analyzed cases
       without an embedding model. It loads at most three case extracts for a selected
-      local chat model; vectors and ranking scores do not enter the answer context.
-- [ ] A retrieved case opens in F with source signal rows and missing values visible,
+      local chat model; vectors and ranking scores do not enter the answer context. (retrieval and drive tests; embeddings not yet measured with a real model)
+- [x] A retrieved case opens in F with source signal rows and missing values visible,
       and its flag episodes are listed; selecting one shows its thresholds and
       per-signal measurements with missing-minute counts. Returning to G preserves the
-      question and comparison.
-- [ ] The Rules drawer (Ctrl+R) lists the loaded preset's rules on G and F, and Escape
-      closes it.
-- [ ] The Cases list opens a case in F and Back or Escape returns to it.
-- [ ] Each research question adds a turn to the conversation panel; "Show on board"
-      restores that turn's board, and earlier turns never reach the model.
-- [ ] The five prototype questions pass as driver scenarios with a scripted model and
-      without one (`tests/test_desktop_drive.py`).
-- [ ] Pipeline produces parquet under processed dir for a small `--n-cases` sample.
-- [ ] On synthetic data every injected anomaly raises its expected rules and clean cases
-      raise no warn/critical flags (`tests/test_synthetic.py`).
-- [ ] Profile output contains no PIDs or timestamps (`tests/test_profile.py`).
-- [ ] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`).
-- [ ] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0.
-- [ ] `ruff check .` and `mypy` exit 0.
-- [ ] The Rust updater contract checks pass on Linux with Python 3.14 and Qt
-      available. An empty manifest URL disables requests in a frozen app.
-- [ ] The Rust signer checks pass and the Windows apply test passes in CI.
-- [ ] The public Pages manifest has a valid signature and names both
-      published packages with matching size and SHA256.
-- [ ] `VERSION` matches `src/__version__.py`.
-- [ ] `CHANGELOG.md` updated for user-visible changes.
-- [ ] CI runs on **Python 3.14**.
+      question and comparison. (suite QA 11.4 3.2–3.5; episode detail and return covered by tests)
+- [x] The Rules drawer (Ctrl+R) lists the loaded preset's rules on G and F, and Escape
+      closes it. (tests; suite QA 11.4 3.7 opened it by button)
+- [x] The Cases list opens a case in F and Back or Escape returns to it. (suite QA 11.4 3.2 and 3.6)
+- [x] Each research question adds a turn to the conversation panel; "Show on board"
+      restores that turn's board, and earlier turns never reach the model. (tests with a scripted model; live AI paused)
+- [x] The five prototype questions pass as driver scenarios with a scripted model and
+      without one (`tests/test_desktop_drive.py`). (full offscreen suite, 2026-11-07)
+- [x] Pipeline produces parquet under processed dir for a small `--n-cases` sample. (suite QA 11.4 2.1–2.2; tests)
+- [x] On synthetic data every injected anomaly raises its expected rules and clean cases
+      raise no warn/critical flags (`tests/test_synthetic.py`). (full offscreen suite, 2026-11-07)
+- [x] Profile output contains no PIDs or timestamps (`tests/test_profile.py`). (full offscreen suite, 2026-11-07)
+- [x] LLM path refuses non-loopback Ollama URLs without override (`tests/test_local_only.py`). (full offscreen suite, 2026-11-07)
+- [x] `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` exits 0. (2026-11-07)
+- [x] `ruff check .` and `mypy` exit 0. (2026-11-07)
+- [x] The Rust updater contract checks pass on Linux with Python 3.14 and Qt
+      available. An empty manifest URL disables requests in a frozen app. (CI on PR #38)
+- [x] The Rust signer checks pass and the Windows apply test passes in CI. (CI on PR #38)
+- [x] The public Pages manifest has a valid signature and names both
+      published packages with matching size and SHA256. (v0.13.0 manifest verified with the pinned key, 2026-11-07; sizes match the release)
+- [x] `VERSION` matches `src/__version__.py`. (0.15.0 in both)
+- [x] `CHANGELOG.md` updated for user-visible changes. (Unreleased section current)
+- [x] CI runs on **Python 3.14**. (`ci.yml`, `release.yml`)
+
+Suite criteria (added 2026-11-07, from "Approved suite target", "Shared source,
+preset, and generation", and "Decided practice contracts"):
+
+- [x] Monitoring opens first; View switches to Handoff practice, Medication and
+      vitals, and the WHO checklist and back; the corner label names the open
+      page (tests; suite QA 12.8).
+- [x] A source change, a preset change, or a new recorded threshold hash
+      invalidates shared fetch caches; older-generation results are rejected;
+      case-fetch keys include the EMR path, preset, and threshold hash (tests).
+- [ ] Handoff grading marks an item mentioned only for a supported detail of that
+      finding, and a minute or value the episode does not show leaves only that
+      episode missed (suite QA 12.2 failed: a minute is charged to the wrong
+      episode).
+- [x] Medication and vitals rows show value, unit, bolus versus infusion, time,
+      and source; missing values stay missing; the page gives no reason or
+      advice (tests; suite QA 12.4–12.5).
+- [x] The WHO checklist runs Sign in, Time out, Sign out on authored cards; a
+      later stage stays closed until the open one is complete; saving writes
+      local practice state only (tests; suite QA 12.6–12.7).
+- [ ] Practice pages are fully keyboard and screen-reader usable: Tab leaves every
+      field and table, combos announce their purpose, and the open page's name
+      is exposed (suite QA 12.1 and 12.9 failed).
