@@ -8,6 +8,7 @@ from PySide6.QtCore import QCoreApplication, QDir, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
+from src.desktop.fonts import install_app_font
 from src.user_settings import THEME_DARK, THEME_LIGHT, THEME_SYSTEM, get_theme
 
 # Concrete theme last applied ("light" | "dark") — used by matplotlib charts.
@@ -597,6 +598,7 @@ def apply_theme(app: QCoreApplication | None = None, mode: str | None = None) ->
     tokens = _DARK if concrete == THEME_DARK else _LIGHT
     sheet = _build_stylesheet(tokens)
     if isinstance(app, QApplication):
+        install_app_font(app)
         app.setStyle("Fusion")
         app.setPalette(_palette_from_tokens(tokens))
         app.setStyleSheet(sheet)

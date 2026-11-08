@@ -225,3 +225,36 @@ def test_entrypoint_help_hides_selftest_scan():
     )
     assert result.returncode == 0
     assert "--selftest-scan" not in result.stdout
+
+
+def _spec_data_includes() -> list[str]:
+    """The ``includes`` globs the spec passes to ``collect_data_files("src", ...)``."""
+    import ast
+
+    tree = ast.parse((ROOT / "packaging" / "mover_sis_monitor.spec").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "collect_data_files"
+            and node.args
+            and ast.literal_eval(node.args[0]) == "src"
+        ):
+            return list(ast.literal_eval(next(k.value for k in node.keywords if k.arg == "includes")))
+    raise AssertionError("the spec does not collect the src data files")
+
+
+def test_spec_bundles_fonts_and_their_license_files():
+    """Run PyInstaller's own collector with the spec's globs, so a changed glob or a new file shows up here."""
+    pytest.importorskip("PyInstaller")
+    from PyInstaller.utils.hooks import collect_data_files
+
+    fonts = ROOT / "src" / "desktop" / "assets" / "fonts"
+    on_disk = {path.name for path in fonts.iterdir()}
+    assert {"Inter-Regular.ttf", "Inter-SemiBold.ttf", "c0648bt_.pfb", "c0632bt_.pfb"} <= on_disk
+    assert {"Inter-LICENSE.txt", "Charter-NOTICE.txt"} <= on_disk
+    collected = {
+        Path(source).name
+        for source, dest in collect_data_files("src", includes=_spec_data_includes())
+        if dest.replace("\\", "/") == "src/desktop/assets/fonts"
+    }
+    assert collected == on_disk
