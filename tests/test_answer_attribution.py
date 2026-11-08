@@ -153,3 +153,18 @@ def test_record_wording_and_negated_diagnoses_are_not_causal_claims():
     ):
         assert causal_claims(text, SOURCES) == [], text
     assert causal_claims("The rise was probably due to bronchospasm.", SOURCES)
+
+
+def test_source_and_case_numbers_are_references_not_values():
+    sources = [
+        "SOURCE EXTRACT (analyzed case) PID=SYN00209eda60\nAnomaly score: 2. Missing minutes: End-tidal CO2 (ETCO2).",
+        "SOURCE EXTRACT (analyzed case) PID=SYN00166b87fb\nAnomaly score: 7. Missing minutes: End-tidal CO2 (ETCO2).",
+        "SOURCE EXTRACT (analyzed case) PID=SYN00092dfe81\nAnomaly score: 12. Missing minutes: End-tidal CO2 (ETCO2).",
+    ]
+    live = (
+        "The case with missing ETCO2 data is **PID=SYN00092dfe81** (source 3). "
+        "Other cases (sources 1 and 2) do not report missing ETCO2 data."
+    )
+    assert misattributed_details(live, sources) == []
+    assert misattributed_details("SYN00092dfe81, like cases 1 and 2 on the shortlist, has missing ETCO2.", sources) == []
+    assert misattributed_details("SYN00092dfe81 had an anomaly score of 2.", sources)

@@ -28,6 +28,10 @@ _EXCLUSIVE = re.compile(
     r"|no (?:cited )?cases?|not any other)\b",
     re.IGNORECASE,
 )
+# "source 3", "sources 1 and 2", "cases 1 and 2" point at extracts or shortlist rows; they are not values.
+_REFERENCE = re.compile(
+    r"\b(?:sources?|extracts?|cases?)\s+#?\d+(?:\s*(?:,|and|&|or|–|-|to)\s*#?\d+)*", re.IGNORECASE
+)
 _SIGNAL_FLAGS = re.compile(r"\b([a-z0-9]+)\s+flags?\b", re.IGNORECASE)
 _MISSING_LINE = re.compile(r"Missing minutes:[^.\n]*\(([A-Za-z0-9_]+)\)")
 _CAUSAL = re.compile(
@@ -100,8 +104,9 @@ def misattributed_details(text: str, sources: Sequence[str], question: str = "")
         others = {other: src for other, src in by_pid.items() if other not in named and other != pid.lower()}
         if not others:
             continue
-        elsewhere = set(find_ungrounded_numbers(segment, list(others.values()), question))
-        for number in find_ungrounded_numbers(segment, allowed, question):
+        values = _REFERENCE.sub(" ", segment)
+        elsewhere = set(find_ungrounded_numbers(values, list(others.values()), question))
+        for number in find_ungrounded_numbers(values, allowed, question):
             if number not in elsewhere:
                 holder = _holder(number, others, question)
                 problems.append(_misattributed(pid, number, holder and _display(holder, sources)))
