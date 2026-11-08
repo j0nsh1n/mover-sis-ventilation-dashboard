@@ -6,13 +6,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QMainWindow
 
 _PRODUCT_NAME = "MOVER Suite"
-_MONITOR_TITLE = "MOVER SIS Monitor v{version} — Ventilation & Anesthesia"
 _MODULE_LABEL = "Monitoring"
 
 
 def install_suite_chrome(window: QMainWindow, version: str) -> None:
     """Set the suite title and the Monitoring label."""
-    title = f"{_PRODUCT_NAME} — {_MONITOR_TITLE.format(version=version)}"
+    title = f"{_PRODUCT_NAME} v{version}"
     window.setProperty("suiteTitle", title)
     window.setWindowTitle(title)
     set_module_label(window, _MODULE_LABEL)

@@ -80,8 +80,10 @@ def data_dir() -> Path:
     if _session_data_dir is not None:
         return _session_data_dir
     if os.environ.get("MOVER_APPIMAGE") == "1":
-        xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-        return (Path(xdg).expanduser() / "mover-sis-monitor" / "data").resolve()
+        xdg = Path(os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")).expanduser()
+        # An AppImage from before the rename keeps its data where it is; it can be large.
+        old = xdg / "mover-sis-monitor" / "data"
+        return (old if old.is_dir() else xdg / "mover-suite" / "data").resolve()
     return app_dir() / "data"
 
 

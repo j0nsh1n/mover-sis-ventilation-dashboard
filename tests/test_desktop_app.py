@@ -143,7 +143,7 @@ def test_mainwindow_constructs_fast(qapp, monkeypatch, tmp_path):
     win.show()
     qapp.processEvents()
     assert construct_s < 2.0, f"MainWindow construct took {construct_s:.2f}s"
-    assert "MOVER SIS" in win.windowTitle()
+    assert "MOVER Suite" in win.windowTitle()
     win.close()
 
 

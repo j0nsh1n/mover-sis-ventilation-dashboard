@@ -107,7 +107,7 @@ def test_appimage_refuses_a_stale_frozen_bundle(tmp_path):
 def test_appimage_refuses_to_replace_an_existing_candidate(tmp_path):
     root, _, capture, env = _packaging_tree(tmp_path)
     version = (root / "VERSION").read_text().strip()
-    image = root / f"dist/MOVER-SIS-Monitor-v{version}-x86_64.AppImage"
+    image = root / f"dist/MOVER-Suite-v{version}-x86_64.AppImage"
     image.write_text("previous candidate")
     result = subprocess.run(
         [str(root / "scripts/build_appimage.sh"), "--skip-build"],

@@ -19,7 +19,7 @@ if [[ ! -f "${APPIMAGE_RUNTIME:-}" ]]; then
 fi
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
-OUTPUT="$ROOT/dist/MOVER-SIS-Monitor-v${VERSION}-x86_64.AppImage"
+OUTPUT="$ROOT/dist/MOVER-Suite-v${VERSION}-x86_64.AppImage"
 if [[ -e "$OUTPUT" ]]; then
   echo "Refusing to replace $OUTPUT. Move the previous candidate before rebuilding." >&2
   exit 1

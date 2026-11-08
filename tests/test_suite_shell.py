@@ -12,7 +12,7 @@ from src.desktop.suite_chrome import install_suite_chrome
 
 
 def _suite_title() -> str:
-    return f"MOVER Suite — MOVER SIS Monitor v{get_version()} — Ventilation & Anesthesia"
+    return f"MOVER Suite v{get_version()}"
 
 
 @pytest.fixture(scope="module")
@@ -46,7 +46,7 @@ def _monitoring_labels(win: MainWindow) -> list[QLabel]:
 def test_main_window_shows_the_suite_title_and_one_monitoring_label(window):
     assert window.windowTitle() == _suite_title()
     assert "MOVER Suite" in window.windowTitle()
-    assert "MOVER SIS" in window.windowTitle()
+    assert "MOVER SIS Monitor" not in window.windowTitle()
     assert window.centralWidget() is window.module_stack
     assert window.module_stack.currentWidget() is window.research
 

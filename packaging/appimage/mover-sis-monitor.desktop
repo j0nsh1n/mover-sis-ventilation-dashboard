@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=MOVER SIS Monitor
+Name=MOVER Suite
 Comment=Explore de-identified perioperative records for research
 Exec=AppRun
 Icon=mover-sis-monitor

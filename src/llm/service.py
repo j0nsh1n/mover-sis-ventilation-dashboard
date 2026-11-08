@@ -176,7 +176,7 @@ def _spawn_serve(ollama_bin: str, env: dict[str, str]) -> subprocess.Popen:
     log_path = Path(
         os.environ.get(
             "MOVER_OLLAMA_LOG",
-            str(Path.home() / ".local" / "state" / "mover-sis-monitor" / "ollama.log"),
+            str(Path.home() / ".local" / "state" / "mover-suite" / "ollama.log"),
         )
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)

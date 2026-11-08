@@ -19,7 +19,7 @@ source "$ROOT/.venv/bin/activate"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
-echo "==> Installing MOVER SIS Monitor v${VERSION} → $INSTALL_DIR"
+echo "==> Installing MOVER Suite v${VERSION} → $INSTALL_DIR"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   "$ROOT/scripts/build_executable.sh"
@@ -73,12 +73,13 @@ cat > "$HOME/.local/bin/mover-sis-monitor" <<EOF
 exec "$INSTALL_DIR/launch.sh" "\$@"
 EOF
 chmod +x "$HOME/.local/bin/mover-sis-monitor"
+ln -sf mover-sis-monitor "$HOME/.local/bin/mover-suite"
 
 cat > "$HOME/.local/share/applications/mover-sis-monitor.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=${VERSION}
-Name=MOVER SIS Monitor
+Name=MOVER Suite
 GenericName=Ventilation & Anesthesia Monitor
 Comment=MOVER SIS research dashboard v${VERSION}
 Exec=$INSTALL_DIR/launch.sh
@@ -96,8 +97,8 @@ echo
 echo "Installed v${VERSION}"
 echo "  App      : $INSTALL_DIR"
 echo "  Version  : $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo unknown)"
-echo "  CLI      : mover-sis-monitor"
-echo "  Menu     : MOVER SIS Monitor"
+echo "  CLI      : mover-suite (or mover-sis-monitor)"
+echo "  Menu     : MOVER Suite"
 echo "  EMR link : $(readlink -f "$INSTALL_DIR/data/raw/EMR" 2>/dev/null || echo none)"
 echo
-echo "Launch: mover-sis-monitor"
+echo "Launch: mover-suite"

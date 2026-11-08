@@ -1,4 +1,4 @@
-# roadmap.md — MOVER SIS Monitor
+# roadmap.md — MOVER Suite (formerly MOVER SIS Monitor)
 
 Note: "Complete when" conditions are verified locally (tests pass, feature works)
 and via review. One phase may span several small commits/PRs when the human asks

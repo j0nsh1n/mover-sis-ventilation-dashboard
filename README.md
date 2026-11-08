@@ -1,4 +1,7 @@
-# MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
+# MOVER Suite — Intraoperative Ventilation & Anesthesia Research
+
+MOVER Suite was called MOVER SIS Monitor up to v0.13.0. Its Monitoring page is the SIS Monitor; View also opens
+fictional Handoff practice, Medication and vitals, and WHO checklist practice.
 
 **Version 0.15.0**
 
@@ -217,30 +220,30 @@ Answers are grounded in a structured case briefing. Research use only — not fo
 source .venv/bin/activate
 # Build + install frozen app to ~/.local/share/mover-sis-monitor
 ./scripts/install_local.sh
-# Launch
-mover-sis-monitor
+# Launch (mover-sis-monitor still works)
+mover-suite
 ```
 
 Or build only:
 
 ```bash
 ./scripts/build_executable.sh
-# → dist/MOVER-SIS-Monitor-v0.15.0-linux-x86_64.tar.gz
+# → dist/MOVER-Suite-v0.15.0-linux-x86_64.tar.gz
 ```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
 | `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.15.0` |
-| `dist/MOVER-SIS-Monitor-v0.15.0-linux-x86_64.tar.gz` | Portable archive |
-| `dist/MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage` | Linux AppImage, built separately |
+| `dist/MOVER-Suite-v0.15.0-linux-x86_64.tar.gz` | Portable archive (its folder is still `MOVER-SIS-Monitor/`, which older updaters need) |
+| `dist/MOVER-Suite-v0.15.0-x86_64.AppImage` | Linux AppImage, built separately |
 | `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
 
 To run the AppImage, make it executable and open it:
 
 ```bash
-chmod +x MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage
-./MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage
+chmod +x MOVER-Suite-v0.15.0-x86_64.AppImage
+./MOVER-Suite-v0.15.0-x86_64.AppImage
 ```
 
 If the binary fails to start on a minimal install:

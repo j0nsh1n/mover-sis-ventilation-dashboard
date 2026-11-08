@@ -391,7 +391,7 @@ class _WelcomePage(QWizardPage):
         )
         lay = QVBoxLayout(self)
         body = QLabel(
-            "<p><b>MOVER SIS Monitor</b> is a research desktop app for "
+            "<p><b>MOVER Suite</b> is a research desktop app for "
             "perioperative SIS data (not for clinical care).</p>"
             "<p>On the next pages you will set:</p>"
             "<ul>"
@@ -449,7 +449,7 @@ class SetupWizard(QWizard):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MOVER SIS Monitor — Setup")
+        self.setWindowTitle("MOVER Suite — Setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
 

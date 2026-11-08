@@ -1,4 +1,4 @@
-# spec.md — MOVER SIS Monitor
+# spec.md — MOVER Suite (formerly MOVER SIS Monitor)
 
 ## Problem
 
@@ -119,7 +119,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 ## User Experience
 
 - **Desktop (primary):** `PYTHONPATH=. python -m src.desktop` or `./scripts/run_desktop.sh`
-  or installed `mover-sis-monitor` after `./scripts/install_local.sh`.
+  or installed `mover-suite` (or `mover-sis-monitor`) after `./scripts/install_local.sh`.
 - Example: complete Setup → ask about pressure in laparoscopic cases in Research
   → inspect a retrieved case in F → return to the same question and comparison.
   With a selected local chat model, the answer uses bounded source extracts.
@@ -163,7 +163,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - streamlit 1.64.0 (optional UI)
   - pytest / pytest-cov / pyinstaller 6.22.3 (dev & packaging)
 - Storage: local filesystem — EMR CSVs, optional waves, parquet cache; prefs in
-  `~/.config/mover-sis-monitor/settings.json` (override with `MOVER_CONFIG_DIR`).
+  `~/.config/mover-suite/settings.json` (override with `MOVER_CONFIG_DIR`), copied once
+  from `~/.config/mover-sis-monitor/` when only that folder exists.
   The embedding cache is `case_embeddings.sqlite3` beside the settings file.
 - Major components:
   - `src/pipeline/` — load → clean → merge → features → flags → run
@@ -350,9 +351,32 @@ real-case picker, retrieval engine, or patient-derived prompts.
 
 ### Identity, packaging, and QA
 
-Keep current packaging, settings path `~/.config/mover-sis-monitor/`, executable
-names, and updater identity at first. Optional Streamlit in `src/dashboard/` stays
-during migration.
+The product ships as MOVER Suite from 0.15.0 (approved 2026-11-08,
+`_work/mover-suite/RENAME-MIGRATION-PLAN.md`). "SIS Monitor" stays the name of the
+Monitoring tool.
+
+- Visible name: window title "MOVER Suite v<version>", About, setup wizard, update
+  messages, desktop entry name, Qt application name, release title, README.
+- Release files: `MOVER-Suite-v<version>-linux-x86_64.tar.gz`,
+  `MOVER-Suite-v<version>-windows-x86_64.zip`, `MOVER-Suite-v<version>-x86_64.AppImage`.
+- Settings: `~/.config/mover-suite/`. On start, when it has no `settings.json` and
+  `~/.config/mover-sis-monitor/` has one, the whole old folder is copied once and
+  `migrated-from.txt` names the source and date. The old folder is never changed. If the
+  copy fails, that session uses the old folder and the status bar says why.
+  `MOVER_CONFIG_DIR` wins over both.
+- Logs go to `~/.local/state/mover-suite/`. AppImage data uses
+  `~/.local/share/mover-sis-monitor/data` when it exists, else
+  `~/.local/share/mover-suite/data`.
+- Kept, because installed v0.13.0 updaters depend on them: the archive folder
+  `MOVER-SIS-Monitor/` and its programs `MOVER-SIS-Monitor`, `launch.sh`, and
+  `MOVER-SIS-Monitor.exe`; the manifest URL and signing key; the repository name
+  `mover-sis-ventilation-dashboard` (GitHub does not redirect Pages after a rename).
+  Also kept: the desktop entry id `mover-sis-monitor`, the window class, the
+  `install_local.sh` folder, and the `mover-sis-monitor` command (`mover-suite` is added).
+- Renaming the program and archive folder would need a bridge release whose updater
+  accepts both names. It is not planned.
+
+Optional Streamlit in `src/dashboard/` stays during migration.
 
 Carry native QA into the suite record. The original candidate AppImage and
 `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`
@@ -481,10 +505,10 @@ preset, and generation", and "Decided practice contracts"):
 - [x] A source change, a preset change, or a new recorded threshold hash
       invalidates shared fetch caches; older-generation results are rejected;
       case-fetch keys include the EMR path, preset, and threshold hash (tests).
-- [ ] Handoff grading marks an item mentioned only for a supported detail of that
+- [x] Handoff grading marks an item mentioned only for a supported detail of that
       finding, and a minute or value the episode does not show leaves only that
-      episode missed (suite QA 12.2 failed: a minute is charged to the wrong
-      episode).
+      episode missed (tests; suite QA 12.2 passes on a source-build recheck,
+      2026-11-08).
 - [x] Medication and vitals rows show value, unit, bolus versus infusion, time,
       and source; missing values stay missing; the page gives no reason or
       advice (tests; suite QA 12.4–12.5).

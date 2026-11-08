@@ -61,6 +61,26 @@ def test_entrypoint_imports_without_gui_show(monkeypatch):
     assert hasattr(desktop_app, "MainWindow")
 
 
+def test_release_files_carry_the_suite_name_but_keep_the_folder_old_updaters_require():
+    """v0.13.0 updaters unpack an archive only when it holds one MOVER-SIS-Monitor folder with that program."""
+    from src import update
+
+    assert update.APP_ROOT == "MOVER-SIS-Monitor"
+    assert update.LINUX_PAYLOAD == ("MOVER-SIS-Monitor", "launch.sh")
+    assert update.WINDOWS_PAYLOAD == ("MOVER-SIS-Monitor.exe",)
+    build = (ROOT / "scripts" / "build_executable.sh").read_text(encoding="utf-8")
+    assert 'TARBALL="$ROOT/dist/MOVER-Suite-v${VERSION}-linux-x86_64.tar.gz"' in build
+    assert 'tar -C "$ROOT/dist" -czf "$TARBALL" MOVER-SIS-Monitor\n' in build
+    assert 'OUTPUT="$ROOT/dist/MOVER-Suite-v${VERSION}-x86_64.AppImage"' in (
+        ROOT / "scripts" / "build_appimage.sh"
+    ).read_text(encoding="utf-8")
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "MOVER-SIS-Monitor-v" not in release
+    assert '--linux "$packages/MOVER-Suite-v$version-linux-x86_64.tar.gz"' in release
+    assert '--windows "$packages/MOVER-Suite-v$version-windows-x86_64.zip"' in release
+    assert 'Compress-Archive -Path "dist/MOVER-SIS-Monitor"' in release
+
+
 def test_build_script_is_executable_and_sane():
     script = ROOT / "scripts" / "build_executable.sh"
     text = script.read_text(encoding="utf-8")

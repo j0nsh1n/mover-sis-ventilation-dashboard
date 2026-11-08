@@ -7,6 +7,12 @@ and Windows packages. The app fetches these URLs directly, without the GitHub
 API or an account. The v0.8.0 app has no default manifest URL, so install
 v0.9.0 manually once to start automatic checks.
 
+From 0.15.0 the app is called MOVER Suite and release files are named
+`MOVER-Suite-v<version>-...`. The folder inside each archive is still
+`MOVER-SIS-Monitor/` with the same program names, because installed v0.13.0
+updaters accept only that folder. A v0.13.0 install updates to MOVER Suite on its
+own. The examples below show the older file names.
+
 ## What the app does
 
 - A frozen Linux or Windows app checks at launch, when it becomes active, and

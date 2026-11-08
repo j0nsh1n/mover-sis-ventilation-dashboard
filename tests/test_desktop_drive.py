@@ -69,7 +69,7 @@ def test_research_roundtrip_keeps_the_question(tmp_path):
         image = QImage(str(png))
         assert not image.isNull()
         assert _distinct_colors(image) > 1, f"{png.name} is a blank grab"
-    assert (out / "state" / "config" / "mover-sis-monitor" / "settings.json").is_file()
+    assert (out / "state" / "config" / "mover-suite" / "settings.json").is_file()
 
 
 def test_invalid_emr_exits_nonzero_with_reason(tmp_path):

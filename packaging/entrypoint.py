@@ -35,7 +35,7 @@ def selftest_scan() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MOVER SIS Monitor desktop app")
+    parser = argparse.ArgumentParser(description="MOVER Suite desktop app")
     parser.add_argument("--selftest-scan", action="store_true", help=argparse.SUPPRESS)
     options, _qt_args = parser.parse_known_args()
     if options.selftest_scan:

@@ -28,13 +28,15 @@ download a newer runtime. No packaging tool is bundled as a Python dependency.
 Make the output executable and launch it:
 
 ```bash
-chmod +x MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage
-./MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage
+chmod +x MOVER-Suite-v0.15.0-x86_64.AppImage
+./MOVER-Suite-v0.15.0-x86_64.AppImage
 ```
 
-Settings retain their existing location. Without saved or explicit data paths,
-the AppImage uses `$XDG_DATA_HOME/mover-sis-monitor/data`, or
-`~/.local/share/mover-sis-monitor/data` when XDG_DATA_HOME is unset or empty. Saved paths
+Settings live in `~/.config/mover-suite/`, copied once from `~/.config/mover-sis-monitor/`
+when only the old folder exists. Without saved or explicit data paths, the AppImage uses
+`$XDG_DATA_HOME/mover-suite/data`, or `~/.local/share/mover-suite/data` when XDG_DATA_HOME is
+unset or empty. An AppImage from before the rename keeps using `mover-sis-monitor/data` when that
+folder exists, because it can hold large processed files. Saved paths
 and MOVER_DATA_DIR, MOVER_EMR_DIR and MOVER_PROCESSED_DIR overrides still apply.
 Research outputs are outside the read-only image.
 

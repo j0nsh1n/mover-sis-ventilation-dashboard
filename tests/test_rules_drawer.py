@@ -404,6 +404,28 @@ def test_a_focused_combo_still_follows_the_wheel(view, qapp):
     assert view.scope_combo.currentIndex() == 1
 
 
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_an_opened_dropdown_shows_every_choice_without_scrolling(view, qapp, theme):
+    from src.desktop.theme import apply_theme
+
+    before = qapp.styleSheet()
+    apply_theme(qapp, theme)
+    combo = view.scope_combo
+    try:
+        combo.setFocus()
+        qapp.processEvents()
+        combo.showPopup()
+        qapp.processEvents()
+        popup = combo.view()
+        last = popup.visualRect(combo.model().index(combo.count() - 1, 0))
+        assert popup.verticalScrollBar().maximum() == 0
+        # Item rects report the text width, which may exceed the list; only the height can hide a choice.
+        assert 0 <= last.top() and last.bottom() < popup.viewport().height(), (last, popup.viewport().rect())
+    finally:
+        combo.hidePopup()
+        qapp.setStyleSheet(before)
+
+
 def test_scope_line_counts_loaded_cases_before_the_first_search(view, qapp):
     cases = pd.DataFrame({"PID": ["SYN0000000001", "SYN0000000002", "SYN0000000003"]})
     view.set_cases_data(cases, None, load_rule_catalog("default"), None)

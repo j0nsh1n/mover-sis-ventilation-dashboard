@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -62,7 +63,13 @@ from src.runtime_paths import (
     processed_dir,
     wave_dir,
 )
-from src.user_settings import apply_ollama_env_from_settings, load_settings, needs_first_run_setup, settings_path
+from src.user_settings import (
+    apply_ollama_env_from_settings,
+    load_settings,
+    needs_first_run_setup,
+    settings_migration_note,
+    settings_path,
+)
 
 if TYPE_CHECKING:
     from src.services.retrieval import RetrievalEngine
@@ -277,6 +284,11 @@ class MainWindow(QMainWindow):
         self._scan_cancel_button.clicked.connect(self._cancel_corpus_scan)
         self._scan_cancel_button.hide()
         self.statusBar().addPermanentWidget(self._scan_cancel_button)
+        settings_path()
+        note = settings_migration_note()
+        self._settings_note = QLabel(note or "", self)
+        self._settings_note.setVisible(bool(note))
+        self.statusBar().addPermanentWidget(self._settings_note)
 
         QTimer.singleShot(0, self._startup)
 
@@ -614,7 +626,7 @@ class MainWindow(QMainWindow):
             self._closing = False
 
     def _on_update_found(self, version: str) -> None:
-        self.statusBar().showMessage(f"Downloading MOVER SIS Monitor v{version} update…")
+        self.statusBar().showMessage(f"Downloading MOVER Suite v{version} update…")
 
     def _on_update_ready(self, version: str, _staged: Path) -> None:
         self._update_button.setText(f"Restart to update to v{version}")
@@ -657,9 +669,10 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About",
-            f"MOVER SIS Ventilation & Anesthesia Monitor\n"
+            f"MOVER Suite\n"
             f"Version {self._version}\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
+            "Monitoring (SIS Monitor) plus fictional handoff, medication, and checklist practice.\n"
             "Configure paths via the ⚙ Settings icon (top-right) or File → Setup…\n"
             "Not for clinical care.",
         )
@@ -697,7 +710,7 @@ class MainWindow(QMainWindow):
         wiz = SetupWizard(self)
         wiz.setup_finished.connect(self._on_settings_applied)
         if first_run:
-            wiz.setWindowTitle("MOVER SIS Monitor — First-time setup")
+            wiz.setWindowTitle("MOVER Suite — First-time setup")
         wiz.exec()
         self._sync_path_fields_from_runtime()
         if wiz.result():
@@ -1548,7 +1561,7 @@ def main() -> int:
         except Exception:
             pass
         app = QApplication(sys.argv)
-    app.setApplicationName("MOVER SIS Ventilation Monitor")
+    app.setApplicationName("MOVER Suite")
     app.setOrganizationName("MOVER-SIS")
     app.setDesktopFileName("mover-sis-monitor")
     apply_theme(app)

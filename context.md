@@ -1,4 +1,4 @@
-# context.md — MOVER SIS Monitor
+# context.md — MOVER Suite (formerly MOVER SIS Monitor)
 
 ## Current State
 

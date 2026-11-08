@@ -16,13 +16,28 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   treatment. The checklist page walks Sign in, Time out, and Sign out on
   authored cards and can save that practice on this computer.
 
-- The desktop window title reads "MOVER Suite — MOVER SIS Monitor" with the
-  version and "Ventilation & Anesthesia". A Monitoring label sits on the left
-  of the menu bar. The research workspace, menus, and Settings gear stay in
-  place.
+- A Monitoring label sits on the left of the menu bar. The research
+  workspace, menus, and Settings gear stay in place.
+
+### Changed
+
+- The app is now called MOVER Suite. The window title reads "MOVER Suite" with
+  the version; About, the setup wizard, update messages, the menu entry, and
+  release files use the new name. Monitoring is still the SIS Monitor.
+- Settings move to `~/.config/mover-suite/`. On first start the old
+  `~/.config/mover-sis-monitor/` folder is copied there once and left as it was,
+  so an older version still finds its settings. If the copy fails, the app keeps
+  using the old folder and says so in the status bar.
+- Installed v0.13.0 apps update to MOVER Suite on their own. The folder inside
+  the download keeps its old name for that reason. An AppImage from before the
+  rename keeps its data folder.
+- `install_local.sh` adds a `mover-suite` command next to `mover-sis-monitor`.
 
 ### Fixed
 
+- Opening the Cases/Articles dropdown by keyboard shows both choices. A scroll
+  arrow no longer covers half of "Articles". The same fix applies to the other
+  dropdowns that ignore the mouse wheel until focused.
 - Handoff practice accepts a minute or a saturation value only when that
   detail is on the fictional episode. A wrong minute, a normal saturation,
   or a generic word such as "sustained" does not count as mentioning the
