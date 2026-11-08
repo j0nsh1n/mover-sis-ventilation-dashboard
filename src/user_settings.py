@@ -76,6 +76,8 @@ def _config_root(xdg: Path) -> Path:
     try:
         _copy_forward(old, new)
     except OSError as exc:
+        if (new / "settings.json").is_file():
+            return new  # another instance finished the copy first
         _migration_note = (
             f"Settings stay in {old} for this session. Copying them to {new} failed: {exc.strerror or exc}."
         )
@@ -84,7 +86,7 @@ def _config_root(xdg: Path) -> Path:
 
 
 def _copy_forward(old: Path, new: Path) -> None:
-    staging = new.with_name(f".{new.name}-copying")
+    staging = new.with_name(f".{new.name}-copying-{os.getpid()}")
     shutil.rmtree(staging, ignore_errors=True)
     shutil.copytree(old, staging, symlinks=True)
     (staging / MIGRATION_MARKER).write_text(f"Copied from {old} on {date.today().isoformat()}.\n", encoding="utf-8")

@@ -338,8 +338,8 @@ jobs:
           <!doctype html>
           <html lang="en">
           <meta charset="utf-8">
-          <title>MOVER SIS Monitor updates</title>
-          <h1>MOVER SIS Monitor</h1>
+          <title>MOVER Suite updates</title>
+          <h1>MOVER Suite</h1>
           <p><a href="https://github.com/j0nsh1n/mover-sis-ventilation-dashboard/releases">Download releases</a></p>
           <p><a href="updates/latest.json">Signed update manifest</a></p>
           HTML

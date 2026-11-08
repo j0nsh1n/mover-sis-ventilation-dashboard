@@ -263,3 +263,20 @@ def test_a_failed_copy_keeps_using_the_old_folder_and_says_why(xdg_home, monkeyp
     note = settings_migration_note()
     assert note is not None and str(old) in note and "Permission denied" in note
     assert not (xdg_home / "mover-suite" / "settings.json").exists()
+
+
+def test_a_second_instance_that_loses_the_copy_race_uses_the_new_folder(xdg_home, monkeypatch):
+    import src.user_settings as user_settings
+    from src.user_settings import settings_migration_note, settings_path
+
+    _old_install(xdg_home)
+
+    def other_instance_won(_old, new):
+        new.mkdir()
+        (new / "settings.json").write_text('{"theme": "light"}', encoding="utf-8")
+        raise FileExistsError(17, "File exists")
+
+    monkeypatch.setattr(user_settings, "_copy_forward", other_instance_won)
+    assert settings_path() == xdg_home / "mover-suite" / "settings.json"
+    assert get_theme() == THEME_LIGHT
+    assert settings_migration_note() is None

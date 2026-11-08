@@ -257,3 +257,13 @@ def test_each_of_two_episodes_keeps_its_own_minutes():
     assert ("unsupported", "hypotension") not in graded
     wrong = _statuses(case, "Hypotension from minute 10 to 16 and again at minute 70.")
     assert ("unsupported", "hypotension") in wrong
+
+
+def test_other_names_for_pressure_and_saturation_keep_their_minutes():
+    case = _case(_low_map((10, 16), spo2={30: 88, 31: 86}))
+    spelled_out = _statuses(case, "Mean arterial pressure under 65 at minute 12, then desaturation at minute 30.")
+    assert ("mentioned", "desaturation") in spelled_out
+    assert ("unsupported", "desaturation") not in spelled_out
+    sats = _statuses(case, "Hypotension at minute 12, sats 86 at minute 31.")
+    assert ("mentioned", "hypotension") in sats
+    assert ("unsupported", "hypotension") not in sats

@@ -47,8 +47,8 @@ _MAP_SERIES = ("blood pressure", "map")
 # A detail belongs to the finding named just before it in the same sentence,
 # or to the sentence's first finding when it comes before any of them.
 _OWNERS: tuple[tuple[str, str], ...] = (
-    ("hypotension", r"hypotensi\w*|low map|low blood pressure|blood pressure|map"),
-    ("desaturation", r"desat\w*|low oxygen|oxygen saturation|saturation|spo2|sp02"),
+    ("hypotension", r"hypotensi\w*|low map|low blood pressure|blood pressure|mean arterial pressure|map|bp"),
+    ("desaturation", r"desat\w*|low oxygen|oxygen saturation|saturation|o2 sats?|sats?|spo2|sp02"),
 ) + tuple((drug, re.escape(drug.casefold())) for drug in TRACKED_DRUGS)
 _OWNER_PATTERN = re.compile(
     "|".join(rf"(?P<o{index}>(?<![a-z0-9])(?:{pattern})(?![a-z0-9]))" for index, (_, pattern) in enumerate(_OWNERS))

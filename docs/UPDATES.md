@@ -1,6 +1,6 @@
 # Desktop updates
 
-MOVER SIS Monitor v0.9.0 checks a signed update manifest at
+MOVER Suite (MOVER SIS Monitor before 0.15.0) has checked a signed update manifest since v0.9.0, at
 `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
 GitHub Pages serves the small manifest. Public GitHub Releases serve the Linux
 and Windows packages. The app fetches these URLs directly, without the GitHub
