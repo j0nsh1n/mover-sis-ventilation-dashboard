@@ -17,7 +17,8 @@ from src.rules import RULE_METADATA
 
 _ID_LIKE = re.compile(r"\b(?:SYN[0-9a-f]{6,14}|[0-9a-f]{12,20})\b", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-_BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+# Numbered lines are often section headings ("2. What the extracts show"), so only marks carry a case.
+_BULLET = re.compile(r"^\s*[-*•]\s+")
 _RULE = re.compile(
     r"(?<![a-z0-9_])(" + "|".join(sorted(map(re.escape, RULE_METADATA), key=len, reverse=True)) + r")(?![a-z0-9_])",
     re.IGNORECASE,
@@ -42,6 +43,13 @@ DIAGNOSES = (
 )
 _DIAGNOSIS = re.compile(r"\b(?:" + "|".join(re.escape(d) for d in DIAGNOSES) + r")\b", re.IGNORECASE)
 _NEGATION_BEFORE = re.compile(r"\b(?:not|no|cannot|can't|without|never)\b[^.;\n]{0,25}$", re.IGNORECASE)
+_NEGATION_AFTER = re.compile(r"^[^.;\n]{0,12}\b(?:not|no longer|never)\s+(?:recorded|documented|stated|mentioned|reported|present)\b", re.IGNORECASE)
+# "due to missing samples" or "possibly from sensor noise" explain the record, not the patient.
+_RECORD_CAUSE = re.compile(
+    r"^\W*(?:\w+\W+){0,3}?(?:missing|samples?|sampling|artifacts?|artefacts?|sensors?|noise|threshold|rules?|gaps?|data"
+    r"|record(?:ing|s)?|monitor(?:ing)?|calibration|export|extract)\b",
+    re.IGNORECASE,
+)
 
 MISATTRIBUTED_MARK = "is not in that case's extract"
 
@@ -76,25 +84,33 @@ def misattributed_details(text: str, sources: Sequence[str], question: str = "")
     A detail belongs to the case ID named before it in the same sentence (or the sentence's
     first case ID when it comes earlier). A line naming exactly one case also owns the bullet
     lines directly under it. Details with no case ID nearby are left to the number check.
+    A sentence that names several cases often compares them ("19.2 and 17.5 respectively",
+    "23.4 compared with 17.5 for Y"), so a detail any of those cases holds is not charged.
+    A flag name written as absent ("did not have pip_rising") is not a claim of the flag.
     """
     by_pid = sources_by_pid(sources)
     if len(by_pid) < 2:
         return []
     problems: list[str] = []
-    for pid, segment in _owned_segments(text):
+    for pid, segment, named in _owned_segments(text):
         own = by_pid.get(pid.lower())
         if own is None:
             continue
-        others = {other: src for other, src in by_pid.items() if other != pid.lower()}
+        allowed = [own] + [by_pid[other] for other in named if other in by_pid and other != pid.lower()]
+        others = {other: src for other, src in by_pid.items() if other not in named and other != pid.lower()}
+        if not others:
+            continue
         elsewhere = set(find_ungrounded_numbers(segment, list(others.values()), question))
-        for number in find_ungrounded_numbers(segment, [own], question):
+        for number in find_ungrounded_numbers(segment, allowed, question):
             if number not in elsewhere:
                 holder = _holder(number, others, question)
                 problems.append(_misattributed(pid, number, holder and _display(holder, sources)))
-        for rule in dict.fromkeys(m.group(1).lower() for m in _RULE.finditer(segment)):
-            if not _has_rule(own, rule):
-                holder = next((other for other, src in others.items() if _has_rule(src, rule)), None)
-                problems.append(_misattributed(pid, rule, holder and _display(holder, sources)))
+        for match in _RULE.finditer(segment):
+            rule = match.group(1).lower()
+            if any(_has_rule(src, rule) for src in allowed) or _NEGATION_BEFORE.search(segment[: match.start()]):
+                continue
+            holder = next((other for other, src in others.items() if _has_rule(src, rule)), None)
+            problems.append(_misattributed(pid, rule, holder and _display(holder, sources)))
     return list(dict.fromkeys(problems))
 
 
@@ -133,13 +149,17 @@ def causal_claims(text: str, sources: Sequence[str]) -> list[str]:
     for pattern in (_CAUSAL, _DIAGNOSIS):
         for match in pattern.finditer(text):
             phrase = " ".join(match.group(0).split())
-            if phrase.casefold() in record or _NEGATION_BEFORE.search(text[: match.start()]):
+            before, after = text[: match.start()], text[match.end() :]
+            if phrase.casefold() in record or _NEGATION_BEFORE.search(before) or _NEGATION_AFTER.search(after):
+                continue
+            if pattern is _CAUSAL and _RECORD_CAUSE.search(after):
                 continue
             found.setdefault(phrase, None)
     return list(found)
 
 
-def _owned_segments(text: str) -> Iterator[tuple[str, str]]:
+def _owned_segments(text: str) -> Iterator[tuple[str, str, frozenset[str]]]:
+    """(case ID, the text it owns, every case ID named in that sentence, lower case)."""
     carry: str | None = None
     for line in text.split("\n"):
         if not line.strip():
@@ -147,16 +167,17 @@ def _owned_segments(text: str) -> Iterator[tuple[str, str]]:
         ids = [m.group(1) for m in PID_TOKEN.finditer(line)]
         if not ids:
             if carry is not None and _BULLET.match(line):
-                yield carry, line
+                yield carry, line, frozenset({carry.lower()})
             else:
                 carry = None
             continue
         for sentence in _SENTENCE_END.split(line):
             marks = [(m.start(), m.group(1)) for m in PID_TOKEN.finditer(sentence)]
+            named = frozenset(pid.lower() for _, pid in marks)
             for index, (start, pid) in enumerate(marks):
                 begin = 0 if index == 0 else start
                 end = marks[index + 1][0] if index + 1 < len(marks) else len(sentence)
-                yield pid, sentence[begin:end]
+                yield pid, sentence[begin:end], named
         carry = ids[0] if len({pid.lower() for pid in ids}) == 1 else None
 
 

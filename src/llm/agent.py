@@ -693,8 +693,8 @@ UNCITED_MARK = "is not one of the cited cases"
 CAUSAL_MARK = "causal or diagnostic claim"
 CAUSAL_FIX = "the record does not establish a cause; describe what was recorded and say the cause is not recorded"
 WITHHELD_ANSWER = (
-    "The local model's answer is withheld. After one rewrite it still tied details to the wrong "
-    "case or named a case that was not retrieved:\n{problems}\n\n"
+    "The local model's answer is withheld because it ties details to the wrong case or names a "
+    "case that was not retrieved:\n{problems}\n\n"
     "The retrieved cases and their source extracts are on the board."
 )
 

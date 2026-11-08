@@ -114,3 +114,42 @@ def test_the_footer_paraphrase_is_not_advice_but_advice_still_is():
     assert find_directive_phrases("I recommend lowering the tidal volume.") == ["recommend"]
     assert find_directive_phrases("Consider reducing PEEP.") == ["Consider reducing"]
     assert "Recommendations" in find_directive_phrases("Recommendations: reduce PEEP.")
+
+
+def test_correct_comparisons_and_sections_are_not_charged_to_the_wrong_case():
+    correct = [
+        f"1. Cases used: {C224}\n2. What the extracts show: the PIP median was 23.4 in the third case "
+        "and etco2_zero_vent flagged in 162–165",
+        f"Both {C224} and {C665} show etco2_zero_vent (at 46–49 and 162–165 min respectively).",
+        f"Between {C224} and {C665}, the PIP medians were 19.2 and 17.5 cmH2O respectively.",
+        f"{C54A} had 23.4 compared with 17.5 for {C665}.",
+        f"{C224}: PIP median 19.2 (vs 17.5 for {C665}).",
+    ]
+    for text in correct:
+        assert misattributed_details(text, SOURCES) == [], text
+
+
+def test_a_flag_written_as_absent_is_not_a_claim_of_the_flag():
+    for text in (
+        f"{C224} did not have pip_rising, whereas {C54A} did.",
+        f"{C224} had no pip_rising flag; pip_rising appears only in {C54A}.",
+        f"{C224} shows etco2_zero_vent but not pip_rising (which {C54A} has).",
+        f"{C224} did not have pip_rising.",
+    ):
+        assert misattributed_details(text, SOURCES) == [], text
+
+
+def test_a_value_from_a_case_not_named_in_the_comparison_is_still_caught():
+    problems = misattributed_details(f"{C224} had a PIP median of 19.2 while {C665} had 23.4 cmH2O.", SOURCES)
+    assert any(C665 in p and "23.4" in p and C54A in p for p in problems), problems
+
+
+def test_record_wording_and_negated_diagnoses_are_not_causal_claims():
+    for text in (
+        "The gap at minute 25 is due to missing samples.",
+        "The flag fired as a result of the rule threshold.",
+        "The zero reading is possibly from sensor noise.",
+        "Sepsis not recorded in these extracts.",
+    ):
+        assert causal_claims(text, SOURCES) == [], text
+    assert causal_claims("The rise was probably due to bronchospasm.", SOURCES)
