@@ -61,3 +61,70 @@ def test_medication_page_uses_the_fictional_demo_when_no_case_is_open(window, qa
     assert "Phenylephrine" in joined
     notices = [label.text() for label in page.findChildren(QLabel)]
     assert any("do not say why a drug was given" in text for text in notices)
+
+
+def _accessible(widget):
+    from PySide6.QtGui import QAccessible
+
+    return QAccessible.queryAccessibleInterface(widget)
+
+
+def test_tab_leaves_the_handoff_text_and_the_medication_table(window, qapp):
+    window._module_actions["handoff"].trigger()
+    qapp.processEvents()
+    handoff = window.module_stack.currentWidget().handoff
+    handoff.setFocus()
+    QTest.keyClick(handoff, Qt.Key.Key_Tab)
+    qapp.processEvents()
+    assert "\t" not in handoff.toPlainText()
+    assert not handoff.hasFocus()
+
+    window._module_actions["medications"].trigger()
+    qapp.processEvents()
+    table = window.module_stack.currentWidget().table
+    assert table.rowCount() > 1
+    table.setFocus()
+    table.setCurrentCell(0, 0)
+    QTest.keyClick(table, Qt.Key.Key_Tab)
+    qapp.processEvents()
+    # Tab no longer walks cell by cell (arrows do). The table is the page's only focus stop, so focus may wrap to it.
+    assert (table.currentRow(), table.currentColumn()) == (0, 0)
+    assert not table.tabKeyNavigation()
+
+
+def test_practice_combos_announce_their_purpose_and_labels_their_text(window, qapp):
+    from PySide6.QtGui import QAccessible
+
+    window._module_actions["handoff"].trigger()
+    qapp.processEvents()
+    handoff = window.module_stack.currentWidget()
+    combo = _accessible(handoff.case_box)
+    assert combo.text(QAccessible.Text.Name) == "Fictional scenario"
+    assert combo.text(QAccessible.Text.Value) == handoff.case_box.currentText()
+    history = _accessible(handoff.history_label).text(QAccessible.Text.Name)
+    assert history == handoff.history_label.text() and history
+
+    window._module_actions["who"].trigger()
+    qapp.processEvents()
+    who = window.module_stack.currentWidget()
+    assert _accessible(who.scenario_box).text(QAccessible.Text.Name) == "Fictional checklist card"
+    stage = _accessible(who.stage_label).text(QAccessible.Text.Name)
+    assert stage == who.stage_label.text() and stage
+
+    window._module_actions["medications"].trigger()
+    qapp.processEvents()
+    meds = window.module_stack.currentWidget()
+    note = _accessible(meds.note).text(QAccessible.Text.Name)
+    assert note == meds.note.text() and note
+
+
+def test_the_window_title_names_the_open_page(window, qapp):
+    monitoring = window.windowTitle()
+    for name, page in (("handoff", "Handoff practice"), ("medications", "Medication and vitals"),
+                       ("who", "WHO checklist")):
+        window._module_actions[name].trigger()
+        qapp.processEvents()
+        assert window.windowTitle() == f"{page} — {monitoring}"
+    window._module_actions["monitoring"].trigger()
+    qapp.processEvents()
+    assert window.windowTitle() == monitoring

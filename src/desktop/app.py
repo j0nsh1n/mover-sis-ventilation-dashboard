@@ -43,7 +43,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
-from src.desktop.suite_chrome import install_suite_chrome, set_module_label
+from src.desktop.suite_chrome import install_suite_chrome, set_module_label, set_page_title
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
@@ -1466,6 +1466,8 @@ class MainWindow(QMainWindow):
             "who": "Checklist",
         }
         set_module_label(self, labels[name])
+        pages = {"handoff": "Handoff practice", "medications": "Medication and vitals", "who": "WHO checklist"}
+        set_page_title(self, pages.get(name))
         action = self._module_actions.get(name)
         if action is not None:
             action.setChecked(True)

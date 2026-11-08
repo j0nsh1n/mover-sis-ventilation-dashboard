@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.accessibility import name_combo
 from src.modules.who_checklist.model import (
     MARK_DONE,
     MARK_NOT_ON_CARD,
@@ -40,21 +41,21 @@ class WhoPanel(QWidget):
         notice = QLabel(_NOTICE)
         notice.setWordWrap(True)
         self.scenario_box = QComboBox()
-        self.scenario_box.setAccessibleName("Fictional checklist card")
+        name_combo(self.scenario_box, "Fictional checklist card")
         for scenario in self._scenarios:
             self.scenario_box.addItem(scenario.title, scenario.scenario_id)
         self.scenario_box.currentIndexChanged.connect(self._select_scenario)
 
         self.briefing = QLabel()
         self.briefing.setWordWrap(True)
-        self.briefing.setAccessibleName("Checklist card")
+        self.briefing.setAccessibleDescription("Checklist card")
         self.stage_label = QLabel()
-        self.stage_label.setAccessibleName("Checklist stage")
+        self.stage_label.setAccessibleDescription("Checklist stage")
 
         self._form = QVBoxLayout()
         self.debrief_label = QLabel()
         self.debrief_label.setWordWrap(True)
-        self.debrief_label.setAccessibleName("Checklist debrief")
+        self.debrief_label.setAccessibleDescription("Checklist debrief")
         self.save_button = QPushButton("Save practice")
         self.save_button.setAccessibleName("Save checklist practice")
         self.save_button.clicked.connect(self._save)

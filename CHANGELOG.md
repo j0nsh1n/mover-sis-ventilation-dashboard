@@ -28,6 +28,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   or a generic word such as "sustained" does not count as mentioning the
   event. "SpO2 missing" names a missing series. An empty timeline still
   reports the missing MAP and SpO2 series.
+- In Handoff practice, Tab moves on from the handoff text instead of typing a
+  tab, and in Medication and vitals, Tab leaves the table instead of walking
+  every cell.
+- Screen readers hear the practice pages properly: the scenario and card
+  dropdowns announce their purpose, notices and the practice count read out
+  their text, and the window title names the open page.
 - Before the first search, the research card shows how many analyzed cases
   are loaded instead of a dash, and it shows them again after switching back
   from Articles.

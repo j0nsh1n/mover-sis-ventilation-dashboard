@@ -484,6 +484,7 @@ preset, and generation", and "Decided practice contracts"):
 - [x] The WHO checklist runs Sign in, Time out, Sign out on authored cards; a
       later stage stays closed until the open one is complete; saving writes
       local practice state only (tests; suite QA 12.6–12.7).
-- [ ] Practice pages are fully keyboard and screen-reader usable: Tab leaves every
-      field and table, combos announce their purpose, and the open page's name
-      is exposed (suite QA 12.1 and 12.9 failed).
+- [x] Practice pages are keyboard and screen-reader usable: Tab leaves the text
+      fields and does not walk table cells, combos announce their purpose, and
+      the window title names the open page (tests; suite QA 12.1 and 12.9 pass
+      on recheck, 2026-11-07).

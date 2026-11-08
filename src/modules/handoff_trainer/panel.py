@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.accessibility import name_combo
 from src.modules.handoff_trainer.cases import practice_cases
 from src.modules.handoff_trainer.grading import PracticeCase, grade, timeline_text
 from src.modules.handoff_trainer.history import load_attempts, record_attempt
@@ -32,17 +33,20 @@ class HandoffPanel(QWidget):
         notice = QLabel(_NOTICE)
         notice.setWordWrap(True)
         self.case_box = QComboBox()
-        self.case_box.setAccessibleName("Fictional scenario")
+        name_combo(self.case_box, "Fictional scenario")
         for case in self._cases:
             self.case_box.addItem(case.title, case.case_id)
         self.case_box.currentIndexChanged.connect(self._select_case)
 
         self.timeline = QPlainTextEdit()
         self.timeline.setReadOnly(True)
+        self.timeline.setTabChangesFocus(True)
         self.timeline.setAccessibleName("Fictional timeline")
 
         self.handoff = QPlainTextEdit()
         self.handoff.setAccessibleName("I-PASS handoff")
+        # Tab moves on to Grade; a handoff has no use for tab characters.
+        self.handoff.setTabChangesFocus(True)
         self.handoff.setPlaceholderText(
             "Illness severity, patient summary, actions, awareness, and synthesis."
         )
@@ -53,9 +57,11 @@ class HandoffPanel(QWidget):
 
         self.result = QPlainTextEdit()
         self.result.setReadOnly(True)
+        self.result.setTabChangesFocus(True)
         self.result.setAccessibleName("Handoff grade")
         self.history_label = QLabel()
-        self.history_label.setAccessibleName("Practice history")
+        # A label reads out its text; the description says what it is.
+        self.history_label.setAccessibleDescription("Practice history")
 
         layout = QVBoxLayout(self)
         layout.addWidget(notice)
