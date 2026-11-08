@@ -17,6 +17,13 @@ from typing import Any, Callable, Literal, NamedTuple
 import pandas as pd
 
 from src.llm.advice_check import AdviceCheck, NotRun, check_advice
+from src.llm.attribution import (
+    MISATTRIBUTED_MARK,
+    causal_claims,
+    incomplete_exclusive_claims,
+    misattributed_details,
+    near_miss_pids,
+)
 from src.llm.grounding import (
     PID_TOKEN,
     REMOVED_NOTE,
@@ -107,6 +114,17 @@ _DIRECTIVE = re.compile("|".join(f"(?:{shape})" for shape in _DIRECTIVE_SHAPES))
 _ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 
+# "findings do not imply clinical recommendations" disclaims, like the footer does.
+_DISCLAIMED = re.compile(r"\b(?:not|no|nor|never|without)\b|n't\b", re.IGNORECASE)
+_CLAUSE_START = re.compile(r"[.;:!?\n][^.;:!?\n]*$")
+
+
+def _clause_before(text: str, end: int) -> str:
+    head = text[:end]
+    match = _CLAUSE_START.search(head)
+    return head[match.start() + 1 :] if match else head
+
+
 def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
     """
     Snippets where the answer advises a reader instead of describing the record.
@@ -120,6 +138,8 @@ def find_directive_phrases(text: str, *, limit: int = 6) -> list[str]:
     for m in _DIRECTIVE.finditer(text.translate(_ASCII_LOWER)):
         snippet = " ".join(text[m.start() : m.end()].split()).strip(" -*•:")
         key = snippet.lower()
+        if key in {"recommendation", "recommendations"} and _DISCLAIMED.search(_clause_before(text, m.start())):
+            continue
         if snippet and key not in seen:
             seen.add(key)
             found.append(snippet)
@@ -539,6 +559,18 @@ def verify_answer(
             "the word-pattern check was applied."
         )
 
+    if sources is not None and source_scope == "cases":
+        claims = causal_claims(text[:body_end], sources)
+        if claims:
+            notes.append("causal_claim:" + " | ".join(claims[:3]))
+            text += (
+                "\n\n**Verification note:** the answer names a cause or diagnosis the record does not state "
+                f"({'; '.join(repr(c) for c in claims[:3])}). The record does not establish cause."
+            )
+        for problem in incomplete_exclusive_claims(text[:body_end], sources):
+            notes.append("incomplete_list")
+            text += f"\n\n**Verification note:** {problem}."
+
     for problem in find_unstated_case_facts(text, session):
         notes.append("unstated_case_facts")
         text += f"\n\n**Verification note:** {problem}."
@@ -657,6 +689,21 @@ def _dose_problems(text: str, med: pd.DataFrame) -> list[str]:
     return problems
 
 
+UNCITED_MARK = "is not one of the cited cases"
+CAUSAL_MARK = "causal or diagnostic claim"
+CAUSAL_FIX = "the record does not establish a cause; describe what was recorded and say the cause is not recorded"
+WITHHELD_ANSWER = (
+    "The local model's answer is withheld. After one rewrite it still tied details to the wrong "
+    "case or named a case that was not retrieved:\n{problems}\n\n"
+    "The retrieved cases and their source extracts are on the board."
+)
+
+
+def blocking_problems(problems: Sequence[str]) -> list[str]:
+    """Problems that withhold an answer when a rewrite leaves them: a wrong-case detail or an uncited case."""
+    return [p for p in problems if UNCITED_MARK in p or MISATTRIBUTED_MARK in p]
+
+
 def answer_problems(
     text: str,
     session: SessionState,
@@ -689,10 +736,13 @@ def answer_problems(
         if _PID_TOKEN.search(text):
             problems.append("- the answer contains a case-ID-like token — articles have no case IDs, remove it")
     else:
-        problems += [
-            f"- {pid} is not one of the cited cases ({cited}) — name only the cited cases"
-            for pid in _unknown_pids(text, set(session.cited_pids))
-        ]
+        unknown = _unknown_pids(text, set(session.cited_pids))
+        unknown += [pid for pid in near_miss_pids(text, session.cited_pids) if pid not in unknown]
+        problems += [f"- {pid} {UNCITED_MARK} ({cited}) — name only the cited cases" for pid in unknown]
+        if sources is not None:
+            problems += [f"- {p}" for p in misattributed_details(text, sources, question)]
+            problems += [f"- {p}" for p in incomplete_exclusive_claims(text, sources)]
+            problems += [f'- {CAUSAL_MARK}: "{c}" — {CAUSAL_FIX}' for c in causal_claims(text, sources)]
     if sources is not None:
         problems += [
             f"- the number {number} is not in the source extracts or the question — "
@@ -924,6 +974,14 @@ def run_agent(
                 trace.append("rewrite:still_flagged" if left else "rewrite:accepted")
         except Exception as e:  # keep the original answer if the retry fails
             trace.append(f"rewrite:failed:{e}")
+
+    if source_scope == "cases" and sources is not None and session.cited_pids:
+        blocking = blocking_problems(
+            answer_problems(final_text, session, sources=sources, question=question, source_scope=source_scope)
+        )
+        if blocking:
+            trace.append("withheld:" + ";".join(p.strip("- ") for p in blocking)[:300])
+            final_text = WITHHELD_ANSWER.format(problems="\n".join(blocking))
 
     verified, notes = verify_answer(
         final_text, session, advice=advice, sources=sources, question=question,

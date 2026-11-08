@@ -472,3 +472,42 @@ def test_rewrite_request_names_the_research_sources_and_keeps_ask_wording():
     request = client.rewrite_request()
     assert "the matched case's ACTUAL age/sex/procedure are stated" in request
     assert "all numbers come from tool results already returned" in request
+
+
+# Case-ID-shaped ids: the wrong-case check binds a value to a token that looks like a case ID.
+_TWO_SYN = (
+    replace(_candidate(), pid="SYN0000aaaa01", age=40.0),
+    replace(_candidate(), pid="SYN0000bbbb02", age=60.0),
+)
+
+
+def _answer_two(client, first: str, second: str):
+    """Two cited cases with different figures, so a value can be stated for the wrong one."""
+    return answer_from_retrieval(
+        question="Which case had the highest PIP?",
+        model="fake",
+        candidates=list(_TWO_SYN),
+        extracts=[f"SOURCE EXTRACT PID={c.pid}\n{text}" for c, text in zip(_TWO_SYN, (first, second), strict=True)],
+        client=client,
+    )
+
+
+def test_a_value_still_on_the_wrong_case_after_the_rewrite_is_withheld():
+    pid_a, pid_b = (c.pid for c in _TWO_SYN)
+    wrong = f"{pid_a} had a PIP maximum of 41 cmH2O."
+    client = DraftClient(wrong, wrong)
+    result = _answer_two(client, "PIP maximum 22 cmH2O", "PIP maximum 41 cmH2O")
+    assert len(client.sent) == 2
+    assert "The local model's answer is withheld" in result.answer
+    assert f"{pid_a}: 41 is not in that case's extract" in result.answer
+    assert any(step.startswith("withheld:") for step in result.tool_trace)
+    assert pid_b in result.answer
+
+
+def test_a_rewrite_that_puts_the_value_on_its_own_case_is_shown():
+    pid_a, pid_b = (c.pid for c in _TWO_SYN)
+    client = DraftClient(f"{pid_a} had a PIP maximum of 41 cmH2O.", f"{pid_b} had a PIP maximum of 41 cmH2O.")
+    result = _answer_two(client, "PIP maximum 22 cmH2O", "PIP maximum 41 cmH2O")
+    assert "withheld" not in result.answer
+    assert f"{pid_b} had a PIP maximum of 41 cmH2O." in result.answer
+    assert "rewrite:accepted" in result.tool_trace
