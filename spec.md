@@ -84,7 +84,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Ollama HTTP must default to **loopback only** (case text stays local unless an explicit
   env override is set for remote).
 - Answer gate rejects prescriptive clinical directives and unstated case facts where
-  implemented in `src/llm/agent.py` / `prompts.py`.
+  implemented in `src/llm/agent.py` / `prompts.py`. A value, minute or flag stated for a
+  case must be in that case's own extract (`src/llm/attribution.py`); a cut-off or
+  one-off copy of a cited case ID counts as an uncited case. Guessed causes or
+  diagnoses the extracts do not state, and "only this case" claims that leave out a
+  cited case with the same flag, are sent back for the one rewrite. If a wrong-case
+  detail or an uncited case remains after it, the answer is withheld with the reasons.
 - Pipeline and guardrails validate config/IO; empty or missing processed data fails clearly.
 - Each case's data window is the whole OR stay (`OR_start`..`OR_end` ± pad), so induction
   and emergence are included; `t_min` is minutes from incision (negative before it).
