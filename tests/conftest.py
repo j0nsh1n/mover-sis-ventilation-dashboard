@@ -45,6 +45,20 @@ def isolate_ollama_process_state(monkeypatch):
     svc._app_started_server = False
 
 
+@pytest.fixture(autouse=True)
+def isolate_user_config(tmp_path_factory, monkeypatch):
+    """Keep every test out of the real settings folder; a test may still point it elsewhere.
+
+    Without this, code that logs errors or reads settings resolved ~/.config on the real
+    machine, and from 0.15.0 that also copied the user's settings into a new folder.
+    """
+    import src.user_settings as user_settings
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config")))
+    monkeypatch.setattr(user_settings, "_config_roots", {})
+    monkeypatch.setattr(user_settings, "_migration_note", None)
+
+
 @pytest.fixture
 def synthetic_emr(tmp_path: Path) -> Path:
     """

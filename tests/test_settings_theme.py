@@ -280,3 +280,11 @@ def test_a_second_instance_that_loses_the_copy_race_uses_the_new_folder(xdg_home
     assert settings_path() == xdg_home / "mover-suite" / "settings.json"
     assert get_theme() == THEME_LIGHT
     assert settings_migration_note() is None
+
+
+def test_tests_never_resolve_the_real_settings_folder(monkeypatch):
+    from src.user_settings import settings_path
+
+    monkeypatch.delenv("MOVER_CONFIG_DIR", raising=False)
+    real = Path.home() / ".config"
+    assert not settings_path().is_relative_to(real)
