@@ -29,8 +29,11 @@ _EXCLUSIVE = re.compile(
     re.IGNORECASE,
 )
 # "source 3", "sources 1 and 2", "cases 1 and 2" point at extracts or shortlist rows; they are not values.
+# A bare "case 23" stays a value ("in this case 23.4 cmH2O"); only plurals or "case #3" are references.
 _REFERENCE = re.compile(
-    r"\b(?:sources?|extracts?|cases?)\s+#?\d+(?:\s*(?:,|and|&|or|–|-|to)\s*#?\d+)*", re.IGNORECASE
+    r"\b(?:sources?|extracts?|cases)\s+#?\d+(?![.\d])(?:\s*(?:,|and|&|or|–|-|to)\s*#?\d+(?![.\d]))*"
+    r"|\bcase\s+#\d+(?![.\d])",
+    re.IGNORECASE,
 )
 _SIGNAL_FLAGS = re.compile(r"\b([a-z0-9]+)\s+flags?\b", re.IGNORECASE)
 _MISSING_LINE = re.compile(r"Missing minutes:[^.\n]*\(([A-Za-z0-9_]+)\)")

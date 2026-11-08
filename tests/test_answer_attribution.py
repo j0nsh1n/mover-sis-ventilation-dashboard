@@ -168,3 +168,4 @@ def test_source_and_case_numbers_are_references_not_values():
     assert misattributed_details(live, sources) == []
     assert misattributed_details("SYN00092dfe81, like cases 1 and 2 on the shortlist, has missing ETCO2.", sources) == []
     assert misattributed_details("SYN00092dfe81 had an anomaly score of 2.", sources)
+    assert misattributed_details("SYN00092dfe81: in this case 2 was the anomaly score.", sources)
