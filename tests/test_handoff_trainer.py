@@ -205,3 +205,55 @@ def test_handoff_package_does_not_import_the_emr_stack():
                 modules = [node.module or ""]
             for name in modules:
                 assert not any(name == item or name.startswith(item + ".") for item in forbidden), path
+
+
+def _low_map(*spans: tuple[int, int], spo2: dict[int, float] | None = None) -> tuple[Sample, ...]:
+    low = {minute for start, end in spans for minute in range(start, end + 1)}
+    last = max([end for _, end in spans] + list(spo2 or {})) + 3
+    return tuple(
+        Sample(minute, map_art=60 if minute in low else 80, spo2=(spo2 or {}).get(minute, 98))
+        for minute in range(0, last + 1)
+    )
+
+
+def test_a_minute_counts_only_for_the_finding_it_is_written_with():
+    case = _case(_low_map((10, 16)), (Dose("Phenylephrine", 12, amount=100, unit="mcg"),))
+    graded = _statuses(
+        case, "Hypotension: arterial MAP below 65 from minute 10 to 16. Phenylephrine bolus given at minute 30."
+    )
+    assert ("mentioned", "hypotension") in graded
+    assert ("unsupported", "hypotension") not in graded
+    assert ("unsupported", "vasopressor") in graded
+    assert ("missed", "vasopressor") in graded
+    assert ("mentioned", "vasopressor") not in graded
+
+    drug_only = _statuses(case, "Phenylephrine bolus given at minute 30.")
+    assert ("missed", "hypotension") in drug_only
+    assert ("unsupported", "hypotension") not in drug_only
+    assert ("unsupported", "vasopressor") in drug_only
+
+
+def test_details_in_one_sentence_go_to_the_finding_they_follow():
+    case = _case(_low_map((10, 16)), (Dose("Phenylephrine", 12, amount=100, unit="mcg"),))
+    graded = _statuses(case, "Phenylephrine 100 mcg at minute 12 for hypotension from minute 10 to 16.")
+    assert ("mentioned", "hypotension") in graded
+    assert ("mentioned", "vasopressor") in graded
+    assert not any(status == "unsupported" for status, _ in graded)
+
+
+def test_a_desaturation_minute_is_not_charged_to_the_hypotension_episode():
+    case = _case(_low_map((10, 16), spo2={20: 88, 21: 86}))
+    graded = _statuses(case, "Hypotension from minute 10 to 16. Desaturation from minute 20 to 21.")
+    assert ("mentioned", "hypotension") in graded
+    assert ("mentioned", "desaturation") in graded
+    assert not any(status == "unsupported" for status, _ in graded)
+
+
+def test_each_of_two_episodes_keeps_its_own_minutes():
+    case = _case(_low_map((10, 16), (31, 38)))
+    assert len([event for event in detect(case) if event.kind == "hypotension"]) == 2
+    graded = _statuses(case, "Hypotension from minute 10 to 16 and again from minute 31 to 38.")
+    assert graded.count(("mentioned", "hypotension")) == 2
+    assert ("unsupported", "hypotension") not in graded
+    wrong = _statuses(case, "Hypotension from minute 10 to 16 and again at minute 70.")
+    assert ("unsupported", "hypotension") in wrong

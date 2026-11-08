@@ -1,6 +1,7 @@
 # Spec (stub)
 
-Status: stub, to be filled in at M1. See `context.md` for data facts and `roadmap.md`.
+Status: stub from the M0 scaffold. Superseded by "Decided practice contracts" in the
+suite's `spec.md`, which uses fictional cases only. Kept for history.
 
 ## Scope
 - Retrospective, educational replay of one case at a time. Not clinical decision support.

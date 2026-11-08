@@ -44,6 +44,16 @@ _MINUTE_CLAIM = re.compile(
 )
 _SPO2_SERIES = ("spo2", "sp02", "oxygen saturation", "saturation")
 _MAP_SERIES = ("blood pressure", "map")
+# A detail belongs to the finding named just before it in the same sentence,
+# or to the sentence's first finding when it comes before any of them.
+_OWNERS: tuple[tuple[str, str], ...] = (
+    ("hypotension", r"hypotensi\w*|low map|low blood pressure|blood pressure|map"),
+    ("desaturation", r"desat\w*|low oxygen|oxygen saturation|saturation|spo2|sp02"),
+) + tuple((drug, re.escape(drug.casefold())) for drug in TRACKED_DRUGS)
+_OWNER_PATTERN = re.compile(
+    "|".join(rf"(?P<o{index}>(?<![a-z0-9])(?:{pattern})(?![a-z0-9]))" for index, (_, pattern) in enumerate(_OWNERS))
+)
+_SENTENCE_BREAK = re.compile(r"[;\n]|\.(?!\d)")
 _GAP_WORDS = re.compile(
     r"\b(?:missing|unavailable|absent|unrecorded|not recorded|not measured|no reading|none recorded|not available)\b"
 )
@@ -105,12 +115,15 @@ def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     """Score one handoff as mentioned, missed, or unsupported."""
     text = " ".join(handoff.casefold().split())
     events = detect(case)
+    owned = _details_by_finding(text)
     items: list[Grade] = []
     for event in events:
         if event.kind in {"hypotension", "desaturation"}:
-            items.extend(_grade_episode(event, text))
+            peers = tuple(other for other in events if other.kind == event.kind)
+            items.extend(_grade_episode(event, text, owned.get(event.kind, ""), peers))
         elif event.kind in {"vasopressor", "inotrope"} and event.drug is not None:
-            items.extend(_grade_drug(event, text))
+            doses = tuple(other for other in events if other.drug == event.drug)
+            items.extend(_grade_drug(event, text, owned.get(event.drug, ""), doses))
         elif event.kind == "missing_map":
             items.append(_grade_gap(event, text, _MAP_SERIES, _map_value_claim))
         elif event.kind == "missing_spo2":
@@ -189,14 +202,18 @@ def _drug_events(doses: tuple[Dose, ...]) -> tuple[TimelineEvent, ...]:
             amount = f"{_number(dose.amount)} {dose.unit}".strip()
         if dose_kind == "infusion" and dose.end_minute is not None:
             when = f"from minute {dose.minute} to minute {dose.end_minute}"
+            end = dose.end_minute
         else:
             when = f"at minute {dose.minute}"
+            end = dose.minute
         events.append(
             TimelineEvent(
                 kind,
                 f"{canonical} {amount} {when}.",
                 drug=canonical,
                 dose_kind=dose_kind,
+                start_minute=dose.minute,
+                end_minute=end,
             )
         )
     return tuple(events)
@@ -266,15 +283,17 @@ def _dose_kind(dose: Dose) -> str:
     return "end time is before the start time"
 
 
-def _grade_episode(event: TimelineEvent, text: str) -> tuple[Grade, ...]:
+def _grade_episode(
+    event: TimelineEvent, text: str, details: str, peers: tuple[TimelineEvent, ...]
+) -> tuple[Grade, ...]:
     if event.kind == "hypotension":
         named = _names_hypotension(text)
         denied = _negated(text, _HYPO_CONCEPT)
-        supported, contradicted = _hypotension_detail(text, event)
+        supported, contradicted = _hypotension_detail(details, event, peers)
     else:
         named = _names_desaturation(text, event)
         denied = _negated(text, _DESAT_CONCEPT)
-        supported, contradicted = _desaturation_detail(text, event)
+        supported, contradicted = _desaturation_detail(details, event, peers)
     if named and not denied and supported and not contradicted:
         return (Grade("mentioned", event.kind, event.evidence),)
     if contradicted:
@@ -294,11 +313,18 @@ def _grade_episode(event: TimelineEvent, text: str) -> tuple[Grade, ...]:
     return (Grade("missed", event.kind, event.evidence),)
 
 
-def _grade_drug(event: TimelineEvent, text: str) -> tuple[Grade, ...]:
+def _grade_drug(
+    event: TimelineEvent, text: str, details: str, doses: tuple[TimelineEvent, ...]
+) -> tuple[Grade, ...]:
     drug = event.drug or ""
     if _names_drug(text, drug, negated=True) and not _names_drug(text, drug, negated=False):
         return (
             Grade("unsupported", event.kind, f"The handoff says {drug} was absent. {event.evidence}"),
+            Grade("missed", event.kind, event.evidence),
+        )
+    if any(not _inside_any(minute, doses) for minute in _minute_numbers(details)):
+        return (
+            Grade("unsupported", event.kind, f"The handoff gives {drug} a minute this timeline does not show. {event.evidence}"),
             Grade("missed", event.kind, event.evidence),
         )
     if _names_drug(text, drug, negated=False):
@@ -394,16 +420,20 @@ def _names_desaturation(text: str, event: TimelineEvent) -> bool:
     )
 
 
-def _hypotension_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
-    minutes_ok, minutes_bad = _minute_fit(text, event)
+def _hypotension_detail(
+    text: str, event: TimelineEvent, peers: tuple[TimelineEvent, ...]
+) -> tuple[bool, bool]:
+    minutes_ok, minutes_bad = _minute_fit(text, event, peers)
     body = _without_minute_claims(text)
-    matched, contradicted = _stated_values(body, ("map", "blood pressure"), event.values, MAP_LOW)
+    matched, contradicted = _stated_values(body, ("map", "blood pressure"), event, peers, MAP_LOW)
     threshold = _has_standalone(body, 65)
     return minutes_ok or threshold or matched, minutes_bad or contradicted
 
 
-def _desaturation_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
-    minutes_ok, minutes_bad = _minute_fit(text, event)
+def _desaturation_detail(
+    text: str, event: TimelineEvent, peers: tuple[TimelineEvent, ...]
+) -> tuple[bool, bool]:
+    minutes_ok, minutes_bad = _minute_fit(text, event, peers)
     body = _without_minute_claims(text)
     under_ninety = re.search(r"(?:under|below|<)\s*90\b", body) is not None
     stated = [
@@ -411,8 +441,8 @@ def _desaturation_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
         for value in _numbers_after(body, ("spo2", "sp02", "saturation"))
         if not (under_ninety and abs(value - 90.0) < 0.01)
     ]
-    matched = any(any(abs(value - known) < 0.01 for known in event.values) for value in stated)
-    contradicted = any(not any(abs(value - known) < 0.01 for known in event.values) for value in stated)
+    matched = any(_shows_value(value, (event,)) for value in stated)
+    contradicted = any(not _shows_value(value, peers) for value in stated)
     threshold = under_ninety or (_has_standalone(body, 90) and not stated)
     return minutes_ok or threshold or matched, minutes_bad or contradicted
 
@@ -420,7 +450,8 @@ def _desaturation_detail(text: str, event: TimelineEvent) -> tuple[bool, bool]:
 def _stated_values(
     text: str,
     words: tuple[str, ...],
-    known: tuple[float, ...],
+    event: TimelineEvent,
+    peers: tuple[TimelineEvent, ...],
     threshold: float | None,
 ) -> tuple[bool, bool]:
     matched = False
@@ -428,20 +459,43 @@ def _stated_values(
     for value in _numbers_after(text, words):
         if threshold is not None and abs(value - threshold) < 0.01:
             matched = True
-        elif any(abs(value - item) < 0.01 for item in known):
+        elif _shows_value(value, (event,)):
             matched = True
-        else:
+        elif not _shows_value(value, peers):
             contradicted = True
     return matched, contradicted
 
 
-def _minute_fit(text: str, event: TimelineEvent) -> tuple[bool, bool]:
+def _shows_value(value: float, events: tuple[TimelineEvent, ...]) -> bool:
+    return any(abs(value - known) < 0.01 for event in events for known in event.values)
+
+
+def _minute_fit(text: str, event: TimelineEvent, peers: tuple[TimelineEvent, ...]) -> tuple[bool, bool]:
+    """A minute inside another episode of the same kind belongs to that episode."""
     claimed = _minute_numbers(text)
     if not claimed or event.start_minute is None or event.end_minute is None:
         return False, False
-    outside = [number for number in claimed if number < event.start_minute or number > event.end_minute]
-    inside = [number for number in claimed if event.start_minute <= number <= event.end_minute]
+    outside = [number for number in claimed if not _inside_any(number, peers)]
+    inside = [number for number in claimed if _inside_any(number, (event,))]
     return bool(inside) and not outside, bool(outside)
+
+
+def _inside_any(minute: int, events: tuple[TimelineEvent, ...]) -> bool:
+    return any(
+        event.start_minute is not None and event.end_minute is not None and event.start_minute <= minute <= event.end_minute
+        for event in events
+    )
+
+
+def _details_by_finding(text: str) -> dict[str, str]:
+    owned: dict[str, list[str]] = {}
+    for sentence in _SENTENCE_BREAK.split(text.replace(EXCLUDED_DRUG, " ")):
+        marks = [(match.start(), _OWNERS[int(str(match.lastgroup)[1:])][0]) for match in _OWNER_PATTERN.finditer(sentence)]
+        for index, (start, owner) in enumerate(marks):
+            begin = 0 if index == 0 else start
+            end = marks[index + 1][0] if index + 1 < len(marks) else len(sentence)
+            owned.setdefault(owner, []).append(sentence[begin:end])
+    return {owner: ". ".join(parts) for owner, parts in owned.items()}
 
 
 def _minute_numbers(text: str) -> tuple[int, ...]:

@@ -28,6 +28,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   or a generic word such as "sustained" does not count as mentioning the
   event. "SpO2 missing" names a missing series. An empty timeline still
   reports the missing MAP and SpO2 series.
+- Handoff practice counts a minute or value only for the finding it is
+  written with. "Phenylephrine bolus given at minute 30" no longer marks a
+  correct hypotension sentence unsupported. It marks phenylephrine
+  unsupported when no dose was given at minute 30. With two episodes of the
+  same kind, each keeps its own minutes.
 - In Handoff practice, Tab moves on from the handoff text instead of typing a
   tab, and in Medication and vitals, Tab leaves the table instead of walking
   every cell.

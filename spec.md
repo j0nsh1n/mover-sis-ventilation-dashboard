@@ -387,8 +387,15 @@ Handoff grading:
   that episode stays missed. A missing MAP or SpO2 series, including an
   empty timeline, is its own item: name the gap, for example "SpO2 missing",
   or the grade is missed. Stating a value for a missing series is unsupported.
-- The page does not recommend treatment. A real-case practice path is not
-  included.
+- A minute or value counts only for the finding it is written with: the
+  finding named just before it in the same sentence, or the sentence's first
+  finding when it comes earlier. A minute inside another episode of the same
+  kind belongs to that episode. A drug given a minute that none of its doses
+  show is unsupported, and that drug stays missed.
+- The page does not recommend treatment. Cases are fictional only. A
+  real-case practice path is not included. Replaying a real MOVER case is a
+  future idea that waits for the Phase 6 calibration on real data and needs
+  its own approval. The imported scaffold's README and spec stub say the same.
 
 Medication and vitals display:
 
