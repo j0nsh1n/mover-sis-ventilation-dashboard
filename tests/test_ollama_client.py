@@ -60,6 +60,27 @@ def test_unavailable_raises():
             OllamaClient().list_models()
 
 
+@pytest.mark.parametrize(
+    ("reason", "plain"),
+    [(ConnectionRefusedError(111, "Connection refused"), "connection refused"),
+     (TimeoutError("timed out"), "no answer in time")],
+)
+def test_unreachable_message_is_plain(reason, plain):
+    import urllib.error
+
+    from src.llm.service import probe_ollama
+
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError(reason)):
+        with pytest.raises(OllamaError) as raised:
+            OllamaClient().list_models()
+        status = probe_ollama()
+    for text in (str(raised.value), status.message):
+        assert plain in text, text
+        assert "ollama serve" in text
+        for raw in ("urlopen error", "Errno", "<", "(("):
+            assert raw not in text, text
+
+
 def test_chat_stream_concatenates():
     lines = [
         json.dumps({"message": {"content": "Hello "}}) + "\n",

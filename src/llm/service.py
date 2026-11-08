@@ -95,7 +95,7 @@ def probe_ollama(
     except OllamaError as e:
         return OllamaStatus(
             available=False,
-            message=f"Ollama API not reachable ({e})",
+            message=str(e),
             models=[],
             base_url=base_url,
             ollama_path=ollama_bin,

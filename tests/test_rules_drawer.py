@@ -404,6 +404,19 @@ def test_a_focused_combo_still_follows_the_wheel(view, qapp):
     assert view.scope_combo.currentIndex() == 1
 
 
+def test_scope_line_counts_loaded_cases_before_the_first_search(view, qapp):
+    cases = pd.DataFrame({"PID": ["SYN0000000001", "SYN0000000002", "SYN0000000003"]})
+    view.set_cases_data(cases, None, load_rule_catalog("default"), None)
+    assert "analyzed cases: 3" in view.scope_label.text()
+    assert "Indexed surgeries: counted at the first search" in view.scope_label.text()
+    view.scope_combo.setCurrentText("Articles")
+    assert view.scope_label.text().startswith("Articles:")
+    view.scope_combo.setCurrentText("Cases")
+    assert "analyzed cases: 3" in view.scope_label.text()
+    view.set_cases_data(None, None, None, None)
+    assert view.scope_label.text() == "Indexed surgeries: — · analyzed cases: —"
+
+
 def test_the_board_regains_its_layout_when_the_drawer_closes(view, qapp):
     view.resize(1300, 900)
     qapp.processEvents()

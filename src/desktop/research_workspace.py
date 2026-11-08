@@ -286,6 +286,8 @@ class ResearchWorkspace(QWidget):
         self._rule_extras: list[str] = []
         self._rule_lines: list[tuple[str | None, str]] = []
         self._cases_data: tuple | None = None
+        # The last search's scope line; None until a case search returns.
+        self._case_scope_text: str | None = None
         self._cases_overview: CasesOverview | None = None
         self._overview_candidates: dict[str, SearchCandidate] = {}
         self._case_origins: dict[str, deque[bool]] = {}
@@ -878,6 +880,8 @@ class ResearchWorkspace(QWidget):
             "Search titles and abstracts in the local catalog" if articles
             else "Try: Where does pressure peak in laparoscopic cases?"
         )
+        if not articles:
+            self.scope_label.setText(self._case_scope())
         if articles:
             self.scope_label.setText(f"Articles: {self._catalog_count:,} in the local catalog")
             self.status_label.setText(self._article_error or (NO_CATALOG if not self._catalog_count else "Ready to search local articles."))
@@ -1282,7 +1286,8 @@ class ResearchWorkspace(QWidget):
         self.answer_text.clear()
         self.comparison_card.hide()
         self.comparison_hint.show()
-        self.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
+        self._case_scope_text = None
+        self.scope_label.setText(self._case_scope())
         self._set_case_actions(False)
         self.set_status("Enter a research question to trace its evidence.")
         self._render_scope()
@@ -1369,10 +1374,11 @@ class ResearchWorkspace(QWidget):
                 ranking += "; the rest ranked by keywords"
         else:
             ranking = "keywords"
-        self.scope_label.setText(
+        self._case_scope_text = (
             result.scope_note
             or f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {ranking}"
         )
+        self.scope_label.setText(self._case_scope_text)
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):
             for column, value in enumerate((candidate.pid, candidate.procedure, candidate.source_label)):
@@ -1967,8 +1973,19 @@ class ResearchWorkspace(QWidget):
     def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog, flags: pd.DataFrame | None = None) -> None:
         """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
         self._cases_data = (cases, scan, catalog, flags)
+        if self.scope != "Articles":
+            self.scope_label.setText(self._case_scope())
         if self._cases_overview is not None:
             self._cases_overview.set_data(cases, scan, catalog, flags)
+
+    def _case_scope(self) -> str:
+        """The case scope line: the last search's counts, or the loaded sample before any search."""
+        if self._case_scope_text is not None:
+            return self._case_scope_text
+        cases = self._cases_data[0] if self._cases_data is not None else None
+        if cases is None:
+            return "Indexed surgeries: — · analyzed cases: —"
+        return f"Indexed surgeries: counted at the first search · analyzed cases: {len(cases):,}"
 
     def refresh_charts(self) -> None:
         if self._cases_overview is not None:

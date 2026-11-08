@@ -28,6 +28,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   or a generic word such as "sustained" does not count as mentioning the
   event. "SpO2 missing" names a missing series. An empty timeline still
   reports the missing MAP and SpO2 series.
+- Before the first search, the research card shows how many analyzed cases
+  are loaded instead of a dash, and it shows them again after switching back
+  from Articles.
+- When Ollama is not running, the status line names the reason (for example
+  "connection refused") instead of raw error text.
 - Scrolling the research board or Settings with the mouse wheel no longer
   changes a dropdown that passes under the pointer, such as the question
   scope. A dropdown follows the wheel once it has focus.

@@ -15,6 +15,20 @@ class OllamaError(RuntimeError):
     """Raised when Ollama is unreachable or returns an error."""
 
 
+def _unreachable(base_url: str, error: urllib.error.URLError) -> str:
+    """Name why the local Ollama API did not answer, without the raw exception text."""
+    reason = error.reason
+    if isinstance(reason, ConnectionRefusedError):
+        why = "connection refused"
+    elif isinstance(reason, TimeoutError):
+        why = "no answer in time"
+    elif isinstance(reason, OSError) and reason.strerror:
+        why = reason.strerror.lower()
+    else:
+        why = str(reason)
+    return f"Cannot reach Ollama at {base_url}: {why}. Start it with: ollama serve."
+
+
 def parse_embed_response(data: dict[str, Any]) -> list[list[float]]:
     """Turn an Ollama embed JSON body into row vectors."""
     if not isinstance(data, dict):
@@ -269,10 +283,7 @@ class OllamaClient:
                         tcs = []
                     yield str(piece), list(tcs), bool(obj.get("done"))
         except urllib.error.URLError as e:
-            raise OllamaError(
-                f"Cannot reach Ollama at {self.base_url}. "
-                f"Start it with: ollama serve. ({e})"
-            ) from e
+            raise OllamaError(_unreachable(self.base_url, e)) from e
 
     def _normalize_messages(
         self, messages: list[ChatMessage] | list[dict[str, Any]]
@@ -311,10 +322,7 @@ class OllamaClient:
             with urllib.request.urlopen(req, timeout=timeout_s or self.timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.URLError as e:
-            raise OllamaError(
-                f"Cannot reach Ollama at {self.base_url}. "
-                f"Start it with: ollama serve. ({e})"
-            ) from e
+            raise OllamaError(_unreachable(self.base_url, e)) from e
         try:
             return json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
