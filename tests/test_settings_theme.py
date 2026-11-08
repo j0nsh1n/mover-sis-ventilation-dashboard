@@ -282,9 +282,8 @@ def test_a_second_instance_that_loses_the_copy_race_uses_the_new_folder(xdg_home
     assert settings_migration_note() is None
 
 
-def test_tests_never_resolve_the_real_settings_folder(monkeypatch):
+def test_tests_never_resolve_the_real_settings_folder(monkeypatch, tmp_path_factory):
     from src.user_settings import settings_path
 
     monkeypatch.delenv("MOVER_CONFIG_DIR", raising=False)
-    real = Path.home() / ".config"
-    assert not settings_path().is_relative_to(real)
+    assert settings_path().is_relative_to(tmp_path_factory.getbasetemp())
