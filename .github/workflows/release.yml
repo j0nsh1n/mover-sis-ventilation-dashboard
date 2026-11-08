@@ -90,17 +90,17 @@ jobs:
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: MOVER SIS Monitor ${{ steps.ver.outputs.tag }}
+          name: MOVER Suite ${{ steps.ver.outputs.tag }}
           draft: true
           body: |
-            ## MOVER SIS Monitor ${{ steps.ver.outputs.tag }}
+            ## MOVER Suite ${{ steps.ver.outputs.tag }}
 
             Desktop builds for **Linux x86_64** (Nobara / Fedora / Ubuntu-compatible)
             and **Windows x86_64**.
 
             ### Linux
             ```bash
-            tar -xzf MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
+            tar -xzf MOVER-Suite-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
             cd MOVER-SIS-Monitor
             ./launch.sh
             ```
@@ -110,7 +110,7 @@ jobs:
             Fedora / Nobara `sudo dnf install libxkbcommon-x11`.
 
             ### Windows
-            1. Download `MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip`
+            1. Download `MOVER-Suite-v${{ steps.ver.outputs.version }}-windows-x86_64.zip`
             2. Extract, then run `MOVER-SIS-Monitor.exe`
             3. SmartScreen may warn on first run — the binary is unsigned
 
@@ -122,7 +122,7 @@ jobs:
             - The local co-pilot needs [Ollama](https://ollama.com) installed separately;
               models stay on your machine and are never bundled
             - On KDE Wayland, prefer X11/XWayland (`QT_QPA_PLATFORM=xcb`) if rendering misbehaves
-          files: dist/MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
+          files: dist/MOVER-Suite-v${{ steps.ver.outputs.version }}-linux-x86_64.tar.gz
           fail_on_unmatched_files: true
           generate_release_notes: true
         env:
@@ -186,7 +186,7 @@ jobs:
           platform=windows-x86_64
           "@ | Set-Content -Path "dist/MOVER-SIS-Monitor/BUILD_INFO.txt"
           @"
-          MOVER SIS Monitor $v (Windows)
+          MOVER Suite $v (Windows)
 
           Run MOVER-SIS-Monitor.exe. On first launch use Setup to point the app at
           your SIS EMR folder (the one containing patient_information.csv).
@@ -213,9 +213,9 @@ jobs:
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           Compress-Archive -Path "dist/MOVER-SIS-Monitor" `
-            -DestinationPath "dist/MOVER-SIS-Monitor-v$v-windows-x86_64.zip" -Force
-          Copy-Item "dist/MOVER-SIS-Monitor-v$v-windows-x86_64.zip" `
-            "dist/MOVER-SIS-Monitor-windows-x86_64.zip" -Force
+            -DestinationPath "dist/MOVER-Suite-v$v-windows-x86_64.zip" -Force
+          Copy-Item "dist/MOVER-Suite-v$v-windows-x86_64.zip" `
+            "dist/MOVER-Suite-windows-x86_64.zip" -Force
 
       - name: Upload Windows archive to draft release
         shell: pwsh
@@ -223,7 +223,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "v${{ steps.ver.outputs.version }}" `
-            "dist/MOVER-SIS-Monitor-v${{ steps.ver.outputs.version }}-windows-x86_64.zip" `
+            "dist/MOVER-Suite-v${{ steps.ver.outputs.version }}-windows-x86_64.zip" `
             --repo "$env:GITHUB_REPOSITORY" --clobber
 
   publish:
@@ -247,9 +247,9 @@ jobs:
           packages="$RUNNER_TEMP/update-packages"
           mkdir -p "$packages"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern "MOVER-SIS-Monitor-v$version-*.tar.gz" --dir "$packages"
+            --pattern "MOVER-Suite-v$version-*.tar.gz" --dir "$packages"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern "MOVER-SIS-Monitor-v$version-*.zip" --dir "$packages"
+            --pattern "MOVER-Suite-v$version-*.zip" --dir "$packages"
           expected=$(sed -n 's/^TRUSTED_UPDATE_PUBLIC_KEY_HEX = "\([0-9a-f]*\)"$/\1/p' src/update.py)
           actual=$(cargo run --quiet --locked --manifest-path tools/update-manifest/Cargo.toml -- public-key)
           if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
@@ -258,8 +258,8 @@ jobs:
           fi
           cargo run --quiet --locked --manifest-path tools/update-manifest/Cargo.toml -- \
             sign --version "$version" \
-            --linux "$packages/MOVER-SIS-Monitor-v$version-linux-x86_64.tar.gz" \
-            --windows "$packages/MOVER-SIS-Monitor-v$version-windows-x86_64.zip" \
+            --linux "$packages/MOVER-Suite-v$version-linux-x86_64.tar.gz" \
+            --windows "$packages/MOVER-Suite-v$version-windows-x86_64.zip" \
             --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag" \
             --out "$RUNNER_TEMP/update-manifest.json"
           jq -r '.manifest | fromjson' "$RUNNER_TEMP/update-manifest.json" \
@@ -338,8 +338,8 @@ jobs:
           <!doctype html>
           <html lang="en">
           <meta charset="utf-8">
-          <title>MOVER SIS Monitor updates</title>
-          <h1>MOVER SIS Monitor</h1>
+          <title>MOVER Suite updates</title>
+          <h1>MOVER Suite</h1>
           <p><a href="https://github.com/j0nsh1n/mover-sis-ventilation-dashboard/releases">Download releases</a></p>
           <p><a href="updates/latest.json">Signed update manifest</a></p>
           HTML

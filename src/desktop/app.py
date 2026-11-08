@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +18,7 @@ import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QGuiApplication,
     QIcon,
     QPainter,
@@ -28,21 +28,27 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QStatusBar,
     QToolButton,
+    QWidget,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.desktop.research_workspace import ResearchWorkspace
+from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
+from src.desktop.suite_chrome import install_suite_chrome, set_module_label, set_page_title
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
+from src.services.data_context import current_context
 from src.desktop.theme import apply_theme
 from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
@@ -57,7 +63,13 @@ from src.runtime_paths import (
     processed_dir,
     wave_dir,
 )
-from src.user_settings import apply_ollama_env_from_settings, load_settings, needs_first_run_setup, settings_path
+from src.user_settings import (
+    apply_ollama_env_from_settings,
+    load_settings,
+    needs_first_run_setup,
+    settings_migration_note,
+    settings_path,
+)
 
 if TYPE_CHECKING:
     from src.services.retrieval import RetrievalEngine
@@ -74,6 +86,8 @@ class DataLoadWorker(QThread):
     def __init__(self, processed: Path | None = None, parent=None):
         super().__init__(parent)
         self.processed = processed
+        self.emr = emr_dir()
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         try:
@@ -81,10 +95,12 @@ class DataLoadWorker(QThread):
 
             if self.processed is None:
                 self.processed = processed_dir()
-            data = load_processed(self.processed, validate=False)
+            data = load_processed(self.processed, validate=False, expected_emr=self.emr)
             self.finished_ok.emit(data)
         except Exception as e:
-            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("load", e))
 
 
 class PipelineWorker(QThread):
@@ -104,8 +120,9 @@ class PipelineWorker(QThread):
         self.n_cases = n_cases
         self.preset = preset
         self.force = force
-        self.emr = emr
+        self.emr = emr if emr is not None else emr_dir()
         self.processed = processed
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         try:
@@ -120,7 +137,9 @@ class PipelineWorker(QThread):
             )
             self.finished_ok.emit(data)
         except Exception as e:
-            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("pipeline", e))
 
 
 class CorpusScanWorker(QThread):
@@ -144,6 +163,7 @@ class CorpusScanWorker(QThread):
         self.processed = processed
         self.preset = preset
         self.workers = workers  # None = automatic (CPU cores minus one)
+        self.job_stamp = current_context().stamp()
 
     def run(self) -> None:
         from src.pipeline.corpus_scan import ScanCancelled, scan_corpus, scan_failure_message
@@ -199,9 +219,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._version = get_version()
-        self.setWindowTitle(
-            f"MOVER SIS Monitor v{self._version} — Ventilation & Anesthesia"
-        )
         self.resize(1380, 860)
 
         apply_persisted_settings()
@@ -209,6 +226,7 @@ class MainWindow(QMainWindow):
         self._active_preset = str(load_settings().get("preset") or "default")
         self._preset_recorded = True
         self._thresholds_sha256: str | None = None
+        self._bind_data_context()
 
         self.cases: pd.DataFrame | None = None
         self.ts: pd.DataFrame | None = None
@@ -223,6 +241,11 @@ class MainWindow(QMainWindow):
         # A data reload asked for while a scan ran; it runs when the scan ends
         self._reload_after_scan = False
         self._worker: QThread | None = None
+        # While a path-free error dialog is modal, remember the latest prefix and
+        # show it without folder paths. The prefix is published with paths after.
+        self._status_path_prefix = ""
+        self._status_paths_hidden = 0
+        self._status_hidden_message: str | None = None
         self._ollama_worker: OllamaWorker | None = None
         self._ollama_available = False
         self._ollama_button_label: str | None = None
@@ -238,9 +261,13 @@ class MainWindow(QMainWindow):
         self._queued_case: tuple[str, bool, bool, bool] | None = None
 
         self._build_menu()
+        install_suite_chrome(self, self._version)
         self._build_ui()
         self._refresh_rule_reference()
         self.setStatusBar(QStatusBar())
+        from src.desktop.accessibility import announce
+
+        self.statusBar().messageChanged.connect(lambda message: announce(self.statusBar(), message))
         self._update_status_paths("Ready")
         self._updates = UpdateController(self._version, self)
         self._updates.found.connect(self._on_update_found)
@@ -257,6 +284,11 @@ class MainWindow(QMainWindow):
         self._scan_cancel_button.clicked.connect(self._cancel_corpus_scan)
         self._scan_cancel_button.hide()
         self.statusBar().addPermanentWidget(self._scan_cancel_button)
+        settings_path()
+        note = settings_migration_note()
+        self._settings_note = QLabel(note or "", self)
+        self._settings_note.setVisible(bool(note))
+        self.statusBar().addPermanentWidget(self._settings_note)
 
         QTimer.singleShot(0, self._startup)
 
@@ -313,6 +345,26 @@ class MainWindow(QMainWindow):
         self.update_act.setVisible(False)
         self.update_act.triggered.connect(self._restart_for_update)
         help_menu.addAction(self.update_act)
+
+        self._module_group = QActionGroup(self)
+        self._module_group.setExclusive(True)
+        self._module_actions: dict[str, QAction] = {}
+        view_menu.addSeparator()
+        for key, label, shortcut in (
+            ("monitoring", "Monitoring", "Ctrl+1"),
+            ("handoff", "Handoff practice", "Ctrl+2"),
+            ("medications", "Medication and vitals", "Ctrl+3"),
+            ("who", "WHO checklist", "Ctrl+4"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setShortcut(shortcut)
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.setObjectName(f"suite-module-{key}")
+            action.triggered.connect(lambda _checked=False, name=key: self._show_suite_module(name))
+            self._module_group.addAction(action)
+            view_menu.addAction(action)
+            self._module_actions[key] = action
 
         # Settings lives on a gear icon in the menu-bar corner, not under Edit
         self.settings_act = QAction(self._gear_icon(), "Settings…", self)
@@ -372,7 +424,14 @@ class MainWindow(QMainWindow):
         self.research.model_changed.connect(self._on_ollama_model_changed)
         self.research.model_stop_requested.connect(self._ollama_stop)
         self.research.model_unload_requested.connect(self._ollama_unload)
-        self.setCentralWidget(self.research)
+        self.module_stack = QStackedWidget()
+        self.module_stack.setObjectName("suite-modules")
+        self.module_stack.setFrameShape(QFrame.Shape.NoFrame)
+        self.module_stack.setContentsMargins(0, 0, 0, 0)
+        self.module_stack.addWidget(self.research)
+        self._suite_pages: dict[str, QWidget] = {"monitoring": self.research}
+        self.setCentralWidget(self.module_stack)
+        self._show_suite_module("monitoring")
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -380,13 +439,21 @@ class MainWindow(QMainWindow):
         self._update_status_paths()
 
     def _update_status_paths(self, prefix: str = "") -> None:
+        self._status_path_prefix = prefix
+        self._publish_status_paths()
+
+    def _publish_status_paths(self) -> None:
+        prefix = self._status_path_prefix
+        if self._status_paths_hidden:
+            self._status_hidden_message = prefix
+            self.statusBar().showMessage(prefix)
+            return
         wave = wave_dir()
         wave_s = str(wave) if wave else "—"
-        msg = (
+        self.statusBar().showMessage(
             f"{prefix}  ·  EMR: {emr_dir()}  ·  Wave: {wave_s}  ·  "
             f"Processed: {processed_dir()}"
         )
-        self.statusBar().showMessage(msg)
 
     def _browse_emr_folder(self) -> None:
         start = str(emr_dir())
@@ -441,10 +508,43 @@ class MainWindow(QMainWindow):
         self._autoload_processed()
 
     # ----- workers -----
+    def _bind_data_context(self) -> None:
+        """Copy the live folders, preset, and local models into the shared context."""
+        context = current_context()
+        context.note_paths(emr_dir(), processed_dir())
+        context.note_preset(
+            self._active_preset,
+            recorded=self._preset_recorded,
+            thresholds_sha256=self._thresholds_sha256,
+        )
+        settings = load_settings()
+        embed_changed = context.note_models(
+            chat_model=str(settings.get("ollama_model") or "") or None,
+            embed_model=str(settings.get("ollama_embed_model") or "nomic-embed-text"),
+        )
+        if embed_changed and getattr(self, "_research_engine", None) is not None:
+            self._research_engine = None
+
     def _autoload_processed(self) -> None:
         # Even when a job is running and the reload has to wait, an old scan must go now
+        self._bind_data_context()
         self._drop_stale_scan()
+        self._clear_loaded_sample()
         proc = processed_dir()
+        worker = self._worker
+        running = worker is not None and bool(getattr(worker, "isRunning", lambda: False)())
+        if running:
+            # The job may be writing the first cache. Reload when it finishes
+            # instead of dropping its result with no follow-up load.
+            self._reload_after_scan = True
+            if not (proc / "cases.parquet").exists():
+                self._update_status_paths(
+                    "No processed cache — run the pipeline or pick another folder"
+                )
+                self.research.set_status(
+                    "No analyzed case cache. Indexed surgery search is available after setup."
+                )
+            return
         if not (proc / "cases.parquet").exists():
             self._update_status_paths(
                 "No processed cache — run the pipeline or pick another folder"
@@ -455,27 +555,49 @@ class MainWindow(QMainWindow):
             if not needs_first_run_setup():
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
-        if self._worker and self._worker.isRunning():
-            if isinstance(self._worker, CorpusScanWorker):
-                self._reload_after_scan = True
-            return
         self._update_status_paths("Loading data…")
         self._worker = DataLoadWorker(processed=proc, parent=self)
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_load_fail)
+        self._worker.finished.connect(self._after_data_job)
         self._worker.start()
 
+    def _clear_loaded_sample(self) -> None:
+        self.cases = self.ts = self.flags = self.episodes = self.events = None
+        self._analysis_facts = {}
+        self._thresholds_sha256 = None
+        self.research.invalidate_case_data()
+        self._set_loaded_preset(self._next_run_preset(), recorded=True)
+        self._data_changed()
+
+    def _after_data_job(self) -> None:
+        if self.sender() is not None and self.sender() is not self._worker:
+            return
+        if self._reload_after_scan:
+            self._reload_after_scan = False
+            self._autoload_processed()
+
     def _on_load_fail(self, msg: str) -> None:
+        if not self._data_job_is_current():
+            return
+        self._clear_loaded_sample()
         self._update_status_paths("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
-        self._warn("Load error", f"Processed data: {processed_dir()}\n\n{msg[:2000]}")
+        self._warn("Load error", f"{msg}\n\nRun File > Run pipeline to rebuild the analyzed sample for this EMR.")
 
     def _warn(self, title: str, text: str) -> None:
-        # Not modal: this can fire during startup, where a modal box would hold the
-        # window back until the user dismissed it.
+        # open() returns immediately. exec() would hold startup until the box closed.
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.destroyed.connect(lambda *_args: QTimer.singleShot(0, self._focus_research_question))
         box.open()
+
+    def _focus_research_question(self) -> None:
+        edit = self.research.question_edit
+        if not edit.isEnabled() or not edit.isVisible():
+            return
+        self.activateWindow()
+        edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -504,7 +626,7 @@ class MainWindow(QMainWindow):
             self._closing = False
 
     def _on_update_found(self, version: str) -> None:
-        self.statusBar().showMessage(f"Downloading MOVER SIS Monitor v{version} update…")
+        self.statusBar().showMessage(f"Downloading MOVER Suite v{version} update…")
 
     def _on_update_ready(self, version: str, _staged: Path) -> None:
         self._update_button.setText(f"Restart to update to v{version}")
@@ -547,9 +669,10 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About",
-            f"MOVER SIS Ventilation & Anesthesia Monitor\n"
+            f"MOVER Suite\n"
             f"Version {self._version}\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
+            "Monitoring (SIS Monitor) plus fictional handoff, medication, and checklist practice.\n"
             "Configure paths via the ⚙ Settings icon (top-right) or File → Setup…\n"
             "Not for clinical care.",
         )
@@ -587,7 +710,7 @@ class MainWindow(QMainWindow):
         wiz = SetupWizard(self)
         wiz.setup_finished.connect(self._on_settings_applied)
         if first_run:
-            wiz.setWindowTitle("MOVER SIS Monitor — First-time setup")
+            wiz.setWindowTitle("MOVER Suite — First-time setup")
         wiz.exec()
         self._sync_path_fields_from_runtime()
         if wiz.result():
@@ -598,6 +721,7 @@ class MainWindow(QMainWindow):
         if wiz.result():
             self._autoload_processed()
             self._refresh_ollama_models()
+            self.research.question_edit.setFocus()
 
     def _open_settings(self) -> None:
         from src.desktop.settings_ui import SettingsDialog
@@ -660,6 +784,7 @@ class MainWindow(QMainWindow):
         n_cases = max(MIN_N_CASES, min(int(n_cases), min(200, MAX_N_CASES)))
         if preset not in ALLOWED_PRESETS:
             preset = "default"
+        self._bind_data_context()
         self._update_status_paths("Running pipeline…")
         self._worker = PipelineWorker(
             n_cases=n_cases,
@@ -671,6 +796,7 @@ class MainWindow(QMainWindow):
         )
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_pipeline_fail)
+        self._worker.finished.connect(self._after_data_job)
         self._worker.start()
 
     def _run_corpus_scan(self) -> None:
@@ -687,10 +813,15 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        self._bind_data_context()
         self._update_status_paths("Scanning full EMR…")
         worker = CorpusScanWorker(emr_dir(), processed_dir(), preset=self._next_run_preset(), parent=self)
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
-        worker.finished_ok.connect(lambda result: self._on_corpus_scan_ok(result, worker.processed))
+        worker.finished_ok.connect(
+            lambda result, finished=worker: self._on_corpus_scan_ok(
+                result, finished.processed, finished
+            )
+        )
         worker.failed.connect(self._on_corpus_scan_fail)
         worker.cancelled.connect(self._on_corpus_scan_cancelled)
         worker.finished.connect(self._scan_cancel_button.hide)
@@ -706,9 +837,23 @@ class MainWindow(QMainWindow):
             self._scan_cancel_button.setEnabled(False)
             self.statusBar().showMessage("Cancelling full-EMR scan…")
 
-    def _on_corpus_scan_ok(self, result, processed: Path | None = None) -> None:
+    def _on_corpus_scan_ok(
+        self,
+        result,
+        processed: Path | None = None,
+        worker: QThread | None = None,
+    ) -> None:
         from src.pipeline.corpus_scan import scan_matches_emr
 
+        # A direct call has no producing worker and still applies. A queued
+        # signal carries the worker that finished, not whichever job is current.
+        if worker is not None:
+            stamp = getattr(worker, "job_stamp", None)
+            if stamp is not None and not current_context().accepts(stamp):
+                self._update_status_paths(
+                    "Full-EMR scan finished for a previous data folder; it was not loaded."
+                )
+                return
         if (processed is not None and processed != processed_dir()) or not scan_matches_emr(result.meta, emr_dir()):
             # The EMR or processed folder changed while the scan ran
             self._update_status_paths("Full-EMR scan finished for a previous data folder; it was not loaded.")
@@ -771,17 +916,34 @@ class MainWindow(QMainWindow):
             self.corpus_scan = load_corpus_scan(processed_dir(), emr_dir())
             self._corpus_scan_dir = processed_dir() if self.corpus_scan is not None else None
         except Exception as exc:
+            from src.desktop.errors import error_message
+
             self.corpus_scan = None
             self._corpus_scan_dir = None
-            root = processed_dir()
             self._warn(
                 "Saved full-EMR scan could not load",
-                f"Could not read saved scan files in {root}:\n"
-                f"{root / 'corpus_cases.parquet'}\n{root / 'corpus_episodes.parquet'}\n"
-                f"{root / 'corpus_meta.json'}\n\n{exc}",
+                error_message("scan-load", exc),
             )
 
+    def _data_job_is_current(self) -> bool:
+        origin = self.sender()
+        if origin is None:
+            return True
+        if origin is not self._worker:
+            return False
+        worker = origin
+        stamp = getattr(worker, "job_stamp", None)
+        if stamp is not None and not current_context().accepts(stamp):
+            return False
+        if isinstance(worker, (PipelineWorker, DataLoadWorker)):
+            return (worker.emr.resolve() == emr_dir().resolve()
+                    and (worker.processed is None
+                         or worker.processed.resolve() == processed_dir().resolve()))
+        return True
+
     def _on_pipeline_ok(self, data) -> None:
+        if not self._data_job_is_current():
+            return
         self.cases, self.ts, self.flags, self.episodes, self.events = data
         from src.services.retrieval import build_analysis_facts
 
@@ -819,16 +981,28 @@ class MainWindow(QMainWindow):
         )
 
     def _on_pipeline_fail(self, msg: str) -> None:
-        self._update_status_paths("Pipeline failed")
-        QMessageBox.critical(
-            self,
-            "Pipeline / guardrail error",
-            msg[:4000]
-            + (
-                "\n\nEnsure the EMR folder has patient_information, "
-                "patient_ventilator, and patient_vitals CSVs."
-            ),
-        )
+        if not self._data_job_is_current():
+            return
+        # critical() runs a nested loop. A queued reload may replace the prefix
+        # while the dialog is open; paths stay off until that loop returns.
+        self._status_paths_hidden += 1
+        try:
+            self._update_status_paths("Pipeline failed")
+            QMessageBox.critical(
+                self,
+                "Pipeline / guardrail error",
+                msg[:4000]
+                + (
+                    "\n\nEnsure the EMR folder has patient_information, "
+                    "patient_ventilator, and patient_vitals CSVs."
+                ),
+            )
+        finally:
+            self._status_paths_hidden = max(0, self._status_paths_hidden - 1)
+            if not self._status_paths_hidden:
+                if self.statusBar().currentMessage() == self._status_hidden_message:
+                    self._publish_status_paths()
+                self._status_hidden_message = None
 
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         self._start_ollama_worker("ensure" if start_if_needed else "probe")
@@ -842,6 +1016,7 @@ class MainWindow(QMainWindow):
         if not status.available:
             self.research.model_combo.addItem("(Ollama stopped — click Start)")
             self.research.model_combo.blockSignals(False)
+            notify_purpose_combo_value(self.research.model_combo)
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -872,6 +1047,7 @@ class MainWindow(QMainWindow):
                     self.research.model_combo.setCurrentIndex(idx)
                     break
         self.research.model_combo.blockSignals(False)
+        notify_purpose_combo_value(self.research.model_combo)
         self._set_ollama_status_ui(status)
         if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
             self.statusBar().showMessage(ollama_status_summary(status))
@@ -975,6 +1151,10 @@ class MainWindow(QMainWindow):
             from src.user_settings import update_settings
 
             update_settings(ollama_model=text)
+            current_context().note_models(
+                chat_model=text,
+                embed_model=current_context().embed_model,
+            )
 
     def _make_session_snapshot(self):
         from src.llm.tools import SessionState
@@ -1028,11 +1208,10 @@ class MainWindow(QMainWindow):
         from src.llm.ollama_client import OllamaEmbedder
         from src.services.retrieval import RetrievalEngine
 
-        embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
         return RetrievalEngine(
             emr=source,
             cache_path=settings_path().parent / "case_embeddings.sqlite3",
-            embedder=OllamaEmbedder(embed_model),
+            embedder=OllamaEmbedder(current_context().embed_model),
             preset=self._active_preset,
             analysis_facts=self._analysis_facts,
             case_agents=self._case_agents(),
@@ -1048,14 +1227,18 @@ class MainWindow(QMainWindow):
         if articles:
             if self._article_catalog is None:
                 return
-            embed_model = str(load_settings().get("ollama_embed_model") or "nomic-embed-text")
-            engine = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3", OllamaEmbedder(embed_model))
+            self._bind_data_context()
+            engine = ArticleCatalog(
+                settings_path().parent / "case_embeddings.sqlite3",
+                OllamaEmbedder(current_context().embed_model),
+            )
         else:
             try:
                 source = validate_emr_dir(emr_dir())
             except Exception as exc:
                 self.research.set_status(f"EMR setup required: {exc}")
                 return
+            self._bind_data_context()
             if (self._research_engine is None or self._research_engine.emr != source
                     or any(worker.isRunning() for worker in self._research_workers.values())):
                 self._research_engine = self._new_research_engine(source)
@@ -1090,6 +1273,11 @@ class MainWindow(QMainWindow):
         """Make ``preset`` the one every reader uses; True when it changed."""
         changed = (preset, recorded) != (self._active_preset, self._preset_recorded)
         self._active_preset, self._preset_recorded = preset, recorded
+        current_context().note_preset(
+            preset,
+            recorded=recorded,
+            thresholds_sha256=self._thresholds_sha256,
+        )
         self._refresh_rule_reference()
         if changed:
             self._data_changed()
@@ -1278,6 +1466,80 @@ class MainWindow(QMainWindow):
                                        thresholds_sha256=self._thresholds_sha256)
         self.research.rules_drawer.set_explanations(cfg)
 
+    def _show_suite_module(self, name: str) -> None:
+        stack = getattr(self, "module_stack", None)
+        if stack is None:
+            return
+        page = self._suite_page(name)
+        stack.setCurrentWidget(page)
+        labels = {
+            "monitoring": "Monitoring",
+            "handoff": "Handoff",
+            "medications": "Medications",
+            "who": "Checklist",
+        }
+        set_module_label(self, labels[name])
+        pages = {"handoff": "Handoff practice", "medications": "Medication and vitals", "who": "WHO checklist"}
+        set_page_title(self, pages.get(name))
+        action = self._module_actions.get(name)
+        if action is not None:
+            action.setChecked(True)
+        if name == "medications":
+            self._offer_open_case_to_medication()
+
+    def _suite_page(self, name: str) -> QWidget:
+        pages = self._suite_pages
+        if name in pages:
+            return pages[name]
+        if name == "handoff":
+            from src.modules.handoff_trainer.panel import HandoffPanel
+
+            page: QWidget = HandoffPanel()
+        elif name == "medications":
+            from src.modules.medication_vitals.panel import MedicationVitalsPanel
+
+            page = MedicationVitalsPanel()
+        elif name == "who":
+            from src.modules.who_checklist.panel import WhoPanel
+
+            page = WhoPanel()
+        else:
+            page = self.research
+        self.module_stack.addWidget(page)
+        pages[name] = page
+        return page
+
+    def _offer_open_case_to_medication(self) -> None:
+        from src.modules.medication_vitals.panel import MedicationVitalsPanel
+
+        panel = self._suite_pages.get("medications")
+        if not isinstance(panel, MedicationVitalsPanel):
+            return
+        pid = self.research._current_pid
+        view = self.research._case_views.get(pid) if pid else None
+        if pid is None or view is None:
+            panel.show_fictional()
+            return
+        from src.llm.case_context import load_case_medications
+
+        origin = _case_origin(view.cases, pid)
+        panel.show_case(str(pid), load_case_medications(pid), view.timeseries, origin=origin)
+
+
+def _case_origin(cases: pd.DataFrame, pid: str):
+    if cases is None or cases.empty or "PID" not in cases.columns or "t_start" not in cases.columns:
+        return None
+    rows = cases[cases["PID"].astype(str) == str(pid)]
+    if rows.empty:
+        return None
+    value = rows.iloc[0].get("t_start")
+    if value is None or pd.isna(value):
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime()
+
 
 def main() -> int:
     if os.environ.get("XDG_SESSION_TYPE") == "wayland" and not os.environ.get(
@@ -1299,16 +1561,19 @@ def main() -> int:
         except Exception:
             pass
         app = QApplication(sys.argv)
-    app.setApplicationName("MOVER SIS Ventilation Monitor")
+    app.setApplicationName("MOVER Suite")
     app.setOrganizationName("MOVER-SIS")
     app.setDesktopFileName("mover-sis-monitor")
     apply_theme(app)
 
     win = MainWindow()
+    screen = QGuiApplication.primaryScreen()
+    if screen is not None:
+        available = screen.availableGeometry()
+        win.resize(min(win.width(), available.width()), min(win.height(), available.height()))
     win.show()
     win.raise_()
     win.activateWindow()
-    screen = QGuiApplication.primaryScreen()
     if screen is not None:
         geo = screen.availableGeometry()
         frame = win.frameGeometry()

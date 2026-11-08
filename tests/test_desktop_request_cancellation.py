@@ -108,7 +108,8 @@ def test_case_failure_after_cancel_is_visible(window, monkeypatch, synthetic_emr
     monkeypatch.setattr("src.desktop.research_workers.fetch_cases", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("synthetic case error")))
     win._load_research_case("SYN_missing", False, False)
     pump(app, lambda: not win._case_worker.isRunning())
-    assert "synthetic case error" in win.research.status_label.text()
+    assert "case:RuntimeError" in win.research.status_label.text()
+    assert "synthetic case error" not in win.research.status_label.text()
     assert "Loading this case" not in win.research.status_label.text()
 
 
@@ -156,7 +157,9 @@ def test_absent_processed_autoload_names_path_after_setup(window, monkeypatch, t
     monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
     win._autoload_processed()
     assert len(dialogs) == 1
-    assert str(root) in dialogs[0]
+    assert "Missing processed files: cases.parquet" in dialogs[0]
+    assert "File > Run pipeline" in dialogs[0]
+    assert str(root) not in dialogs[0]
 
 
 def test_absent_processed_autoload_is_quiet_before_setup(window, monkeypatch):

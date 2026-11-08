@@ -368,8 +368,11 @@ def focused_signals_figure(
     marks = flag_minutes(flags)
     if marks:
         colors = _style()
-        lane.scatter(list(marks), [0] * len(marks), marker="|", s=65,
-                     c=[colors[severity] for severity in marks.values()])
+        for severity, marker in (("info", "o"), ("warn", "^"), ("critical", "D")):
+            minutes = [minute for minute, level in marks.items() if level == severity]
+            if minutes:
+                lane.scatter(minutes, [0] * len(minutes), marker=marker, s=20,
+                             color=colors[severity], label=severity)
     else:
         lane.text(.5, .5, "No flags in this case", transform=lane.transAxes,
                   color=style["text"], ha="center", va="center", fontsize=8)
@@ -407,6 +410,8 @@ class FocusedSignalChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("chartView")
+        self.setAccessibleName("Signal chart")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._ts = pd.DataFrame()
         self._rows = pd.DataFrame()
         self._flags = pd.DataFrame()
@@ -429,6 +434,14 @@ class FocusedSignalChart(QWidget):
         self._images.clear()
         self._extras = ()
         self.lane_marks = flag_minutes(flags)
+        counts = ", ".join(
+            f"{sum(level == severity for level in self.lane_marks.values())} {severity} minutes"
+            for severity in ("info", "warn", "critical")
+        )
+        self.setAccessibleDescription(
+            f"Minute-aligned PIP, ETCO2 and heart rate. Flag lane: {counts}. "
+            "Exact measurements and episodes are available in the source rows and Flag episodes list."
+        )
         self._render_tracks()
 
     def set_tracks(self, extras: list[str]) -> None:
@@ -507,6 +520,10 @@ class FocusedSignalChart(QWidget):
             for _column, point, color in self.cursor_points():
                 painter.setBrush(QColor(color))
                 painter.drawEllipse(point, 4, 4)
+        if self.hasFocus():
+            painter.setPen(QPen(QColor("#8c739f"), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         point = event.position()

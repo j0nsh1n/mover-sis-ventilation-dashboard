@@ -8,10 +8,16 @@ from dataclasses import dataclass, field, replace
 
 import pandas as pd
 from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QBoxLayout,
-    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -24,9 +30,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -35,10 +43,16 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.cases_overview import CasesOverview
+from src.desktop.accessibility import (
+    announce,
+    name_combo as _name_combo,
+    notify_purpose_combo_value,
+)
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
+from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.llm.minute_context import build_minute_extract
 from src.pipeline.flags import collapse_episodes
 from src.rules import RuleCatalog
@@ -78,6 +92,8 @@ class QuestionState:
 FOLLOW_UP_NO_MODEL = "No AI answer. The minute's source rows are above."
 RULES_DRAWER_MAX_WIDTH = 420
 RULES_DRAWER_SHARE = 0.42
+# Width the wrapped title keeps beside the header actions before they move below it.
+HEADER_TITLE_ROOM = 200
 
 
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -176,6 +192,8 @@ class ResearchWorkspace(QWidget):
         self._rule_extras: list[str] = []
         self._rule_lines: list[tuple[str | None, str]] = []
         self._cases_data: tuple | None = None
+        # The last search's scope line; None until a case search returns.
+        self._case_scope_text: str | None = None
         self._cases_overview: CasesOverview | None = None
         self._overview_candidates: dict[str, SearchCandidate] = {}
         self._case_origins: dict[str, deque[bool]] = {}
@@ -215,7 +233,10 @@ class ResearchWorkspace(QWidget):
             QFrame#questionNode QTextEdit { background: #493956; color: #fff9f4;
                 border: 1px solid #8c739f; border-radius: 5px; padding: 8px; }
             QFrame#questionNode QLineEdit:disabled { color: #d3c6d9; }
-            QFrame#questionNode QLineEdit:focus { border: 2px solid #fff9f4; padding: 7px; }
+            QFrame#questionNode QLineEdit:focus,
+            QFrame#questionNode QComboBox:focus { border: 2px solid #fff9f4; padding: 7px; }
+            QFrame#questionNode QComboBox::down-arrow { image: url(movericons:chevron-light.svg);
+                width: 12px; height: 12px; }
             QFrame#questionNode QPushButton#primaryBtn { background: #f5e2cb; color: #332941;
                 border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
             QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
@@ -234,6 +255,7 @@ class ResearchWorkspace(QWidget):
                 border: 1px solid #b4afba; border-radius: 5px; padding: 8px 12px; }
             QWidget#evidencePage QTableWidget { background: #fffefa; color: #302b35;
                 gridline-color: #ddd6dd; border: 1px solid #ddd6dd; }
+            QWidget#evidencePage QTableWidget:focus { border: 2px solid #755390; }
             QWidget#evidencePage QHeaderView::section { background: #f1ecef; color: #4d4154;
                 border: 0; border-bottom: 1px solid #d7ccd9; padding: 7px; }
             QScrollArea#conversationPanel, QWidget#conversationPage { background: #ebe9e3; color: #302b35; }
@@ -286,6 +308,7 @@ class ResearchWorkspace(QWidget):
         scroll = QScrollArea()
         scroll.setObjectName("evidenceScroll")
         scroll.setWidgetResizable(True)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         page = QWidget()
         page.setObjectName("evidencePage")
@@ -313,24 +336,29 @@ class ResearchWorkspace(QWidget):
         self.add_comparison_button.clicked.connect(self._add_comparison)
         self.cases_button = _button("Cases")
         self.cases_button.setObjectName("outlineAction")
-        self.cases_button.setAccessibleName("Open the cases overview")
+        self.cases_button.setAccessibleName("Cases")
+        self.cases_button.setAccessibleDescription("Open the cases overview")
         self.cases_button.clicked.connect(self.show_cases)
         self.new_question_button = _button("New question")
         self.new_question_button.setObjectName("outlineAction")
-        self.new_question_button.setAccessibleName("Clear the board and keep the conversation")
+        self.new_question_button.setAccessibleName("New question")
+        self.new_question_button.setAccessibleDescription("Clear the board and keep the conversation")
         self.new_question_button.clicked.connect(self._new_question)
         self.reset_button = _button("Reset")
         self.reset_button.setObjectName("outlineAction")
-        self.reset_button.setAccessibleName("Clear the conversation and the board")
+        self.reset_button.setAccessibleName("Reset")
+        self.reset_button.setAccessibleDescription("Clear the conversation and the board")
         self.reset_button.clicked.connect(self._reset_canvas)
         self.rules_button = _button("Rules")
         self.rules_button.setObjectName("outlineAction")
-        self.rules_button.setAccessibleName("Open rules drawer")
+        self.rules_button.setAccessibleName("Rules")
+        self.rules_button.setAccessibleDescription("Open rules drawer")
         self.rules_button.setToolTip("Search the rules (Ctrl+R)")
         self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
         self._header_buttons = (self.add_comparison_button, self.cases_button, self.new_question_button,
                                 self.reset_button, self.rules_button)
-        self._place_header_actions(len(self._header_buttons))
+        self._header_columns = len(self._header_buttons)
+        self._place_header_actions(self._header_columns)
         header_layout.addLayout(header_actions)
         layout.addWidget(header)
 
@@ -348,18 +376,23 @@ class ResearchWorkspace(QWidget):
         content.setHorizontalSpacing(24)
         content.setVerticalSpacing(20)
         question_card, question_layout = _card("01 / YOUR QUESTION")
+        question_layout.setSpacing(5)
         question_card.setObjectName("questionNode")
+        # Hug the question content. A two-row span in the narrow column clipped the
+        # scope line under the status bar once the local-model error wrapped.
+        question_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         _name_kicker(question_layout)
         question_title = _wrap("Start with what you want to know.")
         question_title.setObjectName("nodeTitle")
         question_layout.addWidget(question_title)
-        self.scope_combo = QComboBox()
+        self.scope_combo = ScrollSafeComboBox()
+        _name_combo(self.scope_combo, "Question scope")
         self.scope_combo.addItems(["Cases", "Articles"])
-        self.scope_combo.setAccessibleName("Question scope: Cases or Articles")
         self.scope_combo.currentTextChanged.connect(self._change_scope)
         question_layout.addWidget(self.scope_combo)
         question_layout.addWidget(QLabel("Research question"))
         self.question_edit = QLineEdit()
+        self.question_edit.setAccessibleName("Research question")
         self.question_edit.setPlaceholderText("Try: Where does pressure peak in laparoscopic cases?")
         self.question_edit.setMinimumHeight(44)
         self.question_edit.returnPressed.connect(self._submit_question)
@@ -376,7 +409,8 @@ class ResearchWorkspace(QWidget):
         question_layout.addWidget(self.extract_budget_label)
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local AI"))
-        self.model_combo = QComboBox()
+        self.model_combo = ScrollSafeComboBox()
+        _name_combo(self.model_combo, "Local AI")
         self.model_combo.setMinimumHeight(44)
         self.model_combo.currentTextChanged.connect(self.model_changed)
         model_row.addWidget(self.model_combo, stretch=1)
@@ -415,7 +449,7 @@ class ResearchWorkspace(QWidget):
         self.answer_text.setReadOnly(True)
         self.answer_text.hide()
         question_layout.addStretch(1)
-        content.addWidget(question_card, 0, 0, 2, 1)
+        content.addWidget(question_card, 0, 0, 1, 2, Qt.AlignmentFlag.AlignTop)
 
         finding_card, finding_layout = _card("02 / OBSERVATION")
         finding_card.setObjectName("findingNode")
@@ -432,7 +466,7 @@ class ResearchWorkspace(QWidget):
         self.finding_open.setObjectName("textAction")
         self.finding_open.clicked.connect(self._inspect_primary)
         finding_layout.addWidget(self.finding_open)
-        content.addWidget(finding_card, 0, 1)
+        content.addWidget(finding_card, 0, 2)
 
         source_card, source_layout = _card("03 / ORIGINAL SAMPLES")
         source_card.setObjectName("sourceNode")
@@ -447,7 +481,7 @@ class ResearchWorkspace(QWidget):
         source_button.clicked.connect(self._show_primary_source)
         source_layout.addStretch(1)
         source_layout.addWidget(source_button)
-        content.addWidget(source_card, 0, 2)
+        content.addWidget(source_card, 1, 2)
 
         self.comparison_hint, hint_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_hint.setObjectName("comparisonHint")
@@ -457,7 +491,7 @@ class ResearchWorkspace(QWidget):
         self.hint_button.setObjectName("outlineAction")
         self.hint_button.clicked.connect(self._add_comparison)
         hint_layout.addWidget(self.hint_button)
-        content.addWidget(self.comparison_hint, 1, 1)
+        content.addWidget(self.comparison_hint, 1, 0, 1, 2)
 
         self.comparison_card, compare_layout = _card("04 / COMPARE ANOTHER CASE")
         self.comparison_card.setObjectName("comparisonNode")
@@ -468,7 +502,7 @@ class ResearchWorkspace(QWidget):
         compare_button.setObjectName("textAction")
         compare_button.clicked.connect(self._inspect_comparison)
         compare_layout.addWidget(compare_button)
-        content.addWidget(self.comparison_card, 1, 1)
+        content.addWidget(self.comparison_card, 1, 0, 1, 2)
         self.comparison_card.hide()
 
         limit_card, limit_layout = _card("WHAT THIS DOES NOT ESTABLISH")
@@ -480,7 +514,7 @@ class ResearchWorkspace(QWidget):
         self.limit_label = _wrap("A retrieved case can show a pattern, but its measurements alone do not establish a cause or a treatment decision. Missing values remain unknown.")
         limit_layout.addWidget(self.limit_label)
         limit_layout.addStretch(1)
-        content.addWidget(limit_card, 1, 2)
+        content.addWidget(limit_card, 2, 0, 1, 3)
         content.setColumnStretch(0, 10)
         content.setColumnStretch(1, 11)
         content.setColumnStretch(2, 10)
@@ -495,6 +529,7 @@ class ResearchWorkspace(QWidget):
         self.case_shortlist_card = candidate_card
         _name_kicker(candidate_layout)
         self.candidate_table = _ShortlistTable(0, 3)
+        self.candidate_table.setAccessibleName("Retrieved cases")
         self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
         self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.candidate_table.setWordWrap(False)
@@ -539,7 +574,12 @@ class ResearchWorkspace(QWidget):
         self.board_splitter.setStretchFactor(0, 1)
         self.board_splitter.setStretchFactor(1, 0)
         self.board_splitter.setSizes([1000, 340])
-        self.stack.addWidget(self.board_splitter)
+        self.canvas_scroll = QScrollArea()
+        self.canvas_scroll.setWidgetResizable(True)
+        self.canvas_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.canvas_scroll.setWidget(self.board_splitter)
+        self.stack.addWidget(self.canvas_scroll)
         self._set_case_actions(False)
 
     def _build_signal_detail(self) -> None:
@@ -606,6 +646,8 @@ class ResearchWorkspace(QWidget):
         self.detail_chart.minute_clicked.connect(self._select_flag_minute)
         self.detail_chart.setMinimumHeight(220)
         shell_layout.addWidget(self.detail_chart, stretch=1)
+        flag_legend = _wrap("Flag marks: circle = info; triangle = warn; diamond = critical.")
+        shell_layout.addWidget(flag_legend)
         self.minute_label = _wrap()
         shell_layout.addWidget(self.minute_label)
         self.minute_slider = QSlider(Qt.Orientation.Horizontal)
@@ -703,6 +745,7 @@ class ResearchWorkspace(QWidget):
         else:
             self.model_combo.addItem("(AI unavailable · search still works)")
         self.model_combo.blockSignals(False)
+        notify_purpose_combo_value(self.model_combo)
 
     @property
     def scope(self) -> str:
@@ -743,6 +786,8 @@ class ResearchWorkspace(QWidget):
             "Search titles and abstracts in the local catalog" if articles
             else "Try: Where does pressure peak in laparoscopic cases?"
         )
+        if not articles:
+            self.scope_label.setText(self._case_scope())
         if articles:
             self.scope_label.setText(f"Articles: {self._catalog_count:,} in the local catalog")
             self.status_label.setText(self._article_error or (NO_CATALOG if not self._catalog_count else "Ready to search local articles."))
@@ -784,38 +829,64 @@ class ResearchWorkspace(QWidget):
         """Re-flow the board and conversation for the width left beside the rules drawer."""
         board_width = self.width() - (self.rules_drawer.width() if self.rules_drawer.is_open else 0)
         stacked = board_width < 1100
+        self.board_splitter.setMinimumHeight(640 if stacked else 0)
         orientation = Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
         if self.board_splitter.orientation() != orientation:
             self.board_splitter.setOrientation(orientation)
             self.board_splitter.setSizes([max(300, self.height() - 360), 340] if stacked
                                          else [max(600, board_width - 340), 340])
         mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
+        header = self._header_layout.parentWidget()
+        if header is not None:
+            header.setMaximumWidth(max(1, board_width - 32) if mode == "single" else board_width)
+        self._fit_header(board_width, mode)
         if mode == self._layout_mode:
             return
         self._layout_mode = mode
         positions = {
-            "wide": ((0, 0, 2, 1), (0, 1, 1, 1), (0, 2, 1, 1), (1, 1, 1, 1), (1, 2, 1, 1)),
+            # The question card takes two columns on one row so its error and scope
+            # lines stay above the status bar at 1380x860. One narrow column does not.
+            "wide": ((0, 0, 1, 2), (0, 2, 1, 1), (1, 2, 1, 1), (1, 0, 1, 2), (2, 0, 1, 3)),
             "narrow": ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)),
             "single": ((0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 1, 1), (3, 0, 1, 1), (4, 0, 1, 1)),
         }[mode]
         for card in (*self._evidence_cards, self.comparison_hint):
             self._evidence_grid.removeWidget(card)
         for card, position in zip(self._evidence_cards, positions, strict=True):
-            self._evidence_grid.addWidget(card, *position)
+            alignment = Qt.AlignmentFlag.AlignTop if card is self._evidence_cards[0] else Qt.AlignmentFlag(0)
+            self._evidence_grid.addWidget(card, *position, alignment)
         # The hint stands in for the comparison card until one is added.
         self._evidence_grid.addWidget(self.comparison_hint, *positions[3])
         stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
         for column, stretch in enumerate(stretches):
             self._evidence_grid.setColumnStretch(column, stretch)
-        self._header_layout.setDirection(
-            QBoxLayout.Direction.TopToBottom if mode == "single" else QBoxLayout.Direction.LeftToRight
-        )
-        self._header_layout.setContentsMargins(*((16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)))
-        # One row of five buttons is wider than a one-column board beside the drawer.
-        self._place_header_actions(3 if mode == "single" else len(self._header_buttons))
         if self.scope == "Articles":
             self._evidence_grid.removeWidget(self._evidence_cards[0])
             self._evidence_grid.addWidget(self._evidence_cards[0], 0, 0, 1, 3)
+
+    def _fit_header(self, board_width: int, mode: str) -> None:
+        """Place the title and actions so no button is narrower than its label."""
+        margins = (16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)
+        room = board_width - (32 if mode == "single" else 0) - margins[0] - margins[2]
+        spacing = self._header_actions.horizontalSpacing()
+        if spacing < 0:
+            spacing = self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
+        widths = [button.sizeHint().width() for button in self._header_buttons]
+
+        def row(columns: int) -> int:
+            return sum(max(widths[column::columns]) for column in range(columns)) + spacing * (columns - 1)
+
+        # One row of five buttons is wider than a one-column board beside the drawer.
+        most = (1 if board_width < 440 else 2) if mode == "single" else len(widths)
+        beside = mode != "single" and row(len(widths)) + spacing + HEADER_TITLE_ROOM <= room
+        columns = most if beside else next((c for c in (5, 3, 2) if c <= most and row(c) <= room), 1)
+        self._header_layout.setDirection(
+            QBoxLayout.Direction.LeftToRight if beside else QBoxLayout.Direction.TopToBottom
+        )
+        self._header_layout.setContentsMargins(*margins)
+        if columns != self._header_columns:
+            self._header_columns = columns
+            self._place_header_actions(columns)
 
     def _place_header_actions(self, columns: int) -> None:
         for button in self._header_buttons:
@@ -915,6 +986,7 @@ class ResearchWorkspace(QWidget):
             self.scope_combo.blockSignals(True)
             self.scope_combo.setCurrentText(state.scope)
             self.scope_combo.blockSignals(False)
+            notify_purpose_combo_value(self.scope_combo)
             self._clear_board()
             if state.article_result is not None:
                 self.set_article_results(state.article_result)
@@ -1003,6 +1075,7 @@ class ResearchWorkspace(QWidget):
     def set_status(self, message: str) -> None:
         self._status_is_progress = False
         self.status_label.setText(message)
+        announce(self.status_label, message)
         self._save_board()
         if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
             self._cases_overview.set_message(message)
@@ -1119,7 +1192,8 @@ class ResearchWorkspace(QWidget):
         self.answer_text.clear()
         self.comparison_card.hide()
         self.comparison_hint.show()
-        self.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
+        self._case_scope_text = None
+        self.scope_label.setText(self._case_scope())
         self._set_case_actions(False)
         self.set_status("Enter a research question to trace its evidence.")
         self._render_scope()
@@ -1206,10 +1280,11 @@ class ResearchWorkspace(QWidget):
                 ranking += "; the rest ranked by keywords"
         else:
             ranking = "keywords"
-        self.scope_label.setText(
+        self._case_scope_text = (
             result.scope_note
             or f"Indexed surgeries: {result.indexed_count:,} · analyzed cases: {result.analyzed_count:,} · ranking: {ranking}"
         )
+        self.scope_label.setText(self._case_scope_text)
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):
             for column, value in enumerate((candidate.pid, candidate.procedure, candidate.source_label)):
@@ -1249,6 +1324,7 @@ class ResearchWorkspace(QWidget):
                                     if re.search(r"(?<!\w)" + re.escape(candidate.pid) + r"(?!\w)", answer))
             self._save_board()
             self.conversation.update_turn(turn)
+            announce(self.conversation, f"Research answer ready for {turn.question}.")
 
     def set_case_data(
         self,
@@ -1803,8 +1879,19 @@ class ResearchWorkspace(QWidget):
     def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog, flags: pd.DataFrame | None = None) -> None:
         """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
         self._cases_data = (cases, scan, catalog, flags)
+        if self.scope != "Articles":
+            self.scope_label.setText(self._case_scope())
         if self._cases_overview is not None:
             self._cases_overview.set_data(cases, scan, catalog, flags)
+
+    def _case_scope(self) -> str:
+        """The case scope line: the last search's counts, or the loaded sample before any search."""
+        if self._case_scope_text is not None:
+            return self._case_scope_text
+        cases = self._cases_data[0] if self._cases_data is not None else None
+        if cases is None:
+            return "Indexed surgeries: — · analyzed cases: —"
+        return f"Indexed surgeries: counted at the first search · analyzed cases: {len(cases):,}"
 
     def refresh_charts(self) -> None:
         if self._cases_overview is not None:

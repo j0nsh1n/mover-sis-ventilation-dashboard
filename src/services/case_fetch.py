@@ -10,8 +10,9 @@ Retrieval instead works in two stages:
    is where flags/timeseries come from. Batch cost is ~2 s fixed (CSV scan) plus
    ~0.04 s per case, so a few hundred candidates land in ~10 s.
 
-Results are memoised per ``(pid, preset)``: flags depend on the threshold preset,
-so a preset switch must not serve stale rows. Nothing here writes to the user's
+Results are memoised per EMR, surgery, preset, and threshold hash. A fetch
+keeps its own copies, and it stores them only when the data generation is
+still the one it started in. Nothing here writes to the user's
 processed directory — the pipeline's own output goes to a scratch dir that is
 discarded, and callers decide what to persist.
 """
@@ -19,6 +20,7 @@ discarded, and callers decide what to persist.
 from __future__ import annotations
 
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,10 +32,12 @@ from src.runtime_paths import emr_dir, wave_dir, waveform_case_dir
 _FRAME_KEYS = ("cases", "timeseries", "flags", "episodes", "events")
 
 # Module-level memo: parsed EMR index, PIDs that have ventilator rows, and
-# per-(pid, preset) pipeline output. Cheap to rebuild, expensive to redo per query.
+# per-source pipeline output. The case key includes the EMR path, preset, and
+# threshold hash so the same surgery id in two folders cannot share frames.
 _index_cache: dict[str, pd.DataFrame] = {}
 _vent_pid_cache: dict[str, set[str]] = {}
-_case_cache: dict[tuple[str, str], tuple[dict[str, pd.DataFrame], str]] = {}
+_case_cache: dict[tuple[str, str, str, str], tuple[dict[str, pd.DataFrame], str]] = {}
+cache_lock = threading.Lock()
 
 
 @dataclass
@@ -57,11 +61,28 @@ class FetchResult:
         return [str(p) for p in self.cases["PID"].tolist()]
 
 
-def clear_caches() -> None:
-    """Drop memoised index/fetch state (call after EMR path or preset changes)."""
+def discard_stored_caches() -> None:
+    """Drop memoised index and fetch state. Caller holds ``cache_lock``."""
     _index_cache.clear()
     _vent_pid_cache.clear()
     _case_cache.clear()
+
+
+def clear_caches() -> None:
+    """Drop memoised index/fetch state (call after EMR path or preset changes)."""
+    with cache_lock:
+        discard_stored_caches()
+
+
+def _generation() -> int:
+    from src.services.data_context import current_context
+
+    return current_context().generation
+
+
+def _case_key(emr: Path | str | None, pid: str, preset: str, thresholds_hash: str) -> tuple[str, str, str, str]:
+    """Source, surgery, preset, and threshold hash. The hash is the processing version."""
+    return (str(_emr_path(emr).expanduser().resolve()), pid, preset, thresholds_hash)
 
 
 def _emr_path(emr: Path | str | None = None) -> Path:
@@ -76,19 +97,25 @@ def vent_capable_pids(emr: Path | str | None = None) -> set[str]:
     """
     root = _emr_path(emr)
     key = str(root)
-    if key in _vent_pid_cache:
-        return _vent_pid_cache[key]
+    with cache_lock:
+        cached = _vent_pid_cache.get(key)
+        if cached is not None:
+            return cached
+        started = _generation()
     path = root / "patient_ventilator.csv"
     if not path.is_file():
-        _vent_pid_cache[key] = set()
-        return _vent_pid_cache[key]
-    try:
-        col = pd.read_csv(path, usecols=["PID"], dtype=str)["PID"]
-    except (OSError, ValueError, KeyError):
-        _vent_pid_cache[key] = set()
-        return _vent_pid_cache[key]
-    _vent_pid_cache[key] = {str(p) for p in col.dropna().unique()}
-    return _vent_pid_cache[key]
+        found: set[str] = set()
+    else:
+        try:
+            col = pd.read_csv(path, usecols=["PID"], dtype=str)["PID"]
+            found = {str(p) for p in col.dropna().unique()}
+        except (OSError, ValueError, KeyError):
+            found = set()
+    with cache_lock:
+        if _generation() == started:
+            _vent_pid_cache[key] = found
+            return _vent_pid_cache[key]
+    return found
 
 
 def emr_index(emr: Path | str | None = None, *, with_wave: bool = False) -> pd.DataFrame:
@@ -101,20 +128,31 @@ def emr_index(emr: Path | str | None = None, *, with_wave: bool = False) -> pd.D
     """
     root = _emr_path(emr)
     key = f"{root}|wave={with_wave}"
-    if key in _index_cache:
-        return _index_cache[key]
-    if not with_wave and f"{root}|wave=True" in _index_cache:
-        return _index_cache[f"{root}|wave=True"]
+    with cache_lock:
+        cached = _index_cache.get(key)
+        if cached is not None:
+            return cached
+        if not with_wave:
+            with_wave_hit = _index_cache.get(f"{root}|wave=True")
+            if with_wave_hit is not None:
+                return with_wave_hit
+        started = _generation()
 
     path = root / "patient_information.csv"
     if not path.is_file():
-        _index_cache[key] = pd.DataFrame()
-        return _index_cache[key]
+        df = pd.DataFrame()
+        with cache_lock:
+            if _generation() == started:
+                _index_cache[key] = df
+        return df
 
     df = pd.read_csv(path, dtype=str)
     if "PID" not in df.columns:
-        _index_cache[key] = pd.DataFrame()
-        return _index_cache[key]
+        df = pd.DataFrame()
+        with cache_lock:
+            if _generation() == started:
+                _index_cache[key] = df
+        return df
     df["PID"] = df["PID"].astype(str)
     for col in ("Age", "Ht", "Wt"):
         if col in df.columns:
@@ -134,7 +172,9 @@ def emr_index(emr: Path | str | None = None, *, with_wave: bool = False) -> pd.D
             else False
         )
 
-    _index_cache[key] = df
+    with cache_lock:
+        if _generation() == started:
+            _index_cache[key] = df
     return df
 
 
@@ -233,7 +273,7 @@ def fetch_cases(
     use_cache: bool = True,
 ) -> FetchResult:
     """
-    Flag *pids* on demand, reusing anything already computed for this preset.
+    Flag *pids* on demand, reusing a result only for the same EMR, preset, and threshold hash.
 
     PIDs without ventilator rows are reported in ``skipped`` rather than failing
     the batch — the pipeline raises if a run has no ventilator data at all.
@@ -247,17 +287,28 @@ def fetch_cases(
         return FetchResult()
 
     result = FetchResult()
-    vent = vent_capable_pids(emr)
+    # Pin the source for this call. emr_dir() can change while the pipeline runs.
+    root = _emr_path(emr).expanduser().resolve()
+    vent = vent_capable_pids(root)
     if vent:
         result.skipped = [p for p in wanted if p not in vent]
         wanted = [p for p in wanted if p in vent]
 
+    from src.rules import thresholds_sha256
+
+    computed_hash = thresholds_sha256()
     todo: list[str] = []
-    for pid in wanted:
-        if use_cache and (pid, preset) in _case_cache:
-            result.reused.append(pid)
-        else:
-            todo.append(pid)
+    held: dict[str, tuple[dict[str, pd.DataFrame], str]] = {}
+    with cache_lock:
+        started = _generation()
+        for pid in wanted:
+            cache_key = _case_key(root, pid, preset, computed_hash)
+            cached = _case_cache.get(cache_key) if use_cache else None
+            if cached is not None:
+                held[pid] = cached
+                result.reused.append(pid)
+            else:
+                todo.append(pid)
 
     # Guardrail: never hand the pipeline more than it allows in one call
     if len(todo) > MAX_N_CASES:
@@ -265,30 +316,32 @@ def fetch_cases(
         todo = todo[:MAX_N_CASES]
 
     if todo:
-        from src.rules import thresholds_sha256
-
-        computed_hash = thresholds_sha256()
-        frames = _run_for(todo, preset, emr)
+        frames = _run_for(todo, preset, root)
         produced = set()
         cases = frames.get("cases")
         if cases is not None and not cases.empty and "PID" in cases.columns:
             produced = {str(p) for p in cases["PID"]}
+        computed: dict[str, tuple[dict[str, pd.DataFrame], str]] = {}
         for pid in todo:
             if pid in produced:
-                _case_cache[(pid, preset)] = (_split_by_pid(frames, pid), computed_hash)
+                computed[pid] = (_split_by_pid(frames, pid), computed_hash)
                 result.computed.append(pid)
             else:
                 result.skipped.append(pid)
+        with cache_lock:
+            if _generation() == started:
+                for pid, payload in computed.items():
+                    _case_cache[_case_key(root, pid, preset, computed_hash)] = payload
+        held.update(computed)
 
-    collected = result.reused + result.computed
-    result.thresholds_sha256_by_pid = {pid: _case_cache[(pid, preset)][1] for pid in collected}
-    for key in _FRAME_KEYS:
+    result.thresholds_sha256_by_pid = {pid: held[pid][1] for pid in result.reused + result.computed}
+    for frame_name in _FRAME_KEYS:
         parts = [
-            _case_cache[(pid, preset)][0][key]
-            for pid in collected
-            if (pid, preset) in _case_cache and not _case_cache[(pid, preset)][0][key].empty
+            held[pid][0][frame_name]
+            for pid in result.reused + result.computed
+            if not held[pid][0][frame_name].empty
         ]
-        setattr(result, key, pd.concat(parts, ignore_index=True) if parts else pd.DataFrame())
+        setattr(result, frame_name, pd.concat(parts, ignore_index=True) if parts else pd.DataFrame())
 
     if not result.cases.empty and "anomaly_score" in result.cases.columns:
         result.cases = result.cases.sort_values(

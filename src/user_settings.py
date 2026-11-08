@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -37,15 +39,66 @@ _DEFAULT_LLM_CANDIDATES = (
 )
 
 
+CONFIG_DIR_NAME = "mover-suite"
+OLD_CONFIG_DIR_NAME = "mover-sis-monitor"
+MIGRATION_MARKER = "migrated-from.txt"
+_config_roots: dict[Path, Path] = {}
+_migration_note: str | None = None
+
+
 def settings_path() -> Path:
     base = os.environ.get("MOVER_CONFIG_DIR")
     if base:
         root = Path(base).expanduser().resolve()
     else:
-        xdg = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-        root = Path(xdg) / "mover-sis-monitor"
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+        if xdg not in _config_roots:
+            _config_roots[xdg] = _config_root(xdg)
+        root = _config_roots[xdg]
     root.mkdir(parents=True, exist_ok=True)
     return root / "settings.json"
+
+
+def settings_migration_note() -> str | None:
+    """Why this session still uses the old settings folder, or None."""
+    return _migration_note
+
+
+def _config_root(xdg: Path) -> Path:
+    """The suite's settings folder, copied once from the MOVER SIS Monitor folder when only that one exists.
+
+    The old folder is left as it was, so an older version still finds its settings.
+    """
+    global _migration_note
+    new, old = xdg / CONFIG_DIR_NAME, xdg / OLD_CONFIG_DIR_NAME
+    if (new / "settings.json").is_file() or not (old / "settings.json").is_file():
+        return new
+    try:
+        _copy_forward(old, new)
+    except OSError as exc:
+        if (new / "settings.json").is_file():
+            return new  # another instance finished the copy first
+        _migration_note = (
+            f"Settings stay in {old} for this session. Copying them to {new} failed: {exc.strerror or exc}."
+        )
+        return old
+    return new
+
+
+def _copy_forward(old: Path, new: Path) -> None:
+    staging = new.with_name(f".{new.name}-copying-{os.getpid()}")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(old, staging, symlinks=True)
+    (staging / MIGRATION_MARKER).write_text(f"Copied from {old} on {date.today().isoformat()}.\n", encoding="utf-8")
+    if not new.exists():
+        staging.rename(new)
+        return
+    # settings.json moves last, so an interrupted copy is retried on the next start.
+    for item in sorted(staging.iterdir(), key=lambda path: path.name == "settings.json"):
+        target = new / item.name
+        if not target.exists():
+            item.rename(target)
+    shutil.rmtree(staging, ignore_errors=True)
 
 
 def load_settings() -> dict[str, Any]:

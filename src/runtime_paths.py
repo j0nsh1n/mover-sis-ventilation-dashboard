@@ -79,6 +79,11 @@ def data_dir() -> Path:
         return Path(override).expanduser().resolve()
     if _session_data_dir is not None:
         return _session_data_dir
+    if os.environ.get("MOVER_APPIMAGE") == "1":
+        xdg = Path(os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")).expanduser()
+        # An AppImage from before the rename keeps its data where it is; it can be large.
+        old = xdg / "mover-sis-monitor" / "data"
+        return (old if old.is_dir() else xdg / "mover-suite" / "data").resolve()
     return app_dir() / "data"
 
 
@@ -207,7 +212,21 @@ def default_processed_for_emr(emr: Path) -> Path:
         return (emr.parent.parent / "processed").resolve()
     if emr.name == "EMR":
         return (emr.parent / "processed").resolve()
-    return (emr / "processed").resolve()
+    return (emr.parent / "processed").resolve()
+
+
+def validate_output_location(path: Path | str, *, source_emr: Path | str | None = None) -> Path:
+    """Resolve an output path without allowing writes into the source EMR tree."""
+    from src.guardrails.exceptions import PathSafetyError
+
+    output = Path(path).expanduser().resolve()
+    source = (Path(source_emr) if source_emr is not None else emr_dir()).expanduser().resolve()
+    if output.is_relative_to(source):
+        raise PathSafetyError(
+            "Processed output cannot be the EMR folder or inside it. "
+            "Choose a separate folder to keep the EMR read-only."
+        )
+    return output
 
 
 def resolve_user_data_choice(path: Path | str) -> dict[str, Path]:
@@ -230,7 +249,7 @@ def resolve_user_data_choice(path: Path | str) -> dict[str, Path]:
             c = cand.resolve()
         except OSError:
             continue
-        if (c / "cases.parquet").is_file():
+        if not c.is_relative_to(emr) and (c / "cases.parquet").is_file():
             processed = c
             break
     if processed is None:
@@ -239,7 +258,7 @@ def resolve_user_data_choice(path: Path | str) -> dict[str, Path]:
     if emr.name == "EMR" and emr.parent.name == "raw":
         data_root = emr.parent.parent
     elif looks_like_emr_dir(p):
-        data_root = p.parent if p.name == "EMR" else p
+        data_root = p.parent
     else:
         data_root = p
 
@@ -277,7 +296,7 @@ def configure_emr_directory(path: Path | str, *, persist: bool = True) -> Path:
     emr = resolve_emr_directory(path)
     proc = processed_dir()
     # If processed still points at default empty relative to old data, retarget
-    if not (proc / "cases.parquet").is_file():
+    if proc.resolve().is_relative_to(emr) or not (proc / "cases.parquet").is_file():
         proc = default_processed_for_emr(emr)
     data_root = emr.parent.parent if (emr.name == "EMR" and emr.parent.name == "raw") else emr.parent
     set_session_paths(data_dir=data_root, emr_dir=emr, processed_dir=proc)
@@ -303,7 +322,7 @@ def configure_wave_directory(path: Path | str, *, persist: bool = True) -> Path:
 
 
 def configure_processed_directory(path: Path | str, *, persist: bool = True) -> Path:
-    p = Path(path).expanduser().resolve()
+    p = validate_output_location(path)
     if not p.is_dir():
         p.mkdir(parents=True, exist_ok=True)
     set_session_paths(processed_dir=p)

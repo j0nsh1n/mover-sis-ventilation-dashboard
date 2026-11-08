@@ -143,7 +143,7 @@ def test_mainwindow_constructs_fast(qapp, monkeypatch, tmp_path):
     win.show()
     qapp.processEvents()
     assert construct_s < 2.0, f"MainWindow construct took {construct_s:.2f}s"
-    assert "MOVER SIS" in win.windowTitle()
+    assert "MOVER Suite" in win.windowTitle()
     win.close()
 
 
@@ -383,7 +383,8 @@ def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     try:
         win._load_corpus_scan()
         assert win.corpus_scan is None
-        assert len(dialogs) == 1 and str(cases) in dialogs[0]
+        assert len(dialogs) == 1 and "scan-load:ArrowInvalid" in dialogs[0]
+        assert str(cases) not in dialogs[0]
     finally:
         win.close()
 
@@ -401,7 +402,9 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
-        assert str(tmp_path / "missing") in dialogs[0]
+        assert "Missing processed files: cases.parquet" in dialogs[0]
+        assert "File > Run pipeline" in dialogs[0]
+        assert str(tmp_path / "missing") not in dialogs[0]
     finally:
         win.close()
 
@@ -439,3 +442,228 @@ def test_scan_cancel_requests_interruption_and_keeps_previous(qapp, monkeypatch,
         assert win._scan_cancel_button.isHidden()
     finally:
         win.close()
+
+
+_PROBE_FAILURE = (
+    "Ollama API not reachable (Cannot reach Ollama at http://127.0.0.1:11434. "
+    "Start it with: ollama serve. (<urlopen error [Errno 111] Connection refused>))"
+)
+
+
+@requires_qt
+def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+    try:
+        win._warn("Load error", "Missing processed files: cases.parquet")
+        qapp.processEvents()
+        box = win.findChild(QMessageBox)
+        assert box is not None
+        box.button(QMessageBox.StandardButton.Ok).click()
+        for _ in range(4):
+            qapp.processEvents()
+        edit = win.research.question_edit
+        assert edit.isVisible()
+        assert edit.accessibleName() == "Research question"
+        assert qapp.focusWidget() is edit
+        assert edit.hasFocus()
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    emr = tmp_path / "emr-a-bad"
+    processed = tmp_path / "processed"
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MOVER_EMR_DIR", str(emr))
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(processed))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    shown = []
+
+    def critical(parent, title, text):
+        shown.append((title, text, parent.statusBar().currentMessage()))
+
+    monkeypatch.setattr(QMessageBox, "critical", critical)
+    win = MainWindow()
+    try:
+        assert str(emr) in win.statusBar().currentMessage()
+        win._on_pipeline_fail(
+            "The operation could not finish (pipeline:DataValidationError). "
+            "Details are in app-errors.log in the settings folder."
+        )
+        assert len(shown) == 1
+        title, text, during = shown[0]
+        assert title == "Pipeline / guardrail error"
+        assert "pipeline:DataValidationError" in text
+        assert str(emr) not in text and str(processed) not in text
+        assert during == "Pipeline failed"
+        assert str(emr) not in during and str(processed) not in during
+        after = win.statusBar().currentMessage()
+        assert "Pipeline failed" in after
+        assert str(emr) in after and str(processed) in after
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_status(
+    qapp, monkeypatch, tmp_path
+):
+    from PySide6.QtCore import QObject, QTimer, Signal
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    emr = tmp_path / "emr-a-bad"
+    processed = tmp_path / "processed"
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MOVER_EMR_DIR", str(emr))
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(processed))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+
+    class _Emitter(QObject):
+        finished = Signal()
+
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+    emitter = _Emitter(win)
+    samples: list[str] = []
+    bailed: list[bool] = []
+    latest = "Loaded 4 cases · 10 min rows · 1 flags"
+
+    def pipeline_box():
+        boxes = [
+            box
+            for box in win.findChildren(QMessageBox)
+            if box.windowTitle() == "Pipeline / guardrail error"
+        ]
+        return boxes[-1] if boxes else None
+
+    def queued_status() -> None:
+        win._update_status_paths(latest)
+        samples.append(win.statusBar().currentMessage())
+        box = pipeline_box()
+        assert box is not None
+        box.button(QMessageBox.StandardButton.Ok).click()
+
+    def during_dialog() -> None:
+        assert pipeline_box() is not None
+        samples.append(win.statusBar().currentMessage())
+        win._worker = emitter
+        win._reload_after_scan = True
+        emitter.finished.connect(win._after_data_job)
+        emitter.finished.emit()
+        samples.append(win.statusBar().currentMessage())
+        QTimer.singleShot(0, queued_status)
+
+    def bail() -> None:
+        bailed.append(True)
+        box = pipeline_box()
+        if box is not None:
+            box.accept()
+
+    try:
+        assert str(emr) in win.statusBar().currentMessage()
+        QTimer.singleShot(0, during_dialog)
+        QTimer.singleShot(3000, bail)
+        win._on_pipeline_fail(
+            "The operation could not finish (pipeline:DataValidationError). "
+            "Details are in app-errors.log in the settings folder."
+        )
+        assert bailed == []
+        assert len(samples) == 3
+        for message in samples:
+            assert str(emr) not in message
+            assert str(processed) not in message
+            assert " ·  EMR:" not in message
+        assert samples[0] == "Pipeline failed"
+        assert samples[1].startswith("No processed cache")
+        assert samples[2] == latest
+        after = win.statusBar().currentMessage()
+        assert after.startswith(latest)
+        assert "Pipeline failed" not in after
+        assert str(emr) in after and str(processed) in after
+        assert " ·  EMR:" in after
+    finally:
+        win._worker = None
+        for box in win.findChildren(QMessageBox):
+            box.accept()
+        win.close()
+
+
+@requires_qt
+def test_pipeline_dialog_preserves_a_newer_direct_status(qapp, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    latest = "Version 9.9.9 is ready. Restart when convenient."
+
+    def critical(parent, _title, _text):
+        parent.statusBar().showMessage(latest)
+        assert str(tmp_path) not in parent.statusBar().currentMessage()
+
+    monkeypatch.setattr(QMessageBox, "critical", critical)
+    win = MainWindow()
+    try:
+        win._on_pipeline_fail("pipeline:DataValidationError")
+        assert win.statusBar().currentMessage() == latest
+    finally:
+        win.close()
+
+
+@requires_qt
+def test_question_card_scope_line_fits_default_window_with_probe_error(qapp, monkeypatch, tmp_path):
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    win = MainWindow()
+    win.resize(1380, 860)
+    win.show()
+    qapp.processEvents()
+    try:
+        research = win.research
+        card = research.scope_combo.parentWidget()
+        grid = research._evidence_grid
+        assert grid.getItemPosition(grid.indexOf(card))[:4] == (0, 0, 1, 2)
+        research.model_status.setText("Ollama: stopped — click Start to activate")
+        research.set_status(_PROBE_FAILURE)
+        research.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
+        qapp.processEvents()
+        _assert_card_readable(win, _PROBE_FAILURE)
+        longer = _PROBE_FAILURE + " " + ("extra detail " * 40)
+        research.set_status(longer)
+        qapp.processEvents()
+        status = research.status_label
+        assert longer in status.text()
+        assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
+    finally:
+        win.close()
+
+
+def _assert_card_readable(win, expected: str) -> None:
+    research = win.research
+    card = research.scope_combo.parentWidget()
+    scope = research.scope_label
+    status = research.status_label
+    viewport = research.board_scroll.viewport()
+    assert expected in status.text()
+    assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
+    assert scope.height() + 1 >= scope.heightForWidth(max(scope.width(), 1))
+    scope_bottom = scope.mapTo(win, scope.rect().bottomLeft()).y()
+    card_bottom = card.mapTo(win, card.rect().bottomLeft()).y()
+    view_bottom = viewport.mapTo(win, viewport.rect().bottomLeft()).y()
+    assert scope_bottom <= view_bottom
+    assert card_bottom <= view_bottom
+    assert card_bottom <= win.statusBar().y()

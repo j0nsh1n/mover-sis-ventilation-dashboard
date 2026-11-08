@@ -1,4 +1,4 @@
-# roadmap.md — MOVER SIS Monitor
+# roadmap.md — MOVER Suite (formerly MOVER SIS Monitor)
 
 Note: "Complete when" conditions are verified locally (tests pass, feature works)
 and via review. One phase may span several small commits/PRs when the human asks
@@ -125,7 +125,100 @@ to publish.
     the packaging exclude
 - Complete when: each item has a test that fails before the fix, the five prototype
   scenarios still pass, and CI passes on Linux and Windows
-- Status: [ ]
+- Status: [x] 2026-10-17 — merged in #37 with Linux and Windows CI passing.
+  A local v0.14.0 Linux candidate is built and validated; publication is pending.
+
+## MOVER Suite migration (approved 2026-10-27)
+
+Plans and authorization state only. The sequence is the approved plan in
+`/home/jonathans/Projects/medical/mover/_work/mover-suite/MOVER-SUITE-PLAN.md`.
+This subsection does not mark an independently reviewed implementation
+milestone complete.
+
+### Phase 1 — Baseline and spec (authorized 2026-10-27)
+
+- Record checkout, HEAD, candidate AppImage, original checklist hashes, and
+  tooling versions
+- Update `spec.md` for PySide6, four tools, retired legacy tabs, shared
+  source and generation boundaries, and deferred decisions
+- Write the suite native QA record, UNRUN except the carried deferred keyboard
+  route, with the original candidate
+  checklist left UNRUN
+- Write `.handoff/mover-suite/phase-1.md`
+- Status: [x] 2026-10-27 — documentation complete on `feat/v0.15-signal-grounding`
+  at baseline `1bca1ce`. No Phase 1 commit exists yet. Main lightweight
+  Ruff, diff, and document checks passed. Heavy Python, coverage, and Rust
+  checks were resource-deferred; native suite QA awaits the suite target.
+  Approved GPT-6.1 Terra review through T3 Codex returned PASS after three
+  documentation fixes were applied and independently confirmed. This
+  closes the documentation phase only.
+
+### Phase 2 — Monitoring shell (authorized 2026-10-27)
+
+- Add suite navigation with one live module: today's G and F workspace
+- Preserve Monitoring behavior. Unfinished trainer, medication, and WHO
+  tools stay off the shell
+- Carry native suite checks for Setup, Cases, source rows, Rules, keyboard
+  use, scaling, safe errors, and persistence
+- Status: [x] 2026-10-27 local / 2026-10-28 UTC — Monitoring shell is
+  implemented on `feat/v0.15-signal-grounding`. Committed locally on
+  2026-11-01; parent `1bca1ce`. Not pushed. Independent reviews recorded
+  no remaining code issues. Native
+  source QA E1–E2 and sections 1–10 PASS except 3.3 DEFERRED; section 11
+  UNRUN. Historical full source gate FAIL was two mypy errors, later
+  fixed; ruff, mypy, and `git diff --check` then exited 0. Final
+  `pytest --cov=src` exited 0: 1259 passed, 7 skipped, 853 warnings in
+  964.83s; TOTAL 11909 statements, 1898 missed, 84%. All six recorded
+  source/test hashes match. Source-shell scope and closeout are complete;
+  frozen-artifact section 11 remains UNRUN. Phase 3 follows.
+
+### Phase 3 — Shared data context (authorized 2026-11-01)
+
+- One context records the selected source, processed directory, preset,
+  threshold identity, and a generation for pipeline, load, and scan jobs
+- Case-fetch cache keys include the EMR path, preset, and threshold hash
+- Status: implemented on 2026-11-01 on `feat/v0.15-signal-grounding`.
+  Terra and Opus 5.5 reviewed the first draft. Their findings are fixed:
+  a scan uses the stamp of the worker that finished, fetches do not
+  refill a cleared cache, a missing threshold hash does not bump the
+  generation, a fetch keeps its starting EMR path, and a reload during
+  the first pipeline run is queued. Full offscreen `pytest -q` exited 0
+  after those fixes. Not pushed. Native AI stays paused.
+
+### Folder rename (done 2026-11-01)
+
+The folder rename (plan step 4) is DONE as of 2026-11-01: the repository is now `/home/jonathans/Projects/medical/mover/mover-suite`. A compatibility symlink `mover-sis-monitor -> mover-suite` remains. The launcher, `.desktop` Path, T3 worktrees (`git worktree repair`), and `.venv` (rebuilt, Python 3.14) all use the real path. Product name, settings path and packaging names are unchanged until the branding step.
+
+Earlier history: a first attempt found the destination absent and stopped. The July preserved virtualenv was moved, not deleted, to
+`/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
+The live `.venv` stayed. Preflight stopped because this session’s
+processes use the repository as their working directory. `lsof.err` is
+Docker overlay and netns warnings only. Do not move the folder until a
+later preflight shows it unused.
+
+### Practice modules (2026-11-01)
+
+- Handoff grading, medication and vital rows, and fictional WHO checklist
+  practice are in the desktop. Cases and cards are fictional. Trainer history
+  is imported at `6c64f11` under `imports/handoff-trainer`. The original
+  trainer repo stays where it is.
+- The folder rename is now done (path `mover-suite`); see above.
+- A new suite candidate was not built. No portable container command was
+  found to copy, and a host build is not a substitute. Native QA on a new
+  artifact remains UNRUN.
+
+Suite QA section 12 (2026-11-07, suite AppImage, hidden KWin session) passed
+6 of 9 practice-tool steps. It failed on: handoff grading charging a stated
+minute to the wrong episode (12.2); combo and page names not exposed to screen
+readers (12.1); Tab traps in the handoff text and the medication table (12.9).
+A goal audit of the same day ranks real-data calibration, a live-AI session,
+and a release as the largest open items.
+
+GPT-6.1 Terra reviewed the practice pages and did not accept the first
+grader. The fix is local commit `eb09044`. Terra's re-review accepted it:
+a wrong minute, a normal saturation, and a generic word no longer count
+as a completed mention, and an empty timeline still reports the missing
+MAP and SpO2 series. Not pushed.
 
 ## Backlog (unscheduled)
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
@@ -138,9 +231,14 @@ to publish.
 - Windows/Linux release polish (signing, smaller Qt subset)
 - The GitHub Pages manifest cache of 600 seconds against a 60-second poll
 - Unlocked transitive dependencies (`plotly` stays: the optional Streamlit UI and
-  its tests use it; the `scipy` pin is scheduled in Phase 10)
+  its tests use it; the unused `scipy` pin was removed in Phase 10)
 - Signal- and unit-aware number grounding (coincidental matches with unrelated
-  source numbers pass today)
+  source numbers): implemented and independently reviewed locally on the v0.15
+  branch, 2026-10-17; publication is pending.
+- A local v0.15.0 Linux AppImage was built and independently reviewed on
+  2026-10-17. Manual replacement and Bash packaging were selected. Two minor
+  fixes passed focused tests; the final rebuild, startup, scan and packaging
+  checks passed. Publication remains pending.
 - On Windows, a minimum window width of about 1,060 px (the 900 px layout tests
   skip there)
 - The per-size chart image cache grows on each resize until the next case opens

@@ -198,7 +198,7 @@ def run_pipeline(
         emr_path = validate_emr_dir(emr_dir)
     else:
         emr_path = validate_emr_dir(resolve_emr_dir(None))
-    out_path = resolve_output_dir(output_dir, create=True)
+    out_path = resolve_output_dir(output_dir, create=True, source_emr=emr_path)
 
     thresholds = load_thresholds(preset, validate=validate)
     file_hash = thresholds_sha256()

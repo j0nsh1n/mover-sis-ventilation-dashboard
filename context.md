@@ -1,37 +1,104 @@
-# context.md — MOVER SIS Monitor
+# context.md — MOVER Suite (formerly MOVER SIS Monitor)
 
 ## Current State
 
-- **Version:** 0.13.0 released 2026-10-16 (roadmap Phases 7, 8 and 9, and Phase 6
-  engineering). 0.12.1 before it carried the v0.11 and v0.12 work. Installed apps
-  update through the signed Pages manifest.
-- **Branch:** `main` includes everything through v0.13.0 (#34, #35 and the release
-  PR). No working branches are open.
+- **Phase (2026-11-01):** Phase 1 documentation and the Phase 2 Monitoring
+  shell are committed locally as `bf73b41` and not pushed. Phase 3 shared
+  data context is implemented on the same branch. Terra and Opus 5.5
+  reviewed the first draft, and their findings are fixed. The
+  window title names MOVER Suite and MOVER SIS Monitor, and one
+  non-interactive Monitoring label sits in the menu bar. ResearchWorkspace
+  remains the central widget. Kimi's independent implementation review found
+  no code issues. Terra reviews drove nested-dialog, direct-status, and
+  combobox-notification corrections; the final narrow Terra code review
+  recorded No issues found. Native source QA E1, E2, and sections 1–10 PASS
+  except 3.3 DEFERRED. Rechecks 1.5, 6.1, 7.1, 8.2, 8.3, and 10.2 PASS;
+  later 6.1 and 8.2 PASS. Section 11 candidate, GLIBC, artifact, and Windows
+  checks remain UNRUN. Final Python coverage for the Phase 2 tree exited 0:
+  1259 passed, 7 skipped, 853 warnings; TOTAL 11909 statements, 1898 missed,
+  84%. Those six source hashes match `bf73b41`. Phase 3 then edits the
+  desktop and case-fetch cache, so that hash list is the Phase 2 record.
+  Phase 2 source-shell work and its closeout are COMPLETE. The local
+  commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`. Nothing
+  is pushed. The folder rename (plan step 4) is DONE as of 2026-11-01: the repository is now `/home/jonathans/Projects/medical/mover/mover-suite`. A compatibility symlink `mover-sis-monitor -> mover-suite` remains. The launcher, `.desktop` Path, T3 worktrees (`git worktree repair`), and `.venv` (rebuilt, Python 3.14) all use the real path. Product name, settings path and packaging names are unchanged until the branding step. Earlier history: The July preserved virtualenv (Python 3.14.6,
+  created under “Monitoring Dashboard (MOVER SIS)”) was moved, not
+  deleted, to
+  `/home/jonathans/Projects/medical/mover/_scratch/suite-move/venv-july-3.14.6`.
+  The live `.venv` (Python 3.14.7) stayed. Preflight found the target
+  `mover-suite` absent, added `.venv.old-premove/` to the local git
+  exclude, and then stopped: `lsof +D` lists this session’s processes
+  with the repository as their working directory. `lsof.err` contains
+  only Docker overlay and netns stat warnings.
+- **Branch:** `feat/v0.15-signal-grounding`, explicit user override for this
+  work. The root
+  checkout contains the integrated Phase 1 and Phase 2 edits. Grok's separate
+  implementation worktree remains at
+  `/home/jonathans/.t3/worktrees/mover-sis-monitor/t3-ce2f3b2a`. The other
+  working branch `feat/v0.14-desktop-fixes` is preserved.
+- **Audit source:** the v0.15 audit fixes are already committed at that HEAD.
+  Older handoff text about uncommitted audit edits is stale.
+- **Version:** source is 0.15.0, prepared locally. Published version remains
+  0.13.0. No installed app was replaced.
+- **Tooling verified 2026-10-27:** Python 3.14.7, Ruff 0.16.9, mypy 2.3.1.
+  These are installed-version checks.
+- **Checks 2026-10-27/28:** After the research_workspace type fixes, main
+  ran `.venv/bin/ruff check .` (exit 0, All checks passed!),
+  `nice -n 10 .venv/bin/mypy` (exit 0, Success: no issues found in 65 source
+  files), and `git diff --check` (exit 0). No source changed in this
+  closeout. The 2026-10-27 comprehensive source gate failed solely on two
+  mypy errors; its Python 1259 passed, 7 skipped, and coverage 84% TOTAL
+  11907 statements, 1897 missed, are pre-type-fix. Thresholds, packaging,
+  and Rust checks in that gate exited 0. Later recovery logs
+  `final-pytest-q.log` and `final-pytest-cov.log` have no terminal summary.
+  Main's final coverage run completed under
+  `/home/jonathans/Projects/medical/mover/_scratch/suite-verify/phase2-closeout/`
+  (2026-10-28T03:31:37Z to 03:47:44Z). Terminal exit 0; 1259 passed,
+  7 skipped, 853 warnings in 964.83s; TOTAL 11909 statements, 1898 missed,
+  84%. All six source/test hashes recorded during the run still match.
+  The incomplete recovery runs are superseded by this result. Closeout record:
+  `.handoff/mover-suite-phase-2/closeout-report.md`. Native source QA is in
+  `/home/jonathans/Projects/medical/mover/_work/mover-suite/SUITE-QA.md`.
+  Frozen-artifact section 11 and new frozen smoke await a suite candidate.
+- **Historical 2026-10-22 gate (not rerun 2026-10-27):** 1247 Python passed,
+  2 skipped, 5 real-data deselected; Ruff and mypy passed; 10 desktop Rust
+  and 2 parser checks passed. Portable frozen smoke and GLIBC 2.39-or-lower
+  compatibility are also historical.
+- **AppImage candidate (preserved):**
+  `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/candidate-r1/src/dist/MOVER-SIS-Monitor-v0.15.0-x86_64.AppImage`,
+  SHA256 `12a2a835840d17e1f878f111098c9f8977aa17f453f0f9e74a47f5182dde6ff6`.
+- **Original native checklist (preserved, UNRUN):**
+  `/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`,
+  SHA256 `80642f761e714d2c3f8491953267357ad8afa12f147d2f5f35b8184f30560ad3`.
+- **Historical 2026-10-18 human QA** of an earlier v0.15 image is recorded
+  under `~/Projects/medical/mover/_work/appimage-human-20261018-r1/`. That
+  record is separate from the UNRUN candidate checklist. Live AI testing
+  remains paused.
+- **Local release candidates (historical):** v0.14.0 Linux archive under
+  `~/Projects/medical/mover/_work/release-v0.14.0/`; combined v0.15.0 Linux
+  AppImage under `~/Projects/medical/mover/_work/release-v0.15.0/`. No local
+  Windows archive was built.
 - **Distribution:** The repository and release packages are public. GitHub
   Pages hosts the signed manifest at
   `https://j0nsh1n.github.io/mover-sis-ventilation-dashboard/updates/latest.json`.
-  Frozen v0.9.0 builds check it by default. The v0.9.0 release and Pages
-  manifest are live.
-- **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.x.
-- **Tests:** `PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q` passes on
-  `feat/v0.12-g` (809 passed, 2 skipped, 5 deselected, 2026-10-16) with
-  `ruff check .` and `mypy` clean. The five real-wave decode tests run only
-  with `MOVER_REAL_DATA_TESTS=1`. Rust updater and signer suites last passed
-  2026-09-28. The v0.11 local build ran 10 s on both wayland and xcb without a
-  crash (2026-10-14).
-  Real EMR and wave data are on this machine; no test or lane reads them.
-  `tools/desktop_drive.py` drives the app offscreen on synthetic data and
-  saves a screenshot per step; every desktop check uses it.
+- **Runtime:** Python **3.14** (agents + CI target). Dev host verified 3.14.7.
+- **EMR:** `/var/mnt/games/EMR` remains local, read-only, and unopened. No
+  actual patient values were written into Phase 1 files.
+- **Trainer:** `/home/jonathans/Projects/anesthesia-handoff-trainer` is still
+  the standalone M0 scaffold at `a9a6e5d`. Untracked `core/Cargo.lock` stays
+  there. Suite grading uses fictional cases. The standalone repo is not archived.
 - **Product:** Local research desktop for MOVER SIS EMR/wave; optional Streamlit;
   local Ollama co-pilot (not clinical CDS).
-- **Desktop implementation:** G is the first tab after setup; local embedding
-  retrieval indexes one short record per surgery, plus short facts (signals,
-  flagged rules, signal gaps) for analyzed cases, and gives up to three case
-  extracts to the local AI. Keyword search matches whole words and works
-  without the embedding model. G has a Rules drawer (Ctrl+R), a Cases
-  overview and a conversation panel beside the evidence board. F shows the
-  three signal tracks, source rows, flag episodes, a flag lane and rule detail
-  with current thresholds.
+- **Desktop implementation:** G is the central `ResearchWorkspace` after
+  setup. Suite chrome adds the MOVER Suite title and one non-interactive
+  Monitoring menu-bar label. Local embedding retrieval indexes one short
+  record per surgery, plus
+  short facts (signals, flagged rules, signal gaps) for analyzed cases, and
+  gives up to three case extracts to the local AI. Keyword search matches
+  whole words and works without the embedding model. G has a Rules drawer
+  (Ctrl+R), a Cases overview and a conversation panel beside the evidence
+  board. F shows the three signal tracks, source rows, flag episodes, a flag
+  lane and rule detail with current thresholds. The Ask, Summary, Case
+  timeline, and Rule reference tabs are retired.
 - **Design reference:** `docs/MONITORING_CONCEPTS.md` holds the selected G/F
   design and a future article-search proposal based on `HealthDatabaseAccess`.
 - **Interactive studies:** `docs/prototypes/monitoring-radical-concepts.html`
@@ -116,6 +183,7 @@
 | `scripts/install_local.sh` | Build + install `~/.local/share/mover-sis-monitor` |
 | `packaging/` | PyInstaller spec (targeted collection + path filters), entry, rthooks |
 | `rust-updater-tests/` | Rust contract tests with a Python probe for the updater and Qt controller |
+| `rust-desktop-tests/` | Rust-owned desktop regression contracts with a bounded Python/Qt observation bridge |
 | `src/update.py`, `src/desktop/updates.py` | Signed checks, staging, apply, rollback |
 | `tools/update-manifest/` | Rust release manifest signer |
 | `.github/workflows/` | CI and release jobs, including Pages deployment |
@@ -150,8 +218,9 @@ Wave root (optional) ──► wave_decode                   │
   mypy checks `src/` without `pandas-stubs`, so adoption finds real bugs without
   reformatting the codebase or drowning in stub false positives. Widening either
   is a possible later step.
-- **Question-first UI:** G opens after setup; legacy Ask, Summary, Timeline,
-  and Rule reference remain available as secondary tabs.
+- **Question-first UI:** G opens after setup as the central widget. Equivalent
+  functions live in G, F, Cases, and the Rules drawer. The Ask, Summary, Case
+  timeline, and Rule reference tabs are retired.
 - **On-demand fetch:** full `patient_information` search is cheap; flag only shortlist
   (compute-now vs full corpus precompute).
 - **Research answer gate:** one rewrite round on directive phrasing, a wrong age
@@ -174,7 +243,7 @@ Wave root (optional) ──► wave_decode                   │
   for one shard, so Cancel can terminate the worker; CLI scans with one worker
   stay in-process.
 - **Research isolation:** G disables legacy agent tools and uses a session limited
-  to retrieved PIDs, so prior Ask-tab selections cannot enter its prompt.
+  to retrieved PIDs, so prior case selections cannot enter its prompt.
 - **Ollama local-only by default:** remote base URL needs explicit allow env.
 - **Stop/Start lifecycle:** wait for port free; Start retries so Stop → Start works
   without relaunching the app.
@@ -215,20 +284,35 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Date:** 2026-10-16
-- **Released:** v0.13.0. The plan and decision trail are under
-  `~/.claude/orchestrate/mover-overhaul/` (`docs/v013/plan.md`, `decisions.tsv`).
-- **Done:** one Research workspace with the legacy tabs retired; scenario and
-  comparison intents; ask about a minute in F; local article search; number
-  grounding with an eval in CI; thresholds version shown in F; scan memory,
-  bench script, merged full-EMR profile and sanitized scan failures; the
-  calibration runbook. PR CI now runs the test suite on Windows too.
-- **Verified:** every item had an owner gate, an independent audit (Codex or
-  Sonnet) and fixes in a second round; the stacked gate passed 1164 tests.
-- **Next:** the operator runs Phase 6 on the real data per
-  `docs/CALIBRATION_RUNBOOK.md` and approves the spec.md wording proposed in #34
-  and #35. Follow-ups: signal- and unit-aware number grounding (coincidental
-  matches), the stale progress line after an answer, the Windows minimum window
-  width, Enter on the Cases button, the descending sort arrow, a scan surviving a
-  reload of a different EMR, the per-size chart image cache, and the agent filter
-  matching analyzed cases only.
+- **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
+- **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
+  Phase 2 commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`.
+  The branch is not pushed. Grok's implementation worktree remains at
+  `/home/jonathans/.t3/worktrees/mover-sis-monitor/t3-ce2f3b2a`. Other
+  branch `feat/v0.14-desktop-fixes` and untracked
+  `rust-desktop-tests/target/` are preserved.
+- **Task:** Phase 3 shared data context records source, preset, threshold
+  identity, job generation, and the saved chat and embedding models.
+  Review findings are fixed. Full offscreen `pytest -q` exited 0 after
+  those fixes. The folder rename (plan step 4) was later completed (see above); an earlier attempt stopped before `mv`: the July virtualenv is parked at
+  `_scratch/suite-move/venv-july-3.14.6`, and this session holds the
+  repository directory. Phase 2 source-shell scope and closeout stay
+  COMPLETE. Frozen-artifact checks remain UNRUN.
+- **Review:** Grok 4.7 and 4.6 produced designs; GPT-6.1 Terra cross-judged
+  them. Grok 4.7 implemented the selected design. Kimi reviewed the
+  integrated source and found no code issues. Terra's final narrow code
+  review recorded No issues found. Those reviews are history.
+- **Next (2026-11-07):** The folder rename is done; do not rename again.
+  The suite AppImage (SHA256 `512bb077…`) was built in the preserved glibc 2.39
+  builder container; suite QA 11.1–11.4 PASS, with 11.4 on a hidden KWin
+  session on a private D-Bus (see TRIAGE.md). Section 12 practice-tool checks:
+  6 PASS, 3 FAIL (handoff grading charges a minute to the wrong episode; combo
+  and page names not exposed to screen readers; Tab traps in the handoff text
+  and medication table). `feat/v0.15-signal-grounding` is pushed with draft
+  PR #38, CI green. Open: those three practice-page defects, live AI (paused),
+  real-data calibration (roadmap Phase 6), release version and name,
+  publication. The goal audit is a private artifact, linked in the session.
+- **Historical:** earlier grounding, AppImage packaging, audit-fix, and the
+  2026-10-27 FAIL full-source gate remain under `_work/` and `.handoff/`.
+  Native `CANDIDATE-QA.md` stays UNRUN. Windows and real-data checks remain
+  open. No push, PR, installed-app replacement, or publication occurred.

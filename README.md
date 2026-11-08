@@ -1,6 +1,9 @@
-# MOVER SIS — Intraoperative Ventilation & Anesthesia Monitor
+# MOVER Suite — Intraoperative Ventilation & Anesthesia Research
 
-**Version 0.13.0**
+MOVER Suite was called MOVER SIS Monitor up to v0.13.0. Its Monitoring page is the SIS Monitor; View also opens
+fictional Handoff practice, Medication and vitals, and WHO checklist practice.
+
+**Version 0.15.0**
 
 Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics.uci.edu/) **SIS** perioperative dataset (UC Irvine; OR dates largely **2015–2018**). Visualizes ventilator settings, ETCO₂, and volatile anesthetic concentration over each surgery, with transparent rule-based anomaly flags.
 
@@ -177,7 +180,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 
 ## Versioning and releases
 
-- Source of truth: top-level [`VERSION`](VERSION) file (`0.13.0`, semver `x.y.z`)
+- Source of truth: top-level [`VERSION`](VERSION) file (`0.15.0`, semver `x.y.z`)
 - Agent policy: [`agents.md`](agents.md) + project contract [`spec.md`](spec.md); state in [`context.md`](context.md); history in [`CHANGELOG.md`](CHANGELOG.md)
 - UI **About** and window title show the same version
 - **On a `VERSION` change merged to `main`** (or a manual run): GitHub Actions workflow
@@ -188,6 +191,9 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
   from public GitHub Releases. Install v0.9.0 manually once if you have v0.8.0
   or an older build. Set `MOVER_UPDATE_MANIFEST_URL` to an empty string to
   disable automatic checks.
+- The Linux AppImage uses manual file replacement for updates. Settings and
+  research outputs live outside the image. See [AppImage packaging](packaging/appimage/README.md)
+  for build instructions, writable data paths and launch requirements.
 
 ### Local LLM (Ollama)
 
@@ -214,23 +220,31 @@ Answers are grounded in a structured case briefing. Research use only — not fo
 source .venv/bin/activate
 # Build + install frozen app to ~/.local/share/mover-sis-monitor
 ./scripts/install_local.sh
-# Launch
-mover-sis-monitor
+# Launch (mover-sis-monitor still works)
+mover-suite
 ```
 
 Or build only:
 
 ```bash
 ./scripts/build_executable.sh
-# → dist/MOVER-SIS-Monitor-v0.13.0-linux-x86_64.tar.gz
+# → dist/MOVER-Suite-v0.15.0-linux-x86_64.tar.gz
 ```
 
 | Path | Description |
 |------|-------------|
 | `dist/MOVER-SIS-Monitor/MOVER-SIS-Monitor` | GUI binary |
-| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.13.0` |
-| `dist/MOVER-SIS-Monitor-v0.13.0-linux-x86_64.tar.gz` | Portable archive |
+| `dist/MOVER-SIS-Monitor/VERSION` | Stamped `0.15.0` |
+| `dist/MOVER-Suite-v0.15.0-linux-x86_64.tar.gz` | Portable archive (its folder is still `MOVER-SIS-Monitor/`, which older updaters need) |
+| `dist/MOVER-Suite-v0.15.0-x86_64.AppImage` | Linux AppImage, built separately |
 | `~/.local/share/mover-sis-monitor/` | Local install (via `install_local.sh`) |
+
+To run the AppImage, make it executable and open it:
+
+```bash
+chmod +x MOVER-Suite-v0.15.0-x86_64.AppImage
+./MOVER-Suite-v0.15.0-x86_64.AppImage
+```
 
 If the binary fails to start on a minimal install:
 

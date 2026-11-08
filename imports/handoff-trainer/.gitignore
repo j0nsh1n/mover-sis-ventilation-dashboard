@@ -1,0 +1,12 @@
+data/
+processed/
+*.csv
+*.parquet
+.env
+config.toml
+target/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+!tests/fixtures/*.csv

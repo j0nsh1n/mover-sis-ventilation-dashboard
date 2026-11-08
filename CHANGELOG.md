@@ -7,6 +7,120 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- View can open Handoff practice, Medication and vitals, or a fictional WHO
+  checklist. Monitoring still opens first. Handoff practice grades fictional
+  timelines as mentioned, missed, or unsupported. The medication page shows
+  units, time, bolus versus infusion, and source, and it does not recommend
+  treatment. The checklist page walks Sign in, Time out, and Sign out on
+  authored cards and can save that practice on this computer.
+
+- A Monitoring label sits on the left of the menu bar. The research
+  workspace, menus, and Settings gear stay in place.
+
+### Changed
+
+- The app is now called MOVER Suite. The window title reads "MOVER Suite" with
+  the version; About, the setup wizard, update messages, the menu entry, and
+  release files use the new name. Monitoring is still the SIS Monitor.
+- Settings move to `~/.config/mover-suite/`. On first start the old
+  `~/.config/mover-sis-monitor/` folder is copied there once and left as it was,
+  so an older version still finds its settings. If the copy fails, the app keeps
+  using the old folder and says so in the status bar.
+- Installed v0.13.0 apps update to MOVER Suite on their own. The folder inside
+  the download keeps its old name for that reason. An AppImage from before the
+  rename keeps its data folder.
+- `install_local.sh` adds a `mover-suite` command next to `mover-sis-monitor`.
+
+### Fixed
+
+- Opening the Cases/Articles dropdown by keyboard shows both choices. A scroll
+  arrow no longer covers half of "Articles". The same fix applies to the other
+  dropdowns that ignore the mouse wheel until focused.
+- Handoff practice accepts a minute or a saturation value only when that
+  detail is on the fictional episode. A wrong minute, a normal saturation,
+  or a generic word such as "sustained" does not count as mentioning the
+  event. "SpO2 missing" names a missing series. An empty timeline still
+  reports the missing MAP and SpO2 series.
+- Handoff practice counts a minute or value only for the finding it is
+  written with. "Phenylephrine bolus given at minute 30" no longer marks a
+  correct hypotension sentence unsupported. It marks phenylephrine
+  unsupported when no dose was given at minute 30. With two episodes of the
+  same kind, each keeps its own minutes.
+- In Handoff practice, Tab moves on from the handoff text instead of typing a
+  tab, and in Medication and vitals, Tab leaves the table instead of walking
+  every cell.
+- Screen readers hear the practice pages properly: the scenario and card
+  dropdowns announce their purpose, notices and the practice count read out
+  their text, and the window title names the open page.
+- Before the first search, the research card shows how many analyzed cases
+  are loaded instead of a dash, and it shows them again after switching back
+  from Articles.
+- When Ollama is not running, the status line names the reason (for example
+  "connection refused") instead of raw error text.
+- Scrolling the research board or Settings with the mouse wheel no longer
+  changes a dropdown that passes under the pointer, such as the question
+  scope. A dropdown follows the wheel once it has focus.
+- On a small or high-scale screen the research header moves its buttons
+  below the title, wrapping them if needed, instead of cutting their
+  labels short.
+- Checking a long answer's numbers against its sources is faster again. It
+  had been rescanning the whole answer for each number.
+- A case fetch is reused only for the same EMR folder, rule preset, and
+  threshold hash. The same surgery id in another folder is computed again.
+  A pipeline load or full-EMR scan that finishes after the data folders
+  change is not applied, including when the folders are switched back.
+  The saved chat model and embedding model are part of that shared record.
+  A new embedding model applies to the next search and leaves the analyzed
+  sample in place. Reloading without a recorded threshold hash does not
+  count as a new threshold identity. A fetch keeps the EMR path it
+  started with, and a reload requested while a pipeline is still writing
+  the first cache runs again when that job finishes.
+- Dismissing the startup load warning puts keyboard focus on the research question.
+- A failed pipeline keeps folder paths off the status bar for the whole error
+  dialog, including when a reload changes the status while that dialog is open.
+  Closing it preserves a newer direct message or restores the latest path line.
+- At the default window size, the question card and its indexed-surgeries line
+  stay fully visible after a failed local-model check. A longer status still
+  wraps instead of being cut off inside the card.
+- The question-scope and Local AI dropdowns use their purpose as the accessible
+  name and the current choice as the accessible value. A new choice, including
+  a model-list refresh, updates that value. The selected model is unchanged.
+
+- Pipeline and full-EMR scan outputs are refused inside the source EMR tree,
+  including when external output paths are enabled. Exports with other folder
+  names default to a separate processed folder.
+- Desktop reloads clear the previous analyzed sample and check the recorded EMR
+  source before loading cached data. Results from jobs for another folder are
+  discarded.
+- A number attributed to an absent case signal cannot borrow an age or another
+  signal's value. Heart-rate readings and thresholds accept both bpm and /min.
+- Load, pipeline, case and research failures show short codes. Full diagnostic
+  details go to a local app-errors.log in the settings folder, readable only by
+  the user, including when the log already existed.
+- Research controls have field names and button names that match their labels.
+  Status changes and completed answers emit accessibility announcements. Empty
+  scroll containers no longer take keyboard focus, and dropdowns show a focus
+  border and visible chevrons.
+- Signal charts have an accessible description and distinguish flag severities
+  by marker shape. The ready-state question card fits at the default size.
+  Initial windows fit the available screen, and Setup and Settings contents
+  scroll when space is limited.
+
+## [0.15.0] - 2026-10-17
+
+This version combines the v0.14 desktop fixes and v0.15 number-grounding work.
+The local v0.14 Linux candidate was not published separately.
+
+- A Linux AppImage packages the desktop as one executable file. It keeps saved
+  data paths, defaults new outputs to the user's data directory, and uses manual
+  AppImage replacement for updates.
+
+- The number check ties each number in an answer to the signal it describes: "PIP reached 23" must match a PIP figure in the sources (or a threshold in PIP's unit), not the patient's age 23 or a heart-rate value. A number is tied to the signals named just before it in its sentence, or to its column's header in a table of rows; with no signal named, a number with a measurement unit (cmH2O, mmHg, mL, mL/kg, bpm, /min, vol%) must match a source figure in that unit. Counts, times, dates, ages, doses and figure numbers, and every number in article abstracts, are compared as before. On the eval's three seed-8 extracts, made-up PIP, PEEP, tidal volume, ETCO2, heart-rate, SpO2 and FiO2 values that passed by coincidence fell from 52% to none, and every figure the extracts print still passes; the eval reports both as `coincidental_pass_rate` and `true_claim_pass_rate`. The "Ask about this minute" extract names the signal on its "Mean flagged value" line when the rule watches one signal.
+
+- Article number checks recognize catalog headers with parenthesized publication years and periods in titles. Abstract figures retain their existing value-only check, while unsupported figures are still rewritten or removed.
+
 - A saved full-EMR scan records which EMR folder it scored (as a hash, not a path). Pointing the app at a different EMR or processed folder drops the old scan's cases, scan scope and indexed count at once, even while another scan runs; a scan that finishes after either folder changed is not loaded, and a scan whose `patient_information.csv` changed while it ran writes nothing. Scan again for the new EMR. Scans saved by earlier versions still load.
 - Scenario questions that name an anesthetic agent now match every surgery a full-EMR scan scored, not only the analyzed sample (the sample's agent wins where both have the case). Without a scan, the scope line of an agent-filtered scenario says the agent is known for analyzed cases only; when the agent filter leaves nothing, the answer says where agents come from and that a scan would widen the search.
 - The Research status line no longer keeps a running step such as "Model round 1/8…" or "Rewriting the draft…" after the search ends: it reads "Search finished.", keeps a failure message, and returns to the earlier status when the search is cancelled. Reopening an earlier question, cancelled ones included, shows "Search finished." or "Search cancelled." instead of the running step.

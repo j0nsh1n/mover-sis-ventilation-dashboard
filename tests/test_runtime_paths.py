@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 
 import pytest
 
@@ -54,3 +55,46 @@ def test_env_overrides(monkeypatch, tmp_path):
     assert dd() == (tmp_path / "d").resolve()
     assert ed() == (tmp_path / "e").resolve()
     assert pd() == (tmp_path / "p").resolve()
+
+
+def test_appimage_outputs_use_writable_user_data(monkeypatch, tmp_path):
+    monkeypatch.setenv("MOVER_APPIMAGE", "1")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user data"))
+    expected = tmp_path / "user data" / "mover-suite" / "data"
+    assert data_dir() == expected
+    assert processed_dir() == expected / "processed"
+    assert emr_dir() == expected / "raw" / "EMR"
+
+
+def test_an_appimage_from_before_the_rename_keeps_its_data_folder(monkeypatch, tmp_path):
+    monkeypatch.setenv("MOVER_APPIMAGE", "1")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user data"))
+    old = tmp_path / "user data" / "mover-sis-monitor" / "data"
+    old.mkdir(parents=True)
+    assert data_dir() == old
+    assert not (tmp_path / "user data" / "mover-suite").exists()
+
+
+def test_appimage_preserves_saved_and_explicit_data_paths(monkeypatch, tmp_path):
+    from src.runtime_paths import set_session_paths
+
+    monkeypatch.setenv("MOVER_APPIMAGE", "1")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user data"))
+    saved = tmp_path / "saved data"
+    set_session_paths(data_dir=saved)
+    assert data_dir() == saved
+    explicit = tmp_path / "explicit data"
+    monkeypatch.setenv("MOVER_DATA_DIR", str(explicit))
+    assert data_dir() == explicit
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="AppImage is Linux-only; Windows ignores HOME")
+@pytest.mark.parametrize("xdg_value", [None, ""])
+def test_appimage_defaults_to_home_when_xdg_is_unset_or_empty(monkeypatch, tmp_path, xdg_value):
+    monkeypatch.setenv("MOVER_APPIMAGE", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    if xdg_value is None:
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_DATA_HOME", xdg_value)
+    assert data_dir() == tmp_path / ".local/share/mover-suite/data"

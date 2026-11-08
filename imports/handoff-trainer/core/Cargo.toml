@@ -1,0 +1,12 @@
+[package]
+name = "aht_core"
+version = "0.0.1"
+edition = "2021"
+description = "Preprocessing and event detection for the anesthesia handoff trainer (placeholder)"
+
+[lib]
+name = "aht_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# pyo3 and polars get added at M1.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build a standalone Linux x86_64 executable for Nobara / Fedora.
-# Output: dist/MOVER-SIS-Monitor/  and  dist/MOVER-SIS-Monitor-vX.Y.Z-linux-x86_64.tar.gz
+# Output: dist/MOVER-SIS-Monitor/  and  dist/MOVER-Suite-vX.Y.Z-linux-x86_64.tar.gz
+# The folder and program keep the MOVER-SIS-Monitor name: installed v0.13.0 updaters accept only that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +16,7 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 export MOVER_APP_VERSION="$VERSION"
-echo "==> Building MOVER SIS Monitor v${VERSION}"
+echo "==> Building MOVER Suite v${VERSION}"
 
 echo "==> Installing build dependencies"
 python -m pip install -q -U pip
@@ -24,7 +25,7 @@ python -m pip install -q 'pyinstaller==6.22.3'
 
 echo "==> Cleaning previous build"
 rm -rf build/pyinstaller dist/MOVER-SIS-Monitor
-rm -f dist/MOVER-SIS-Monitor-*.tar.gz dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz
+rm -f dist/MOVER-SIS-Monitor-*.tar.gz dist/MOVER-Suite-*.tar.gz
 
 echo "==> Running PyInstaller (onedir)"
 python -m PyInstaller \
@@ -36,7 +37,7 @@ python -m PyInstaller \
 
 APP_DIR="$ROOT/dist/MOVER-SIS-Monitor"
 BIN="$APP_DIR/MOVER-SIS-Monitor"
-TARBALL="$ROOT/dist/MOVER-SIS-Monitor-v${VERSION}-linux-x86_64.tar.gz"
+TARBALL="$ROOT/dist/MOVER-Suite-v${VERSION}-linux-x86_64.tar.gz"
 
 if [[ ! -x "$BIN" && -f "$BIN" ]]; then
   chmod +x "$BIN"
@@ -94,8 +95,8 @@ Then launch MOVER-SIS-Monitor and choose this folder (or Run pipeline).
 EOF
 
 cat > "$APP_DIR/README-RUN.txt" <<EOF
-MOVER SIS Ventilation Monitor v${VERSION} — Linux executable
-============================================================
+MOVER Suite v${VERSION} — Linux executable
+==========================================
 
 Run:
   ./launch.sh
@@ -122,7 +123,7 @@ EOF
 cat > "$APP_DIR/mover-sis-monitor.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=MOVER SIS Monitor
+Name=MOVER Suite
 GenericName=Ventilation & Anesthesia Monitor
 Comment=MOVER SIS research dashboard v${VERSION}
 Exec=$APP_DIR/launch.sh
@@ -152,7 +153,7 @@ if [[ "$QT_QPA_PLATFORM" == xcb* ]] && command -v ldconfig >/dev/null 2>&1; then
     [[ -e "$APP_DIR/_internal/$lib" || "$host_libs" == *"$lib "* ]] || missing+=("$lib")
   done
   if (( ${#missing[@]} )); then
-    msg="MOVER SIS Monitor needs system libraries that are not installed: ${missing[*]}
+    msg="MOVER Suite needs system libraries that are not installed: ${missing[*]}
 
 Ubuntu / Debian:  sudo apt install libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0
 Fedora / Nobara:  sudo dnf install libxkbcommon libxkbcommon-x11 xcb-util-cursor"
@@ -174,7 +175,7 @@ chmod +x "$APP_DIR/launch.sh"
 echo "==> Creating tarball $TARBALL"
 tar -C "$ROOT/dist" -czf "$TARBALL" MOVER-SIS-Monitor
 # Stable alias for tooling
-cp -f "$TARBALL" "$ROOT/dist/MOVER-SIS-Monitor-linux-x86_64.tar.gz"
+cp -f "$TARBALL" "$ROOT/dist/MOVER-Suite-linux-x86_64.tar.gz"
 
 echo
 echo "Build complete: v${VERSION}"

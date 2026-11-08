@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MOVER Suite
+Comment=Explore de-identified perioperative records for research
+Exec=AppRun
+Icon=mover-sis-monitor
+Terminal=false
+Categories=Science;
+StartupNotify=true
+StartupWMClass=MOVER-SIS-Monitor

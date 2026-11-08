@@ -92,7 +92,8 @@ def build_minute_extract(
     )
     mean = episode.get("value_mean")
     if mean is not None and pd.notna(mean):
-        lines.append(f"Mean flagged value: {float(mean):g}")  # type: ignore[arg-type]
+        named = f" ({episode_signals[0]})" if len(episode_signals) == 1 else ""
+        lines.append(f"Mean flagged value{named}: {float(mean):g}")  # type: ignore[arg-type]
     lines.extend(_signal_stats(rows, signal, start, end) for signal in episode_signals)
     lines.extend(threshold_lines)
     return "\n".join(lines)

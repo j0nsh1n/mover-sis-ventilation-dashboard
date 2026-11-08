@@ -38,13 +38,22 @@ def test_gate_catches_every_flawed_answer_and_flags_no_clean_one(scripted):
     assert metrics["draft_grounding_rate"] < 1.0, "the corpus must contain drafts with invented numbers"
 
 
+def test_made_up_signal_values_do_not_pass_by_coincidence(scripted):
+    _, metrics = scripted
+    # Before numbers were tied to their signal, about 30% passed on these extracts
+    assert metrics["coincidental_pass_rate"] <= 0.02
+    # and every figure the extracts print for those signals still passes
+    assert metrics["true_claim_pass_rate"] == 1.0
+
+
 def test_corpus_covers_each_kind_of_answer(scripted):
     _, metrics = scripted
     assert metrics["n_entries"] >= 20
     assert metrics["n_expected_to_fail"] >= 8
     assert metrics["n_clean"] >= 8
     assert 0 < metrics["rewrite_rate"] < 1
-    assert metrics["gate_latency_ms_p95"] >= metrics["gate_latency_ms_mean"] > 0
+    # One slow call can lift the mean above a nearest-rank p95, so only check both were recorded.
+    assert metrics["gate_latency_ms_p95"] > 0 and metrics["gate_latency_ms_mean"] > 0
     assert (metrics["seed"], metrics["n_cases"]) == (8, 30)
 
 

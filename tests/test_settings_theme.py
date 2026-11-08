@@ -168,3 +168,122 @@ def test_settings_dialog_constructs(config_home, monkeypatch, tmp_path):
     assert len(wiz.pageIds()) == 3
     wiz.close()
     clear_session_path_overrides()
+
+
+@pytest.fixture
+def xdg_home(tmp_path, monkeypatch):
+    import src.user_settings as user_settings
+
+    monkeypatch.delenv("MOVER_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(user_settings, "_config_roots", {})
+    monkeypatch.setattr(user_settings, "_migration_note", None)
+    return tmp_path / "xdg"
+
+
+def _old_install(xdg: Path) -> Path:
+    old = xdg / "mover-sis-monitor"
+    old.mkdir(parents=True)
+    (old / "settings.json").write_text('{"theme": "dark", "emr_dir": "/fake/EMR"}', encoding="utf-8")
+    (old / "handoff-practice.jsonl").write_text('{"case_id": "FAKE-1"}\n', encoding="utf-8")
+    return old
+
+
+def _snapshot(folder: Path) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in sorted(folder.iterdir())}
+
+
+def test_old_settings_are_copied_once_and_the_old_folder_is_left_alone(xdg_home):
+    from src.user_settings import settings_migration_note, settings_path
+
+    old = _old_install(xdg_home)
+    before = _snapshot(old)
+    assert settings_path() == xdg_home / "mover-suite" / "settings.json"
+    assert load_settings() == {"theme": "dark", "emr_dir": "/fake/EMR"}
+    new = xdg_home / "mover-suite"
+    assert (new / "handoff-practice.jsonl").read_text(encoding="utf-8") == '{"case_id": "FAKE-1"}\n'
+    assert str(old) in (new / "migrated-from.txt").read_text(encoding="utf-8")
+    assert _snapshot(old) == before
+    assert settings_migration_note() is None
+    assert not list(xdg_home.glob(".mover-suite-copying*"))
+
+
+def test_settings_saved_after_the_copy_stay_in_the_new_folder(xdg_home):
+    import src.user_settings as user_settings
+
+    old = _old_install(xdg_home)
+    update_settings(theme="light")
+    user_settings._config_roots.clear()
+    (old / "settings.json").write_text('{"theme": "system"}', encoding="utf-8")
+    assert get_theme() == THEME_LIGHT
+    assert '"system"' in (old / "settings.json").read_text(encoding="utf-8")
+
+
+def test_an_existing_suite_folder_is_not_overwritten(xdg_home):
+    _old_install(xdg_home)
+    new = xdg_home / "mover-suite"
+    new.mkdir()
+    (new / "settings.json").write_text('{"theme": "light"}', encoding="utf-8")
+    assert get_theme() == THEME_LIGHT
+    assert not (new / "handoff-practice.jsonl").exists()
+
+
+def test_a_partial_suite_folder_gets_the_missing_files_and_keeps_its_own(xdg_home):
+    _old_install(xdg_home)
+    new = xdg_home / "mover-suite"
+    new.mkdir()
+    (new / "app-errors.log").write_text("kept\n", encoding="utf-8")
+    assert get_theme() == THEME_DARK
+    assert (new / "app-errors.log").read_text(encoding="utf-8") == "kept\n"
+    assert (new / "handoff-practice.jsonl").is_file()
+
+
+def test_the_config_override_skips_the_copy(xdg_home, tmp_path, monkeypatch):
+    from src.user_settings import settings_path
+
+    _old_install(xdg_home)
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "override"))
+    assert settings_path() == (tmp_path / "override" / "settings.json").resolve()
+    assert not (xdg_home / "mover-suite").exists()
+
+
+def test_a_failed_copy_keeps_using_the_old_folder_and_says_why(xdg_home, monkeypatch):
+    import shutil
+
+    from src.user_settings import settings_migration_note, settings_path
+
+    old = _old_install(xdg_home)
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(shutil, "copytree", refuse)
+    assert settings_path() == old / "settings.json"
+    assert get_theme() == THEME_DARK
+    note = settings_migration_note()
+    assert note is not None and str(old) in note and "Permission denied" in note
+    assert not (xdg_home / "mover-suite" / "settings.json").exists()
+
+
+def test_a_second_instance_that_loses_the_copy_race_uses_the_new_folder(xdg_home, monkeypatch):
+    import src.user_settings as user_settings
+    from src.user_settings import settings_migration_note, settings_path
+
+    _old_install(xdg_home)
+
+    def other_instance_won(_old, new):
+        new.mkdir()
+        (new / "settings.json").write_text('{"theme": "light"}', encoding="utf-8")
+        raise FileExistsError(17, "File exists")
+
+    monkeypatch.setattr(user_settings, "_copy_forward", other_instance_won)
+    assert settings_path() == xdg_home / "mover-suite" / "settings.json"
+    assert get_theme() == THEME_LIGHT
+    assert settings_migration_note() is None
+
+
+def test_tests_never_resolve_the_real_settings_folder(monkeypatch, tmp_path_factory):
+    from src.user_settings import settings_path
+
+    monkeypatch.delenv("MOVER_CONFIG_DIR", raising=False)
+    assert settings_path().is_relative_to(tmp_path_factory.getbasetemp())

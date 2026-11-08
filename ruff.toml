@@ -5,6 +5,8 @@ extend-exclude = [
     "dist",
     "rust-updater-tests/target",
     "tools/update-manifest/target",
+    # Historical trainer snapshot. Its inspector is not the suite linter's code.
+    "imports/handoff-trainer",
 ]
 
 [lint]

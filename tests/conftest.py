@@ -45,6 +45,34 @@ def isolate_ollama_process_state(monkeypatch):
     svc._app_started_server = False
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolate_user_folders(tmp_path_factory):
+    """Point the settings, data and state folders and the Ollama log at temp paths for the whole run.
+
+    Without this, code that logs errors or reads settings resolved ~/.config on the real
+    machine, and from 0.15.0 that also copied the user's settings into a new folder. The
+    paths stay set for the session, not per test, because a worker thread can log after
+    its test has finished. A test may still override them. HOME itself is not redirected,
+    so a direct Path.home() still reaches the real home.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config")))
+    patch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("xdg-data")))
+    patch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("xdg-state")))
+    patch.setenv("MOVER_OLLAMA_LOG", str(tmp_path_factory.mktemp("ollama-log") / "ollama.log"))
+    yield
+    patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings_root(monkeypatch):
+    """Each test resolves the settings folder from its own environment."""
+    import src.user_settings as user_settings
+
+    monkeypatch.setattr(user_settings, "_config_roots", {})
+    monkeypatch.setattr(user_settings, "_migration_note", None)
+
+
 @pytest.fixture
 def synthetic_emr(tmp_path: Path) -> Path:
     """

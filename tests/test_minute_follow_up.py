@@ -108,7 +108,7 @@ def test_covering_episode_shows_label_severity_bounds_measurements_and_threshold
         threshold_lines=["Thresholds when flagged (default, abc123abc123)", "SpO2 below 92 %"],
     )
     assert "EPISODE COVERING THE SELECTED MINUTE: Low SpO2 (spo2_low), critical, 3 to 6 min" in extract
-    assert "Mean flagged value: 90.5" in extract
+    assert "Mean flagged value (SPO2): 90.5" in extract
     assert "SPO2: min 89, max 92, mean 90.6667; 1 missing minutes" in extract
     assert extract.endswith("Thresholds when flagged (default, abc123abc123)\nSpO2 below 92 %")
 
@@ -328,7 +328,10 @@ def test_a_failed_request_is_reported_under_the_field(workspace, qapp, monkeypat
 
     use_client(monkeypatch, Broken())
     ask(workspace, qapp)
-    assert workspace.follow_up_answer.toPlainText() == "The question could not be answered: the model is not running"
+    message = workspace.follow_up_answer.toPlainText()
+    assert message.startswith("The question could not be answered:")
+    assert "minute-question:OllamaError" in message
+    assert "the model is not running" not in message
     assert workspace.follow_up_button.isEnabled()
 
 

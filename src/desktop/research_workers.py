@@ -179,7 +179,9 @@ class ResearchWorker(QThread):
         except InterruptedError:
             pass
         except Exception as exc:
-            self.failed.emit(str(exc))
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("research", exc))
 
 
 class CaseFetchWorker(QThread):
@@ -196,7 +198,9 @@ class CaseFetchWorker(QThread):
         try:
             self.loaded.emit(fetch_cases([self.pid], emr=self.emr, preset=self.preset))
         except Exception as exc:
-            self.failed.emit(str(exc))
+            from src.desktop.errors import error_message
+
+            self.failed.emit(error_message("case", exc))
 
 
 class MinuteQuestionWorker(QThread):
@@ -222,4 +226,6 @@ class MinuteQuestionWorker(QThread):
                 self.answer.emit(response)
         except Exception as exc:
             if not self.isInterruptionRequested():
-                self.failed.emit(str(exc))
+                from src.desktop.errors import error_message
+
+                self.failed.emit(error_message("minute-question", exc))

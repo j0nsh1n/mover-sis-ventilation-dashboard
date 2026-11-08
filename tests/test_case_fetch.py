@@ -81,24 +81,22 @@ def test_fetch_reuses_cache_on_second_call(synthetic_emr, monkeypatch):
     assert not res.cases.empty
 
 
-def test_fetch_retains_compute_hash_in_mixed_cached_batch(synthetic_emr, monkeypatch):
+def test_threshold_hash_is_part_of_the_cache_key(synthetic_emr, monkeypatch):
     import src.rules
 
     stamp = ["a" * 64]
     monkeypatch.setattr(src.rules, "thresholds_sha256", lambda: stamp[0])
-    real = case_fetch._run_for
-
-    def compute(*args):
-        frames = real(*args)
-        stamp[0] = "b" * 64
-        return frames
-
-    monkeypatch.setattr(case_fetch, "_run_for", compute)
     first = case_fetch.fetch_cases(["caseA"], emr=synthetic_emr)
+    assert first.reused == []
     assert first.thresholds_sha256_by_pid == {"caseA": "a" * 64}
+    stamp[0] = "b" * 64
     second = case_fetch.fetch_cases(["caseA", "caseB"], emr=synthetic_emr)
-    assert second.reused == ["caseA"]
-    assert second.thresholds_sha256_by_pid == {"caseA": "a" * 64, "caseB": "b" * 64}
+    assert second.reused == []
+    assert set(second.computed) == {"caseA", "caseB"}
+    assert second.thresholds_sha256_by_pid == {"caseA": "b" * 64, "caseB": "b" * 64}
+    previous = case_fetch._case_key(synthetic_emr, "caseA", "default", "a" * 64)
+    assert previous in case_fetch._case_cache
+    assert case_fetch._case_cache[previous][1] == "a" * 64
 
 
 def test_cache_is_keyed_by_preset(synthetic_emr, monkeypatch):
