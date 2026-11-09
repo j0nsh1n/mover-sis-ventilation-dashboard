@@ -9,7 +9,7 @@ from PySide6.QtCore import QCoreApplication, QDir, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-from src.desktop.fonts import install_app_font
+from src.desktop.fonts import install_app_font, serif_family
 from src.user_settings import THEME_DARK, THEME_LIGHT, THEME_SYSTEM, get_theme
 
 # Concrete theme last applied ("light" | "dark") — used by matplotlib charts.
@@ -407,6 +407,204 @@ QLabel#footerField {{
     padding-left: 18px;
 }}
 
+/* —— research page: question, controls, evidence trail, conversation —— */
+QLineEdit#questionField {{
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid {rule_strong};
+    border-radius: 0;
+    padding: 2px 0 8px 0;
+    min-height: 34px;
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLineEdit#questionField:hover {{
+    border-color: {ink_3};
+}}
+/* the ring is the underline, thickened; padding drops by 1 px so the field keeps its height */
+QLineEdit#questionField:focus {{
+    border: none;
+    border-bottom: 2px solid {accent};
+    padding: 2px 0 7px 0;
+}}
+QLineEdit#questionField:disabled {{
+    background: transparent;
+    color: {ink_3};
+    border-bottom: 1px solid {rule};
+}}
+QGroupBox#scopeSwitch {{
+    border: none;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}}
+QRadioButton#scopeOption {{
+    background: transparent;
+    color: {ink_3};
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 10px;
+    margin-right: 2px;
+    spacing: 0;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QRadioButton#scopeOption::indicator {{
+    width: 0;
+    height: 0;
+}}
+QRadioButton#scopeOption:hover {{
+    color: {ink};
+}}
+QRadioButton#scopeOption:checked {{
+    color: {ink};
+    border-bottom: 2px solid {ink};
+}}
+QRadioButton#scopeOption:focus {{
+    border: 2px solid {accent};
+    padding: 7px 8px;
+}}
+QPushButton#modelMenuBtn {{
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 6px 28px 6px 10px;
+    font-weight: 400;
+}}
+QPushButton#modelMenuBtn:hover, QPushButton#modelMenuBtn:pressed {{
+    background: {rule_faint};
+}}
+QPushButton#modelMenuBtn::menu-indicator {{
+    image: none;
+    width: 0;
+}}
+QPushButton#modelMenuBtn:focus {{
+    border: 2px solid {accent};
+    padding: 5px 27px 5px 9px;
+}}
+QPushButton#linkBtn {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 2px 4px;
+    min-height: 0;
+    font-size: 12.5px;
+}}
+QPushButton#linkBtn:hover, QPushButton#linkBtn:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#linkBtn:disabled {{
+    background: transparent;
+    color: {rule_strong};
+    border-color: transparent;
+}}
+QPushButton#linkBtn:focus {{
+    border: 2px solid {accent};
+    padding: 1px 3px;
+}}
+QLabel#boardHeading {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#statement {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#stepHeading {{
+    font-size: 14px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#stepNumber {{
+    font-size: 14px;
+    font-weight: 600;
+    color: {ink_3};
+}}
+QLabel#quietText {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#bodyText {{
+    color: {ink};
+    font-size: 14px;
+}}
+QSplitter#boardSplitter::handle {{
+    background: transparent;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+}}
+QSplitter#boardSplitter::handle:hover {{
+    background: {accent};
+}}
+QScrollArea#conversationPanel {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QWidget#conversationPage {{
+    background: {sheet};
+}}
+QLabel#conversationTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#turnQuestion {{
+    font-family: {serif};
+    font-style: italic;
+    font-size: 20px;
+    color: {ink};
+}}
+QFrame#turnRule {{
+    background: {rule};
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
+}}
+QTextBrowser#turnAnswer {{
+    background: transparent;
+    border: 2px solid transparent;
+    padding: 0;
+    font-size: 14px;
+    selection-background-color: {accent};
+    selection-color: {on_accent};
+}}
+QTextBrowser#turnAnswer:focus {{
+    border: 2px solid {accent};
+    padding: 0;
+}}
+QPushButton#citationLink {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 2px 4px;
+    min-height: 0;
+    font-size: 13px;
+    font-weight: 400;
+    text-align: left;
+}}
+QPushButton#citationLink:hover, QPushButton#citationLink:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#citationLink:focus {{
+    border: 2px solid {accent};
+    padding: 1px 3px;
+}}
+QProgressBar#turnProgress {{
+    background: {rule};
+    border: none;
+    min-height: 3px;
+    max-height: 3px;
+}}
+QProgressBar#turnProgress::chunk {{
+    background: {accent};
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;
@@ -611,8 +809,13 @@ _DARK = {
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 
 
+def _serif_css() -> str:
+    """The title font as a stylesheet family list; asking for it registers the bundled files first."""
+    return f'"{serif_family()}", "Noto Serif", Georgia, serif'
+
+
 def _build_stylesheet(tokens: dict[str, str]) -> str:
-    return _STRUCTURE.format(**tokens)
+    return _STRUCTURE.format(serif=_serif_css(), **tokens)
 
 
 QDir.addSearchPath("movericons", str(Path(__file__).parent / "assets"))
