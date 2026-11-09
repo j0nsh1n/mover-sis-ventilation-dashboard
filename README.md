@@ -197,7 +197,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 
 ### Local LLM (Ollama)
 
-The **Research** workspace uses Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. Select **Local AI** to generate an answer from retrieved case extracts. **Start AI**, **Stop AI**, **Unload model**, and **Refresh** are in the question card. Models stay on the host, outside the executable.
+The **Research** workspace uses Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. The **Local AI** menu beside the question names the model and its state (for example "qwen3:14b ready"). Choose the answer model there; **Start AI**, **Stop AI**, **Unload model**, **Refresh model list** and **Data setup** are in the same menu and in the `Ctrl+K` search. `Ctrl+Enter` traces the evidence. Models stay on the host, outside the executable.
 
 Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via **Settings** in the left navigation (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 
