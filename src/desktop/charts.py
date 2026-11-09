@@ -130,23 +130,12 @@ LegacyChartView = ChartView
 
 
 def _style() -> dict[str, str]:
-    try:
-        from src.desktop.theme import chart_style
+    from src.desktop.theme import chart_style, chart_style_from, tokens
 
+    try:
         return chart_style()
     except Exception:
-        return {
-            "figure_facecolor": "#F3F0E8",
-            "axes_facecolor": "#F3F0E8",
-            "text": "#1C1B19",
-            "muted": "#66625A",
-            "grid": "#E2DCCF",
-            "spine": "#DAD4C7",
-            "bar": "#47443D",
-            "info": "#1C1B19",
-            "warn": "#1C1B19",
-            "critical": "#1C1B19",
-        }
+        return chart_style_from(tokens("light"))
 
 
 def _style_axes(ax, style: dict[str, str]) -> None:
@@ -226,7 +215,8 @@ def flag_rules_figure(
         "warn": style["warn"],
         "critical": style["critical"],
     }
-    # One ink for every severity; hollow, hatched and solid bars tell them apart.
+    # One ink for every severity. The design fills info hollow, warn half and critical solid; a bar
+    # cannot be half filled, so warn is hatched, which carries the same "partly filled" reading.
     fills: dict[str, dict[str, Any]] = {
         "info": {"facecolor": "none"},
         "warn": {"facecolor": "none", "hatch": "////"},
@@ -339,6 +329,10 @@ def focused_minute_rows(ts: pd.DataFrame) -> pd.DataFrame:
     return rows.set_axis(rows.index + first).rename_axis("t_min")
 
 
+# The F chart draws on its own dark panel whatever the app theme is.
+SIGNAL_PANEL_COLOR = "#142124"
+
+
 def focused_signals_figure(
     ts: pd.DataFrame, selected_minute: float | None, *,
     flags: pd.DataFrame | None = None, extra_signals: tuple[str, ...] = (),
@@ -346,7 +340,7 @@ def focused_signals_figure(
 ) -> plt.Figure:
     """Minute-aligned signal tracks and a severity lane; missing minutes break lines."""
     style = {
-        "figure_facecolor": "#142124", "axes_facecolor": "#142124",
+        "figure_facecolor": SIGNAL_PANEL_COLOR, "axes_facecolor": SIGNAL_PANEL_COLOR,
         "text": "#dce8dd", "muted": "#a3b8b2", "grid": "#3b5755", "spine": "#35484a",
     }
     tracks = [("PIP", "PIP", "cmH₂O", "#f2b173"),
@@ -377,11 +371,12 @@ def focused_signals_figure(
 
         # This figure always draws on its own dark panel, so the flags take the dark theme's ink.
         ink = tokens("dark")["ink"]
-        for severity, marker in (("info", "o"), ("warn", "^"), ("critical", "D")):
+        # The design's fill rule: info a hollow circle, warn a half-filled triangle, critical a solid diamond.
+        for severity, marker, fill in (("info", "o", "none"), ("warn", "^", "left"), ("critical", "D", "full")):
             minutes = [minute for minute, level in marks.items() if level == severity]
             if minutes:
-                lane.scatter(minutes, [0] * len(minutes), marker=marker, s=20,
-                             color=ink, label=severity)
+                lane.plot(minutes, [0] * len(minutes), linestyle="none", marker=marker, markersize=5.5,
+                          fillstyle=fill, color=ink, markeredgewidth=1.1, label=severity)
     else:
         lane.text(.5, .5, "No flags in this case", transform=lane.transAxes,
                   color=style["text"], ha="center", va="center", fontsize=8)
@@ -514,7 +509,7 @@ class FocusedSignalChart(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#142124"))
+        painter.fillRect(self.rect(), QColor(SIGNAL_PANEL_COLOR))
         if self._pixmap.isNull():
             return
         painter.drawPixmap(QPointF(0, 0), self._pixmap)
@@ -525,7 +520,7 @@ class FocusedSignalChart(QWidget):
                 x = axis.left() + axis.width() * (self._minute - low) / (high - low)
                 painter.drawLine(QPointF(x, axis.top()), QPointF(x, axis.bottom()))
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor("#142124"), 1.5))
+            painter.setPen(QPen(QColor(SIGNAL_PANEL_COLOR), 1.5))
             for _column, point, color in self.cursor_points():
                 painter.setBrush(QColor(color))
                 painter.drawEllipse(point, 4, 4)

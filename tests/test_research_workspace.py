@@ -72,7 +72,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
         table = self.findChild(QTableWidget)
         assert table is not None
         assert table.item(1, 1).text() == "33"
-        assert table.item(1, 2).text() == "—"
+        assert table.item(1, 2).text() == "missing"
         return 0
 
     monkeypatch.setattr(QDialog, "exec", inspect_dialog)
@@ -333,7 +333,7 @@ def episode_view(qapp):
 def test_episode_list_writes_each_severity_as_its_shape_and_word(episode_view):
     view, _ = episode_view
     lines = [view.episode_list.item(row).text().split("\n")[0] for row in range(view.episode_list.count())]
-    assert [" · ".join(line.split(" · ")[1:2]) for line in lines] == ["△ warn", "◇ critical"]
+    assert [" · ".join(line.split(" · ")[1:2]) for line in lines] == ["△ warn", "◆ critical"]
 
 
 def test_episode_order_lane_and_keyboard(episode_view, qapp):
@@ -521,7 +521,7 @@ def test_chart_preserves_nan_and_deleted_row_gaps(episode_view):
     line = figure.axes[3].lines[0]
     assert list(line.get_xdata()) == [0, 1, 2, 3, 4, 5]
     assert np.isnan(line.get_ydata()[2:4]).all()
-    assert len(figure.axes[-1].collections[0].get_offsets()) == 4
+    assert sum(len(mark.get_xdata()) for mark in figure.axes[-1].lines) == 4
     plt.close(figure)
 
 

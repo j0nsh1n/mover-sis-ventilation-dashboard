@@ -1965,7 +1965,7 @@ class ResearchWorkspace(QWidget):
         dialog.setWindowTitle(f"Source samples · {pid}")
         dialog.resize(620, 480)
         layout = QVBoxLayout(dialog)
-        layout.addWidget(_wrap(f"Rows {start + 1}–{stop} of {len(ts)} · minutes relative to incision · dash means missing"))
+        layout.addWidget(_wrap(f"Rows {start + 1}–{stop} of {len(ts)} · minutes relative to incision · hatched cells are missing"))
         signals = self.chart_track_names if index is not None else ["PIP", "ETCO2", "HR"]
         columns = ["t_min", *signals]
         headings = {"t_min": "Minute", "PIP": "PIP cmH₂O", "ETCO2": "ETCO₂ mmHg", "HR": "Heart rate bpm"}
@@ -1977,7 +1977,7 @@ class ResearchWorkspace(QWidget):
             source = ts.iloc[frame_row]
             for column, key in enumerate(columns):
                 value = source.get(key)
-                text = "—" if pd.isna(value) else f"{float(value):g}"
+                text = "missing" if pd.isna(value) else f"{float(value):g}"
                 cell = QTableWidgetItem(text)
                 mark_missing(cell, bool(pd.isna(value)))
                 table.setItem(table_row, column, cell)

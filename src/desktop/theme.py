@@ -557,13 +557,12 @@ def token_color(name: str, theme: str | None = None) -> QColor:
     return QColor(value)
 
 
-def chart_style() -> dict[str, str]:
-    """Colors for matplotlib figures matching the active UI theme.
+def chart_style_from(t: dict[str, str]) -> dict[str, str]:
+    """Colors for matplotlib figures drawn from the token set ``t``.
 
     ``info``, ``warn`` and ``critical`` are the same ink: a rule flag is told apart by its
     shape and its word, never by a color of its own.
     """
-    t = tokens()
     return {
         "figure_facecolor": t["paper"],
         "axes_facecolor": t["paper"],
@@ -576,6 +575,11 @@ def chart_style() -> dict[str, str]:
         "warn": t["ink"],
         "critical": t["ink"],
     }
+
+
+def chart_style() -> dict[str, str]:
+    """Colors for matplotlib figures matching the active UI theme."""
+    return chart_style_from(tokens())
 
 
 def chat_role_color(role: str) -> str:

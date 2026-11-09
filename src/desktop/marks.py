@@ -18,15 +18,24 @@ from PySide6.QtWidgets import (
 
 from src.desktop.theme import token_color
 
-# Same shapes the flag lane in the charts draws: circle, triangle, diamond.
-SEVERITY_GLYPHS = {"info": "○", "warn": "△", "critical": "◇"}
+# The design's fill rule, one ink: info is a hollow circle, warn a half-filled triangle,
+# critical a solid diamond. Inter has no half-filled triangle glyph, so the text uses the
+# outline triangle; the chart flag lane draws the half-filled one.
+SEVERITY_GLYPHS = {"info": "○", "warn": "△", "critical": "◆"}
 
 # Item-data role that marks a cell as a missing value; the cell keeps its own text.
 MISSING_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 
+# The text of a missing cell sits on a small backing of the row's own ground so the hatch
+# never runs through the letters; the pair is checked for contrast in test_theme_contrast.
+MISSING_TEXT_TOKEN = "ink_3"
+MISSING_BACKING_TOKEN = "paper"
+MISSING_BACKING_SELECTED_TOKEN = "sel"
+
 _HATCH_SPACING = 8  # horizontal step; about 6 px between neighbouring lines
 _HATCH_WIDTH = 1.2
 _CELL_PADDING = 8
+_BACKING_PAD_X = 3
 
 
 def severity_glyph(severity: str) -> str:
@@ -35,7 +44,7 @@ def severity_glyph(severity: str) -> str:
 
 
 def severity_label(severity: str) -> str:
-    """Shape and word together, for example ``◇ critical``."""
+    """Shape and word together, for example ``◆ critical``."""
     word = str(severity).strip()
     glyph = severity_glyph(word)
     return f"{glyph} {word}" if glyph else word
@@ -71,17 +80,23 @@ class MissingCellDelegate(QStyledItemDelegate):
         font = QFont(opt.font)
         font.setItalic(True)
         painter.setFont(font)
-        painter.setPen(token_color("ink_3"))
-        painter.drawText(
-            text_rect.adjusted(_CELL_PADDING // 2, 0, -_CELL_PADDING // 2, 0),
-            int(opt.displayAlignment) | int(Qt.AlignmentFlag.AlignVCenter),
-            painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, text_rect.width() - _CELL_PADDING),
+        target = text_rect.adjusted(_CELL_PADDING // 2, 0, -_CELL_PADDING // 2, 0)
+        flags = int(opt.displayAlignment) | int(Qt.AlignmentFlag.AlignVCenter)
+        shown = painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, text_rect.width() - _CELL_PADDING)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        backing = token_color(MISSING_BACKING_SELECTED_TOKEN if selected else MISSING_BACKING_TOKEN)
+        painter.fillRect(
+            painter.fontMetrics().boundingRect(target, flags, shown).adjusted(-_BACKING_PAD_X, 0, _BACKING_PAD_X, 0),
+            backing,
         )
+        painter.setPen(token_color(MISSING_TEXT_TOKEN))
+        painter.drawText(target, flags, shown)
         painter.restore()
 
     @staticmethod
     def _draw_hatch(painter: QPainter, rect: QRect) -> None:
-        painter.setClipRect(rect)
+        # Intersect, so a clip the caller set (a scrolled viewport, a partial repaint) still applies.
+        painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
         pen = painter.pen()
         pen.setColor(token_color("hatch"))
         pen.setWidthF(_HATCH_WIDTH)

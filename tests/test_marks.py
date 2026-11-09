@@ -41,7 +41,7 @@ def _close_figures():
 def test_severity_is_a_shape_and_the_rule_files_word():
     assert severity_label("info") == "○ info"
     assert severity_label("warn") == "△ warn"
-    assert severity_label("critical") == "◇ critical"
+    assert severity_label("critical") == "◆ critical"
     assert len(set(SEVERITY_GLYPHS.values())) == 3
     assert severity_glyph("unheard-of") == ""
     assert severity_label("unheard-of") == "unheard-of"
@@ -53,17 +53,42 @@ def _flags() -> pd.DataFrame:
     )
 
 
-def test_the_flag_lane_draws_three_shapes_in_one_ink(qapp, applied_theme):
+def test_the_flag_lane_follows_the_fill_rule_in_one_ink(qapp, applied_theme):
     ts = pd.DataFrame({"t_min": range(5), "PIP": [10, 11, 12, 13, 14], "ETCO2": [30] * 5, "HR": [70] * 5})
     lane = focused_signals_figure(ts, 2, flags=_flags()).axes[-1]
-    marks = {c.get_label(): c for c in lane.collections}
+    marks = {line.get_label(): line for line in lane.lines}
     assert set(marks) == {"info", "warn", "critical"}
+    # info is a hollow circle, warn a half-filled triangle, critical a solid diamond
+    assert [(marks[s].get_marker(), marks[s].get_fillstyle()) for s in ("info", "warn", "critical")] == [
+        ("o", "none"), ("^", "left"), ("D", "full")]
     # The lane's figure is always dark, so its ink is the dark theme's ink under either app theme.
     ink = to_rgba(tokens("dark")["ink"])
-    for severity, collection in marks.items():
-        assert tuple(collection.get_facecolor()[0]) == pytest.approx(ink), severity
-    shapes = {len(c.get_paths()[0].vertices) for c in marks.values()}
-    assert len(shapes) == 3, "circle, triangle and diamond must stay three different shapes"
+    for severity, line in marks.items():
+        assert to_rgba(line.get_markeredgecolor()) == pytest.approx(ink), severity
+    assert to_rgba(marks["info"].get_markerfacecolor())[3] == 0
+    for severity in ("warn", "critical"):
+        assert to_rgba(marks[severity].get_markerfacecolor()) == pytest.approx(ink), severity
+    # the half-filled triangle's other half stays open
+    assert to_rgba(marks["warn"].get_markerfacecoloralt())[3] == 0
+
+
+def test_the_fallback_chart_colors_come_from_the_light_tokens(qapp, monkeypatch):
+    import src.desktop.theme as theme
+    from src.desktop.charts import _style
+
+    def broken():
+        raise RuntimeError("no theme")
+
+    monkeypatch.setattr(theme, "chart_style", broken)
+    light = tokens("light")
+    style = _style()
+    assert style["figure_facecolor"] == light["paper"]
+    assert style["text"] == light["ink"]
+    assert style["muted"] == light["ink_3"]
+    assert style["grid"] == light["grid"]
+    assert style["spine"] == light["rule"]
+    assert style["bar"] == light["ink_2"]
+    assert {style["info"], style["warn"], style["critical"]} == {light["ink"]}
 
 
 def test_stacked_flag_counts_use_the_ink_and_tell_severities_apart_by_fill(qapp, applied_theme):
@@ -148,3 +173,51 @@ def test_the_medication_table_hatches_exactly_its_missing_values(qapp):
         value = table.item(row, 2).text()
         assert bool(table.item(row, 2).data(MISSING_ROLE)) == (value in {"missing", "not recorded"})
 
+
+
+def test_the_text_of_a_missing_cell_has_a_clear_backing_so_the_hatch_never_crosses_the_letters(qapp, applied_theme):
+    plain = _table("", missing=False)
+    background = QColor(_paint(plain).pixel(150, 20))
+    empty = _paint(_table("", missing=True))
+    with_text = _paint(_table("missing", missing=True))
+    # the hatch's own full-coverage color: the most common painted color of an empty hatched cell
+    counts: dict[int, int] = {}
+    for y in range(empty.height()):
+        for x in range(empty.width()):
+            if QColor(empty.pixel(x, y)) != background:
+                counts[empty.pixel(x, y)] = counts.get(empty.pixel(x, y), 0) + 1
+    hatch = max(counts, key=lambda color: counts[color])
+    changed = [(x, y) for y in range(with_text.height()) for x in range(with_text.width())
+               if with_text.pixel(x, y) != empty.pixel(x, y)]
+    assert changed
+    left, right = min(x for x, _ in changed), max(x for x, _ in changed)
+    top, bottom = min(y for _, y in changed), max(y for _, y in changed)
+    crossing = [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1) if with_text.pixel(x, y) == hatch]
+    assert crossing == [], "hatch lines must not run through the text"
+
+
+def test_the_hatch_keeps_a_clip_the_caller_already_set(qapp):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    table = _table("", missing=True)
+    table.resize(320, 120)
+    table.show()
+    QApplication.processEvents()
+    index = table.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.widget = table
+    table.itemDelegate().initStyleOption(option, index)
+    option.rect = QRect(0, 0, 200, 40)
+    image = QImage(320, 80, QImage.Format.Format_ARGB32)
+    sentinel = QColor(10, 200, 30).rgba()
+    image.fill(sentinel)
+    painter = QPainter(image)
+    painter.setClipRect(QRect(0, 0, 100, 80))
+    table.itemDelegate().paint(painter, option, index)
+    painter.end()
+    outside = [(x, y) for y in range(image.height()) for x in range(100, image.width()) if image.pixel(x, y) != sentinel]
+    inside = [(x, y) for y in range(image.height()) for x in range(100) if image.pixel(x, y) != sentinel]
+    assert inside, "the hatch must still be drawn inside the caller's clip"
+    assert outside == [], "the hatch must not escape the clip the caller set"

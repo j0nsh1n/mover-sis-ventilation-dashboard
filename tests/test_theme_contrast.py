@@ -6,6 +6,8 @@ import itertools
 
 import pytest
 
+from src.desktop.charts import SIGNAL_PANEL_COLOR
+from src.desktop.marks import MISSING_BACKING_SELECTED_TOKEN, MISSING_BACKING_TOKEN, MISSING_TEXT_TOKEN
 from src.desktop.theme import tokens
 
 # WCAG 2.2 success criteria: 1.4.3 (text) and 1.4.11 (user interface parts and graphics).
@@ -45,6 +47,11 @@ PAIRS: list[tuple[str, str, float]] = [
     ("accent", "paper", AA_TEXT),
     ("accent", "sheet", AA_TEXT),
     ("accent_hover", "paper", AA_TEXT),
+    # Accent text (links, citations) also sits on the selected row.
+    ("accent", "sel", AA_TEXT),
+    # Text on a missing-data cell sits on a backing of the row's own ground, never on the hatch itself.
+    (MISSING_TEXT_TOKEN, MISSING_BACKING_TOKEN, AA_TEXT),
+    (MISSING_TEXT_TOKEN, MISSING_BACKING_SELECTED_TOKEN, AA_TEXT),
     ("practice", "paper", AA_TEXT),
     ("rule_strong", "paper", AA_NON_TEXT),
     ("rule_strong", "sheet", AA_NON_TEXT),
@@ -80,3 +87,8 @@ def test_every_color_the_design_names_exists(theme):
     assert names <= palette.keys()
     for name in names - {"hatch"}:
         assert len(palette[name]) == 7 and palette[name].startswith("#"), name
+
+
+def test_the_flag_ink_reads_on_the_signal_chart_panel():
+    # The F chart draws on its own dark panel under both app themes, with the dark theme's ink for flags.
+    assert contrast(tokens("dark")["ink"], SIGNAL_PANEL_COLOR) >= AA_NON_TEXT

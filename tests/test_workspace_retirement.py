@@ -281,7 +281,7 @@ def test_changing_the_theme_redraws_the_open_cases_charts(window, qapp, monkeypa
         apply_theme(qapp, "light")
 
 
-def test_source_samples_hatch_missing_cells_and_keep_the_dash(detail, monkeypatch):
+def test_source_samples_hatch_missing_cells_and_say_missing(detail, monkeypatch):
     from PySide6.QtWidgets import QTableWidget
 
     from src.desktop.marks import MISSING_ROLE, MissingCellDelegate
@@ -307,4 +307,4 @@ def test_source_samples_hatch_missing_cells_and_keep_the_dash(detail, monkeypatc
     monkeypatch.setattr(QDialog, "exec", inspect)
     detail._show_current_source()
     # SPO2 is the fifth column and has no sample at minute 1 (row 1); no other cell is missing
-    assert seen == {(1, 4): "—"}
+    assert seen == {(1, 4): "missing"}
