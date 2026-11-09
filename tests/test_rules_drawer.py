@@ -757,7 +757,9 @@ def test_invalid_catalog_focuses_close_and_escape_restores_opener(workspace):
 
 @pytest.mark.parametrize("location", ["question", "canvas", "detail"])
 def test_escape_anywhere_in_workspace_closes_drawer(workspace, location):
-    workspace.open_rules(workspace.question_edit)
+    # The opener is not where Escape is pressed, so a close that leaves focus in place fails.
+    opener = workspace.new_question_button
+    workspace.open_rules(opener)
     if location == "question":
         target = workspace.question_edit
     elif location == "detail":
@@ -768,23 +770,48 @@ def test_escape_anywhere_in_workspace_closes_drawer(workspace, location):
     target.setFocus()
     QTest.keyClick(target, Qt.Key.Key_Escape)
     assert not workspace.rules_drawer.is_open
-    expected = workspace.back_button if location == "detail" else workspace.question_edit
+    expected = workspace.back_button if location == "detail" else opener
     assert expected.hasFocus()
 
 
 @pytest.mark.parametrize("opener_state", ["hidden", "deleted"])
-def test_escape_with_unavailable_opener_uses_fallback(workspace, opener_state):
-    opener = QLineEdit(workspace)
-    opener.show()
-    workspace.open_rules(opener)
-    if opener_state == "hidden":
-        opener.hide()
-    else:
-        delete(opener)
-    workspace.question_edit.setFocus()
-    QTest.keyClick(workspace.question_edit, Qt.Key.Key_Escape)
-    assert not workspace.rules_drawer.is_open
-    assert workspace.question_edit.hasFocus()
+def test_escape_with_unavailable_opener_uses_fallback(qapp, opener_state):
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from src.desktop.rules_drawer import RulesDrawer
+
+    # The fallback is the last control, which Qt would not choose by itself when the drawer hides.
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    first = QLineEdit()
+    fallback = QPushButton("Fallback")
+    drawer = RulesDrawer(host, fallback_focus=lambda: fallback)
+    for widget in (first, drawer, fallback):
+        layout.addWidget(widget)
+    drawer.set_catalog(load_rule_catalog("default"))
+    host.show()
+    host.activateWindow()
+    qapp.processEvents()
+    try:
+        opener = QLineEdit(host)
+        opener.show()
+        drawer.open(opener)
+        if opener_state == "hidden":
+            opener.hide()
+        else:
+            delete(opener)
+        assert drawer.search_edit.hasFocus()
+        QTest.keyClick(drawer.search_edit, Qt.Key.Key_Escape)
+        assert not drawer.is_open
+        assert fallback.hasFocus()
+    finally:
+        _dispose(host, qapp)
+
+
+def test_the_workspace_falls_back_to_the_question_or_back_on_the_case_page(workspace):
+    assert workspace._rules_fallback_focus() is workspace.question_edit
+    workspace.stack.setCurrentIndex(1)
+    assert workspace._rules_fallback_focus() is workspace.back_button
 
 
 def test_closed_drawer_leaves_escape_to_the_workspace(workspace):

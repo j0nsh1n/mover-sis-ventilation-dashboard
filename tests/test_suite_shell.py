@@ -531,3 +531,16 @@ def test_ctrl_1_returns_to_where_research_was_while_the_rail_item_opens_the_boar
     window.rail.button("research").click()
     qapp.processEvents()
     assert research.stack.currentIndex() == 0, "the rail item still opens the question board"
+
+
+def test_escape_from_rules_opened_on_the_rail_returns_focus_to_the_rail_button(window, qapp):
+    rules = window.rail.button("rules")
+    rules.setFocus()
+    rules.click()
+    qapp.processEvents()
+    drawer = window.research.rules_drawer
+    assert drawer.is_open and drawer.search_edit.hasFocus()
+    QTest.keyClick(drawer.search_edit, Qt.Key.Key_Escape)
+    qapp.processEvents()
+    assert not drawer.is_open
+    assert qapp.focusWidget() is rules
