@@ -30,7 +30,7 @@ def plain_text(markdown: str) -> str:
     previous = ""  # the kind of the last block written: "list", "code" or "text"
     block = document.begin()
     while block.isValid():
-        code = block.blockFormat().hasProperty(QTextFormat.Property.BlockCodeFence)
+        code = block.blockFormat().hasProperty(QTextFormat.Property.BlockCodeLanguage)
         # An image becomes an object character; a hard line break is a line separator.
         text = block.text().replace("\ufffc", "").replace("\u2028", "\n").replace("\xa0", " ")
         text = text.rstrip() if code else text.strip()

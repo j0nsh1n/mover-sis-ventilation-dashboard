@@ -180,6 +180,7 @@ def test_tab_leaves_answer_and_rendered_height_fits(qapp):
     ("```\ndef f():\n    return 1\n\n    x\n```", "def f():\n    return 1\n\n    x"),
     # Qt keeps a hard line break as its own paragraph, and shows it as one.
     ("Title\n\nline one  \nline two", "Title\n\nline one\n\nline two"),
+    ("Para.\n\n    indented code\n        deeper\n\nAfter.", "Para.\n\nindented code\n    deeper\n\nAfter."),
     ("a&nbsp;b", "a b"),
     ("", ""),
 ])
