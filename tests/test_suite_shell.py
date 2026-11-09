@@ -114,9 +114,29 @@ def test_exactly_one_place_is_marked_and_every_item_is_a_tab_stop(window, qapp):
     # a second click on the current place keeps its mark
     window.rail.button("research").click()
     assert _checked(window) == ["research"]
-    # Qt would drop the unchecked members of an exclusive group from the Tab order; none may be dropped
+    # Qt would drop the unchecked members of an exclusive group from the Tab order: press Tab and see where focus goes
+    def tab_order(first: str, count: int) -> list[str]:
+        start = window.rail.button(first)
+        start.setFocus()
+        qapp.processEvents()
+        assert qapp.focusWidget() is start
+        reached = [first]
+        for _ in range(count - 1):
+            QTest.keyClick(qapp.focusWidget(), Qt.Key.Key_Tab)
+            qapp.processEvents()
+            reached.append(next((key for key, button in window.rail._buttons.items()
+                                 if button is qapp.focusWidget()), "<outside the rail>"))
+        return reached
+
+    window.rail.button("research").click()
+    assert tab_order("research", 5) == ["research", "cases", "practice", "rules", "settings"]
     _open_case(window, qapp)
-    assert all(button.focusPolicy() == Qt.FocusPolicy.StrongFocus for button in window.rail._buttons.values())
+    assert tab_order("research", 6) == ["research", "cases", "signal", "practice", "rules", "settings"]
+    # the same holds with another place marked
+    window.rail.button("practice").click()
+    qapp.processEvents()
+    assert _checked(window) == ["practice"]
+    assert tab_order("research", 6) == ["research", "cases", "signal", "practice", "rules", "settings"]
 
 
 def test_rail_head_and_footer_stay_inside_a_900_pixel_window(window, qapp):
