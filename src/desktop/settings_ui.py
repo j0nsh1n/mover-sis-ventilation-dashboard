@@ -433,9 +433,8 @@ class _DonePage(QWizardPage):
         self.setSubTitle("Setup is complete.")
         lay = QVBoxLayout(self)
         body = QLabel(
-            "You can re-open this wizard anytime from "
-            "File → Setup…, or change individual options under "
-            "the ⚙ Settings icon (Ctrl+,)."
+            "You can re-open this wizard anytime: press Ctrl+K and choose Setup. "
+            "Change individual options in Settings (Ctrl+,)."
         )
         body.setWordWrap(True)
         lay.addWidget(body)

@@ -89,7 +89,7 @@ phase, so the co-pilot can say "during induction".
 ### Score every surgery (full-EMR scan)
 
 The pipeline above analyzes a sample and keeps its minute-level data for charts.
-To score every surgery with ventilator data, use **File → Scan full EMR** or:
+To score every surgery with ventilator data, press **Ctrl+K** and choose **Scan full EMR**, or:
 
 ```bash
 PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default
@@ -169,7 +169,7 @@ The desktop app:
 - Opens the searchable **Rules** drawer with `Ctrl+R`, including collapsible **Scoring** and **Age-40 MAC** sections below the rules
 - Provides **Settings** (`Ctrl+,`) for EMR, Wave, Processed, chat and embedding models, and theme
 - **Theme:** light, dark, or system  
-- Loads processed caches after setup; **File → Run pipeline** for rebuilds
+- Loads processed caches after setup; **Ctrl+K → Run pipeline** for rebuilds
 - Research-only (not clinical care)
 
 ### Optional: Streamlit (browser)
