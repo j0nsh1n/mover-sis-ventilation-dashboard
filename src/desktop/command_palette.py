@@ -31,6 +31,13 @@ SHORTCUT_ROLE = Qt.ItemDataRole.UserRole + 1
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 2
 ACTION_ROLE = Qt.ItemDataRole.UserRole + 3
 HINT_ROLE = Qt.ItemDataRole.UserRole + 4
+# Set on the first row of a group: the group's name, painted as a heading above that row.
+HEADING_ROLE = Qt.ItemDataRole.UserRole + 5
+
+MAX_WIDTH = 640
+GUTTER = 24
+ROW_HEIGHT = 34
+HEADING_HEIGHT = 28
 
 PLACEHOLDER = "Search actions, screens and settings"
 
@@ -85,20 +92,41 @@ def _row_text(command: Command) -> str:
 
 
 class _RowDelegate(QStyledItemDelegate):
-    """Title on the left; the shortcut or the reason it is unavailable on the right, muted."""
+    """Title on the left; the shortcut or the reason it is unavailable on the right, muted.
+
+    The first row of a group carries its group's name as a heading painted above it. A heading is
+    not an item, so it cannot be selected and Up and Down never stop on it.
+    """
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
-        return QSize(option.rect.width(), 34)
+        extra = HEADING_HEIGHT if index.data(HEADING_ROLE) else 0
+        return QSize(option.rect.width(), ROW_HEIGHT + extra)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         opt.text = ""
+        heading = index.data(HEADING_ROLE) or ""
+        row = QRect(option.rect)
+        if heading:
+            row.setTop(row.top() + HEADING_HEIGHT)
+        opt.rect = row
         widget = option.widget
         style = widget.style() if widget is not None else QApplication.style()
+        painter.save()
+        if heading:
+            small = painter.font()
+            small.setPointSizeF(max(7.0, small.pointSizeF() - 1.5))
+            small.setWeight(small.Weight.DemiBold)
+            small.setLetterSpacing(small.SpacingType.AbsoluteSpacing, 0.8)
+            painter.setFont(small)
+            painter.setPen(token_color("ink_3"))
+            painter.drawText(QRect(option.rect.left() + 14, option.rect.top(), option.rect.width() - 28, HEADING_HEIGHT),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, str(heading).upper())
+        painter.restore()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
         enabled = bool(index.flags() & Qt.ItemFlag.ItemIsEnabled)
-        rect = option.rect.adjusted(14, 0, -14, 0)
+        rect = row.adjusted(14, 0, -14, 0)
         painter.save()
         side = index.data(SHORTCUT_ROLE) or index.data(HINT_ROLE) or ""
         painter.setPen(token_color("ink_3"))
@@ -106,17 +134,11 @@ class _RowDelegate(QStyledItemDelegate):
         if side:
             painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, side)
         painter.setPen(token_color("ink" if enabled else "rule_strong"))
-        group = index.data(GROUP_ROLE) or ""
         title = QFontMetrics(painter.font()).elidedText(
             index.data(Qt.ItemDataRole.DisplayRole) or "", Qt.TextElideMode.ElideRight,
-            max(40, rect.width() - side_width - 16 - QFontMetrics(painter.font()).horizontalAdvance(group)),
+            max(40, rect.width() - side_width - 16),
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, title)
-        title_width = QFontMetrics(painter.font()).horizontalAdvance(title)
-        painter.setPen(token_color("ink_3"))
-        painter.drawText(QRect(rect.left() + title_width + 12, rect.top(), rect.width() - title_width - side_width - 28,
-                               rect.height()),
-                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, group)
         painter.restore()
 
 
@@ -171,7 +193,7 @@ class CommandPalette(QDialog):
         self.results.setAccessibleName("Results")
         self.results.setItemDelegate(_RowDelegate(self.results))
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self.results.setMinimumHeight(34 * 8)
+        self.results.setMinimumHeight(ROW_HEIGHT * 8)
         self.results.itemActivated.connect(lambda _item: self.run_current())
         self.results.itemClicked.connect(lambda _item: self.run_current())
         self.results.currentItemChanged.connect(self._announce_current)
@@ -180,7 +202,7 @@ class CommandPalette(QDialog):
         keys.setObjectName("paletteHint")
         layout.addWidget(keys)
         self.setTabOrder(self.search, self.results)
-        self.setFixedWidth(640)
+        self.setFixedWidth(MAX_WIDTH)
         self._refill()
 
     # ----- list -----
@@ -195,23 +217,34 @@ class CommandPalette(QDialog):
             if rank is not None:
                 ranked.append((rank, position, command))
         ranked.sort(key=lambda entry: entry[:2])
-        self.results.clear()
+        # Each group is a section; the section holding the best match comes first, and rows keep their rank inside it
+        sections: dict[str, list[Command]] = {}
         for _rank, _position, command in ranked:
-            item = QListWidgetItem(command.title)
-            item.setData(ACTION_ROLE, command)
-            item.setData(GROUP_ROLE, command.group)
-            item.setData(SHORTCUT_ROLE, command.shortcut)
-            enabled = command.action.isEnabled()
-            if not enabled:
-                item.setData(HINT_ROLE, command.action.toolTip())
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            elif command.action.isCheckable() and command.action.isChecked():
-                item.setData(HINT_ROLE, "active")
-            item.setData(Qt.ItemDataRole.AccessibleTextRole, _row_text(command))
-            self.results.addItem(item)
+            sections.setdefault(command.group, []).append(command)
+        # Clearing and refilling would announce an empty list and every row on the way; announce once below
+        self.results.blockSignals(True)
+        self.results.clear()
+        for group, commands in sections.items():
+            for number, command in enumerate(commands):
+                item = QListWidgetItem(command.title)
+                item.setData(ACTION_ROLE, command)
+                item.setData(GROUP_ROLE, command.group)
+                item.setData(SHORTCUT_ROLE, command.shortcut)
+                if number == 0:
+                    item.setData(HEADING_ROLE, group)
+                enabled = command.action.isEnabled()
+                if not enabled:
+                    item.setData(HINT_ROLE, command.action.toolTip())
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                elif command.action.isCheckable() and command.action.isChecked():
+                    item.setData(HINT_ROLE, "active")
+                item.setData(Qt.ItemDataRole.AccessibleTextRole, _row_text(command))
+                self.results.addItem(item)
         total = self.results.count()
         self.count.setText("No results" if total == 0 else f"{total} result{'s' if total != 1 else ''}")
         self.step_selection(0, first=True)
+        self.results.blockSignals(False)
+        self._announce_current(self.results.currentItem())
 
     def step_selection(self, step: int, first: bool = False) -> None:
         rows = [row for row in range(self.results.count())
@@ -227,7 +260,8 @@ class CommandPalette(QDialog):
 
     def _announce_current(self, item: QListWidgetItem | None) -> None:
         if item is None:
-            announce(self.results, "No results")
+            # A list whose rows are all unavailable still has results; say how many
+            announce(self.results, self.count.text())
             return
         position = self.results.row(item) + 1
         announce(self.results, f"{item.data(Qt.ItemDataRole.AccessibleTextRole)}, {position} of {self.results.count()}")
@@ -245,6 +279,7 @@ class CommandPalette(QDialog):
     # ----- placement -----
     def open_over(self, window: QWidget) -> None:
         frame = window.frameGeometry()
+        self.setFixedWidth(max(280, min(MAX_WIDTH, window.width() - 2 * GUTTER)))
         self.adjustSize()
         self.setGeometry(frame.center().x() - self.width() // 2, frame.top() + 80, self.width(), self.sizeHint().height())
         self.search.setFocus(Qt.FocusReason.PopupFocusReason)

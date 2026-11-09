@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAccessible, QKeySequence
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
 
 from src.desktop.app import MainWindow
 from src.desktop.command_palette import Command, match_rank
@@ -282,3 +282,85 @@ def test_matching_needs_every_word_and_prefers_titles_that_start_with_it():
     assert match_rank(reload_, "cache") == 2
     assert match_rank(reload_, "reload rules") is None
     assert match_rank(rules, "") == 3
+
+
+def _unit_palette():
+    from PySide6.QtGui import QAction
+
+    from src.desktop.command_palette import CommandPalette
+
+    commands = [Command(QAction(text), group) for text, group in (
+        ("Open EMR folder", "Data"), ("Open Wave folder", "Data"), ("Reload", "Data"), ("Cases", "Go to"),
+    )]
+    return CommandPalette(commands)
+
+
+def test_each_keystroke_announces_once_with_the_real_top_row(qapp, monkeypatch):
+    import src.desktop.command_palette as module
+
+    said: list[str] = []
+    monkeypatch.setattr(module, "announce", lambda _widget, message: said.append(message))
+    palette = _unit_palette()
+    said.clear()
+    QTest.keyClicks(palette.search, "o")
+    assert said == ["Open EMR folder, Data, 1 of 4"]
+    said.clear()
+    QTest.keyClicks(palette.search, "p")
+    assert said == ["Open EMR folder, Data, 1 of 2"]
+    said.clear()
+    QTest.keyClicks(palette.search, "zzzz")
+    assert said == ["No results"] * 4, "an empty list says so once per keystroke, never a stale row"
+    palette.search.clear()
+    assert said[-1].endswith("1 of 4") and "No results" not in said[-1]
+
+
+def test_no_results_is_announced_only_when_the_list_is_empty(qapp, monkeypatch):
+    import src.desktop.command_palette as module
+
+    said: list[str] = []
+    monkeypatch.setattr(module, "announce", lambda _widget, message: said.append(message))
+    palette = _unit_palette()
+    said.clear()
+    palette.search.setText("reload")
+    assert said == ["Reload, Data, 1 of 1"]
+    assert "No results" not in said
+
+
+def test_each_group_is_one_section_with_a_heading_that_cannot_be_selected(window, qapp):
+    from src.desktop.command_palette import HEADING_ROLE
+
+    palette = _open_palette(window, qapp)
+    results = palette.results
+    headings = [(row, results.item(row).data(HEADING_ROLE)) for row in range(results.count())
+                if results.item(row).data(HEADING_ROLE)]
+    assert [name for _row, name in headings] == ["Go to", "Data", "Appearance", "App"]
+    # headings are painted above their first row, so every list item is a runnable command
+    assert all(results.item(row).data(Qt.ItemDataRole.UserRole + 3) is not None for row in range(results.count()))
+    # the group name is not repeated on every row
+    delegate_height = results.itemDelegate().sizeHint
+    option = QStyleOptionViewItem()
+    first, second = results.model().index(0, 0), results.model().index(1, 0)
+    assert delegate_height(option, first).height() > delegate_height(option, second).height()
+    # Down from the last "Go to" row lands on the first "Data" row
+    data_row = headings[1][0]
+    results.setCurrentRow(data_row - 1)
+    _press(palette.search, Qt.Key.Key_Down)
+    assert results.currentRow() == data_row
+
+    palette.search.setText("theme")
+    rows = [results.item(row).data(Qt.ItemDataRole.UserRole + 2) for row in range(results.count())]
+    assert rows == sorted(rows, key=rows.index), "rows of one group stay together"
+    assert sum(1 for row in range(results.count()) if results.item(row).data(HEADING_ROLE)) == len(set(rows))
+
+
+def test_the_palette_is_never_wider_than_the_window(window, qapp):
+    window.resize(400, 600)
+    qapp.processEvents()
+    palette = _open_palette(window, qapp)
+    assert palette.width() <= window.width() - 2 * 24
+    _press(palette.search, Qt.Key.Key_Escape)
+    qapp.processEvents()
+    window.resize(1380, 860)
+    qapp.processEvents()
+    palette = _open_palette(window, qapp)
+    assert palette.width() == 640
