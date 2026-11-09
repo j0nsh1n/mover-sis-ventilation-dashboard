@@ -136,16 +136,16 @@ def _style() -> dict[str, str]:
         return chart_style()
     except Exception:
         return {
-            "figure_facecolor": "#ffffff",
-            "axes_facecolor": "#ffffff",
-            "text": "#0f172a",
-            "muted": "#64748b",
-            "grid": "#e2e8f0",
-            "spine": "#cbd5e1",
-            "bar": "#ea580c",
-            "info": "#3b82f6",
-            "warn": "#d97706",
-            "critical": "#dc2626",
+            "figure_facecolor": "#F3F0E8",
+            "axes_facecolor": "#F3F0E8",
+            "text": "#1C1B19",
+            "muted": "#66625A",
+            "grid": "#E2DCCF",
+            "spine": "#DAD4C7",
+            "bar": "#47443D",
+            "info": "#1C1B19",
+            "warn": "#1C1B19",
+            "critical": "#1C1B19",
         }
 
 
@@ -226,11 +226,17 @@ def flag_rules_figure(
         "warn": style["warn"],
         "critical": style["critical"],
     }
+    # One ink for every severity; hollow, hatched and solid bars tell them apart.
+    fills: dict[str, dict[str, Any]] = {
+        "info": {"facecolor": "none"},
+        "warn": {"facecolor": "none", "hatch": "////"},
+        "critical": {"facecolor": colors["critical"]},
+    }
     bottom = None
     x = range(len(counts))
     for sev in ("info", "warn", "critical"):
         vals = counts[sev].values
-        ax.bar(x, vals, bottom=bottom, label=sev, color=colors[sev], width=0.78, edgecolor="none")
+        ax.bar(x, vals, bottom=bottom, label=sev, width=0.78, edgecolor=colors[sev], linewidth=0.8, **fills[sev])
         bottom = vals if bottom is None else bottom + vals
     # Headroom keeps the legend off the tallest bars
     ax.set_ylim(0, max(float(counts.sum(axis=1).max()), 1.0) * 1.22)
@@ -367,12 +373,15 @@ def focused_signals_figure(
     lane.set_ylabel("Flags", fontsize=8)
     marks = flag_minutes(flags)
     if marks:
-        colors = _style()
+        from src.desktop.theme import tokens
+
+        # This figure always draws on its own dark panel, so the flags take the dark theme's ink.
+        ink = tokens("dark")["ink"]
         for severity, marker in (("info", "o"), ("warn", "^"), ("critical", "D")):
             minutes = [minute for minute, level in marks.items() if level == severity]
             if minutes:
                 lane.scatter(minutes, [0] * len(minutes), marker=marker, s=20,
-                             color=colors[severity], label=severity)
+                             color=ink, label=severity)
     else:
         lane.text(.5, .5, "No flags in this case", transform=lane.transAxes,
                   color=style["text"], ha="center", va="center", fontsize=8)

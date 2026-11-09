@@ -330,6 +330,12 @@ def episode_view(qapp):
     view.close()
 
 
+def test_episode_list_writes_each_severity_as_its_shape_and_word(episode_view):
+    view, _ = episode_view
+    lines = [view.episode_list.item(row).text().split("\n")[0] for row in range(view.episode_list.count())]
+    assert [" · ".join(line.split(" · ")[1:2]) for line in lines] == ["△ warn", "◇ critical"]
+
+
 def test_episode_order_lane_and_keyboard(episode_view, qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest

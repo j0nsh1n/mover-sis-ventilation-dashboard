@@ -7,9 +7,13 @@ from datetime import datetime
 import pandas as pd
 from PySide6.QtWidgets import QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
+from src.desktop.marks import MissingCellDelegate, mark_missing
 from src.modules.medication_vitals.align import DISCLAIMER, align_rows, fictional_demo
 
 _COLUMNS = ("Time", "Item", "Value", "Unit", "Kind", "Source")
+_VALUE_COLUMN = _COLUMNS.index("Value")
+# The two ways the record says a value is absent: a vital with no sample, and a dose never written down.
+_MISSING_VALUES = {"missing", "not recorded"}
 
 
 class MedicationVitalsPanel(QWidget):
@@ -28,6 +32,7 @@ class MedicationVitalsPanel(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         # Arrow keys move between cells; Tab leaves the table.
         self.table.setTabKeyNavigation(False)
+        self.table.setItemDelegate(MissingCellDelegate(self.table))
         layout = QVBoxLayout(self)
         layout.addWidget(notice)
         layout.addWidget(self.note)
@@ -62,4 +67,6 @@ class MedicationVitalsPanel(QWidget):
         for index, row in enumerate(rows):
             values = (row.time_text, row.subject, row.value_text, row.unit, row.kind, row.provenance)
             for column, value in enumerate(values):
-                self.table.setItem(index, column, QTableWidgetItem(value))
+                item = QTableWidgetItem(value)
+                mark_missing(item, column == _VALUE_COLUMN and value in _MISSING_VALUES)
+                self.table.setItem(index, column, item)

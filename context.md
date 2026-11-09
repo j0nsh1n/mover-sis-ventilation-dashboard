@@ -284,6 +284,15 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
+- **Visual overhaul, stage 1 (2026-11-08, branch `feat/visual-overhaul`, not
+  pushed):** design tokens for light and dark in `src/desktop/theme.py`
+  (`tokens()`, `token_color()`), bundled Charter and Inter
+  (`src/desktop/fonts.py`, `assets/fonts/`), the base stylesheet and focus
+  ring, one-ink flag marks and severity text (`src/desktop/marks.py`), the
+  hatched missing-data cell, and a WCAG contrast test. Plan:
+  `_work/mover-suite/VISUAL-OVERHAUL-PLAN.md`. Next: stage 2, the app frame.
+  Per-screen stylesheets in the research workspace, cases overview and
+  practice panels still use their own colors until their stages.
 - **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
 - **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
   Phase 2 commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`.

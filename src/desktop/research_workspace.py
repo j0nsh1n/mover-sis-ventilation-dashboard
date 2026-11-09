@@ -50,6 +50,7 @@ from src.desktop.accessibility import (
 )
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
+from src.desktop.marks import MissingCellDelegate, mark_missing, severity_label
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
@@ -1780,7 +1781,7 @@ class ResearchWorkspace(QWidget):
             spec = self._rule_spec(episode["rule_id"])
             label = spec.label if spec else episode["rule_id"]
             item = QListWidgetItem(
-                f"{label} · {episode['severity']} · {self._episode_phase(episode)}\n"
+                f"{label} · {severity_label(episode['severity'])} · {self._episode_phase(episode)}\n"
                 f"{episode['t_start_min']:g} to {episode['t_end_min']:g} min · {episode['duration_min']:g} min duration"
             )
             item.setToolTip(item.text())
@@ -1968,12 +1969,15 @@ class ResearchWorkspace(QWidget):
         table = QTableWidget(stop - start, len(columns))
         table.setHorizontalHeaderLabels([headings.get(signal, signal) for signal in columns])
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setItemDelegate(MissingCellDelegate(table))
         for table_row, frame_row in enumerate(range(start, stop)):
             source = ts.iloc[frame_row]
             for column, key in enumerate(columns):
                 value = source.get(key)
                 text = "—" if pd.isna(value) else f"{float(value):g}"
-                table.setItem(table_row, column, QTableWidgetItem(text))
+                cell = QTableWidgetItem(text)
+                mark_missing(cell, bool(pd.isna(value)))
+                table.setItem(table_row, column, cell)
         table.selectRow(selected - start)
         table.resizeColumnsToContents()
         layout.addWidget(table)

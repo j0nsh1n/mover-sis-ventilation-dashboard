@@ -21,6 +21,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- New look, first step: warm paper (light) and "night ledger" (dark) colors with
+  one indigo accent, Inter and Charter fonts bundled with the app, quieter
+  controls and tables, and a 2 px accent focus ring on every control that can
+  take focus. Rule flags are one ink in every theme: a circle, triangle or
+  diamond with the words info, warn or critical beside it, never red, amber or
+  blue. Missing values in the medication and vitals table and in the source
+  samples window are hatched and keep their text. Layouts are unchanged.
+
 - The app is now called MOVER Suite. The window title reads "MOVER Suite" with
   the version; About, the setup wizard, update messages, the menu entry, and
   release files use the new name. Monitoring is still the SIS Monitor.
