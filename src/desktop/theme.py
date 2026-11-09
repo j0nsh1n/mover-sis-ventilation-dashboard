@@ -44,22 +44,7 @@ QToolTip {{
     font-size: 12.5px;
 }}
 
-/* —— menu —— */
-QMenuBar {{
-    background: {paper};
-    color: {ink};
-    border-bottom: 1px solid {rule};
-    padding: 2px 4px;
-    spacing: 2px;
-}}
-QMenuBar::item {{
-    background: transparent;
-    padding: 6px 12px;
-    border-radius: 3px;
-}}
-QMenuBar::item:selected {{
-    background: {sel};
-}}
+/* —— menu (context menus only; the app has no menu bar) —— */
 QMenu {{
     background: {sheet};
     color: {ink};
@@ -314,13 +299,106 @@ QTableCornerButton::section {{
     border-bottom: 1px solid {rule};
 }}
 
-/* —— status —— */
+/* —— app frame: rail, running head, practice tabs, footer —— */
+QFrame#navRail {{
+    background: {paper};
+    border: none;
+    border-right: 1px solid {rule};
+}}
+QToolButton#railButton {{
+    background: transparent;
+    color: {ink_3};
+    border: none;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-radius: 0;
+    padding: 8px 0 6px 0;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QToolButton#railButton:hover {{
+    color: {ink};
+}}
+QToolButton#railButton:checked {{
+    color: {ink};
+    border-left: 3px solid {accent};
+}}
+QToolButton#railButton:disabled {{
+    color: {rule_strong};
+}}
+/* the ring replaces the 3 px marks, so padding changes to keep icon and word where they were */
+QToolButton#railButton:focus {{
+    border: 2px solid {accent};
+    padding: 6px 1px 4px 1px;
+}}
+QFrame#runningHead {{
+    background: {paper};
+    border: none;
+}}
+QFrame#runningHead[practice="true"] {{
+    border-top: 3px solid {practice_bar};
+}}
+QLabel#stamp {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#fictionLabel {{
+    color: {practice};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QPushButton#findButton {{
+    background: transparent;
+    color: {ink_3};
+    border: 1px solid transparent;
+    padding: 4px 8px;
+    min-height: 0;
+    font-size: 12.5px;
+    font-weight: 400;
+}}
+QPushButton#findButton:hover, QPushButton#findButton:pressed {{
+    background: transparent;
+    color: {ink};
+}}
+QPushButton#findButton:focus {{
+    border: 2px solid {accent};
+    padding: 3px 7px;
+}}
+QFrame#practiceTabs {{
+    background: {paper};
+    border: none;
+}}
+QDialog#commandPalette {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+}}
+QListWidget#paletteList {{
+    background: {sheet};
+    border: 2px solid transparent;
+}}
+QListWidget#paletteList:focus {{
+    border: 2px solid {accent};
+}}
+QLabel#paletteHint {{
+    color: {ink_3};
+    font-size: 12px;
+}}
+
+/* —— status: the quiet footer —— */
 QStatusBar {{
     background: {paper};
     color: {ink_3};
     border-top: 1px solid {rule};
-    padding: 2px 8px;
+    padding: 2px 16px;
     font-size: 12px;
+}}
+QStatusBar::item {{
+    border: none;
+}}
+QLabel#footerField {{
+    color: {ink_3};
+    font-size: 12px;
+    padding-left: 18px;
 }}
 
 /* —— labels —— */

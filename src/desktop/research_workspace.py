@@ -77,6 +77,18 @@ class CaseView:
     thresholds_sha256: str | None = None
 
 
+@dataclass(frozen=True)
+class Place:
+    """Where the workspace is, for the running head's breadcrumb."""
+
+    page: str  # "research", "signal" or "cases"
+    question: int | None = None  # 1-based number of the question on the board
+    questions: int = 0
+    pid: str | None = None
+    minute: float | None = None
+    from_overview: bool = False
+
+
 @dataclass
 class QuestionState:
     result: RetrievalResult | None
@@ -159,6 +171,8 @@ class ResearchWorkspace(QWidget):
     model_stop_requested = Signal()
     model_unload_requested = Signal()
     model_changed = Signal(str)
+    # Page, question, case or minute changed: the window refreshes its breadcrumb and rail.
+    place_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -210,6 +224,7 @@ class ResearchWorkspace(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.stack = QStackedWidget()
+        self.stack.currentChanged.connect(lambda _index: self.place_changed.emit())
         root.addWidget(self.stack, 1)
         self._build_canvas()
         self._build_signal_detail()
@@ -932,8 +947,8 @@ class ResearchWorkspace(QWidget):
             event.accept()
             self.return_to_canvas()
             return
-        # File > Reload data also uses Ctrl+R. event() claims the key while focus is
-        # inside the workspace so the menu action does not fire there.
+        # The window's Reload action also uses Ctrl+R. event() claims the key while focus is
+        # inside the workspace so the action does not fire there.
         if event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
             event.accept()
             self.open_rules()
@@ -982,6 +997,7 @@ class ResearchWorkspace(QWidget):
         turn.board = self._snapshot_board()
         self.conversation.append_turn(turn)
         self.set_searching(True)
+        self.place_changed.emit()
 
     def _restore_board(self, state: QuestionState) -> None:
         self._restoring_board = True
@@ -1019,6 +1035,7 @@ class ResearchWorkspace(QWidget):
             self.stack.setCurrentIndex(0)
         finally:
             self._restoring_board = False
+        self.place_changed.emit()
 
     def cancel_question(self) -> None:
         state = self._before_question
@@ -1110,6 +1127,7 @@ class ResearchWorkspace(QWidget):
         self._save_board()
         if running is not None:
             self.conversation.update_turn(running)
+        self.place_changed.emit()
         return had_cases
 
     def _drop_turn_case_data(self, turn: Turn, *, shown: bool) -> None:
@@ -1661,6 +1679,7 @@ class ResearchWorkspace(QWidget):
             self.metric_values[column].setText("missing" if pd.isna(value) else f"{float(value):g}")
         self.sample_label.setText(" · ".join(values))
         self.detail_chart.set_minute(minute)
+        self.place_changed.emit()
 
     def _covering_episode(self, minute: float) -> pd.Series | None:
         if self._episodes.empty:
@@ -1869,6 +1888,42 @@ class ResearchWorkspace(QWidget):
         if self.selected_rule_id is not None:
             self.show_rule(self.selected_rule_id)
 
+    def place(self) -> Place:
+        index = self.stack.currentIndex()
+        turns = self.conversation.turns
+        question = next((number for number, turn in enumerate(turns, 1) if turn.request_id == self._board_request), None)
+        if index == CASES_PAGE:
+            return Place("cases", question, len(turns))
+        if index != 1 or self._current_pid is None:
+            return Place("research", question, len(turns))
+        minute = None
+        if not self._minute_rows.empty and 0 <= self.minute_slider.value() < len(self._minute_rows):
+            minute = float(self._minute_rows.iloc[self.minute_slider.value()]["t_min"])
+        return Place("signal", question, len(turns), self._current_pid, minute, self._detail_from_overview)
+
+    def has_open_case(self) -> bool:
+        """True when the Signal page has a case to show."""
+        return self._current_pid is not None and self._current_pid in self._case_views
+
+    def show_canvas(self) -> None:
+        """The question board, as the rail's Research item opens it."""
+        self._leave_signal()
+        self.stack.setCurrentIndex(0)
+
+    def show_signal(self) -> bool:
+        """The open case's page again, with its minute and episode as they were; False when no case is open."""
+        view = self._case_views.get(self._current_pid) if self._current_pid is not None else None
+        if view is None:
+            return False
+        self.rules_drawer.set_thresholds_sha256(view.thresholds_sha256)
+        self.stack.setCurrentIndex(1)
+        return True
+
+    def _leave_signal(self) -> None:
+        if self.stack.currentIndex() == 1:
+            self.clear_episode_selection()
+            self.rules_drawer.set_thresholds_sha256(self._thresholds_sha256)
+
     def return_to_canvas(self) -> None:
         self.clear_episode_selection()
         self.rules_drawer.set_thresholds_sha256(self._thresholds_sha256)
@@ -1902,6 +1957,7 @@ class ResearchWorkspace(QWidget):
             self._cases_overview.refresh_charts()
 
     def show_cases(self) -> None:
+        self._leave_signal()
         if self._cases_overview is None:
             # Built on first open so the workspace's first paint does not pay for it
             overview = CasesOverview()
