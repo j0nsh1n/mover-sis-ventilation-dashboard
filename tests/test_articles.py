@@ -290,7 +290,7 @@ def test_article_board_has_inert_sources_citations_and_saved_scope(qapp, tmp_pat
     store.import_file(FIXTURE)
     view = ResearchWorkspace()
     view.set_article_catalog(store.count)
-    view.scope_combo.setCurrentText("Articles")
+    view.scope_switch.set_scope("Articles")
     view.begin_question("pressure", 1)
     result = store.search("pressure")
     view.set_article_results(result)
@@ -303,18 +303,18 @@ def test_article_board_has_inert_sources_citations_and_saved_scope(qapp, tmp_pat
     widget = view.conversation.turn_widgets[1]
     assert "[A1]" in widget.answer_text.toPlainText()
     assert not widget.citation_buttons
-    view.scope_combo.setCurrentText("Cases")
+    view.scope_switch.set_scope("Cases")
     view.show_turn(1)
     assert view.scope == "Articles" and view.article_result == result
     assert view.article_list.count() == len(result.articles)
-    view.scope_combo.setCurrentText("Cases")
+    view.scope_switch.set_scope("Cases")
     asked = []
     view.question_submitted.connect(lambda q: asked.append((q, view.scope)))
     widget.ask_button.click()
     assert asked == [("pressure", "Articles")]
     view.begin_question("running article question", 2)
-    view.scope_combo.setCurrentText("Cases")
-    assert view.scope == "Cases" and view.scope_combo.currentText() == "Cases"
+    view.scope_switch.set_scope("Cases")
+    assert view.scope == "Cases" and view.scope_switch.scope() == "Cases"
     assert view.conversation.turns[-1].state == "cancelled"
     assert view.conversation.turns[-1].board.scope == "Articles"
     view.close()
@@ -333,7 +333,7 @@ def test_articles_work_without_emr_and_show_empty_states(qapp, tmp_path, monkeyp
     view = win.research
     view.set_models([])
     view.set_setup_required(True)
-    view.scope_combo.setCurrentText("Articles")
+    view.scope_switch.set_scope("Articles")
     assert view.ask_button.isEnabled() and view.status_label.text() == NO_CATALOG
 
     def ask(question):

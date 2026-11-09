@@ -81,7 +81,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     assert view.stack.currentIndex() == 0
     assert view.question_edit.text() == "Where is peak pressure?"
     assert "caseB" in view.comparison_label.text()
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert view.question_edit.text() == ""
     assert view.candidate_table.rowCount() == 0
     assert not view.comparison_card.isVisible()
@@ -215,7 +215,7 @@ def test_cancel_search_restores_board_and_ignores_late_results(qapp, monkeypatch
     win.research.set_answer("Previous answer")
     try:
         win._start_research_search("New question")
-        assert win.research.reset_button.isEnabled()
+        assert win.research.conversation.reset_button.isEnabled()
         assert not win.research.cancel_button.isHidden()
         win.research.cancel_button.click()
         assert win._research_worker.wait(1000)
@@ -238,7 +238,7 @@ def test_reset_during_search_cancels_and_clears_board(qapp, monkeypatch):
     cancelled = []
     view.cancel_requested.connect(lambda: cancelled.append(True))
     view.begin_question("A running question")
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert cancelled == [True]
     assert view.question_edit.text() == ""
     assert view.answer_text.toPlainText() == ""
@@ -864,86 +864,59 @@ def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(e
     assert seen["TV"] and not seen["SPO2"] and not seen["PEEP"]
 
 
-def _value_events(seen, combo):
-    from PySide6.QtGui import QAccessible
-
-    return [
-        value
-        for kind, obj, value in seen
-        if kind == QAccessible.Event.ValueChanged and obj is combo
-    ]
-
-
-def test_main_combos_publish_purpose_before_the_current_item(qapp):
+def test_scope_switch_and_model_menu_publish_their_purpose_and_state(qapp):
     from PySide6.QtGui import QAccessible
 
     view = ResearchWorkspace()
-    view.model_combo.addItem("(Ollama stopped — click Start)")
     view.show()
     qapp.processEvents()
     try:
-        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
-        model = QAccessible.queryAccessibleInterface(view.model_combo)
+        scope = QAccessible.queryAccessibleInterface(view.scope_switch)
         assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Cases"
+        cases = QAccessible.queryAccessibleInterface(view.scope_switch.option("Cases"))
+        articles = QAccessible.queryAccessibleInterface(view.scope_switch.option("Articles"))
+        assert cases.text(QAccessible.Text.Name) == "Cases" and cases.role() == QAccessible.Role.RadioButton
+        assert cases.state().checked and not articles.state().checked
+        view.scope_switch.set_scope("Articles")
+        assert articles.state().checked and not cases.state().checked and view.scope == "Articles"
+        model = QAccessible.queryAccessibleInterface(view.model_menu)
         assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "(Ollama stopped — click Start)"
-        assert view.scope_combo.currentText() == "Cases"
-        assert view.selected_model() is None
-        view.model_combo.setItemText(0, "qwen3:14b")
+        assert model.text(QAccessible.Text.Description) == "Local AI not checked"
+        view.set_models(["qwen3:14b"])
+        view.set_model_state("ready")
+        assert model.text(QAccessible.Text.Description) == "qwen3:14b ready"
+        assert model.text(QAccessible.Text.Name) == "Local AI"
         assert view.selected_model() == "qwen3:14b"
-        renamed = QAccessible.queryAccessibleInterface(view.model_combo)
-        assert renamed.text(QAccessible.Text.Name) == "Local AI"
-        assert renamed.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        assert scope.childCount() == 1
     finally:
         view.close()
 
 
-def test_purpose_combos_notify_value_when_the_selection_changes(qapp, monkeypatch):
-    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+def test_model_menu_announces_a_new_state_and_a_choice_but_a_refresh_is_not_a_choice(qapp, monkeypatch):
+    from PySide6.QtGui import QAccessible
 
     seen = []
-
-    def capture(event):
-        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
-        seen.append((event.type(), event.object(), value))
-
-    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
+    monkeypatch.setattr(QAccessible, "updateAccessibility", lambda event: seen.append((event.type(), event.object())))
     view = ResearchWorkspace()
-    view.model_combo.addItem("(Ollama stopped — click Start)")
-    view.model_combo.addItem("qwen3:14b")
-    view.show()
-    qapp.processEvents()
+    view.set_models(["first", "second"])
+    chosen = []
+    view.model_changed.connect(chosen.append)
     try:
         seen.clear()
-        view.scope_combo.setCurrentIndex(1)
-        scope_values = _value_events(seen, view.scope_combo)
-        assert scope_values == ["Articles"]
-        assert not any(
-            kind == QAccessible.Event.NameChanged and obj is view.scope_combo
-            for kind, obj, _value in seen
-        )
-        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Articles"
-        assert view.scope == "Articles"
+        view.set_model_state("ready")
+        assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
         seen.clear()
-        view.model_combo.setCurrentIndex(1)
-        assert _value_events(seen, view.model_combo) == ["qwen3:14b"]
-        assert view.selected_model() == "qwen3:14b"
-        model = QAccessible.queryAccessibleInterface(view.model_combo)
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        assert scope.childCount() == 1
+        view.model_menu.choose("second")
+        assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
+        assert chosen == ["second"] and view.selected_model() == "second"
+        view.set_models(["first", "second", "third"], "first")
+        view.set_models([], placeholder="(Ollama stopped — click Start)")
+        assert chosen == ["second"], "only a person's choice is a choice"
+        assert view.selected_model() is None
     finally:
         view.close()
 
 
-def test_apply_ollama_status_notifies_value_while_combo_signals_are_blocked(qapp, monkeypatch, tmp_path):
-    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+def test_apply_ollama_status_updates_the_menu_without_counting_as_a_choice(qapp, monkeypatch, tmp_path):
     from src.desktop.app import MainWindow
     from src.llm.service import OllamaStatus
 
@@ -951,65 +924,55 @@ def test_apply_ollama_status_notifies_value_while_combo_signals_are_blocked(qapp
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "emr"))
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    seen = []
-
-    def capture(event):
-        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
-        seen.append((event.type(), event.object(), value))
-
-    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
     win = MainWindow()
-    combo = win.research.model_combo
-    signals = []
-    combo.currentTextChanged.connect(signals.append)
+    menu = win.research.model_menu
+    chosen = []
+    win.research.model_changed.connect(chosen.append)
     try:
-        seen.clear()
         win._apply_ollama_status(
             OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], "http://127.0.0.1:11434")
         )
-        assert signals == []
-        assert _value_events(seen, combo) == ["synthetic:a"]
-        iface = QAccessible.queryAccessibleInterface(combo)
-        assert iface.text(QAccessible.Text.Name) == "Local AI"
-        assert iface.text(QAccessible.Text.Value) == "synthetic:a"
+        assert chosen == []
         assert win.research.selected_model() == "synthetic:a"
-        seen.clear()
+        assert menu.text() == "synthetic:a ready"
         win._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
-        assert signals == []
-        assert _value_events(seen, combo) == ["(Ollama stopped — click Start)"]
+        assert chosen == []
         assert win.research.selected_model() is None
-        assert QAccessible.queryAccessibleInterface(combo).text(QAccessible.Text.Value) == (
-            "(Ollama stopped — click Start)"
-        )
+        assert menu.text() == "Local AI stopped"
+        assert menu.placeholder_text() == "(Ollama stopped — click Start)"
+        assert menu.model_actions() == []
     finally:
         win.close()
 
 
 def test_purpose_combo_names_survive_repeated_creation(qapp):
+    """The handoff and checklist pages still name their combos by purpose; the mechanism must hold across lifetimes."""
     from PySide6.QtGui import QAccessible
 
-    first = ResearchWorkspace()
+    from src.desktop.accessibility import name_combo
+    from src.desktop.scroll_safe_combo import ScrollSafeComboBox
+
+    first = ScrollSafeComboBox()
+    name_combo(first, "Fictional scenario")
+    first.addItem("one")
     first.show()
     qapp.processEvents()
     first.close()
     first.deleteLater()
     qapp.processEvents()
-    second = ResearchWorkspace()
-    second.model_combo.addItem("qwen3:14b")
+    second = ScrollSafeComboBox()
+    name_combo(second, "Fictional scenario")
+    second.addItems(["one", "two"])
     second.show()
     qapp.processEvents()
     try:
-        scope = QAccessible.queryAccessibleInterface(second.scope_combo)
-        model = QAccessible.queryAccessibleInterface(second.model_combo)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Cases"
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        second.scope_combo.setCurrentIndex(1)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Articles"
-        assert second.selected_model() == "qwen3:14b"
+        iface = QAccessible.queryAccessibleInterface(second)
+        assert iface.text(QAccessible.Text.Name) == "Fictional scenario"
+        assert iface.text(QAccessible.Text.Value) == "one"
+        assert "ShowMenu" in iface.actionNames()
+        second.setCurrentIndex(1)
+        assert iface.text(QAccessible.Text.Name) == "Fictional scenario"
+        assert iface.text(QAccessible.Text.Value) == "two"
     finally:
         second.close()
         second.deleteLater()
@@ -1044,3 +1007,23 @@ def test_signal_detail_does_not_scroll_sideways_at_900_px_with_the_drawer_open(e
     assert view.context_button.isVisible()
     right = view.context_button.mapTo(scroll.viewport(), view.context_button.rect().topRight()).x()
     assert right <= scroll.viewport().width()
+
+
+def test_the_research_page_and_conversation_carry_no_colors_of_their_own(qapp):
+    """Only the case page (the next stage) keeps its own colours; the question board and conversation use the tokens."""
+    import re
+    from pathlib import Path
+
+    view = ResearchWorkspace()
+    try:
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", view.styleSheet()):
+            if re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", body):
+                assert "signal" in selector.lower(), selector.strip()
+        for name in ("research_workspace.py", "conversation_panel.py", "evidence_trail.py", "research_controls.py"):
+            source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / name).read_text(encoding="utf-8")
+            if name == "research_workspace.py":
+                # The case page's remaining literals are its own stylesheet and metric colours.
+                source = source[: source.index("        # The case page keeps its own dark look")]
+            assert re.findall(r"#[0-9a-fA-F]{6}\b|QColor\(\"#", source) == [], name
+    finally:
+        view.close()

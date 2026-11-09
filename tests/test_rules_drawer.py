@@ -78,7 +78,7 @@ def _contrast(a: QColor, b: QColor) -> float:
 
 
 def test_count_text_for_empty_and_filtered_search(view):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     total = len(load_rule_catalog().specs)
     assert drawer.count_label.text() == f"{total} rules"
@@ -91,7 +91,7 @@ def test_count_text_for_empty_and_filtered_search(view):
 def test_count_follows_catalog_size_not_a_constant(view):
     catalog = load_rule_catalog()
     view.set_rule_catalog(replace(catalog, specs=catalog.specs[:3]))
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     assert drawer.count_label.text() == "3 rules"
     _type(drawer, catalog.specs[0].id)
@@ -99,7 +99,7 @@ def test_count_follows_catalog_size_not_a_constant(view):
 
 
 def test_etco2_filter_shows_exactly_the_catalog_matches(view):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     _type(drawer, "etco2")
     assert drawer.visible_rule_ids() == _ids("etco2")
@@ -110,7 +110,7 @@ def test_etco2_filter_shows_exactly_the_catalog_matches(view):
 
 
 def test_empty_result_message_and_clear_search(view):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     _type(drawer, "zzz")
     assert drawer.visible_rule_ids() == []
@@ -124,7 +124,7 @@ def test_empty_result_message_and_clear_search(view):
 
 
 def test_rows_show_label_signals_thresholds_with_units_and_phase_skips(view):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     text = _row_text(drawer, "pip_high")
     assert "High PIP" in text and "pip_high" in text
@@ -188,18 +188,14 @@ def test_unknown_rule_id_shows_all_rules_with_a_notice(view):
     assert not drawer.notice_label.isVisible()
 
 
-def test_escape_closes_and_returns_focus_to_the_rules_button(view, qapp):
-    view.rules_button.click()
+def test_escape_closes_and_returns_focus_to_the_opener(view, qapp):
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     assert drawer.search_edit.hasFocus()
     QTest.keyClick(drawer.search_edit, Qt.Key.Key_Escape)
     qapp.processEvents()
     assert not drawer.is_open
-    assert view.rules_button.hasFocus()
-    image = view.rules_button.grab().toImage()
-    ring = QColor("#8c739f")
-    assert image.pixelColor(0, image.height() // 2) == ring
-    assert image.pixelColor(image.width() // 2, 0) == ring
+    assert view.question_edit.hasFocus()
 
 
 def test_escape_returns_focus_to_whatever_had_it_for_ctrl_r(view, qapp):
@@ -214,13 +210,13 @@ def test_escape_returns_focus_to_whatever_had_it_for_ctrl_r(view, qapp):
 
 
 def test_escape_from_the_list_and_the_close_button_also_close(view, qapp):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     QTest.keyClick(view.rules_drawer.rule_scroll, Qt.Key.Key_Escape)
     assert not view.rules_drawer.is_open
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     view.rules_drawer.close_button.click()
     assert not view.rules_drawer.is_open
-    assert view.rules_button.hasFocus()
+    assert view.question_edit.hasFocus()
 
 
 def test_ctrl_r_opens_the_drawer_on_the_canvas_and_on_f(view, qapp):
@@ -250,7 +246,7 @@ def test_escape_on_f_without_an_opener_falls_back_to_a_visible_button(view, qapp
 def test_header_names_the_preset_and_hash_prefix(view, preset):
     catalog = load_rule_catalog(preset)
     view.set_rule_catalog(catalog, thresholds_sha256=catalog.thresholds_sha256)
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     header = view.rules_drawer.header_label.text()
     assert header == f"Thresholds when flagged ({preset}, {catalog.thresholds_sha256[:12]})"
     assert len(catalog.thresholds_sha256[:12]) == 12
@@ -259,14 +255,14 @@ def test_header_names_the_preset_and_hash_prefix(view, preset):
 def test_header_says_when_the_preset_was_not_recorded(view):
     catalog = load_rule_catalog("default")
     view.set_rule_catalog(catalog, recorded=False)
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     assert "Preset not recorded with this data; using default." in view.rules_drawer.header_label.text()
     view.set_rule_catalog(catalog, recorded=True, thresholds_sha256=catalog.thresholds_sha256)
     assert "not recorded" not in view.rules_drawer.header_label.text()
 
 
 def test_catalog_replacement_while_open_reapplies_the_search(view):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     _type(drawer, "etco2")
     default_text = _row_text(drawer, "etco2_high")
@@ -283,7 +279,7 @@ def test_catalog_replacement_while_open_reapplies_the_search(view):
 
 def test_catalog_replaced_while_closed_is_used_on_the_next_open(view):
     view.set_rule_catalog(load_rule_catalog("strict"))
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     assert view.rules_drawer.header_label.text().endswith(f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})")
     assert f"warn at least {load_rule_catalog('strict').get('pip_high').params['warn']:g} cmH2O" in _row_text(
         view.rules_drawer, "pip_high"
@@ -292,7 +288,7 @@ def test_catalog_replaced_while_closed_is_used_on_the_next_open(view):
 
 def test_invalid_config_is_stated_in_the_drawer(view):
     view.set_rule_catalog(None, recorded=True, error="rules.pip_high.warn must be a number")
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     drawer = view.rules_drawer
     assert "invalid" in drawer.header_label.text().lower()
     assert "rules.pip_high.warn must be a number" in drawer.empty_label.text()
@@ -305,7 +301,7 @@ def test_invalid_config_is_stated_in_the_drawer(view):
 
 def test_drawer_opens_while_a_search_is_running_and_without_a_model(view):
     view.set_searching(True)
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     assert view.rules_drawer.is_open
     assert view.cancel_button.isVisible()
     assert view.selected_model() is None
@@ -317,7 +313,7 @@ def test_drawer_opens_while_a_search_is_running_and_without_a_model(view):
 @pytest.mark.skipif(sys.platform == "win32", reason="900 px layout is tuned for Linux font and style metrics; the Windows native style needs about 1,060 px (follow-up)")
 def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     view.resize(900, 900)
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     qapp.processEvents()
     drawer = view.rules_drawer
     assert drawer.width() <= int(view.width() * 0.42)
@@ -327,7 +323,7 @@ def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     assert not scroll.horizontalScrollBar().isVisible()
     assert scroll.viewport().width() >= 480
     assert view.question_edit.isVisible() and view.question_edit.width() >= 300
-    for button in (view.rules_button, view.reset_button, view.add_comparison_button):
+    for button in (view.new_question_button, view.add_comparison_button, view.ask_button, view.model_menu):
         origin = button.mapTo(view, button.rect().topLeft())
         assert origin.x() >= 0 and origin.x() + button.width() <= view.width() - drawer.width()
     assert not drawer.rule_scroll.horizontalScrollBar().isVisible()
@@ -345,33 +341,38 @@ def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     assert view.question_edit.text() == "pressure"
 
 
+def _controls(view):
+    return (view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
+            view.ask_button)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="900 px layout is tuned for Linux font and style metrics; the Windows native style needs about 1,060 px (follow-up)")
-def test_header_buttons_wrap_beside_the_drawer_at_900_px(view, qapp):
+def test_controls_wrap_beside_the_drawer_at_900_px(view, qapp):
     view.resize(900, 900)
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     qapp.processEvents()
     viewport = view.board_splitter.widget(0).viewport()
-    buttons = view._header_buttons
-    for button in buttons:
-        origin = button.mapTo(viewport, button.rect().topLeft())
-        assert origin.x() >= 0 and origin.x() + button.width() <= viewport.width(), button.text()
-    assert buttons[-1].y() > buttons[0].y()
+    for control in _controls(view):
+        origin = control.mapTo(viewport, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= viewport.width(), control.accessibleName()
+    # The actions drop under the choices instead of squeezing them.
+    assert view.ask_button.y() > view.scope_switch.y()
     view.rules_drawer.close_drawer()
     qapp.processEvents()
     view.resize(1400, 900)
     qapp.processEvents()
-    assert len({button.y() for button in buttons}) == 1
+    assert len({control.y() + control.height() // 2 for control in _controls(view)}) == 1
 
 
-def test_header_buttons_keep_their_full_labels_on_a_small_screen(view, qapp):
+def test_controls_keep_their_full_labels_on_a_small_screen(view, qapp):
     # 700 logical px is a 1400 px screen at double scale; the buttons used to shrink to "d a compar".
     view.resize(700, 450)
     qapp.processEvents()
     viewport = view.board_splitter.widget(0).viewport()
-    for button in view._header_buttons:
-        assert button.width() >= button.sizeHint().width(), button.text()
-        origin = button.mapTo(viewport, button.rect().topLeft())
-        assert origin.x() >= 0 and origin.x() + button.width() <= viewport.width(), button.text()
+    for control in _controls(view):
+        assert control.width() >= control.sizeHint().width(), control.accessibleName()
+        origin = control.mapTo(viewport, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= viewport.width(), control.accessibleName()
 
 
 def _wheel(widget, steps: int) -> QWheelEvent:
@@ -383,34 +384,47 @@ def _wheel(widget, steps: int) -> QWheelEvent:
     return event
 
 
-def test_scrolling_the_board_past_a_combo_leaves_its_choice_alone(view, qapp):
-    for combo in (view.scope_combo, view.model_combo):
-        if combo.count() < 2:
-            combo.addItems(["first", "second"])
-        combo.setCurrentIndex(0)
-        view.question_edit.setFocus()
-        qapp.processEvents()
-        event = _wheel(combo, 1)
-        assert combo.currentIndex() == 0, combo.accessibleName()
-        assert not event.isAccepted(), combo.accessibleName()
-        assert not combo.hasFocus(), combo.accessibleName()
+@pytest.fixture
+def settings_combo(qapp, tmp_path, monkeypatch):
+    """A ScrollSafeComboBox that still exists in the app: the Settings theme choice."""
+    from src.desktop.settings_ui import SettingsDialog
 
-
-def test_a_focused_combo_still_follows_the_wheel(view, qapp):
-    view.scope_combo.setCurrentIndex(0)
-    view.scope_combo.setFocus()
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    dialog = SettingsDialog()
+    dialog.show()
     qapp.processEvents()
-    _wheel(view.scope_combo, 1)
-    assert view.scope_combo.currentIndex() == 1
+    yield dialog.form.combo_theme, dialog.form.combo_preset
+    dialog.close()
+
+
+def test_scrolling_a_form_past_a_combo_leaves_its_choice_alone(settings_combo, qapp):
+    combo, other = settings_combo
+    assert combo.count() >= 2
+    combo.setCurrentIndex(0)
+    other.setFocus()
+    qapp.processEvents()
+    event = _wheel(combo, 1)
+    assert combo.currentIndex() == 0
+    assert not event.isAccepted()
+    assert not combo.hasFocus()
+
+
+def test_a_focused_combo_still_follows_the_wheel(settings_combo, qapp):
+    combo, _other = settings_combo
+    combo.setCurrentIndex(0)
+    combo.setFocus()
+    qapp.processEvents()
+    _wheel(combo, 1)
+    assert combo.currentIndex() == 1
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
-def test_an_opened_dropdown_shows_every_choice_without_scrolling(view, qapp, theme):
+def test_an_opened_dropdown_shows_every_choice_without_scrolling(settings_combo, qapp, theme):
     from src.desktop.theme import apply_theme
 
     before = qapp.styleSheet()
     apply_theme(qapp, theme)
-    combo = view.scope_combo
+    combo, _other = settings_combo
     try:
         combo.setFocus()
         qapp.processEvents()
@@ -426,14 +440,28 @@ def test_an_opened_dropdown_shows_every_choice_without_scrolling(view, qapp, the
         qapp.setStyleSheet(before)
 
 
+def test_the_scope_switch_shows_both_options_and_the_arrow_keys_move_between_them(view, qapp):
+    switch = view.scope_switch
+    cases, articles = switch.option("Cases"), switch.option("Articles")
+    assert cases.isVisible() and articles.isVisible()
+    assert switch.accessibleName() == "Question scope"
+    cases.setFocus()
+    qapp.processEvents()
+    assert switch.scope() == "Cases"
+    QTest.keyClick(cases, Qt.Key.Key_Right)
+    assert switch.scope() == "Articles" and view.scope == "Articles" and articles.hasFocus()
+    QTest.keyClick(articles, Qt.Key.Key_Left)
+    assert switch.scope() == "Cases" and view.scope == "Cases" and cases.hasFocus()
+
+
 def test_scope_line_counts_loaded_cases_before_the_first_search(view, qapp):
     cases = pd.DataFrame({"PID": ["SYN0000000001", "SYN0000000002", "SYN0000000003"]})
     view.set_cases_data(cases, None, load_rule_catalog("default"), None)
     assert "analyzed cases: 3" in view.scope_label.text()
     assert "Indexed surgeries: counted at the first search" in view.scope_label.text()
-    view.scope_combo.setCurrentText("Articles")
+    view.scope_switch.set_scope("Articles")
     assert view.scope_label.text().startswith("Articles:")
-    view.scope_combo.setCurrentText("Cases")
+    view.scope_switch.set_scope("Cases")
     assert "analyzed cases: 3" in view.scope_label.text()
     view.set_cases_data(None, None, None, None)
     assert view.scope_label.text() == "Indexed surgeries: — · analyzed cases: —"
@@ -443,22 +471,39 @@ def test_the_board_regains_its_layout_when_the_drawer_closes(view, qapp):
     view.resize(1300, 900)
     qapp.processEvents()
     assert view._layout_mode == "wide"
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     assert view._layout_mode == "narrow"
     view.rules_drawer.close_drawer()
     assert view._layout_mode == "wide"
 
 
-def test_no_comparison_hint_overlaps_a_card_when_narrow(view, qapp):
-    view.resize(900, 900)
+def _add_loaded_comparison(view):
+    ts = pd.DataFrame({"t_min": [0, 1, 2], "PIP": [20.0, 33.0, 24.0], "ETCO2": [35.0, None, 37.0], "HR": [70, 72, 75]})
+    view.set_results(RetrievalResult(candidates=(
+        SearchCandidate(pid="caseA", source_label="analyzed case", analyzed=True, procedure="A", age=1, gender="M",
+                        source_text="", rank_method="keyword", score=0.5),
+        SearchCandidate(pid="caseB", source_label="analyzed case", analyzed=True, procedure="B", age=1, gender="M",
+                        source_text="", rank_method="keyword", score=0.5),
+    )))
+    view.set_case_data("caseA", ts, pd.DataFrame())
+    view.set_case_data("caseB", ts, pd.DataFrame(), comparison=True)
+
+
+@pytest.mark.parametrize("width", [1300, 900, 640])
+def test_no_trail_step_overlaps_another_at_any_width(view, qapp, width):
+    view.resize(width, 900)
+    _add_loaded_comparison(view)
     qapp.processEvents()
-    grid = view._evidence_grid
-    hint = grid.getItemPosition(grid.indexOf(view.comparison_hint))
-    card = grid.getItemPosition(grid.indexOf(view.comparison_card))
-    assert hint == card
-    for other in view._evidence_cards:
-        if other is not view.comparison_card:
-            assert grid.getItemPosition(grid.indexOf(other)) != hint
+    qapp.processEvents()
+    steps = [view.case_shortlist_card, view.observation_step, view.comparison_card, view.limit_step]
+    assert all(step.isVisible() for step in steps)
+    page = view._board_page
+    tops = [step.mapTo(page, step.rect().topLeft()).y() for step in steps]
+    bottoms = [step.mapTo(page, step.rect().bottomLeft()).y() for step in steps]
+    for above, below in zip(range(len(steps) - 1), range(1, len(steps)), strict=True):
+        assert bottoms[above] < tops[below], (width, steps[above].objectName(), steps[below].objectName())
+        # Each step is as tall as its own content needs, so nothing is squeezed into the next one.
+        assert steps[above].height() >= steps[above].minimumSizeHint().height()
 
 
 def test_text_contrast_is_enough_under_the_light_and_dark_app_themes(view, qapp):
@@ -506,7 +551,7 @@ def test_text_contrast_is_enough_under_the_light_and_dark_app_themes(view, qapp)
 
 
 def test_opening_and_filtering_are_fast(view, qapp):
-    view.rules_button.click()
+    view.open_rules(view.question_edit)
     view.rules_drawer.close_drawer()
     fresh = ResearchWorkspace()
     fresh.set_rule_catalog(load_rule_catalog("default"))
@@ -517,12 +562,12 @@ def test_opening_and_filtering_are_fast(view, qapp):
         opens = []
         for _ in range(5):
             started = time.perf_counter()
-            fresh.rules_button.click()
+            fresh.open_rules(fresh.question_edit)
             qapp.processEvents()
             opens.append(time.perf_counter() - started)
             fresh.rules_drawer.close_drawer()
         assert statistics.median(opens) < 0.15
-        fresh.rules_button.click()
+        fresh.open_rules(fresh.question_edit)
         keys = []
         for char in "etco2 high":
             started = time.perf_counter()
@@ -636,7 +681,7 @@ def test_drawer_follows_the_loaded_preset_not_the_saved_one(qapp, monkeypatch, t
     try:
         window.cases = pd.DataFrame()
         drawer = window.research.rules_drawer
-        window.research.rules_button.click()
+        window.research.open_rules(window.research.question_edit)
         assert drawer.header_label.text().endswith(f"Current thresholds (default, {load_rule_catalog().thresholds_sha256[:12]})")
         window._set_loaded_preset("strict", recorded=True)
         assert drawer.header_label.text().endswith(f"Current thresholds (strict, {load_rule_catalog('strict').thresholds_sha256[:12]})")
@@ -659,7 +704,7 @@ def test_invalid_thresholds_reach_the_drawer_from_the_window(qapp, monkeypatch, 
         monkeypatch.setattr("src.config.load_thresholds", fail)
         window._refresh_rule_reference()
         drawer = window.research.rules_drawer
-        window.research.rules_button.click()
+        window.research.open_rules(window.research.question_edit)
         assert "thresholds are broken" in drawer.empty_label.text()
         assert "invalid" in drawer.header_label.text().lower()
     finally:
@@ -702,17 +747,17 @@ def workspace():
 
 def test_invalid_catalog_focuses_close_and_escape_restores_opener(workspace):
     workspace.set_rule_catalog(None, error="invalid thresholds")
-    workspace.rules_button.click()
+    workspace.open_rules(workspace.question_edit)
     drawer = workspace.rules_drawer
     assert drawer.close_button.hasFocus()
     QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Escape)
     assert not drawer.is_open
-    assert workspace.rules_button.hasFocus()
+    assert workspace.question_edit.hasFocus()
 
 
 @pytest.mark.parametrize("location", ["question", "canvas", "detail"])
 def test_escape_anywhere_in_workspace_closes_drawer(workspace, location):
-    workspace.rules_button.click()
+    workspace.open_rules(workspace.question_edit)
     if location == "question":
         target = workspace.question_edit
     elif location == "detail":
@@ -723,7 +768,7 @@ def test_escape_anywhere_in_workspace_closes_drawer(workspace, location):
     target.setFocus()
     QTest.keyClick(target, Qt.Key.Key_Escape)
     assert not workspace.rules_drawer.is_open
-    expected = workspace.back_button if location == "detail" else workspace.rules_button
+    expected = workspace.back_button if location == "detail" else workspace.question_edit
     assert expected.hasFocus()
 
 
@@ -739,7 +784,7 @@ def test_escape_with_unavailable_opener_uses_fallback(workspace, opener_state):
     workspace.question_edit.setFocus()
     QTest.keyClick(workspace.question_edit, Qt.Key.Key_Escape)
     assert not workspace.rules_drawer.is_open
-    assert workspace.rules_button.hasFocus()
+    assert workspace.question_edit.hasFocus()
 
 
 def test_closed_drawer_leaves_escape_to_the_workspace(workspace):
@@ -787,7 +832,7 @@ def test_narrow_shortlist_fits_all_columns_and_keeps_full_text(workspace):
     for _ in range(3):
         QApplication.processEvents()
     wide_widths = [table.columnWidth(i) for i in range(3)]
-    workspace.rules_button.click()
+    workspace.open_rules(workspace.question_edit)
     for _ in range(3):
         QApplication.processEvents()
     assert not table.horizontalScrollBar().isVisible()

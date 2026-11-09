@@ -202,17 +202,17 @@ def slow_ollama_start(run: Run) -> dict[str, Any]:
     ticks: list[float] = []
     QTimer.singleShot(10, lambda: ticks.append(time.monotonic()))
     started = time.monotonic()
-    run.win.research.start_button.click()
+    run.win.research.start_action.trigger()
     run.win._ollama_start()
     run.wait(lambda: bool(ticks), "a GUI timer tick", timeout_s=0.1)
     assert ticks[0] - started < 0.1
-    assert not run.win.research.start_button.isEnabled()
+    assert not run.win.research.start_action.isEnabled()
     return {"timer_ms": round((ticks[0] - started) * 1000), "status": run.win.research.status_label.text()}
 
 
 def ollama_ready(run: Run) -> dict[str, Any]:
     run.wait(lambda: not run.win._ollama_worker.isRunning(), "the fake Ollama start")
-    assert run.win.research.start_button.isEnabled()
+    assert run.win.research.start_action.isEnabled()
     return {"status": run.win.research.status_label.text()}
 
 
@@ -231,7 +231,7 @@ def start_slow_search(run: Run) -> dict[str, Any]:
     run.win.research.ask_button.click()
     run.win.research.cancel_button.setFocus()
     run.wait(lambda: "Searching synthetic" in run.win.research.status_label.text(), "slow search progress")
-    assert run.win.research.reset_button.isEnabled()
+    assert run.win.research.conversation.reset_button.isEnabled()
     assert run.win.width() == 900
     return {"cancel_visible": run.win.research.cancel_button.isVisible(), "width": run.win.width()}
 
@@ -378,7 +378,7 @@ def open_rules_from_button(run: Run) -> dict[str, Any]:
     research = run.win.research
     run.win.activateWindow()
     run.settle()
-    research.rules_button.click()
+    run.win.rail.button("rules").click()
     run.settle()
     assert research.rules_drawer.is_open
     return _drawer_facts(run)
@@ -673,7 +673,7 @@ def open_cases(run: Run) -> dict[str, Any]:
     run.win.resize(900, 860)
     run.settle()
     research = run.win.research
-    research.cases_button.click()
+    research.show_cases()
     run.settle()
     if research.stack.currentIndex() != 2:
         raise RuntimeError("one click on Cases did not open the overview")
@@ -741,7 +741,7 @@ def full_scan(run: Run) -> dict[str, Any]:
 
 
 def switch_to_scan_scope(run: Run) -> dict[str, Any]:
-    run.win.research.cases_button.click()
+    run.win.research.show_cases()
     run.settle()
     overview = run.win.research._cases_overview
     if overview.scope_combo.count() < 2:
@@ -901,7 +901,7 @@ def prototype_ask(run: Run) -> dict[str, Any]:
         expected = ({"analyzed case"} if candidate.pid in analyzed
                     else {"indexed surgery", "indexed surgery · no ventilator data"})
         assert label in expected, (candidate.pid, label)
-    assert [research.candidate_table.item(row, 2).text() for row in range(len(candidates))] == labels
+    assert [research.candidate_table.item(row, 4).text() for row in range(len(candidates))] == labels
     research.candidate_table.setCurrentCell(0, 0)
     research._select_candidate(0)
     run.wait(lambda: _case_loaded(run.win), "the top prototype candidate")
@@ -1071,7 +1071,7 @@ def import_articles(run: Run) -> dict[str, Any]:
     finally:
         QFileDialog.getOpenFileName = original
     research = run.win.research
-    research.scope_combo.setCurrentText("Articles")
+    research.scope_switch.set_scope("Articles")
     assert run.win._article_catalog.count == 12
     assert research.scope_label.text() == "Articles: 12 in the local catalog"
     return {"scope": research.scope_label.text(), "imported": 12}
@@ -1327,10 +1327,8 @@ def install_llm(mode: str, drafts: Sequence[str]) -> None:
     models = [SCRIPTED_MODEL] if mode == "scripted" else []
 
     def refresh_models(self: Any, **_kwargs: Any) -> None:
-        self.research.model_combo.clear()
-        self.research.model_combo.addItems(models or ["(Ollama stopped — click Start)"])
-        self.research.model_status.setText(f"Ollama: replaced by the driver (--llm {mode})")
-        self.research.set_models(models, models[0] if models else None)
+        self.research.set_model_status(f"Ollama: replaced by the driver (--llm {mode})")
+        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — click Start)")
 
     def client_factory(*_args: Any, **_kwargs: Any) -> ScriptedChatClient:
         return ScriptedChatClient(drafts)

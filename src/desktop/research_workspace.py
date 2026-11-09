@@ -7,20 +7,12 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 
 import pandas as pd
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
-from PySide6.QtGui import (
-    QColor,
-    QKeyEvent,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
-)
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QAction, QActionGroup, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QBoxLayout,
     QDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -30,11 +22,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
-    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -43,18 +33,15 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.cases_overview import CasesOverview
-from src.desktop.accessibility import (
-    announce,
-    name_combo as _name_combo,
-    notify_purpose_combo_value,
-)
+from src.desktop.accessibility import announce
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
+from src.desktop.evidence_trail import GUTTER, Sparkline, TrailStep
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
 from src.desktop.fonts import make_tabular
 from src.desktop.marks import MissingCellDelegate, mark_missing, severity_label
+from src.desktop.research_controls import LocalModelButton, ScopeSwitch, TraceButton
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
-from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.llm.minute_context import build_minute_extract
 from src.pipeline.flags import collapse_episodes
 from src.rules import RuleCatalog
@@ -106,28 +93,28 @@ class QuestionState:
 FOLLOW_UP_NO_MODEL = "No AI answer. The minute's source rows are above."
 RULES_DRAWER_MAX_WIDTH = 420
 RULES_DRAWER_SHARE = 0.42
-# Width the wrapped title keeps beside the header actions before they move below it.
-HEADER_TITLE_ROOM = 200
-
-
-def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
-    card = QFrame()
-    card.setFrameShape(QFrame.Shape.StyledPanel)
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(18, 16, 18, 16)
-    layout.setSpacing(9)
-    heading = QLabel(title)
-    heading.setObjectName("sectionLabel")
-    layout.addWidget(heading)
-    return card, layout
-
-
-def _name_kicker(layout: QVBoxLayout) -> None:
-    """Restyle a card's heading label (its first item) as a node kicker."""
-    item = layout.itemAt(0)
-    heading = item.widget() if item is not None else None
-    if heading is not None:
-        heading.setObjectName("nodeKicker")
+PAGE_MARGINS = (32, 24, 32, 32)
+CONVERSATION_WIDTH = 380
+CASES_PLACEHOLDER = "Try: Where does pressure peak in laparoscopic cases?"
+ARTICLES_PLACEHOLDER = "Search titles and abstracts in the local catalog"
+CASES_EXTRACTS = "The local model reads at most three retrieved source extracts."
+ARTICLES_EXTRACTS = "The local model reads at most five article abstracts."
+SPARK_WAITING = "PIP / source samples load on demand"
+SPARK_NONE = "PIP / no observed samples"
+SHORTLIST_COLUMNS = ("#", "Case", "Procedure", "Duration", "Status")
+SOURCE_COLUMNS = ("Min", "PIP", "ETCO₂", "HR")
+SHORTLIST_COLLAPSED_ROWS = 3
+SOURCE_ROWS = 3
+ROW_HEIGHT = 32
+HEADER_HEIGHT = 30
+# Board width from which the observation and its source rows sit side by side.
+SIDE_BY_SIDE_WIDTH = 720
+CONTROLS_GAP = 24
+# Bar position of a running question by search phase; the bar only moves forward.
+PHASE_PROGRESS = {
+    "": 0.05, "preparing": 0.1, "filtering": 0.25, "embedding_query": 0.35, "ranking": 0.5,
+    "fetching": 0.7, "generating": 0.85, "done": 1.0,
+}
 
 
 def _wrap(text: str = "") -> QLabel:
@@ -147,17 +134,70 @@ def _button(text: str, *, primary: bool = False) -> QPushButton:
     return button
 
 
-class _ShortlistTable(QTableWidget):
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self.fit_columns()
+def _text_button(text: str) -> QPushButton:
+    """A quiet action: accent text, no box."""
+    button = QPushButton(text)
+    button.setObjectName("textBtn")
+    button.setAutoDefault(True)
+    return button
 
-    def fit_columns(self) -> None:
+
+def _link_button(text: str) -> QPushButton:
+    """A small in-line link, such as Show all or All rows."""
+    button = QPushButton(text)
+    button.setObjectName("linkBtn")
+    button.setAutoDefault(True)
+    return button
+
+
+def _step_heading(text: str, number: int | None = None) -> QWidget:
+    """A step's name. A step with no pin of its own carries its number in front."""
+    label = QLabel(text)
+    label.setObjectName("stepHeading")
+    if number is None:
+        return label
+    holder = QWidget()
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    mark = QLabel(str(number))
+    mark.setObjectName("stepNumber")
+    row.addWidget(mark)
+    row.addWidget(label, 1)
+    holder.setAccessibleName(f"{number} {text}")
+    return holder
+
+
+def _align_headers_right(table: QTableWidget, columns: tuple[int, ...]) -> None:
+    """Number columns are right-aligned, so their headings sit over the digits."""
+    for column in columns:
+        header = table.horizontalHeaderItem(column)
+        if header is not None:
+            header.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+
+def _fit_rows(table: QTableWidget, rows: int) -> None:
+    """Size a small table to exactly ``rows`` rows, so only the page scrolls."""
+    table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
+    table.horizontalHeader().setFixedHeight(HEADER_HEIGHT)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    # The app style keeps a 2 px frame so the focus ring does not move the rows.
+    table.setFixedHeight(HEADER_HEIGHT + rows * ROW_HEIGHT + 4)
+
+
+class _ShortlistTable(QTableWidget):
+    """The shortlist: case and procedure stay whole, the procedure column takes the spare width."""
+
+    def __init__(self, rows: int, columns: int, parent=None):
+        super().__init__(rows, columns, parent)
         header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.resizeColumnsToContents()
-        if header.length() > self.viewport().width():
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        for column in range(columns):
+            header.setSectionResizeMode(
+                column, QHeaderView.ResizeMode.Stretch if column == 2 else QHeaderView.ResizeMode.ResizeToContents
+            )
+        header.setStretchLastSection(False)
 
 
 class ResearchWorkspace(QWidget):
@@ -231,62 +271,8 @@ class ResearchWorkspace(QWidget):
         self.rules_drawer = RulesDrawer(self, fallback_focus=self._rules_fallback_focus)
         self.rules_drawer.closed.connect(self._apply_board_layout)
         root.addWidget(self.rules_drawer)
+        # The case page keeps its own dark look until its stage; the research page takes the app's tokens.
         self.setStyleSheet("""
-            QWidget#evidencePage, QScrollArea#evidenceScroll { background: #ebe9e3; color: #2c2930; }
-            QWidget#evidenceHeader { background: #f8f7f3; border-bottom: 1px solid #d5d0d4; }
-            QWidget#evidencePage QLabel { color: #302b35; }
-            QLabel#evidenceTitle { font-family: Georgia; font-size: 34px; color: #302637; }
-            QLabel#evidenceKicker { font-size: 11px; font-weight: bold; color: #755390; }
-            QLabel#nodeTitle { font-family: Georgia; font-size: 23px; }
-            QLabel#nodeKicker { font-size: 10px; font-weight: bold; }
-            QFrame#questionNode, QFrame#findingNode, QFrame#sourceNode,
-            QFrame#comparisonNode, QFrame#comparisonHint, QFrame#limitNode,
-            QFrame#shortlistNode { border: 1px solid #d2cbd3; border-radius: 9px; }
-            QFrame#questionNode { background: #332941; border-color: #332941; }
-            QFrame#questionNode QLabel { color: #f7f2fa; }
-            QFrame#questionNode QLabel#nodeKicker { color: #c9b8dd; }
-            QFrame#questionNode QLabel#nodeTitle { color: #fff9f4; }
-            QFrame#questionNode QLineEdit, QFrame#questionNode QComboBox,
-            QFrame#questionNode QTextEdit { background: #493956; color: #fff9f4;
-                border: 1px solid #8c739f; border-radius: 5px; padding: 8px; }
-            QFrame#questionNode QLineEdit:disabled { color: #d3c6d9; }
-            QFrame#questionNode QLineEdit:focus,
-            QFrame#questionNode QComboBox:focus { border: 2px solid #fff9f4; padding: 7px; }
-            QFrame#questionNode QComboBox::down-arrow { image: url(movericons:chevron-light.svg);
-                width: 12px; height: 12px; }
-            QFrame#questionNode QPushButton#primaryBtn { background: #f5e2cb; color: #332941;
-                border: 1px solid #f5e2cb; border-radius: 5px; font-weight: bold; }
-            QFrame#questionNode QPushButton#secondaryBtn { background: transparent; color: #eadcf4;
-                border: 1px solid #8c739f; border-radius: 5px; }
-            QFrame#questionNode QPushButton#secondaryBtn:focus { border: 2px solid #fff9f4; }
-            QFrame#findingNode { background: #f2e3d3; border-color: #ddc6af; }
-            QFrame#sourceNode { background: #fffefa; }
-            QFrame#comparisonNode { background: #e3e9e1; border-color: #b5c3b1; }
-            QFrame#comparisonHint { background: transparent; border: 1px dashed #9e93a3; }
-            QFrame#limitNode { background: #ebe4ef; border-color: #c8bbd1; }
-            QFrame#shortlistNode { background: #fbfaf6; }
-            QWidget#evidencePage QPushButton#textAction { background: transparent; color: #4b3d5d;
-                border: 0; border-bottom: 1px solid #a99bac; border-radius: 0;
-                text-align: left; padding: 7px 0; font-weight: bold; }
-            QWidget#evidencePage QPushButton#outlineAction { background: #f8f7f3; color: #4b3d5d;
-                border: 1px solid #b4afba; border-radius: 5px; padding: 8px 12px; }
-            QWidget#evidencePage QTableWidget { background: #fffefa; color: #302b35;
-                gridline-color: #ddd6dd; border: 1px solid #ddd6dd; }
-            QWidget#evidencePage QTableWidget:focus { border: 2px solid #755390; }
-            QWidget#evidencePage QHeaderView::section { background: #f1ecef; color: #4d4154;
-                border: 0; border-bottom: 1px solid #d7ccd9; padding: 7px; }
-            QScrollArea#conversationPanel, QWidget#conversationPage { background: #ebe9e3; color: #302b35; }
-            QFrame#conversationTurn { background: #fffefa; border: 1px solid #b4afba; border-radius: 8px; }
-            QWidget#conversationPage QLabel { color: #302b35; }
-            QWidget#conversationPage QLabel#turnQuestion { font-weight: bold; font-size: 15px; }
-            QWidget#conversationPage QTextEdit { background: #fffefa; color: #302b35;
-                border: 0; selection-background-color: #493956; selection-color: #fff9f4; }
-            QWidget#conversationPage QPushButton { background: #f8f7f3; color: #4b3d5d;
-                border: 1px solid #8c739f; border-radius: 5px; padding: 7px; min-height: 24px; }
-            QWidget#conversationPage QPushButton#citationLink { text-align: left; text-decoration: underline; }
-            QWidget#conversationPage QPushButton:disabled { color: #64586b; background: #ebe9e3; }
-            QWidget#conversationPage QPushButton:focus, QWidget#conversationPage QTextEdit:focus {
-                border: 2px solid #755390; }
             QWidget#signalPage { background: #111a1c; }
             QWidget#signalPage QLabel { color: #edf3eb; }
             QWidget#signalPage QLabel#signalKicker { color: #bce891; font-size: 11px; font-weight: bold; }
@@ -314,10 +300,6 @@ class ResearchWorkspace(QWidget):
             QWidget#signalPage QSlider::handle:horizontal { background: #c4ed93; width: 16px;
                 margin: -6px 0; border-radius: 8px; }
             QWidget#signalPage QWidget#chartView { background: #142124; }
-            QPushButton:focus,
-            QFrame#questionNode QPushButton#primaryBtn:focus,
-            QWidget#evidencePage QPushButton#textAction:focus,
-            QWidget#evidencePage QPushButton#outlineAction:focus,
             QWidget#signalPage QPushButton:focus { border: 2px solid #8c739f; }
         """)
 
@@ -329,275 +311,318 @@ class ResearchWorkspace(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         page = QWidget()
         page.setObjectName("evidencePage")
+        self._board_page = page
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 24)
+        layout.setContentsMargins(*PAGE_MARGINS)
         layout.setSpacing(0)
-        header = QWidget()
-        header.setObjectName("evidenceHeader")
-        header_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, header)
-        header_layout.setContentsMargins(34, 21, 34, 21)
-        self._header_layout = header_layout
-        header_actions = QGridLayout()
-        self._header_actions = header_actions
-        header_copy = QVBoxLayout()
-        kicker = QLabel("G  /  PRIMARY RESEARCH WORKSPACE")
-        kicker.setObjectName("evidenceKicker")
-        header_copy.addWidget(kicker)
-        title = QLabel("An answer you can take apart.")
-        title.setObjectName("evidenceTitle")
-        title.setWordWrap(True)
-        header_copy.addWidget(title)
-        header_layout.addLayout(header_copy, 1)
-        self.add_comparison_button = _button("+ Add a comparison")
-        self.add_comparison_button.setObjectName("outlineAction")
-        self.add_comparison_button.clicked.connect(self._add_comparison)
-        self.cases_button = _button("Cases")
-        self.cases_button.setObjectName("outlineAction")
-        self.cases_button.setAccessibleName("Cases")
-        self.cases_button.setAccessibleDescription("Open the cases overview")
-        self.cases_button.clicked.connect(self.show_cases)
-        self.new_question_button = _button("New question")
-        self.new_question_button.setObjectName("outlineAction")
+
+        # The question is the page's title: the largest text on the screen.
+        self.question_edit = QLineEdit()
+        self.question_edit.setObjectName("questionField")
+        self.question_edit.setAccessibleName("Research question")
+        self.question_edit.setPlaceholderText(CASES_PLACEHOLDER)
+        self.question_edit.returnPressed.connect(self._submit_question)
+        layout.addWidget(self.question_edit)
+
+        self.scope_switch = ScopeSwitch()
+        self.scope_switch.changed.connect(self._change_scope)
+        self.model_menu = LocalModelButton()
+        self.model_menu.model_chosen.connect(self.model_changed)
+        self.start_action = self.model_menu.start_action
+        self.refresh_action = self.model_menu.refresh_action
+        self.setup_action = self.model_menu.setup_action
+        self.stop_action = self.model_menu.stop_action
+        self.unload_action = self.model_menu.unload_action
+        self.start_action.triggered.connect(self.model_start_requested)
+        self.refresh_action.triggered.connect(self.model_refresh_requested)
+        self.setup_action.triggered.connect(self.setup_requested)
+        self.stop_action.triggered.connect(self.model_stop_requested)
+        self.unload_action.triggered.connect(self.model_unload_requested)
+        self.new_question_button = _text_button("New question")
         self.new_question_button.setAccessibleName("New question")
         self.new_question_button.setAccessibleDescription("Clear the board and keep the conversation")
         self.new_question_button.clicked.connect(self._new_question)
-        self.reset_button = _button("Reset")
-        self.reset_button.setObjectName("outlineAction")
-        self.reset_button.setAccessibleName("Reset")
-        self.reset_button.setAccessibleDescription("Clear the conversation and the board")
-        self.reset_button.clicked.connect(self._reset_canvas)
-        self.rules_button = _button("Rules")
-        self.rules_button.setObjectName("outlineAction")
-        self.rules_button.setAccessibleName("Rules")
-        self.rules_button.setAccessibleDescription("Open rules drawer")
-        self.rules_button.setToolTip("Search the rules (Ctrl+R)")
-        self.rules_button.clicked.connect(lambda: self.open_rules(self.rules_button))
-        self._header_buttons = (self.add_comparison_button, self.cases_button, self.new_question_button,
-                                self.reset_button, self.rules_button)
-        self._header_columns = len(self._header_buttons)
-        self._place_header_actions(self._header_columns)
-        header_layout.addLayout(header_actions)
-        layout.addWidget(header)
-
-        map_wrap = QWidget()
-        map_layout = QVBoxLayout(map_wrap)
-        map_layout.setContentsMargins(34, 20, 34, 16)
-        map_layout.setSpacing(14)
-        meta = QHBoxLayout()
-        meta.addWidget(QLabel("●  EVIDENCE CONNECTIONS"))
-        meta.addStretch(1)
-        meta.addWidget(_wrap("Links show source relationships. They do not imply causation."))
-        map_layout.addLayout(meta)
-
-        content = QGridLayout()
-        content.setHorizontalSpacing(24)
-        content.setVerticalSpacing(20)
-        question_card, question_layout = _card("01 / YOUR QUESTION")
-        question_layout.setSpacing(5)
-        question_card.setObjectName("questionNode")
-        # Hug the question content. A two-row span in the narrow column clipped the
-        # scope line under the status bar once the local-model error wrapped.
-        question_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        _name_kicker(question_layout)
-        question_title = _wrap("Start with what you want to know.")
-        question_title.setObjectName("nodeTitle")
-        question_layout.addWidget(question_title)
-        self.scope_combo = ScrollSafeComboBox()
-        _name_combo(self.scope_combo, "Question scope")
-        self.scope_combo.addItems(["Cases", "Articles"])
-        self.scope_combo.currentTextChanged.connect(self._change_scope)
-        question_layout.addWidget(self.scope_combo)
-        question_layout.addWidget(QLabel("Research question"))
-        self.question_edit = QLineEdit()
-        self.question_edit.setAccessibleName("Research question")
-        self.question_edit.setPlaceholderText("Try: Where does pressure peak in laparoscopic cases?")
-        self.question_edit.setMinimumHeight(44)
-        self.question_edit.returnPressed.connect(self._submit_question)
-        question_layout.addWidget(self.question_edit)
-        self.ask_button = _button("Trace the evidence with AI  ↗", primary=True)
-        self.ask_button.clicked.connect(self._submit_question)
-        question_layout.addWidget(self.ask_button)
-        self.cancel_button = _button("Cancel")
+        self.add_comparison_button = _text_button("Add comparison")
+        self.add_comparison_button.setAccessibleName("Add comparison")
+        self.add_comparison_button.setAccessibleDescription("Add a second retrieved case to the evidence trail")
+        self.add_comparison_button.clicked.connect(self._add_comparison)
+        self.cancel_button = _text_button("Cancel")
         self.cancel_button.setAccessibleName("Cancel research request")
         self.cancel_button.clicked.connect(self.cancel_requested)
         self.cancel_button.hide()
-        question_layout.addWidget(self.cancel_button)
-        self.extract_budget_label = _wrap("The local model reads at most three retrieved source extracts.")
-        question_layout.addWidget(self.extract_budget_label)
-        model_row = QHBoxLayout()
-        model_row.addWidget(QLabel("Local AI"))
-        self.model_combo = ScrollSafeComboBox()
-        _name_combo(self.model_combo, "Local AI")
-        self.model_combo.setMinimumHeight(44)
-        self.model_combo.currentTextChanged.connect(self.model_changed)
-        model_row.addWidget(self.model_combo, stretch=1)
-        question_layout.addLayout(model_row)
-        model_actions = QHBoxLayout()
-        self.start_button = _button("Start AI")
-        self.start_button.clicked.connect(self.model_start_requested)
-        model_actions.addWidget(self.start_button)
-        refresh = _button("Refresh")
-        refresh.clicked.connect(self.model_refresh_requested)
-        model_actions.addWidget(refresh)
-        self.setup_button = _button("Data setup")
-        self.setup_button.clicked.connect(self.setup_requested)
-        model_actions.addWidget(self.setup_button)
-        question_layout.addLayout(model_actions)
-        model_memory = QHBoxLayout()
-        self.stop_button = _button("Stop AI")
-        self.stop_button.setToolTip("Stop Ollama and release its model memory.")
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.model_stop_requested)
-        model_memory.addWidget(self.stop_button)
-        self.unload_button = _button("Unload model")
-        self.unload_button.setToolTip("Unload the selected model and keep Ollama running.")
-        self.unload_button.setEnabled(False)
-        self.unload_button.clicked.connect(self.model_unload_requested)
-        model_memory.addWidget(self.unload_button)
-        question_layout.addLayout(model_memory)
+        self.ask_button = TraceButton()
+        self.ask_button.clicked.connect(self._submit_question)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), page)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._submit_with_shortcut)
+
+        self._build_actions()
+
+        choices = QHBoxLayout()
+        choices.setSpacing(12)
+        choices.addWidget(self.scope_switch)
+        choices.addWidget(self.model_menu)
+        choices.addStretch(1)
+        secondary = QHBoxLayout()
+        secondary.setSpacing(8)
+        for widget in (self.new_question_button, self.add_comparison_button, self.cancel_button):
+            secondary.addWidget(widget)
+        actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        actions.setSpacing(8)
+        actions.addLayout(secondary)
+        actions.addWidget(self.ask_button)
+        self._choices_row, self._secondary_row, self._actions_row = choices, secondary, actions
+        # One row when it fits; otherwise the actions drop under the choices, still right-aligned.
+        controls = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        controls.setSpacing(CONTROLS_GAP)
+        controls.addLayout(choices)
+        controls.addStretch(1)
+        controls.addLayout(actions)
+        self._controls_layout = controls
+        layout.addSpacing(14)
+        layout.addLayout(controls)
+
         self.model_status = _wrap("Local AI has not been checked. Search remains available.")
-        question_layout.addWidget(self.model_status)
+        self.model_status.setObjectName("quietText")
         self.status_label = _wrap("Set up an EMR folder to search indexed surgeries.")
+        self.status_label.setObjectName("quietText")
         self.status_label.setAccessibleName("Research search status")
-        question_layout.addWidget(self.status_label)
-        self.scope_label = _wrap("Indexed surgeries: — · analyzed cases: —")
-        question_layout.addWidget(self.scope_label)
+        layout.addSpacing(8)
+        layout.addWidget(self.model_status)
+        layout.addWidget(self.status_label)
         self.answer_text = QTextEdit(self)
         self.answer_text.setReadOnly(True)
         self.answer_text.hide()
-        question_layout.addStretch(1)
-        content.addWidget(question_card, 0, 0, 1, 2, Qt.AlignmentFlag.AlignTop)
 
-        finding_card, finding_layout = _card("02 / OBSERVATION")
-        finding_card.setObjectName("findingNode")
-        _name_kicker(finding_layout)
-        self.finding_title = _wrap("Select a retrieved case")
-        self.finding_title.setObjectName("nodeTitle")
-        finding_layout.addWidget(self.finding_title)
-        self.finding_copy = _wrap("Detailed measurements load when you inspect a case.")
-        finding_layout.addWidget(self.finding_copy)
-        self.spark_label = QLabel("PIP / source samples load on demand")
-        self.spark_label.setMinimumHeight(62)
-        finding_layout.addWidget(self.spark_label)
-        self.finding_open = _button("Explore this signal in F  ↗")
-        self.finding_open.setObjectName("textAction")
-        self.finding_open.clicked.connect(self._inspect_primary)
-        finding_layout.addWidget(self.finding_open)
-        content.addWidget(finding_card, 0, 2)
+        heading = QHBoxLayout()
+        heading.setSpacing(12)
+        title = QLabel("Evidence")
+        title.setObjectName("boardHeading")
+        heading.addWidget(title)
+        note = QLabel("Each step shows where the next one came from. Lines are provenance, not cause.")
+        note.setObjectName("quietText")
+        note.setWordWrap(True)
+        heading.addWidget(note, 1)
+        layout.addSpacing(32)
+        layout.addLayout(heading)
+        layout.addSpacing(20)
 
-        source_card, source_layout = _card("03 / ORIGINAL SAMPLES")
-        source_card.setObjectName("sourceNode")
-        _name_kicker(source_layout)
-        self.source_title = _wrap("Choose a case")
-        self.source_title.setObjectName("nodeTitle")
-        source_layout.addWidget(self.source_title)
-        self.source_label = _wrap("No case selected.")
-        source_layout.addWidget(self.source_label)
-        source_button = _button("Open source table  ↗")
-        source_button.setObjectName("textAction")
-        source_button.clicked.connect(self._show_primary_source)
-        source_layout.addStretch(1)
-        source_layout.addWidget(source_button)
-        content.addWidget(source_card, 1, 2)
-
-        self.comparison_hint, hint_layout = _card("04 / COMPARE ANOTHER CASE")
-        self.comparison_hint.setObjectName("comparisonHint")
-        _name_kicker(hint_layout)
-        hint_layout.addWidget(_wrap("Add a second case to the evidence trail."))
-        self.hint_button = _button("Add a comparison")
-        self.hint_button.setObjectName("outlineAction")
-        self.hint_button.clicked.connect(self._add_comparison)
-        hint_layout.addWidget(self.hint_button)
-        content.addWidget(self.comparison_hint, 1, 0, 1, 2)
-
-        self.comparison_card, compare_layout = _card("04 / COMPARE ANOTHER CASE")
-        self.comparison_card.setObjectName("comparisonNode")
-        _name_kicker(compare_layout)
-        self.comparison_label = _wrap()
-        compare_layout.addWidget(self.comparison_label)
-        compare_button = _button("Explore comparison in F  ↗")
-        compare_button.setObjectName("textAction")
-        compare_button.clicked.connect(self._inspect_comparison)
-        compare_layout.addWidget(compare_button)
-        content.addWidget(self.comparison_card, 1, 0, 1, 2)
-        self.comparison_card.hide()
-
-        limit_card, limit_layout = _card("WHAT THIS DOES NOT ESTABLISH")
-        limit_card.setObjectName("limitNode")
-        _name_kicker(limit_layout)
-        limit_title = _wrap("An observation has limits.")
-        limit_title.setObjectName("nodeTitle")
-        limit_layout.addWidget(limit_title)
-        self.limit_label = _wrap("A retrieved case can show a pattern, but its measurements alone do not establish a cause or a treatment decision. Missing values remain unknown.")
-        limit_layout.addWidget(self.limit_label)
-        limit_layout.addStretch(1)
-        content.addWidget(limit_card, 2, 0, 1, 3)
-        content.setColumnStretch(0, 10)
-        content.setColumnStretch(1, 11)
-        content.setColumnStretch(2, 10)
-        self._evidence_grid = content
-        self._evidence_cards = (question_card, finding_card, source_card, self.comparison_card, limit_card)
-        self._layout_mode = "wide"
-        map_layout.addLayout(content)
-        layout.addWidget(map_wrap)
-
-        candidate_card, candidate_layout = _card("RETRIEVED CASES / SOURCE SHORTLIST")
-        candidate_card.setObjectName("shortlistNode")
-        self.case_shortlist_card = candidate_card
-        _name_kicker(candidate_layout)
-        self.candidate_table = _ShortlistTable(0, 3)
+        # Step 1: the shortlist
+        self.case_shortlist_card = shortlist = TrailStep(1)
+        self._shortlist_head = QHBoxLayout()
+        self._shortlist_head.setSpacing(12)
+        self._shortlist_head.addWidget(_step_heading("Shortlist"))
+        self.scope_label = _wrap("Indexed surgeries: — · analyzed cases: —")
+        self.scope_label.setObjectName("quietText")
+        self._shortlist_head.addWidget(self.scope_label, 1)
+        self.show_all_button = _link_button("Show all")
+        self.show_all_button.setAccessibleName("Show all retrieved cases")
+        self.show_all_button.clicked.connect(self._toggle_show_all)
+        self.show_all_button.hide()
+        self._shortlist_head.addWidget(self.show_all_button)
+        shortlist.body.addLayout(self._shortlist_head)
+        self.candidate_table = _ShortlistTable(0, len(SHORTLIST_COLUMNS))
+        self.candidate_table.setObjectName("shortlistTable")
         self.candidate_table.setAccessibleName("Retrieved cases")
-        self.candidate_table.setHorizontalHeaderLabels(["Case", "Procedure", "Scope"])
+        self.candidate_table.setHorizontalHeaderLabels(list(SHORTLIST_COLUMNS))
+        _align_headers_right(self.candidate_table, (0, 3))
         self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.candidate_table.setWordWrap(False)
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.candidate_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.candidate_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.candidate_table.setTabKeyNavigation(False)
-        self.candidate_table.setMinimumHeight(160)
+        self.candidate_table.setItemDelegate(MissingCellDelegate(self.candidate_table))
         self.candidate_table.cellClicked.connect(lambda row, _column: self._select_candidate(row))
         self.candidate_table.itemActivated.connect(lambda item: self._select_candidate(item.row()))
-        candidate_layout.addWidget(self.candidate_table)
-        actions = QHBoxLayout()
-        self.inspect_button = _button("Inspect selected signal  ↗")
-        self.inspect_button.setObjectName("outlineAction")
+        shortlist.body.addWidget(self.candidate_table)
+        picks = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        picks.setSpacing(8)
+        self.inspect_button = _text_button("Inspect selected signal")
         self.inspect_button.clicked.connect(self._inspect_selected)
-        actions.addWidget(self.inspect_button)
-        self.compare_button = _button("Add selected as comparison")
-        self.compare_button.setObjectName("outlineAction")
+        picks.addWidget(self.inspect_button)
+        self.compare_button = _text_button("Add selected as comparison")
         self.compare_button.clicked.connect(self._compare_selected)
-        actions.addWidget(self.compare_button)
-        candidate_layout.addLayout(actions)
+        picks.addWidget(self.compare_button)
+        picks.addStretch(1)
+        self._picks_row = picks
+        shortlist.body.addLayout(picks)
         self.selection_label = _wrap("Choose a case with one click or Enter.")
-        candidate_layout.addWidget(self.selection_label)
-        self.article_card, article_layout = _card("LOCAL ARTICLES / SOURCE SHORTLIST")
+        self.selection_label.setObjectName("quietText")
+        shortlist.body.addWidget(self.selection_label)
+        layout.addWidget(shortlist)
+
+        # The article shortlist replaces the trail in the Articles scope
+        self.article_card = articles = TrailStep(1)
+        articles_head = QHBoxLayout()
+        articles_head.setSpacing(12)
+        articles_head.addWidget(_step_heading("Articles"))
+        self._articles_head = articles_head
+        articles_head.addStretch(1)
+        articles.body.addLayout(articles_head)
         self.article_list = QListWidget()
         self.article_list.setAccessibleName("Matching local articles")
         self.article_list.setWordWrap(True)
         self.article_list.setMinimumHeight(260)
-        article_layout.addWidget(self.article_list)
-        layout.addWidget(self.article_card)
-        self.article_card.hide()
-        layout.addWidget(candidate_card)
-        layout.setStretchFactor(candidate_card, 0)
+        articles.body.addWidget(self.article_list)
+        layout.addWidget(articles)
+        articles.hide()
+
+        # Step 2: the observation, with the rows behind it beside it
+        self.observation_step = observation = TrailStep(2)
+        self._observation_columns = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._observation_columns.setSpacing(32)
+        left = QVBoxLayout()
+        left.setSpacing(6)
+        left.addWidget(_step_heading("Observation"))
+        self.finding_title = _wrap("Select a retrieved case")
+        self.finding_title.setObjectName("statement")
+        left.addWidget(self.finding_title)
+        self.finding_context = _wrap()
+        self.finding_context.setObjectName("quietText")
+        self.finding_context.hide()
+        left.addWidget(self.finding_context)
+        self.finding_copy = _wrap("Detailed measurements load when you inspect a case.")
+        self.finding_copy.setObjectName("quietText")
+        left.addWidget(self.finding_copy)
+        self.sparkline = Sparkline(SPARK_WAITING)
+        left.addWidget(self.sparkline)
+        self.finding_open = QPushButton("Open the signal")
+        self.finding_open.setAutoDefault(True)
+        self.finding_open.clicked.connect(self._inspect_primary)
+        left.addWidget(self.finding_open, alignment=Qt.AlignmentFlag.AlignLeft)
+        left.addStretch(1)
+        right = QVBoxLayout()
+        right.setSpacing(6)
+        rows_head = QHBoxLayout()
+        rows_head.setSpacing(8)
+        rows_head.addWidget(_step_heading("Source rows", 3), 1)
+        self.all_rows_button = _link_button("All rows")
+        self.all_rows_button.setAccessibleName("All source rows")
+        self.all_rows_button.clicked.connect(self._show_primary_source)
+        rows_head.addWidget(self.all_rows_button)
+        right.addLayout(rows_head)
+        self.source_title = _wrap("Choose a case")
+        self.source_title.setObjectName("stepHeading")
+        right.addWidget(self.source_title)
+        self.source_table = QTableWidget(0, len(SOURCE_COLUMNS))
+        self.source_table.setObjectName("sourceRows")
+        self.source_table.setAccessibleName("Source rows behind the observation")
+        self.source_table.setHorizontalHeaderLabels(list(SOURCE_COLUMNS))
+        _align_headers_right(self.source_table, (0, 1, 2, 3))
+        self.source_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.source_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.source_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.source_table.setItemDelegate(MissingCellDelegate(self.source_table))
+        self.source_table.hide()
+        _fit_rows(self.source_table, 0)
+        right.addWidget(self.source_table)
+        self.source_label = _wrap("No case selected.")
+        self.source_label.setObjectName("quietText")
+        right.addWidget(self.source_label)
+        right.addStretch(1)
+        self._observation_columns.addLayout(left, 1)
+        self._observation_columns.addLayout(right, 1)
+        observation.body.addLayout(self._observation_columns)
+        layout.addWidget(observation)
+
+        # Step 4: the comparison, once one is added
+        self.comparison_card = comparison = TrailStep(4)
+        comparison.body.addWidget(_step_heading("Comparison"))
+        self.comparison_label = _wrap()
+        comparison.body.addWidget(self.comparison_label)
+        compare_open = _link_button("Open comparison")
+        compare_open.clicked.connect(self._inspect_comparison)
+        comparison.body.addWidget(compare_open, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(comparison)
+        comparison.hide()
+
+        self.limit_step = limit = TrailStep(None)
+        limit.body.setContentsMargins(GUTTER, 0, 0, 8)
+        limit.body.addWidget(_step_heading("What this does not establish"))
+        self.limit_label = _wrap(
+            "A retrieved case can show a pattern, but its measurements alone do not establish a cause or a "
+            "treatment decision. Missing values remain unknown."
+        )
+        limit.body.addWidget(self.limit_label)
+        layout.addWidget(limit)
+        layout.addStretch(1)
+        self._layout_mode = "wide"
         scroll.setWidget(page)
         self.board_scroll = scroll
         self.conversation = ConversationPanel()
         self.conversation.case_requested.connect(self._open_cited_case)
         self.conversation.show_requested.connect(self.show_turn)
         self.conversation.ask_scoped_requested.connect(self._ask_again)
+        self.conversation.cancel_requested.connect(self.cancel_requested)
+        self.conversation.reset_requested.connect(self._reset_canvas)
         self.board_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.board_splitter.setObjectName("boardSplitter")
+        self.board_splitter.setHandleWidth(1)
         self.board_splitter.addWidget(scroll)
         self.board_splitter.addWidget(self.conversation)
         self.board_splitter.setStretchFactor(0, 1)
         self.board_splitter.setStretchFactor(1, 0)
-        self.board_splitter.setSizes([1000, 340])
+        self.board_splitter.setSizes([1000, CONVERSATION_WIDTH])
         self.canvas_scroll = QScrollArea()
         self.canvas_scroll.setWidgetResizable(True)
         self.canvas_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.canvas_scroll.setWidget(self.board_splitter)
         self.stack.addWidget(self.canvas_scroll)
+        self._extract_text = ""
+        self._show_all_rows = False
         self._set_case_actions(False)
+        self._set_extract_text(CASES_EXTRACTS)
+
+    def _build_actions(self) -> None:
+        """Actions behind the page's buttons, so Ctrl+K lists the same things the buttons do."""
+        self.trace_action = QAction("Trace the evidence", self)
+        self.trace_action.triggered.connect(self._submit_with_shortcut)
+        self.new_question_action = QAction("New question", self)
+        self.new_question_action.setToolTip("Clear the board and keep the conversation")
+        self.new_question_action.triggered.connect(self._new_question)
+        self.add_comparison_action = QAction("Add comparison", self)
+        self.add_comparison_action.triggered.connect(self._add_comparison)
+        self.reset_action = QAction("Reset conversation and board", self)
+        self.reset_action.setToolTip("Clear the conversation and the board")
+        self.reset_action.triggered.connect(self._reset_canvas)
+        self.scope_actions: dict[str, QAction] = {}
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for scope, text in (("Cases", "Ask about cases"), ("Articles", "Ask about articles")):
+            action = QAction(text, self)
+            action.setCheckable(True)
+            action.setChecked(scope == "Cases")
+            action.triggered.connect(lambda _checked=False, scope=scope: self.scope_switch.set_scope(scope))
+            group.addAction(action)
+            self.scope_actions[scope] = action
+
+    def command_entries(self) -> list[tuple[QAction, str, str]]:
+        """Palette lines for the research page: the action, its group and extra search words."""
+        research = "Research"
+        local = "Local AI"
+        menu = self.model_menu
+        return [
+            (self.trace_action, research, "search ask question evidence"),
+            (self.new_question_action, research, "clear board ask"),
+            (self.add_comparison_action, research, "second case compare"),
+            (self.reset_action, research, "clear conversation start over"),
+            (self.scope_actions["Cases"], "Question scope", "search switch"),
+            (self.scope_actions["Articles"], "Question scope", "search switch catalog"),
+            (menu.start_action, local, "ollama model start"),
+            (menu.stop_action, local, "ollama model stop memory"),
+            (menu.unload_action, local, "ollama model memory"),
+            (menu.refresh_action, local, "ollama model list models"),
+        ]
+
+    def _sync_actions(self) -> None:
+        """Keep the palette's copies of the buttons on the same enabled rules as the buttons."""
+        busy_reason = "A search is running. Cancel it or wait for it to finish."
+        for action, button in ((self.trace_action, self.ask_button), (self.add_comparison_action, self.add_comparison_button)):
+            action.setEnabled(button.isEnabled() and not button.isHidden())
+            action.setToolTip("" if action.isEnabled() else (busy_reason if self._searching else "Not available here."))
 
     def _build_signal_detail(self) -> None:
         page = QWidget()
@@ -750,21 +775,21 @@ class ResearchWorkspace(QWidget):
         self.stack.currentChanged.connect(lambda _index: self._reset_follow_up(clear_question=True))
 
     def selected_model(self) -> str | None:
-        value = self.model_combo.currentText().strip()
-        return value if value and not value.startswith("(") else None
+        return self.model_menu.selected_model()
 
-    def set_models(self, models: list[str], current: str | None = None) -> None:
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        if models:
-            self.model_combo.addItems(models)
-            index = self.model_combo.findText(current or "")
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
-        else:
-            self.model_combo.addItem("(AI unavailable · search still works)")
-        self.model_combo.blockSignals(False)
-        notify_purpose_combo_value(self.model_combo)
+    def set_models(self, models: list[str], current: str | None = None, placeholder: str = "") -> None:
+        """Show the installed models in the menu. A change made here never counts as the user's choice."""
+        self.model_menu.set_models(models, current, placeholder)
+
+    def set_model_state(self, state: str) -> None:
+        """The local model's state word on the menu button: unchecked, ready, stopped, failed or busy:<word>."""
+        self.model_menu.set_state(state)
+
+    def set_model_status(self, text: str, *, rich: bool = False, relevant: bool = True) -> None:
+        """The Ollama status line under the question. It is hidden while everything is fine."""
+        self.model_status.setTextFormat(Qt.TextFormat.RichText if rich else Qt.TextFormat.PlainText)
+        self.model_status.setText(text)
+        self.model_status.setVisible(relevant and bool(text))
 
     @property
     def scope(self) -> str:
@@ -776,7 +801,7 @@ class ResearchWorkspace(QWidget):
             self._render_scope()
 
     def _ask_again(self, question: str, scope: str) -> None:
-        self.scope_combo.setCurrentText(scope)
+        self.scope_switch.set_scope(scope)
         self.question_submitted.emit(question)
 
     def _change_scope(self, scope: str) -> None:
@@ -784,27 +809,27 @@ class ResearchWorkspace(QWidget):
         self.board_restore_requested.emit()
         self._detach_board()
         self._scope = scope
-        self.scope_combo.blockSignals(True)
-        self.scope_combo.setCurrentText(scope)
-        self.scope_combo.blockSignals(False)
+        self.scope_switch.set_scope(scope, notify=False)
         self._clear_board()
+
+    def _set_extract_text(self, text: str) -> None:
+        self._extract_text = text
+        self.model_menu.set_intro(f"{text} Search works without it.")
 
     def _render_scope(self) -> None:
         articles = self.scope == "Articles"
         self.article_card.setVisible(articles)
         self.case_shortlist_card.setVisible(not articles)
-        for card in self._evidence_cards[1:]:
-            card.setVisible(not articles and card is not self.comparison_card)
-        self.comparison_hint.setVisible(not articles)
+        self.observation_step.setVisible(not articles)
+        self.limit_step.setVisible(not articles)
+        self.comparison_card.setVisible(not articles and self._comparison_pid is not None)
         self.add_comparison_button.setVisible(not articles)
-        self.extract_budget_label.setText(
-            "The local model reads at most five article abstracts."
-            if articles else "The local model reads at most three retrieved source extracts."
-        )
-        self.question_edit.setPlaceholderText(
-            "Search titles and abstracts in the local catalog" if articles
-            else "Try: Where does pressure peak in laparoscopic cases?"
-        )
+        self._set_extract_text(ARTICLES_EXTRACTS if articles else CASES_EXTRACTS)
+        self.question_edit.setPlaceholderText(ARTICLES_PLACEHOLDER if articles else CASES_PLACEHOLDER)
+        # The scope line belongs beside the step that is showing.
+        head = self._articles_head if articles else self._shortlist_head
+        if head.indexOf(self.scope_label) < 0:
+            head.insertWidget(1, self.scope_label, 1)
         if not articles:
             self.scope_label.setText(self._case_scope())
         if articles:
@@ -813,6 +838,8 @@ class ResearchWorkspace(QWidget):
         ready = not self._searching and (articles or not self._setup_required)
         self.ask_button.setEnabled(ready and not (articles and self._article_error))
         self.question_edit.setEnabled(ready)
+        self.scope_actions[self.scope].setChecked(True)
+        self._sync_actions()
         self._layout_mode = ""
         self._apply_board_layout()
 
@@ -823,6 +850,7 @@ class ResearchWorkspace(QWidget):
             return
         self.ask_button.setEnabled(not required)
         self.question_edit.setEnabled(not required)
+        self._sync_actions()
         self.status_label.setText(
             "Setup required. Choose a valid EMR folder before searching."
             if required else "Ready to search indexed surgeries."
@@ -835,9 +863,15 @@ class ResearchWorkspace(QWidget):
         self._searching = active
         self.cancel_button.setVisible(active)
         self.add_comparison_button.setEnabled(not active)
-        self.hint_button.setEnabled(not active)
         self.inspect_button.setEnabled(not active and self._selected_pid is not None)
         self.compare_button.setEnabled(not active and self._selected_pid is not None)
+        self._sync_actions()
+        self._apply_board_layout()
+
+    def _submit_with_shortcut(self) -> None:
+        # Enter in the field already submits; the shortcut also works from the switch, the menu and the trail.
+        if self.ask_button.isEnabled():
+            self._submit_question()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -853,65 +887,50 @@ class ResearchWorkspace(QWidget):
         if self.board_splitter.orientation() != orientation:
             self.board_splitter.setOrientation(orientation)
             self.board_splitter.setSizes([max(300, self.height() - 360), 340] if stacked
-                                         else [max(600, board_width - 340), 340])
-        mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
-        header = self._header_layout.parentWidget()
-        if header is not None:
-            header.setMaximumWidth(max(1, board_width - 32) if mode == "single" else board_width)
-        self._fit_header(board_width, mode)
-        if mode == self._layout_mode:
-            return
-        self._layout_mode = mode
-        positions = {
-            # The question card takes two columns on one row so its error and scope
-            # lines stay above the status bar at 1380x860. One narrow column does not.
-            "wide": ((0, 0, 1, 2), (0, 2, 1, 1), (1, 2, 1, 1), (1, 0, 1, 2), (2, 0, 1, 3)),
-            "narrow": ((0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)),
-            "single": ((0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 1, 1), (3, 0, 1, 1), (4, 0, 1, 1)),
-        }[mode]
-        for card in (*self._evidence_cards, self.comparison_hint):
-            self._evidence_grid.removeWidget(card)
-        for card, position in zip(self._evidence_cards, positions, strict=True):
-            alignment = Qt.AlignmentFlag.AlignTop if card is self._evidence_cards[0] else Qt.AlignmentFlag(0)
-            self._evidence_grid.addWidget(card, *position, alignment)
-        # The hint stands in for the comparison card until one is added.
-        self._evidence_grid.addWidget(self.comparison_hint, *positions[3])
-        stretches = {"wide": (10, 11, 10), "narrow": (10, 10, 0), "single": (1, 0, 0)}[mode]
-        for column, stretch in enumerate(stretches):
-            self._evidence_grid.setColumnStretch(column, stretch)
-        if self.scope == "Articles":
-            self._evidence_grid.removeWidget(self._evidence_cards[0])
-            self._evidence_grid.addWidget(self._evidence_cards[0], 0, 0, 1, 3)
-
-    def _fit_header(self, board_width: int, mode: str) -> None:
-        """Place the title and actions so no button is narrower than its label."""
-        margins = (16, 14, 16, 14) if mode == "single" else (34, 21, 34, 21)
-        room = board_width - (32 if mode == "single" else 0) - margins[0] - margins[2]
-        spacing = self._header_actions.horizontalSpacing()
-        if spacing < 0:
-            spacing = self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
-        widths = [button.sizeHint().width() for button in self._header_buttons]
-
-        def row(columns: int) -> int:
-            return sum(max(widths[column::columns]) for column in range(columns)) + spacing * (columns - 1)
-
-        # One row of five buttons is wider than a one-column board beside the drawer.
-        most = (1 if board_width < 440 else 2) if mode == "single" else len(widths)
-        beside = mode != "single" and row(len(widths)) + spacing + HEADER_TITLE_ROOM <= room
-        columns = most if beside else next((c for c in (5, 3, 2) if c <= most and row(c) <= room), 1)
-        self._header_layout.setDirection(
-            QBoxLayout.Direction.LeftToRight if beside else QBoxLayout.Direction.TopToBottom
+                                         else [max(600, board_width - CONVERSATION_WIDTH), CONVERSATION_WIDTH])
+        self._layout_mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
+        room = board_width - (0 if stacked else CONVERSATION_WIDTH) - PAGE_MARGINS[0] - PAGE_MARGINS[2]
+        self._fit_controls(room)
+        side_by_side = room - GUTTER >= SIDE_BY_SIDE_WIDTH
+        self._observation_columns.setDirection(
+            QBoxLayout.Direction.LeftToRight if side_by_side else QBoxLayout.Direction.TopToBottom
         )
-        self._header_layout.setContentsMargins(*margins)
-        if columns != self._header_columns:
-            self._header_columns = columns
-            self._place_header_actions(columns)
+        # The two case actions stack when the trail is too narrow to hold them side by side.
+        self.inspect_button.ensurePolished()
+        self.compare_button.ensurePolished()
+        pair = self.inspect_button.sizeHint().width() + self._picks_row.spacing() + self.compare_button.sizeHint().width()
+        self._picks_row.setDirection(
+            QBoxLayout.Direction.LeftToRight if room - GUTTER >= pair else QBoxLayout.Direction.TopToBottom
+        )
 
-    def _place_header_actions(self, columns: int) -> None:
-        for button in self._header_buttons:
-            self._header_actions.removeWidget(button)
-        for index, button in enumerate(self._header_buttons):
-            self._header_actions.addWidget(button, index // columns, index % columns)
+    def _fit_controls(self, room: int) -> None:
+        """Lay the controls out in as few rows as the width allows.
+
+        One row when everything fits; otherwise the actions drop under the choices, on the right;
+        and when even the actions are too wide, the Trace button drops under the other actions.
+        """
+        # Unpolished buttons report plainer, narrower sizes than the styled ones will have.
+        for control in (self.scope_switch, self.model_menu, self.new_question_button, self.add_comparison_button,
+                        self.cancel_button, self.ask_button):
+            control.ensurePolished()
+        choices = self._choices_row.sizeHint().width()
+        secondary = self._secondary_row.sizeHint().width()
+        ask = self.ask_button.sizeHint().width()
+        actions = secondary + self._actions_row.spacing() + ask
+        one_row = choices + CONTROLS_GAP + actions <= room
+        self._controls_layout.setDirection(
+            QBoxLayout.Direction.LeftToRight if one_row else QBoxLayout.Direction.TopToBottom
+        )
+        self._controls_layout.setSpacing(CONTROLS_GAP if one_row else 10)
+        self._controls_layout.setAlignment(
+            self._actions_row, Qt.AlignmentFlag(0) if one_row else Qt.AlignmentFlag.AlignRight
+        )
+        stacked = not one_row and actions > room
+        self._actions_row.setDirection(
+            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
+        )
+        self._actions_row.setAlignment(self.ask_button, Qt.AlignmentFlag.AlignRight if stacked else Qt.AlignmentFlag(0))
+        self._actions_row.setAlignment(self._secondary_row, Qt.AlignmentFlag.AlignRight if stacked else Qt.AlignmentFlag(0))
 
     def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True,
                          thresholds_sha256: str | None = None, error: str = "") -> None:
@@ -938,7 +957,7 @@ class ResearchWorkspace(QWidget):
         self._apply_board_layout()
 
     def _rules_fallback_focus(self) -> QWidget:
-        return self.rules_button if self.rules_button.isVisible() else self.back_button
+        return self.question_edit if self.question_edit.isVisible() else self.back_button
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         # The open rules drawer owns Escape; a second Escape shortcut here would make Qt drop both as ambiguous.
@@ -967,7 +986,7 @@ class ResearchWorkspace(QWidget):
 
     def _board_labels(self) -> tuple[QLabel, ...]:
         return (self.status_label, self.scope_label, self.finding_title, self.finding_copy,
-                self.source_title, self.source_label, self.selection_label)
+                self.source_title, self.source_label, self.selection_label, self.finding_context)
 
     def _snapshot_board(self) -> QuestionState:
         return QuestionState(
@@ -1003,10 +1022,7 @@ class ResearchWorkspace(QWidget):
         self._restoring_board = True
         try:
             self._scope = state.scope
-            self.scope_combo.blockSignals(True)
-            self.scope_combo.setCurrentText(state.scope)
-            self.scope_combo.blockSignals(False)
-            notify_purpose_combo_value(self.scope_combo)
+            self.scope_switch.set_scope(state.scope, notify=False)
             self._clear_board()
             if state.article_result is not None:
                 self.set_article_results(state.article_result)
@@ -1029,6 +1045,7 @@ class ResearchWorkspace(QWidget):
                     row = next((i for i, candidate in enumerate(state.result.candidates) if candidate.pid == state.selected_pid), None)
                     if row is not None:
                         self.candidate_table.setCurrentCell(row, 0)
+                        self._fit_shortlist()
             self.answer_text.setPlainText(state.answer)
             for label, text in zip(self._board_labels(), state.labels, strict=True):
                 label.setText(text)
@@ -1083,10 +1100,19 @@ class ResearchWorkspace(QWidget):
             self._overview_candidates[pid] = candidate
             self._open_or_request(pid, comparison=False)
 
-    def set_progress(self, message: str) -> None:
-        """Show a running step of the current search; finish_progress replaces it."""
+    def set_progress(self, message: str, phase: str = "", total: int = 0) -> None:
+        """Show a running step of the current search; finish_progress replaces it.
+
+        The running question's entry in the conversation lists the same steps with a bar.
+        """
         self.set_status(message)
         self._status_is_progress = True
+        turn = self.conversation.turn(self._active_turn_request)
+        if turn is not None and turn.state == "running":
+            turn.advance(message, phase, PHASE_PROGRESS.get(phase, PHASE_PROGRESS[""]))
+            if phase == "fetching" and total:
+                turn.extracts = total
+            self.conversation.update_turn(turn)
 
     def finish_progress(self) -> None:
         """Replace a running step left on the status line once its search has ended."""
@@ -1142,6 +1168,7 @@ class ResearchWorkspace(QWidget):
             labels[2:6] = ("Open a case to inspect its measurements",
                            "The shortlist is based on indexed surgery metadata. Detailed signal values load on demand.",
                            "Choose a case", "No case selected.")
+            labels[7] = ""
             turn.board = replace(board, case_views={}, primary_pid=None, comparison_pid=None, labels=tuple(labels))
         self.conversation.update_turn(turn)
 
@@ -1209,11 +1236,10 @@ class ResearchWorkspace(QWidget):
         self.finding_copy.setText("Detailed measurements load when you inspect a case.")
         self.source_title.setText("Choose a case")
         self.source_label.setText("No case selected.")
-        self.spark_label.setPixmap(QPixmap())
-        self.spark_label.setText("PIP / source samples load on demand")
+        self._show_all_rows = False
+        self._clear_observation()
         self.answer_text.clear()
         self.comparison_card.hide()
-        self.comparison_hint.show()
         self._case_scope_text = None
         self.scope_label.setText(self._case_scope())
         self._set_case_actions(False)
@@ -1234,37 +1260,59 @@ class ResearchWorkspace(QWidget):
             return
         self._open_or_request(candidate.pid, comparison=True, open_detail=False)
 
-    def _show_sparkline(self, ts: pd.DataFrame) -> None:
+    def _clear_observation(self) -> None:
+        self.sparkline.clear(SPARK_WAITING)
+        self.source_table.setRowCount(0)
+        self.source_table.hide()
+        self.finding_context.hide()
+        self.finding_context.clear()
+        self.finding_open.setText("Open the signal")
+
+    def _show_observation(self, view: CaseView, ts: pd.DataFrame) -> str:
+        """Draw the observation's sparkline, button and rows; returns the rows' provenance sentence."""
+        index = self._observation(view)[2]
+        minute = float(ts.iloc[index]["t_min"]) if not ts.empty and "t_min" in ts else None
         if "PIP" not in ts or not ts["PIP"].notna().any():
-            self.spark_label.setText("PIP / no observed samples")
-            return
-        values = pd.to_numeric(ts["PIP"], errors="coerce")
-        width, height = 320, 66
-        pixmap = QPixmap(width, height)
-        pixmap.fill(QColor("#f2e3d3"))
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#cfb59f"), 1))
-        painter.drawLine(0, height - 8, width, height - 8)
-        low, high = float(values.min()), float(values.max())
-        span = max(high - low, 1.0)
-        path = QPainterPath()
-        drawing = False
-        for index, value in enumerate(values):
-            if pd.isna(value):
-                drawing = False
-                continue
-            x = 4 + index * (width - 8) / max(len(values) - 1, 1)
-            y = height - 12 - (float(value) - low) / span * (height - 22)
-            if drawing:
-                path.lineTo(QPointF(x, y))
-            else:
-                path.moveTo(QPointF(x, y))
-                drawing = True
-        painter.setPen(QPen(QColor("#996045"), 2.5))
-        painter.drawPath(path)
-        painter.end()
-        self.spark_label.setPixmap(pixmap)
+            self.sparkline.clear(SPARK_NONE)
+        else:
+            values = pd.to_numeric(ts["PIP"], errors="coerce")
+            self.sparkline.set_series(
+                [None if pd.isna(value) else float(value) for value in values], index,
+                f"PIP over the case, observation at minute {minute:g}" if minute is not None else "PIP over the case",
+            )
+        if minute is not None:
+            self.finding_open.setText(f"Open at minute {minute:g}")
+            first, last = float(ts["t_min"].iloc[0]), float(ts["t_min"].iloc[-1])
+            self.finding_context.setText(
+                f"{view.candidate.pid} · one case, {len(ts)} minute rows, minutes {first:g}–{last:g} relative to incision"
+            )
+            self.finding_context.show()
+        return self._fill_source_rows(ts, index)
+
+    def _fill_source_rows(self, ts: pd.DataFrame, index: int) -> str:
+        """Three rows around the observed minute, with missing cells hatched; returns where they sit in the case."""
+        if ts.empty:
+            self.source_table.setRowCount(0)
+            self.source_table.hide()
+            return ""
+        start = min(max(0, index - 1), max(0, len(ts) - SOURCE_ROWS))
+        stop = min(len(ts), start + SOURCE_ROWS)
+        self.source_table.setRowCount(stop - start)
+        keys = ("t_min", "PIP", "ETCO2", "HR")
+        for table_row, frame_row in enumerate(range(start, stop)):
+            source = ts.iloc[frame_row]
+            for column, key in enumerate(keys):
+                value = source.get(key)
+                missing = pd.isna(value)
+                cell = QTableWidgetItem("missing" if missing else f"{float(value):g}")
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                mark_missing(cell, bool(missing))
+                self.source_table.setItem(table_row, column, cell)
+        self.source_table.selectRow(index - start)
+        _fit_rows(self.source_table, stop - start)
+        self.source_table.show()
+        return (f"Rows {start + 1}–{stop} of {len(ts)} · minutes relative to incision. "
+                "Missing stays missing; nothing is filled in.")
 
     def set_article_results(self, result: ArticleSearchResult) -> None:
         self.article_result = result
@@ -1273,6 +1321,10 @@ class ResearchWorkspace(QWidget):
         self.article_list.clear()
         self.scope_label.setText(f"Articles: {result.catalog_count:,} in the local catalog")
         self.set_status(result.message)
+        turn = self.conversation.turn(self._active_turn_request)
+        if turn is not None and turn.model and turn.state == "running":
+            turn.extracts = min(len(result.articles), ABSTRACT_LIMIT)
+            self.conversation.update_turn(turn)
         for i, article in enumerate(result.articles, 1):
             citation = f"[A{i}] " if i <= ABSTRACT_LIMIT else ""
             snippet = article.abstract[:320] + ("…" if len(article.abstract) > 320 else "")
@@ -1292,9 +1344,7 @@ class ResearchWorkspace(QWidget):
         self._comparison_pid = None
         self._case_views.clear()
         self.comparison_card.hide()
-        self.comparison_hint.show()
-        self.spark_label.setPixmap(QPixmap())
-        self.spark_label.setText("PIP / source samples load on demand")
+        self._clear_observation()
         ranking = result.rank_method
         if ranking == "embedding":
             ranking += f", {result.embedded_count:,} of {result.indexed_count:,} records indexed"
@@ -1309,11 +1359,15 @@ class ResearchWorkspace(QWidget):
         self.scope_label.setText(self._case_scope_text)
         self.candidate_table.setRowCount(len(result.candidates))
         for row, candidate in enumerate(result.candidates):
-            for column, value in enumerate((candidate.pid, candidate.procedure, candidate.source_label)):
+            values = (str(row + 1), candidate.pid, candidate.procedure, "", candidate.source_label)
+            for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
+                if column in (0, 3):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.candidate_table.setItem(row, column, item)
-        self.candidate_table.fit_columns()
+        self._refresh_durations()
+        self._show_all_rows = False
         self._selected_pid = None
         if result.candidates:
             row = self._preferred_row()
@@ -1328,8 +1382,46 @@ class ResearchWorkspace(QWidget):
             self.finding_copy.setText("Try a broader question or review your data source.")
             self.source_title.setText("No match")
             self.source_label.setText("No source record matched this question.")
+        self._fit_shortlist()
         self._set_case_actions(bool(result.candidates))
         self._save_board()
+
+    def _duration_text(self, pid: str) -> str:
+        """Minutes from the analyzed-case table, or from the opened case; a dash while neither is known."""
+        cases = self._cases_data[0] if self._cases_data is not None else None
+        if cases is not None and {"PID", "case_duration_min"} <= set(cases.columns):
+            known = pd.to_numeric(cases.loc[cases["PID"].astype(str) == pid, "case_duration_min"], errors="coerce").dropna()
+            if not known.empty:
+                return f"{known.iloc[0]:g} min"
+        view = self._case_views.get(pid)
+        if view is not None and "t_min" in view.timeseries and not view.timeseries.empty:
+            return f"{float(view.timeseries['t_min'].max()):g} min"
+        return "—"
+
+    def _refresh_durations(self) -> None:
+        for row in range(self.candidate_table.rowCount()):
+            pid_item = self.candidate_table.item(row, 1)
+            duration = self.candidate_table.item(row, 3)
+            if pid_item is not None and duration is not None:
+                text = self._duration_text(pid_item.text())
+                duration.setText(text)
+                duration.setToolTip(text)
+
+    def _fit_shortlist(self) -> None:
+        """Show the first rows, plus the selected one, and size the table to them; Show all reveals the rest."""
+        total = self.candidate_table.rowCount()
+        self.candidate_table.setVisible(total > 0)
+        keep = total if self._show_all_rows else min(total, max(SHORTLIST_COLLAPSED_ROWS, self.candidate_table.currentRow() + 1))
+        for row in range(total):
+            self.candidate_table.setRowHidden(row, row >= keep)
+        _fit_rows(self.candidate_table, keep)
+        more = total > SHORTLIST_COLLAPSED_ROWS
+        self.show_all_button.setVisible(more)
+        self.show_all_button.setText("Show fewer" if self._show_all_rows else f"Show all {total}")
+
+    def _toggle_show_all(self) -> None:
+        self._show_all_rows = not self._show_all_rows
+        self._fit_shortlist()
 
     def set_answer(
         self, answer: str, request_id: int | None = None, *,
@@ -1384,18 +1476,18 @@ class ResearchWorkspace(QWidget):
             if open_detail:
                 self.open_detail(pid, from_overview=True)
             return
+        self._refresh_durations()
         if comparison:
             self._comparison_pid = pid
             self.comparison_card.show()
-            self.comparison_hint.hide()
             self.comparison_label.setText(self._case_summary(view))
         else:
             self._primary_pid = pid
             self.finding_title.setText(self._observation(view)[0])
             self.finding_copy.setText(self._observation(view)[1])
             self.source_title.setText(pid)
-            self.source_label.setText(self._case_summary(view))
-            self._show_sparkline(ordered)
+            provenance = self._show_observation(view, ordered)
+            self.source_label.setText(self._case_summary(view) + (f"\n{provenance}" if provenance else ""))
         self._save_board()
         if open_detail:
             self.open_detail(pid)
@@ -1445,6 +1537,7 @@ class ResearchWorkspace(QWidget):
             return
         candidate = self.result.candidates[row]
         self._selected_pid = candidate.pid
+        self._fit_shortlist()
         self.selection_label.setText(
             f"Selected {candidate.pid} · {candidate.source_label} · {candidate.procedure or 'procedure not recorded'}"
         )
@@ -1455,6 +1548,7 @@ class ResearchWorkspace(QWidget):
         self.inspect_button.setEnabled(enabled)
         self.compare_button.setEnabled(enabled)
         self.finding_open.setEnabled(enabled)
+        self.all_rows_button.setEnabled(enabled)
 
     def _inspect_selected(self) -> None:
         if self._selected_pid:
@@ -1497,7 +1591,6 @@ class ResearchWorkspace(QWidget):
             elif comparison:
                 self._comparison_pid = pid
                 self.comparison_card.show()
-                self.comparison_hint.hide()
                 self.comparison_label.setText(self._case_summary(self._case_views[pid]))
                 self._save_board()
         else:
@@ -1974,7 +2067,7 @@ class ResearchWorkspace(QWidget):
 
     def close_cases(self) -> None:
         self.stack.setCurrentIndex(0)
-        self.cases_button.setFocus()
+        self.question_edit.setFocus()
 
     def _open_overview_case(self, pid: str) -> None:
         overview = self._cases_overview

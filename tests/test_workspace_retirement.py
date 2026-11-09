@@ -65,21 +65,21 @@ def test_research_is_central_and_lifecycle_uses_its_controls(window, monkeypatch
     assert not hasattr(window, "tabs") and not hasattr(window, "chat_history")
     window._apply_ollama_status(OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], "http://127.0.0.1:11434"))
     research = window.research
-    research.model_combo.setCurrentText("synthetic:b")
+    research.model_menu.choose("synthetic:b")
     assert research.selected_model() == "synthetic:b"
     research.begin_question("Keep this completed question", request_id=1)
     research.set_answer("Recorded answer", 1)
     research.set_searching(False)
     calls = []
     monkeypatch.setattr(window, "_start_ollama_worker", calls.append)
-    research.stop_button.click()
+    research.stop_action.trigger()
     assert calls == ["stop"]
     assert research.question_edit.text() == "Keep this completed question"
     assert research._board_request == 1
     unloaded = []
     monkeypatch.setattr("src.llm.service.unload_ollama_model", lambda model: (unloaded.append(model) or True, "unloaded"))
     monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
-    research.unload_button.click()
+    research.unload_action.trigger()
     assert unloaded == ["synthetic:b"]
 
 
@@ -247,7 +247,7 @@ def test_choosing_a_model_is_remembered_and_restored(window):
     url = "http://127.0.0.1:11434"
     window._apply_ollama_status(OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], url))
     assert window.research.selected_model() == "synthetic:a"
-    window.research.model_combo.setCurrentText("synthetic:b")
+    window.research.model_menu.choose("synthetic:b")
     assert load_settings()["ollama_model"] == "synthetic:b"
     window._apply_ollama_status(OllamaStatus(False, "stopped", [], url))
     assert window.research.selected_model() is None

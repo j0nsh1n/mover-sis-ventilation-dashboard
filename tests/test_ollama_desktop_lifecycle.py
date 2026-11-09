@@ -5,8 +5,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from src.desktop.app import MainWindow
@@ -92,12 +91,12 @@ def test_stop_runs_off_thread_and_start_remains_disabled(window, monkeypatch):
     elapsed = time.monotonic() - before
     try:
         assert elapsed < 0.1
-        assert not win.research.start_button.isEnabled()
+        assert not win.research.start_action.isEnabled()
     finally:
         gate.set()
     pump(app, lambda: not win._ollama_worker.isRunning())
     assert threads and threads[0] != threading.get_ident()
-    assert win.research.start_button.isEnabled()
+    assert win.research.start_action.isEnabled()
 
 
 @pytest.mark.parametrize("action", ["probe", "start"])
@@ -118,7 +117,7 @@ def test_failure_dialog_and_status_match_action(window, monkeypatch, action):
 def test_probe_clears_checking_status_and_restores_original_labels(window, monkeypatch):
     win, app, _ = window
     monkeypatch.setattr("src.llm.service.probe_ollama", lambda **kw: ready())
-    button = win.research.start_button
+    button = win.research.start_action
     button.setText("Launch local AI")
     win._refresh_ollama_models()
     pump(app, lambda: not win._ollama_worker.isRunning())
@@ -137,7 +136,7 @@ def test_result_uses_emitted_action_after_worker_replacement(window):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
-def test_buttons_have_visible_focus_and_start_moves_focus(window, monkeypatch, theme):
+def test_buttons_have_visible_focus_and_starting_keeps_focus_on_the_model_menu(window, monkeypatch, theme):
     from src.desktop.theme import apply_theme
 
     win, app, _ = window
@@ -146,12 +145,16 @@ def test_buttons_have_visible_focus_and_start_moves_focus(window, monkeypatch, t
     assert "border: 2px solid" in app.styleSheet()
     gate = threading.Event()
     monkeypatch.setattr("src.llm.service.start_ollama", lambda **kw: (gate.wait(1), ready())[1])
-    win.research.start_button.setFocus()
+    menu = win.research.model_menu
+    menu.setFocus()
     app.processEvents()
-    QTest.keyClick(win.research.start_button, Qt.Key.Key_Space)
+    # Start is a menu item, not a focused button: working disables the item and the menu button keeps focus.
+    win.research.start_action.trigger()
     try:
         app.processEvents()
-        assert app.focusWidget() is win.research.question_edit
+        assert not win.research.start_action.isEnabled()
+        assert menu.isEnabled()
+        assert app.focusWidget() is menu
     finally:
         gate.set()
     pump(app, lambda: not win._ollama_worker.isRunning())
@@ -173,11 +176,11 @@ def test_start_stays_disabled_until_probe_thread_finishes(window, monkeypatch):
     try:
         pump(app, lambda: win.research.status_label.text() == "Local model ready.")
         assert win._ollama_worker.isRunning()
-        assert not win.research.start_button.isEnabled()
+        assert not win.research.start_action.isEnabled()
     finally:
         gate.set()
     pump(app, lambda: not win._ollama_worker.isRunning())
-    assert win.research.start_button.isEnabled()
+    assert win.research.start_action.isEnabled()
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

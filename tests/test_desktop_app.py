@@ -237,12 +237,12 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
     started = time.perf_counter()
     timer.start(10)
     try:
-        win.research.start_button.click()
+        win.research.start_action.trigger()
         first_worker = win._ollama_worker
         win._ollama_start()
         assert win._ollama_worker is first_worker
-        assert win.research.start_button.text() == "Starting…"
-        assert not win.research.start_button.isEnabled()
+        assert win.research.start_action.text() == "Starting…"
+        assert not win.research.start_action.isEnabled()
         while not ticks and time.perf_counter() - started < 0.1:
             qapp.processEvents()
             time.sleep(0.001)
@@ -250,7 +250,7 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
         assert first_worker.wait(3000)
         qapp.processEvents()
         assert len(calls) == 1
-        assert win.research.start_button.isEnabled()
+        assert win.research.start_action.isEnabled()
         assert "ready" in win.research.status_label.text().lower()
     finally:
         win.close()
@@ -270,7 +270,7 @@ def test_ollama_failure_names_reason(qapp, monkeypatch):
         assert win._ollama_worker.wait(1000)
         qapp.processEvents()
         assert "port busy" in win.research.status_label.text()
-        assert win.research.start_button.isEnabled()
+        assert win.research.start_action.isEnabled()
     finally:
         win.close()
 
@@ -626,7 +626,7 @@ def test_pipeline_dialog_preserves_a_newer_direct_status(qapp, monkeypatch, tmp_
 
 
 @requires_qt
-def test_question_card_scope_line_fits_default_window_with_probe_error(qapp, monkeypatch, tmp_path):
+def test_status_and_scope_lines_fit_default_window_with_probe_error(qapp, monkeypatch, tmp_path):
     from src.desktop.app import MainWindow
 
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
@@ -637,39 +637,45 @@ def test_question_card_scope_line_fits_default_window_with_probe_error(qapp, mon
     qapp.processEvents()
     try:
         research = win.research
-        card = research.scope_combo.parentWidget()
-        grid = research._evidence_grid
-        assert grid.getItemPosition(grid.indexOf(card))[:4] == (0, 0, 1, 2)
-        research.model_status.setText("Ollama: stopped — click Start to activate")
+        research.set_model_status("Ollama: stopped — click Start to activate")
         research.set_status(_PROBE_FAILURE)
         research.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
         qapp.processEvents()
-        _assert_card_readable(win, _PROBE_FAILURE)
+        _assert_lines_readable(win, _PROBE_FAILURE)
         longer = _PROBE_FAILURE + " " + ("extra detail " * 40)
         research.set_status(longer)
         qapp.processEvents()
         status = research.status_label
         assert longer in status.text()
         assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
+        _assert_lines_readable(win, longer)
     finally:
         win.close()
 
 
-def _assert_card_readable(win, expected: str) -> None:
+def _assert_lines_readable(win, expected: str) -> None:
+    """The Ollama status, the reason and the scope line are whole and sit on the screen, one under the other."""
     research = win.research
-    card = research.scope_combo.parentWidget()
-    scope = research.scope_label
+    model = research.model_status
     status = research.status_label
+    scope = research.scope_label
     viewport = research.board_scroll.viewport()
+    assert model.isVisible() and "Ollama" in model.text()
     assert expected in status.text()
-    assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
-    assert scope.height() + 1 >= scope.heightForWidth(max(scope.width(), 1))
+    for label in (model, status, scope):
+        assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1)), label.text()
+    # Page coordinates: the reason sits under the Ollama line, and both sit above the evidence trail.
+    page = research._board_page
+    model_bottom = model.mapTo(page, model.rect().bottomLeft()).y()
+    status_top = status.mapTo(page, status.rect().topLeft()).y()
+    status_bottom = status.mapTo(page, status.rect().bottomLeft()).y()
+    scope_top = scope.mapTo(page, scope.rect().topLeft()).y()
+    assert model_bottom <= status_top and status_bottom <= scope_top
+    # And the scope line is in view without scrolling at the default window size.
     scope_bottom = scope.mapTo(win, scope.rect().bottomLeft()).y()
-    card_bottom = card.mapTo(win, card.rect().bottomLeft()).y()
     view_bottom = viewport.mapTo(win, viewport.rect().bottomLeft()).y()
     assert scope_bottom <= view_bottom
-    assert card_bottom <= view_bottom
-    assert card_bottom <= win.statusBar().y()
+    assert scope_bottom <= win.statusBar().y()
 
 
 @requires_qt

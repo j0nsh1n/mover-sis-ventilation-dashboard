@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
+from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.command_palette import Command, CommandPalette
 from src.desktop.shell import FooterFields, NavRail, PracticeTabs, RunningHead
 from src.desktop.suite_chrome import install_suite_chrome, set_page_title
@@ -374,7 +374,7 @@ class MainWindow(QMainWindow):
         add("action-scan-emr", "Scan full EMR (all ventilated surgeries)\u2026", self._run_corpus_scan,
             group=data, keywords="file score corpus")
         add("action-setup", "Setup\u2026", self._open_setup_wizard, group=data,
-            keywords="file wizard first-time")
+            keywords="file wizard first-time data setup")
 
         appearance = "Appearance"
         self._theme_group = QActionGroup(self)
@@ -413,6 +413,11 @@ class MainWindow(QMainWindow):
             return
         # An action hidden from view (an update that is not ready) is not offered either
         commands = [command for command in self._commands if command.action.isVisible()]
+        # The installed models change with Ollama's state, so their lines are made when the palette opens.
+        models = [Command(action, "Answer model", "ollama local ai choose use")
+                  for action in self.research.model_menu.model_actions()]
+        after_local_ai = 1 + max(i for i, command in enumerate(commands) if command.group == "Local AI")
+        commands[after_local_ai:after_local_ai] = models
         palette = CommandPalette(commands, self)
         palette.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         palette.finished.connect(self._palette_closed)
@@ -454,6 +459,13 @@ class MainWindow(QMainWindow):
         self.research.model_changed.connect(self._on_ollama_model_changed)
         self.research.model_stop_requested.connect(self._ollama_stop)
         self.research.model_unload_requested.connect(self._ollama_unload)
+        # The page's own commands follow the places they belong to, ahead of Data and Appearance.
+        page_commands = [
+            Command(action, group, keywords, "Ctrl+Enter" if action is self.research.trace_action else "")
+            for action, group, keywords in self.research.command_entries()
+        ]
+        after_places = 1 + max(i for i, command in enumerate(self._commands) if command.group == "Go to")
+        self._commands[after_places:after_places] = page_commands
         self.module_stack = QStackedWidget()
         self.module_stack.setObjectName("suite-modules")
         self.module_stack.setFrameShape(QFrame.Shape.NoFrame)
@@ -1075,13 +1087,9 @@ class MainWindow(QMainWindow):
     def _apply_ollama_status(self, status) -> None:
         from src.llm.service import ollama_status_summary
 
-        prev = self.research.model_combo.currentText().strip()
-        self.research.model_combo.blockSignals(True)
-        self.research.model_combo.clear()
+        prev = self.research.selected_model() or ""
         if not status.available:
-            self.research.model_combo.addItem("(Ollama stopped — click Start)")
-            self.research.model_combo.blockSignals(False)
-            notify_purpose_combo_value(self.research.model_combo)
+            self.research.set_models([], placeholder="(Ollama stopped — click Start)")
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -1089,12 +1097,11 @@ class MainWindow(QMainWindow):
 
         models = status.models
         if not models:
-            self.research.model_combo.addItem("(no models — ollama pull gemma4)")
+            self.research.set_models([], placeholder="(no models — ollama pull gemma4)")
         else:
-            self.research.model_combo.addItems(models)
             saved = load_settings().get("ollama_model")
             preferred_list = []
-            if prev and not prev.startswith("("):
+            if prev:
                 preferred_list.append(prev)
             if saved:
                 preferred_list.append(str(saved))
@@ -1106,40 +1113,36 @@ class MainWindow(QMainWindow):
                     "mistral-small3.1:24b",
                 ]
             )
-            for preferred in preferred_list:
-                idx = self.research.model_combo.findText(preferred)
-                if idx >= 0:
-                    self.research.model_combo.setCurrentIndex(idx)
-                    break
-        self.research.model_combo.blockSignals(False)
-        notify_purpose_combo_value(self.research.model_combo)
+            self.research.set_models(
+                list(models), next((name for name in preferred_list if name in models), None)
+            )
         self._set_ollama_status_ui(status)
         if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
             self.statusBar().showMessage(ollama_status_summary(status))
 
+    def _set_model_state(self, state: str) -> None:
+        """One place for the local model's state, so the footer and the menu button never disagree."""
+        self._model_state = state
+        self.research.set_model_state(state)
+        self._refresh_footer()
+
     def _set_ollama_status_ui(self, status) -> None:
         self._ollama_available = status.available
-        self._model_state = "ready" if status.available else "stopped"
-        self._refresh_footer()
+        self._set_model_state("ready" if status.available else "stopped")
         busy = self._ollama_worker is not None and self._ollama_worker.isRunning()
+        research = self.research
         if status.available:
             n = len(status.models)
             extra = " · started by app" if status.started_by_app else ""
-            self.research.model_status.setText(
-                f"Ollama: <b>running</b> · {n} model(s){extra}"
-            )
-            self.research.model_status.setTextFormat(Qt.TextFormat.RichText)
-            self.research.start_button.setEnabled(not busy)
-            self.research.stop_button.setEnabled(not busy)
-            self.research.unload_button.setEnabled(not busy)
+            research.set_model_status(f"Ollama: <b>running</b> · {n} model(s){extra}", rich=True, relevant=False)
+            research.start_action.setEnabled(not busy)
+            research.stop_action.setEnabled(not busy)
+            research.unload_action.setEnabled(not busy)
         else:
-            self.research.model_status.setText(
-                "Ollama: <b>stopped</b> — click Start to activate"
-            )
-            self.research.model_status.setTextFormat(Qt.TextFormat.RichText)
-            self.research.start_button.setEnabled(not busy)
-            self.research.stop_button.setEnabled(False)
-            self.research.unload_button.setEnabled(False)
+            research.set_model_status("Ollama: <b>stopped</b> — click Start to activate", rich=True)
+            research.start_action.setEnabled(not busy)
+            research.stop_action.setEnabled(False)
+            research.unload_action.setEnabled(False)
 
     def _ollama_start(self) -> None:
         self._start_ollama_worker("start")
@@ -1149,17 +1152,14 @@ class MainWindow(QMainWindow):
             return
         if self._ollama_worker is not None and self._ollama_worker.isRunning():
             return
-        self._ollama_button_label = self.research.start_button.text()
-        if self.research.start_button.hasFocus():
-            self.research.question_edit.setFocus()
+        self._ollama_button_label = self.research.start_action.text()
         label = {"probe": "Checking…", "stop": "Stopping…"}.get(action, "Starting…")
-        self.research.start_button.setText(label)
-        for button in (self.research.start_button, self.research.stop_button, self.research.unload_button):
-            button.setEnabled(False)
+        self.research.start_action.setText(label)
+        for command in (self.research.start_action, self.research.stop_action, self.research.unload_action):
+            command.setEnabled(False)
         message = {"probe": "Checking local model…", "stop": "Stopping local model…"}.get(action, "Starting local model…")
-        self._model_state = "busy:" + {"probe": "checking", "stop": "stopping"}.get(action, "starting")
-        self._refresh_footer()
-        self.research.model_status.setText(message)
+        self._set_model_state("busy:" + {"probe": "checking", "stop": "stopping"}.get(action, "starting"))
+        self.research.set_model_status(message)
         self.research.set_status(message)
         self.statusBar().showMessage(message)
         worker = OllamaWorker(action, parent=self)
@@ -1172,11 +1172,11 @@ class MainWindow(QMainWindow):
     def _on_ollama_done(self) -> None:
         if self.sender() is not self._ollama_worker:
             return
-        self.research.start_button.setEnabled(True)
-        self.research.stop_button.setEnabled(self._ollama_available)
-        self.research.unload_button.setEnabled(self._ollama_available)
+        self.research.start_action.setEnabled(True)
+        self.research.stop_action.setEnabled(self._ollama_available)
+        self.research.unload_action.setEnabled(self._ollama_available)
         if self._ollama_button_label is not None:
-            self.research.start_button.setText(self._ollama_button_label)
+            self.research.start_action.setText(self._ollama_button_label)
             self._ollama_button_label = None
 
     def _on_ollama_ready(self, action: str, status) -> None:
@@ -1191,10 +1191,8 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._ollama_available = False
-        self._model_state = "failed"
-        self._refresh_footer()
-        self.research.model_status.setTextFormat(Qt.TextFormat.PlainText)
-        self.research.model_status.setText(f"Local model failed: {message}")
+        self._set_model_state("failed")
+        self.research.set_model_status(f"Local model failed: {message}")
         self.research.set_status(f"Local model failed: {message}")
         self.statusBar().showMessage(f"Local model failed: {message}")
         if action == "start":
@@ -1208,7 +1206,7 @@ class MainWindow(QMainWindow):
     def _ollama_unload(self) -> None:
         from src.llm.service import unload_ollama_model
 
-        model = self.research.model_combo.currentText().strip()
+        model = self.research.selected_model() or ""
         ok, msg = unload_ollama_model(model)
         self.statusBar().showMessage(msg)
         if ok:
@@ -1332,7 +1330,8 @@ class MainWindow(QMainWindow):
         )
         self._research_workers[request_id] = self._research_worker
         self._research_worker.progress.connect(
-            lambda progress: self.research.set_progress(progress.message)
+            lambda progress: self.research.set_progress(
+                progress.message, str(getattr(progress, "phase", "")), getattr(progress, "total", 0))
             if request_id == self._active_research_request else None
         )
         self._research_worker.shortlist.connect(lambda result: self._on_research_shortlist(result, request_id))

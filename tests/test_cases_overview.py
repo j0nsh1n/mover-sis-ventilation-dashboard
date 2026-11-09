@@ -78,7 +78,7 @@ def test_overview_is_not_built_until_opened(qapp):
     view = _workspace(_cases())
     assert view._cases_overview is None
     assert view.stack.count() == 2
-    view.cases_button.click()
+    view.show_cases()
     assert view._cases_overview is not None
     assert view.stack.currentIndex() == CASES_PAGE
 
@@ -167,25 +167,17 @@ def test_click_and_enter_request_the_right_case(qapp):
     assert requests == [(overview.cell_text(1, 0), False, True)]
 
 
-def test_back_button_and_escape_return_focus_to_the_cases_button(qapp):
+def test_back_button_and_escape_return_focus_to_the_question(qapp):
     view = _workspace(_cases())
     view.show_cases()
     view._cases_overview.back_button.click()
     assert view.stack.currentIndex() == 0
-    assert view.window().focusWidget() is view.cases_button
+    assert view.window().focusWidget() is view.question_edit
 
     view.show_cases()
     QTest.keyClick(view._cases_overview.table, Qt.Key.Key_Escape)
     assert view.stack.currentIndex() == 0
-    assert view.window().focusWidget() is view.cases_button
-
-
-@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space])
-def test_enter_and_space_open_cases_from_the_cases_button(qapp, key):
-    view = _workspace(_cases())
-    view.cases_button.setFocus()
-    QTest.keyClick(view.cases_button, key)
-    assert view.stack.currentIndex() == CASES_PAGE
+    assert view.window().focusWidget() is view.question_edit
 
 
 def test_every_workspace_button_answers_enter(qapp):
@@ -196,7 +188,7 @@ def test_every_workspace_button_answers_enter(qapp):
     view.begin_question("elevated PIP", 1)
     view.set_answer("An answer.", 1)
     buttons = view.findChildren(QPushButton)
-    assert view.cases_button in buttons
+    assert view.ask_button in buttons and view.new_question_button in buttons
     assert {"Close", "Charts ▸", "Show on board", "Ask again"} <= {b.text() for b in buttons}
     assert [b.text() for b in buttons if not b.autoDefault()] == []
 
@@ -431,8 +423,7 @@ def _board_state(view):
     return (view._primary_pid, view._comparison_pid, view.question_edit.text(),
             view.answer_text.toPlainText(), view.finding_title.text(), view.finding_copy.text(),
             view.source_title.text(), view.source_label.text(), view.comparison_label.text(),
-            view.comparison_card.isHidden(), view.comparison_hint.isHidden(),
-            view.spark_label.pixmap().cacheKey())
+            view.comparison_card.isHidden(), view.sparkline.state(), view.source_table.rowCount())
 
 
 def test_overview_shortlist_open_preserves_the_question_board(request_window):

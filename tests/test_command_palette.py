@@ -254,13 +254,17 @@ def test_the_palette_is_usable_by_a_screen_reader(window, qapp):
     assert palette.results.focusPolicy() != Qt.FocusPolicy.NoFocus
 
 
+# The research page's own commands (and the installed models, when there are any) sit after the places.
+PAGE_GROUPS = ["Go to", "Research", "Question scope", "Local AI", "Data", "Appearance", "App"]
+
+
 def test_the_list_has_every_command_once_in_group_order_with_no_filter(window, qapp):
     palette = _open_palette(window, qapp)
     titles = [title for title, _ in _rows(palette)]
     assert len(titles) == len(set(titles))
     assert titles[:3] == ["Research", "Cases", "Signal"]
     groups = [palette.results.item(row).data(Qt.ItemDataRole.UserRole + 2) for row in range(palette.results.count())]
-    assert groups == sorted(groups, key=["Go to", "Data", "Appearance", "App"].index)
+    assert groups == sorted(groups, key=PAGE_GROUPS.index)
     # The rules key is handled by the research pages, so the palette says where it applies
     assert dict(_rows(palette))["Rules"] == "Ctrl+R on research pages"
 
@@ -338,7 +342,7 @@ def test_each_group_is_one_section_with_a_heading_that_cannot_be_selected(window
     results = palette.results
     headings = [(row, results.item(row).data(HEADING_ROLE)) for row in range(results.count())
                 if results.item(row).data(HEADING_ROLE)]
-    assert [name for _row, name in headings] == ["Go to", "Data", "Appearance", "App"]
+    assert [name for _row, name in headings] == PAGE_GROUPS
     # headings are painted above their first row, so every list item is a runnable command
     assert all(results.item(row).data(Qt.ItemDataRole.UserRole + 3) is not None for row in range(results.count()))
     # the group name is not repeated on every row
@@ -346,11 +350,11 @@ def test_each_group_is_one_section_with_a_heading_that_cannot_be_selected(window
     option = QStyleOptionViewItem()
     first, second = results.model().index(0, 0), results.model().index(1, 0)
     assert delegate_height(option, first).height() > delegate_height(option, second).height()
-    # Down from the last "Go to" row lands on the first "Data" row
-    data_row = headings[1][0]
-    results.setCurrentRow(data_row - 1)
+    # Down from the last "Go to" row lands on the first row of the next group
+    next_row = headings[1][0]
+    results.setCurrentRow(next_row - 1)
     _press(palette.search, Qt.Key.Key_Down)
-    assert results.currentRow() == data_row
+    assert results.currentRow() == next_row
 
     palette.search.setText("theme")
     rows = [results.item(row).data(Qt.ItemDataRole.UserRole + 2) for row in range(results.count())]
