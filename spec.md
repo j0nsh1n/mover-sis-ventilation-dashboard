@@ -127,7 +127,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `55y woman, hysterectomy, sevoflurane, elevated PIP` to request a grounded
   research answer about similar cases and documented management patterns.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
-- **Full-EMR scan:** File → Scan full EMR, or
+- **Full-EMR scan:** Ctrl+K → Scan full EMR, or
   `PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default`
 - **Profile (threshold calibration):**
   `PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md`
@@ -138,7 +138,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
   rule preset for new runs, theme). Setup opens before the app loads data on first run
   or for an invalid EMR path.
-- File > Run pipeline and File > Scan full EMR use the saved rule preset (`default`
+- Run pipeline and Scan full EMR (both in Ctrl+K) use the saved rule preset (`default`
   when unset). The Rules drawer, Research questions, and case fetches use the preset
   recorded with the loaded data, or the saved preset when no data is loaded; run the
   pipeline again to apply a new preset to loaded data.
@@ -324,9 +324,17 @@ Desktop UI stays PySide6. Python 3.14 remains the language for the UI and existi
 processing. No new Rust component and no port of tests into Rust is granted.
 Existing Rust updater, signer, and desktop contract suites stay as they are.
 
-Monitoring opens first. View can switch to Handoff practice, Medication and
-vitals, or the WHO checklist. Those pages are working practice tools, not empty
-tabs. The corner label names the page that is open.
+Research (Monitoring) opens first. The left navigation reaches Research, Cases,
+Signal (the open case), Practice (Handoff practice, Medication and vitals and the
+WHO checklist as tabs), Rules and Settings. There is no menu bar: every former
+menu action is in the Ctrl+K command search and keeps its shortcut (Ctrl+1 to
+Ctrl+4, Ctrl+O, Ctrl+Shift+O, Ctrl+R, Ctrl+Q, Ctrl+,). The running head shows a
+breadcrumb for the open place, "Find Ctrl+K", and the research-only line (on
+practice pages, "Fictional practice"). The footer shows the data source (folder
+paths only in its tooltip and in Settings), analyzed and indexed counts, the rule
+preset and threshold-hash prefix, and the local model state. The window title
+names the open page. The practice pages are working practice tools, not empty
+tabs.
 
 ### Shared source, preset, and generation
 
@@ -499,9 +507,10 @@ device and is not clinical decision support.
 Suite criteria (added 2026-11-07, from "Approved suite target", "Shared source,
 preset, and generation", and "Decided practice contracts"):
 
-- [x] Monitoring opens first; View switches to Handoff practice, Medication and
-      vitals, and the WHO checklist and back; the corner label names the open
-      page (tests; suite QA 12.8).
+- [x] Research opens first; the left navigation and Ctrl+1 to Ctrl+4 switch to
+      the practice tools and back; the breadcrumb and window title name the open
+      page; every former menu action is in Ctrl+K with its shortcut (tests;
+      suite QA 12.8 predates the new frame and is rerun in stage 8).
 - [x] A source change, a preset change, or a new recorded threshold hash
       invalidates shared fetch caches; older-generation results are rejected;
       case-fetch keys include the EMR path, preset, and threshold hash (tests).
