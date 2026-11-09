@@ -128,10 +128,10 @@ def test_theme_apply_light_dark(config_home, monkeypatch):
     concrete = apply_theme(app, THEME_DARK)
     assert concrete == THEME_DARK
     sheet = app.styleSheet()
-    assert sheet and ("0b1220" in sheet or "0f172a" in sheet or "151e2e" in sheet)
+    assert "#131518" in sheet and "#ECE8DF" in sheet  # Night ledger paper and ink
     concrete = apply_theme(app, THEME_LIGHT)
     assert concrete == THEME_LIGHT
-    assert "f1f5f9" in app.styleSheet() or "ffffff" in app.styleSheet()
+    assert "#F3F0E8" in app.styleSheet() and "#1C1B19" in app.styleSheet()  # Paper paper and ink
 
 
 def test_settings_dialog_constructs(config_home, monkeypatch, tmp_path):

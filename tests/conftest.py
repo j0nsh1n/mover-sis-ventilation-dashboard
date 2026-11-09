@@ -215,3 +215,17 @@ def pipeline_result(synthetic_emr, tmp_path, monkeypatch):
         write_sample_csv=False,
         validate=True,
     )
+
+
+@pytest.fixture(scope="module", params=["light", "dark"])
+def applied_theme(request, qapp):
+    """Apply each theme once for a module's tests, then go back to light.
+
+    Applying a theme repolishes every live widget, including the ones earlier tests
+    left behind, so doing it once per test makes a full run crawl.
+    """
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, request.param)
+    yield request.param
+    apply_theme(qapp, "light")

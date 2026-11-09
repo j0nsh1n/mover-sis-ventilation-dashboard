@@ -1,7 +1,8 @@
-"""Application themes: light, dark, and follow-system."""
+"""Application themes: light ("Paper"), dark ("Night ledger"), and follow-system."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QDir, Qt
@@ -15,78 +16,86 @@ from src.user_settings import THEME_DARK, THEME_LIGHT, THEME_SYSTEM, get_theme
 _active_concrete: str = THEME_LIGHT
 
 # ---------------------------------------------------------------------------
-# Shared stylesheet fragments (structure only; colors injected per theme)
+# Shared stylesheet (structure only; colors injected per theme)
+#
+# Rules of the design: one canvas, hairlines instead of boxes, radius 3 px, two
+# font weights (400 and 600), one accent. Hover and press change color only.
+# Every focusable control shows a 2 px accent ring; padding shrinks by 1 px when
+# it appears so nothing moves.
 # ---------------------------------------------------------------------------
 
 _STRUCTURE = """
 /* —— shell —— */
 QMainWindow {{
-    background: {bg};
-    color: {fg};
+    background: {paper};
+    color: {ink};
 }}
 QWidget {{
-    color: {fg};
-    font-size: 13px;
-    font-family: "Inter", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif;
+    color: {ink};
+    font-size: 14px;
+    font-family: "Inter", "Noto Sans", "Segoe UI", "Ubuntu", sans-serif;
 }}
 QToolTip {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
     padding: 6px 8px;
-    border-radius: 2px;
+    border-radius: 3px;
+    font-size: 12.5px;
 }}
 
 /* —— menu —— */
 QMenuBar {{
-    background: {surface};
-    color: {fg};
-    border-bottom: 1px solid {border};
+    background: {paper};
+    color: {ink};
+    border-bottom: 1px solid {rule};
     padding: 2px 4px;
     spacing: 2px;
 }}
 QMenuBar::item {{
     background: transparent;
     padding: 6px 12px;
-    border-radius: 2px;
+    border-radius: 3px;
 }}
 QMenuBar::item:selected {{
-    background: {hover};
+    background: {sel};
 }}
 QMenu {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
+    border-radius: 3px;
     padding: 4px;
 }}
 QMenu::item {{
     padding: 7px 28px 7px 12px;
-    border-radius: 2px;
+    border-radius: 3px;
 }}
 QMenu::item:selected {{
-    background: {hover};
+    background: {sel};
+    color: {ink};
+}}
+QMenu::item:disabled {{
+    color: {rule_strong};
 }}
 QMenu::separator {{
     height: 1px;
-    background: {border};
+    background: {rule};
     margin: 6px 8px;
 }}
 
-/* —— cards / group boxes ——
-   Title sits on the top border: need margin-top + title background
-   matching the surface so the border does not cut through the text. */
+/* —— group boxes: a hairline, no card —— */
 QGroupBox {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: transparent;
+    border: 1px solid {rule};
+    border-radius: 3px;
     margin-top: 1.15em;
     padding-top: 14px;
     padding-left: 12px;
     padding-right: 12px;
     padding-bottom: 10px;
     font-weight: 600;
-    color: {fg};
+    color: {ink};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
@@ -94,56 +103,63 @@ QGroupBox::title {{
     left: 10px;
     top: 0px;
     padding: 0 6px;
-    color: {muted};
-    background-color: {bg};
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
+    color: {ink_3};
+    background-color: {paper};
+    font-size: 12.5px;
+    font-weight: 600;
 }}
 
 /* —— inputs —— */
 QLineEdit, QSpinBox, QComboBox, QTextEdit, QPlainTextEdit {{
-    background: {input_bg};
-    border: 1px solid {border};
-    border-radius: 2px;
-    padding: 6px 10px;
-    min-height: 26px;
-    color: {fg};
-    selection-background-color: {accent_soft};
-    selection-color: {fg};
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
+    padding: 7px 10px;
+    min-height: 20px;
+    color: {ink};
+    font-size: 13px;
+    selection-background-color: {accent};
+    selection-color: {on_accent};
 }}
-QLineEdit:hover, QSpinBox:hover, QComboBox:hover, QTextEdit:hover {{
-    border-color: {border_strong};
+QLineEdit:hover, QSpinBox:hover, QComboBox:hover, QTextEdit:hover, QPlainTextEdit:hover {{
+    border-color: {ink_3};
 }}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {{
-    border: 1px solid {accent};
-    background: {input_focus};
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+    border: 2px solid {accent};
+    padding: 6px 9px;
+}}
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {{
+    background: {paper};
+    color: {rule_strong};
+    border-color: {rule};
 }}
 QComboBox {{
     padding-right: 28px;
+}}
+QComboBox:focus {{
+    padding-right: 27px;
 }}
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 28px;
     border: none;
-    border-left: 1px solid {border};
     background: transparent;
 }}
 QComboBox::drop-down:hover {{
-    background: {border_strong};
+    background: {rule_faint};
 }}
-QComboBox:focus {{ border: 2px solid #8c739f; }}
 QComboBox::down-arrow {{
     image: url(movericons:{combo_arrow});
     width: 12px;
     height: 12px;
 }}
 QComboBox QAbstractItemView {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-    selection-background-color: {hover};
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
+    selection-background-color: {sel};
+    selection-color: {ink};
     outline: none;
     padding: 4px;
 }}
@@ -153,179 +169,204 @@ QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px;
 }}
 
-/* —— buttons —— */
+/* —— buttons: outlined by default, one filled primary, text buttons for the rest —— */
 QPushButton {{
-    background: {btn};
-    color: {btn_fg};
-    border: 1px solid {btn_border};
-    border-radius: 2px;
+    background: transparent;
+    color: {ink};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
     padding: 8px 14px;
+    font-size: 13px;
     font-weight: 600;
     min-height: 18px;
 }}
 QPushButton:hover {{
-    background: {btn_hover};
+    background: {rule_faint};
 }}
 QPushButton:pressed {{
-    background: {btn_pressed};
+    background: {rule};
 }}
 QPushButton:disabled {{
-    background: {disabled_bg};
-    color: {disabled_fg};
-    border-color: {border};
+    background: transparent;
+    color: {rule_strong};
+    border-color: {rule};
 }}
-QPushButton#secondaryBtn {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-}}
-QPushButton#secondaryBtn:hover {{
-    background: {hover};
-    border-color: {border_strong};
+QPushButton:focus {{
+    border: 2px solid {accent};
+    padding: 7px 13px;
 }}
 QPushButton#primaryBtn {{
     background: {accent};
-    color: {accent_fg};
+    color: {on_accent};
     border: 1px solid {accent};
 }}
-QPushButton#primaryBtn:hover {{
+QPushButton#primaryBtn:hover, QPushButton#primaryBtn:pressed {{
     background: {accent_hover};
     border-color: {accent_hover};
 }}
-QPushButton#primaryBtn:pressed {{
-    background: {accent_pressed};
+QPushButton#primaryBtn:disabled {{
+    background: {rule_faint};
+    color: {rule_strong};
+    border-color: {rule};
+}}
+/* an accent ring on an accent fill cannot be seen, so the filled button rings in ink */
+QPushButton#primaryBtn:focus {{
+    border: 2px solid {ink};
+    padding: 7px 13px;
+}}
+QPushButton#textBtn {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+}}
+QPushButton#textBtn:hover, QPushButton#textBtn:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#textBtn:disabled {{
+    background: transparent;
+    color: {rule_strong};
+    border-color: transparent;
+}}
+QPushButton#textBtn:focus {{
+    border: 2px solid {accent};
+    padding: 7px 13px;
 }}
 
-QPushButton:focus, QPushButton#primaryBtn:focus, QPushButton#secondaryBtn:focus {{
-    border: 2px solid #8c739f;
-}}
-
-/* —— tabs —— */
+/* —— tabs: text, with a line under the current one —— */
 QTabWidget::pane {{
-    border: 1px solid {border};
-    border-radius: 2px;
-    background: {surface};
+    border: none;
+    border-top: 1px solid {rule};
+    background: transparent;
     top: -1px;
     padding: 4px;
 }}
 QTabBar::tab {{
     background: transparent;
-    border: 1px solid transparent;
-    border-bottom: none;
-    border-top-left-radius: 2px;
-    border-top-right-radius: 2px;
-    padding: 9px 16px;
-    margin-right: 2px;
-    color: {muted};
-    font-weight: 500;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 2px;
+    margin-right: 18px;
+    color: {ink_3};
+    font-size: 13px;
+    font-weight: 600;
 }}
 QTabBar::tab:hover {{
-    background: {hover};
-    color: {fg};
+    color: {ink};
 }}
 QTabBar::tab:selected {{
-    background: {surface};
-    border: 1px solid {border};
-    border-bottom: 1px solid {surface};
-    color: {fg};
-    font-weight: 700;
+    color: {ink};
+    border-bottom: 2px solid {ink};
+}}
+QTabBar::tab:focus {{
+    border: 2px solid {accent};
+    padding: 6px 0px;
 }}
 
-/* —— tables —— */
-QTableWidget {{
-    background: {input_bg};
-    gridline-color: {border};
-    border: 1px solid {border};
-    border-radius: 2px;
-    alternate-background-color: {alt_row};
-    color: {fg};
-    selection-background-color: {accent_soft};
-    selection-color: {fg};
+/* —— lists and tables: one header line, faint row lines —— */
+QAbstractItemView {{
+    selection-background-color: {sel};
+    selection-color: {ink};
     outline: none;
 }}
-QTableWidget::item {{
-    padding: 4px 8px;
+QTableView, QListView, QTreeView {{
+    background: {paper};
+    gridline-color: transparent;
+    border: 2px solid transparent;
+    color: {ink};
+    font-size: 13px;
 }}
-QTableWidget::item:selected {{
-    background: {accent_soft};
+QTableView:focus, QListView:focus, QTreeView:focus {{
+    border: 2px solid {accent};
+}}
+QTableView::item {{
+    padding: 4px 8px;
+    border-bottom: 1px solid {rule_faint};
+}}
+QTableView::item:selected, QTableView::item:selected:!active {{
+    background: {sel};
+    color: {ink};
+}}
+QListView::item:selected, QListView::item:selected:!active {{
+    background: {sel};
+    color: {ink};
+}}
+QHeaderView {{
+    background: {paper};
 }}
 QHeaderView::section {{
-    background: {surface};
-    padding: 8px 10px;
+    background: {paper};
+    padding: 6px 10px;
     border: none;
-    border-right: 1px solid {border};
-    border-bottom: 1px solid {border};
-    font-weight: 700;
-    font-size: 11px;
-    color: {muted};
+    border-bottom: 1px solid {rule};
+    font-weight: 600;
+    font-size: 12.5px;
+    color: {ink_3};
+}}
+QHeaderView::section:vertical {{
+    border-bottom: 1px solid {rule_faint};
 }}
 QTableCornerButton::section {{
-    background: {surface};
+    background: {paper};
     border: none;
-    border-bottom: 1px solid {border};
-    border-right: 1px solid {border};
+    border-bottom: 1px solid {rule};
 }}
 
 /* —— status —— */
 QStatusBar {{
-    background: {surface};
-    color: {muted};
-    border-top: 1px solid {border};
+    background: {paper};
+    color: {ink_3};
+    border-top: 1px solid {rule};
     padding: 2px 8px;
-    font-size: 11px;
+    font-size: 12px;
 }}
 
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;
-    font-weight: 700;
-    color: {fg};
-    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: {ink};
 }}
 QLabel#heroSub {{
-    color: {muted};
-    font-size: 12px;
+    color: {ink_3};
+    font-size: 12.5px;
     padding-top: 2px;
 }}
 QLabel#pathHint {{
-    color: {muted};
-    font-size: 11px;
-    line-height: 1.35;
+    color: {ink_3};
+    font-size: 12.5px;
 }}
 QLabel#sectionLabel {{
-    font-weight: 700;
-    font-size: 12px;
-    color: {muted};
+    font-weight: 600;
+    font-size: 12.5px;
+    color: {ink_3};
     margin-top: 4px;
-    letter-spacing: 0.02em;
 }}
 QLabel#metricTitle {{
-    color: {muted};
-    font-size: 11px;
+    color: {ink_3};
+    font-size: 12.5px;
     font-weight: 600;
-    letter-spacing: 0.03em;
 }}
 QLabel#metricValue {{
     font-size: 18px;
-    font-weight: 700;
-    color: {fg};
+    font-weight: 600;
+    color: {ink};
     padding-top: 2px;
 }}
 
 /* —— metric cards —— */
 QFrame#metricCard {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
-    border-top: 2px solid {accent};
+    background: {sheet};
+    border: 1px solid {rule};
+    border-radius: 3px;
     min-width: 108px;
 }}
 
 /* —— chart host —— */
 QWidget#chartView {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: {paper};
+    border: 1px solid {rule};
+    border-radius: 3px;
 }}
 QScrollArea {{
     background: transparent;
@@ -342,28 +383,37 @@ QWidget#sidePanel {{
 
 /* —— checkboxes —— */
 QCheckBox {{
-    color: {fg};
+    color: {ink};
     spacing: 8px;
 }}
 QCheckBox::indicator {{
     width: 16px;
     height: 16px;
-    border-radius: 2px;
-    border: 1px solid {border_strong};
-    background: {input_bg};
+    border-radius: 3px;
+    border: 1px solid {rule_strong};
+    background: {sheet};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {ink_3};
 }}
 QCheckBox::indicator:checked {{
     background: {accent};
     border-color: {accent};
 }}
+QCheckBox::indicator:focus {{
+    border: 2px solid {accent};
+}}
+QCheckBox:disabled {{
+    color: {rule_strong};
+}}
 
 /* —— dialogs / wizard —— */
 QDialog, QWizard {{
-    background: {bg};
-    color: {fg};
+    background: {paper};
+    color: {ink};
 }}
 QWizard QWidget {{
-    color: {fg};
+    color: {ink};
 }}
 QDialogButtonBox QPushButton {{
     min-width: 88px;
@@ -371,7 +421,7 @@ QDialogButtonBox QPushButton {{
 
 /* —— splitters —— */
 QSplitter::handle {{
-    background: {border};
+    background: {rule};
     width: 2px;
     margin: 4px 2px;
     border-radius: 0px;
@@ -387,12 +437,12 @@ QScrollBar:vertical {{
     margin: 4px 2px;
 }}
 QScrollBar::handle:vertical {{
-    background: {scroll};
-    border-radius: 2px;
+    background: {rule_strong};
+    border-radius: 3px;
     min-height: 28px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {scroll_hover};
+    background: {ink_3};
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
@@ -403,9 +453,12 @@ QScrollBar:horizontal {{
     margin: 2px 4px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {scroll};
-    border-radius: 2px;
+    background: {rule_strong};
+    border-radius: 3px;
     min-width: 28px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {ink_3};
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
     width: 0;
@@ -415,61 +468,61 @@ QScrollBar::add-page, QScrollBar::sub-page {{
 }}
 """
 
+# Design tokens, with the design's hyphenated names written with underscores
+# (sheet-2 is sheet_2). Light is "Paper", dark is "Night ledger".
 _LIGHT = {
     "combo_arrow": "chevron-dark.svg",
-    "bg": "#f1f5f9",
-    "surface": "#ffffff",
-    "input_bg": "#ffffff",
-    "input_focus": "#ffffff",
-    "fg": "#0f172a",
-    "muted": "#64748b",
-    "border": "#e2e8f0",
-    "border_strong": "#cbd5e1",
-    "hover": "#f1f5f9",
-    "alt_row": "#f8fafc",
-    "accent": "#0d9488",
-    "accent_hover": "#0f766e",
-    "accent_pressed": "#115e59",
-    "accent_fg": "#f0fdfa",
-    "accent_soft": "#ccfbf1",
-    "btn": "#e2e8f0",
-    "btn_fg": "#1e293b",
-    "btn_border": "#cbd5e1",
-    "btn_hover": "#cbd5e1",
-    "btn_pressed": "#94a3b8",
-    "disabled_bg": "#f1f5f9",
-    "disabled_fg": "#94a3b8",
-    "scroll": "#cbd5e1",
-    "scroll_hover": "#94a3b8",
+    "paper": "#F3F0E8",
+    "sheet": "#FBFAF6",
+    "sheet_2": "#ECE8DE",
+    "ink": "#1C1B19",
+    "ink_2": "#47443D",
+    "ink_3": "#66625A",
+    "rule": "#DAD4C7",
+    "rule_faint": "#E6E1D6",
+    "rule_strong": "#8E877A",
+    "grid": "#E2DCCF",
+    "accent": "#2F43A3",
+    "accent_hover": "#24348A",
+    "on_accent": "#FFFFFF",
+    "sel": "#E2E5F4",
+    "practice": "#6E4D00",
+    "practice_bar": "#A27C12",
+    "hatch": "rgba(71, 68, 61, 0.30)",
+    "s_pip": "#B0502A",
+    "s_etco2": "#1B776B",
+    "s_hr": "#6A4C9C",
+    "s_spo2": "#2D69B0",
+    "s_map": "#7F6200",
 }
 
 _DARK = {
     "combo_arrow": "chevron-light.svg",
-    "bg": "#0b1220",
-    "surface": "#151e2e",
-    "input_bg": "#0f172a",
-    "input_focus": "#111827",
-    "fg": "#e8eef7",
-    "muted": "#94a3b8",
-    "border": "#243044",
-    "border_strong": "#334155",
-    "hover": "#1a2436",
-    "alt_row": "#121a29",
-    "accent": "#14b8a6",
-    "accent_hover": "#2dd4bf",
-    "accent_pressed": "#0d9488",
-    "accent_fg": "#042f2e",
-    "accent_soft": "#134e4a",
-    "btn": "#1e293b",
-    "btn_fg": "#f1f5f9",
-    "btn_border": "#334155",
-    "btn_hover": "#334155",
-    "btn_pressed": "#475569",
-    "disabled_bg": "#151e2e",
-    "disabled_fg": "#475569",
-    "scroll": "#334155",
-    "scroll_hover": "#475569",
+    "paper": "#131518",
+    "sheet": "#1A1D21",
+    "sheet_2": "#0F1113",
+    "ink": "#ECE8DF",
+    "ink_2": "#C3BDB0",
+    "ink_3": "#9C978B",
+    "rule": "#2B2F35",
+    "rule_faint": "#202328",
+    "rule_strong": "#686D75",
+    "grid": "#24282E",
+    "accent": "#A4B1F5",
+    "accent_hover": "#C0C9F8",
+    "on_accent": "#10142B",
+    "sel": "#252B48",
+    "practice": "#F0D27A",
+    "practice_bar": "#8A7429",
+    "hatch": "rgba(195, 189, 176, 0.24)",
+    "s_pip": "#EE8A5E",
+    "s_etco2": "#5AC6B6",
+    "s_hr": "#B9A1EC",
+    "s_spo2": "#80AFEE",
+    "s_map": "#D8BC55",
 }
+
+_RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 
 
 def _build_stylesheet(tokens: dict[str, str]) -> str:
@@ -486,41 +539,47 @@ def active_theme() -> str:
     return _active_concrete
 
 
+def tokens(theme: str | None = None) -> dict[str, str]:
+    """Design tokens of ``theme`` (``light`` or ``dark``), or of the active theme when omitted."""
+    chosen = theme or _active_concrete
+    return dict(_DARK if chosen == THEME_DARK else _LIGHT)
+
+
+def token_color(name: str, theme: str | None = None) -> QColor:
+    """A token as a ``QColor``; accepts the plain hex colors and the ``rgba()`` hatch."""
+    value = tokens(theme)[name]
+    match = _RGBA.fullmatch(value)
+    if match:
+        red, green, blue, alpha = match.groups()
+        return QColor(int(red), int(green), int(blue), round(float(alpha) * 255))
+    return QColor(value)
+
+
 def chart_style() -> dict[str, str]:
-    """Colors for matplotlib figures matching the active UI theme."""
-    if _active_concrete == THEME_DARK:
-        return {
-            "figure_facecolor": _DARK["surface"],
-            "axes_facecolor": _DARK["input_bg"],
-            "text": _DARK["fg"],
-            "muted": _DARK["muted"],
-            "grid": _DARK["border"],
-            "spine": _DARK["border_strong"],
-            "bar": "#f97316",
-            "info": "#60a5fa",
-            "warn": "#fbbf24",
-            "critical": "#f87171",
-        }
+    """Colors for matplotlib figures matching the active UI theme.
+
+    ``info``, ``warn`` and ``critical`` are the same ink: a rule flag is told apart by its
+    shape and its word, never by a color of its own.
+    """
+    t = tokens()
     return {
-        "figure_facecolor": _LIGHT["surface"],
-        "axes_facecolor": "#ffffff",
-        "text": _LIGHT["fg"],
-        "muted": _LIGHT["muted"],
-        "grid": _LIGHT["border"],
-        "spine": _LIGHT["border_strong"],
-        "bar": "#ea580c",
-        "info": "#3b82f6",
-        "warn": "#d97706",
-        "critical": "#dc2626",
+        "figure_facecolor": t["paper"],
+        "axes_facecolor": t["paper"],
+        "text": t["ink"],
+        "muted": t["ink_3"],
+        "grid": t["grid"],
+        "spine": t["rule"],
+        "bar": t["ink_2"],
+        "info": t["ink"],
+        "warn": t["ink"],
+        "critical": t["ink"],
     }
 
 
 def chat_role_color(role: str) -> str:
     """HTML color for chat role labels under the active theme."""
-    dark = _active_concrete == THEME_DARK
-    if role == "user":
-        return "#2dd4bf" if dark else "#0f766e"
-    return "#94a3b8" if dark else "#475569"
+    t = tokens()
+    return t["accent"] if role == "user" else t["ink_3"]
 
 
 def system_prefers_dark() -> bool:
@@ -556,26 +615,23 @@ def resolve_theme_mode(mode: str | None = None) -> str:
 
 def _palette_from_tokens(t: dict[str, str]) -> QPalette:
     p = QPalette()
-    window = QColor(t["bg"])
-    base = QColor(t["input_bg"])
-    alt = QColor(t["surface"])
-    text = QColor(t["fg"])
-    muted = QColor(t["muted"])
-    highlight = QColor(t["accent"])
-    button = QColor(t["btn"])
-    disabled = QColor(t["disabled_fg"])
+    window = QColor(t["paper"])
+    base = QColor(t["sheet"])
+    text = QColor(t["ink"])
+    muted = QColor(t["ink_3"])
+    disabled = QColor(t["rule_strong"])
     p.setColor(QPalette.ColorRole.Window, window)
     p.setColor(QPalette.ColorRole.WindowText, text)
     p.setColor(QPalette.ColorRole.Base, base)
-    p.setColor(QPalette.ColorRole.AlternateBase, alt)
-    p.setColor(QPalette.ColorRole.ToolTipBase, alt)
+    p.setColor(QPalette.ColorRole.AlternateBase, QColor(t["sheet_2"]))
+    p.setColor(QPalette.ColorRole.ToolTipBase, base)
     p.setColor(QPalette.ColorRole.ToolTipText, text)
     p.setColor(QPalette.ColorRole.Text, text)
-    p.setColor(QPalette.ColorRole.Button, button)
+    p.setColor(QPalette.ColorRole.Button, window)
     p.setColor(QPalette.ColorRole.ButtonText, text)
     p.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-    p.setColor(QPalette.ColorRole.Highlight, highlight)
-    p.setColor(QPalette.ColorRole.HighlightedText, QColor(t["accent_fg"]))
+    p.setColor(QPalette.ColorRole.Highlight, QColor(t["accent"]))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor(t["on_accent"]))
     p.setColor(QPalette.ColorRole.Link, QColor(t["accent"]))
     p.setColor(QPalette.ColorRole.PlaceholderText, muted)
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled)
@@ -595,11 +651,11 @@ def apply_theme(app: QCoreApplication | None = None, mode: str | None = None) ->
         app = QApplication.instance()
     concrete = resolve_theme_mode(mode)
     _active_concrete = concrete
-    tokens = _DARK if concrete == THEME_DARK else _LIGHT
-    sheet = _build_stylesheet(tokens)
+    palette = tokens(concrete)
+    sheet = _build_stylesheet(palette)
     if isinstance(app, QApplication):
         install_app_font(app)
         app.setStyle("Fusion")
-        app.setPalette(_palette_from_tokens(tokens))
+        app.setPalette(_palette_from_tokens(palette))
         app.setStyleSheet(sheet)
     return concrete
