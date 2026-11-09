@@ -426,7 +426,11 @@ class MainWindow(QMainWindow):
 
     # ----- layout -----
     def statusBar(self) -> QStatusBar:  # noqa: N802
-        """The footer. It lives in the page column, not in the window's own status bar slot."""
+        """The footer. It lives in the page column, not in the window's own status bar slot.
+
+        Qt status tips (QAction.setStatusTip) post to the window's own slot, which is empty, so they
+        show nowhere; write footer text through this bar instead.
+        """
         return self._footer_bar
 
     def _build_ui(self) -> None:

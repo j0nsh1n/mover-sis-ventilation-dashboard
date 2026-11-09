@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAccessible, QKeySequence
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
@@ -369,3 +369,33 @@ def test_the_palette_is_never_wider_than_the_window(window, qapp):
     qapp.processEvents()
     palette = _open_palette(window, qapp)
     assert palette.width() == 640
+
+
+def test_headings_are_written_as_the_group_name_without_capitals(window, qapp):
+    from src.desktop.command_palette import HEADING_ROLE, heading_text
+
+    palette = _open_palette(window, qapp)
+    results = palette.results
+    for row in range(results.count()):
+        index = results.model().index(row, 0)
+        group = results.item(row).data(HEADING_ROLE)
+        if group:
+            assert heading_text(index) == group and heading_text(index) != group.upper(), group
+
+
+def test_a_click_on_a_heading_runs_nothing_and_a_click_on_the_row_runs_it(window, qapp, calls):
+    from src.desktop.command_palette import HEADING_HEIGHT, HEADING_ROLE
+
+    palette = _open_palette(window, qapp)
+    results = palette.results
+    row = next(r for r in range(results.count()) if results.item(r).data(HEADING_ROLE) == "Data")
+    item = results.item(row)
+    handler = next(h for text, _s, h in CALLS if item.text().startswith(text))
+    rect = results.visualItemRect(item)
+    QTest.mouseClick(results.viewport(), Qt.MouseButton.LeftButton, pos=rect.topLeft() + QPoint(40, HEADING_HEIGHT // 2))
+    qapp.processEvents()
+    assert calls == [] and palette.isVisible()
+    QTest.mouseClick(results.viewport(), Qt.MouseButton.LeftButton,
+                     pos=rect.topLeft() + QPoint(40, HEADING_HEIGHT + (rect.height() - HEADING_HEIGHT) // 2))
+    qapp.processEvents()
+    assert calls == [handler]

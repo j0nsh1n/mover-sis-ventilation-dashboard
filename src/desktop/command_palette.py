@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QFontMetrics, QKeyEvent, QKeySequence, QPainter
+from PySide6.QtGui import QAction, QFontMetrics, QKeyEvent, QKeySequence, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -118,11 +118,10 @@ class _RowDelegate(QStyledItemDelegate):
             small = painter.font()
             small.setPointSizeF(max(7.0, small.pointSizeF() - 1.5))
             small.setWeight(small.Weight.DemiBold)
-            small.setLetterSpacing(small.SpacingType.AbsoluteSpacing, 0.8)
             painter.setFont(small)
             painter.setPen(token_color("ink_3"))
             painter.drawText(QRect(option.rect.left() + 14, option.rect.top(), option.rect.width() - 28, HEADING_HEIGHT),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, str(heading).upper())
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, heading_text(index))
         painter.restore()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
         enabled = bool(index.flags() & Qt.ItemFlag.ItemIsEnabled)
@@ -140,6 +139,33 @@ class _RowDelegate(QStyledItemDelegate):
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, title)
         painter.restore()
+
+
+def heading_text(index: QModelIndex | QPersistentModelIndex) -> str:
+    """A section heading as written: the design allows no capitals or letter spacing."""
+    return str(index.data(HEADING_ROLE) or "")
+
+
+class _ClickRows(QObject):
+    """A click runs the row under it; a click on a section heading painted above a row runs nothing."""
+
+    def __init__(self, palette: CommandPalette):
+        super().__init__(palette)
+        self._palette = palette
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() != QEvent.Type.MouseButtonRelease or not isinstance(event, QMouseEvent):
+            return False
+        results = self._palette.results
+        pos = event.position().toPoint()
+        item = results.itemAt(pos)
+        if item is None:
+            return False
+        if item.data(HEADING_ROLE) and pos.y() < results.visualItemRect(item).top() + HEADING_HEIGHT:
+            return True
+        results.setCurrentItem(item)
+        self._palette.run_current()
+        return True
 
 
 class _SearchKeys(QObject):
@@ -195,7 +221,8 @@ class CommandPalette(QDialog):
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.results.setMinimumHeight(ROW_HEIGHT * 8)
         self.results.itemActivated.connect(lambda _item: self.run_current())
-        self.results.itemClicked.connect(lambda _item: self.run_current())
+        self._clicks = _ClickRows(self)
+        self.results.viewport().installEventFilter(self._clicks)
         self.results.currentItemChanged.connect(self._announce_current)
         layout.addWidget(self.results, 1)
         keys = QLabel("Up and Down move · Enter runs · Esc closes · Ctrl+K opens this from any screen", self)
