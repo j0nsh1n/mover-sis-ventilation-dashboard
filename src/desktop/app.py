@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
 
         places = "Go to"
         self._module_actions["monitoring"] = add(
-            "suite-module-monitoring", "Research", partial(self._go, "research"), group=places,
+            "suite-module-monitoring", "Research", self._resume_research, group=places,
             shortcut="Ctrl+1", keywords="monitoring evidence question board home",
         )
         self._nav_cases = add(
@@ -1576,6 +1576,21 @@ class MainWindow(QMainWindow):
             else:
                 self.research.show_canvas()
                 self._focus_research_question()
+        from src.desktop.accessibility import announce
+
+        announce(self.head.crumbs, self.head.crumb_text())
+
+    def _resume_research(self) -> None:
+        """Ctrl+1: back to the research page that was showing (board, cases, or the open case with its minute and episode).
+
+        The rail's Research item is different: it opens the question board.
+        """
+        self._show_suite_module("monitoring")
+        page = self.research.place().page
+        if page == "research":
+            self._focus_research_question()
+        elif page == "signal":
+            self.research.back_button.setFocus(Qt.FocusReason.ShortcutFocusReason)
         from src.desktop.accessibility import announce
 
         announce(self.head.crumbs, self.head.crumb_text())

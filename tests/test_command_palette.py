@@ -140,7 +140,12 @@ def test_module_shortcuts_and_ctrl_k_switch_pages(window, qapp, text, shortcut, 
         return window.module_stack.currentWidget().objectName()
 
     for route in ("shortcut", "palette"):
-        window._go("cases" if page is None else "research")  # start somewhere else
+        if page is None:
+            # Research comes back as it was left: here the cases page, not the question board
+            window._go("cases")
+            window._go("handoff")
+        else:
+            window._go("research")  # start somewhere else
         qapp.processEvents()
         if route == "shortcut":
             QTest.keySequence(window, QKeySequence(shortcut))
@@ -152,7 +157,7 @@ def test_module_shortcuts_and_ctrl_k_switch_pages(window, qapp, text, shortcut, 
         qapp.processEvents()
         if page is None:
             assert window.module_stack.currentWidget() is window.research
-            assert window.research.stack.currentIndex() == 0
+            assert window.research.stack.currentIndex() == 2
         else:
             assert shown() == page
 

@@ -497,3 +497,37 @@ def test_the_current_place_keeps_its_mark_while_it_has_keyboard_focus(window, qa
     other.setFocus()
     qapp.processEvents()
     assert _left_strip(other, 1) == accent and _left_strip(other, 4) != accent
+
+
+def test_ctrl_1_returns_to_where_research_was_while_the_rail_item_opens_the_board(window, qapp):
+    window.activateWindow()
+    research = window.research
+    _open_case(window, qapp)
+    research.minute_slider.setValue(2)
+    research.selected_rule_id = "demo-rule"
+    qapp.processEvents()
+    crumbs = window.head.crumb_text()
+    assert crumbs.endswith("Minute 2")
+
+    for key in ("handoff", "medications", "who"):
+        window._go(key)
+        qapp.processEvents()
+        assert window.module_stack.currentWidget() is not research
+        QTest.keyClick(window, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier)
+        qapp.processEvents()
+        assert window.module_stack.currentWidget() is research
+        assert research.stack.currentIndex() == 1, "the case page, not the question board"
+        assert window.head.crumb_text() == crumbs
+        assert research.selected_rule_id == "demo-rule"
+        assert _checked(window) == ["signal"]
+
+    window._go("cases")
+    window._go("handoff")
+    QTest.keyClick(window, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier)
+    qapp.processEvents()
+    assert research.stack.currentIndex() == 2 and window.head.crumb_text() == "Cases"
+
+    window._go("handoff")
+    window.rail.button("research").click()
+    qapp.processEvents()
+    assert research.stack.currentIndex() == 0, "the rail item still opens the question board"
