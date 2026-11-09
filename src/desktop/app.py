@@ -1089,7 +1089,7 @@ class MainWindow(QMainWindow):
 
         prev = self.research.selected_model() or ""
         if not status.available:
-            self.research.set_models([], placeholder="(Ollama stopped — click Start)")
+            self.research.set_models([], placeholder="(Ollama stopped — choose Start AI)")
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -1139,7 +1139,7 @@ class MainWindow(QMainWindow):
             research.stop_action.setEnabled(not busy)
             research.unload_action.setEnabled(not busy)
         else:
-            research.set_model_status("Ollama: <b>stopped</b> — click Start to activate", rich=True)
+            research.set_model_status("Ollama: <b>stopped</b> — choose Start AI in the Local AI menu", rich=True)
             research.start_action.setEnabled(not busy)
             research.stop_action.setEnabled(False)
             research.unload_action.setEnabled(False)
