@@ -477,7 +477,7 @@ def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
 
 
 @requires_qt
-def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypatch, tmp_path):
+def test_pipeline_error_dialog_never_shows_folder_paths_in_the_status_bar(qapp, monkeypatch, tmp_path):
     from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
@@ -495,7 +495,7 @@ def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypa
     monkeypatch.setattr(QMessageBox, "critical", critical)
     win = MainWindow()
     try:
-        assert str(emr) in win.statusBar().currentMessage()
+        assert str(emr) not in win.statusBar().currentMessage()
         win._on_pipeline_fail(
             "The operation could not finish (pipeline:DataValidationError). "
             "Details are in app-errors.log in the settings folder."
@@ -508,14 +508,17 @@ def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypa
         assert during == "Pipeline failed"
         assert str(emr) not in during and str(processed) not in during
         after = win.statusBar().currentMessage()
-        assert "Pipeline failed" in after
-        assert str(emr) in after and str(processed) in after
+        assert after == "Pipeline failed"
+        assert str(emr) not in after and str(processed) not in after
+        # the folders are in the source field's tooltip and in Settings, nowhere else in the footer
+        tip = win._footer.source.toolTip()
+        assert str(emr) in tip and str(processed) in tip
     finally:
         win.close()
 
 
 @requires_qt
-def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_status(
+def test_pipeline_dialog_keeps_paths_out_of_a_nested_reload_and_keeps_the_latest_status(
     qapp, monkeypatch, tmp_path
 ):
     from PySide6.QtCore import QObject, QTimer, Signal
@@ -538,7 +541,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
     emitter = _Emitter(win)
     samples: list[str] = []
     bailed: list[bool] = []
-    latest = "Loaded 4 cases · 10 min rows · 1 flags"
+    latest = "Loaded 4 cases"
 
     def pipeline_box():
         boxes = [
@@ -549,7 +552,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
         return boxes[-1] if boxes else None
 
     def queued_status() -> None:
-        win._update_status_paths(latest)
+        win._set_status(latest)
         samples.append(win.statusBar().currentMessage())
         box = pipeline_box()
         assert box is not None
@@ -572,7 +575,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
             box.accept()
 
     try:
-        assert str(emr) in win.statusBar().currentMessage()
+        assert str(emr) not in win.statusBar().currentMessage()
         QTimer.singleShot(0, during_dialog)
         QTimer.singleShot(3000, bail)
         win._on_pipeline_fail(
@@ -589,10 +592,10 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
         assert samples[1].startswith("No processed cache")
         assert samples[2] == latest
         after = win.statusBar().currentMessage()
-        assert after.startswith(latest)
-        assert "Pipeline failed" not in after
-        assert str(emr) in after and str(processed) in after
-        assert " ·  EMR:" in after
+        assert after == latest
+        assert str(emr) not in after and str(processed) not in after
+        tip = win._footer.source.toolTip()
+        assert str(emr) in tip and str(processed) in tip
     finally:
         win._worker = None
         for box in win.findChildren(QMessageBox):

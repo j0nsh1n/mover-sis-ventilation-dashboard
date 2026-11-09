@@ -57,7 +57,7 @@ def _isolate_paths(tmp_path, monkeypatch):
     clear_session_path_overrides()
 
 
-def test_apply_data_folder_updates_runtime_and_status(qapp, tmp_path):
+def test_apply_data_folder_updates_runtime_and_the_source_tooltip(qapp, tmp_path):
     from src.desktop.app import MainWindow
     from src.runtime_paths import emr_dir, processed_dir
 
@@ -76,8 +76,9 @@ def test_apply_data_folder_updates_runtime_and_status(qapp, tmp_path):
     assert emr_dir() == emr.resolve()
     assert processed_dir().name == "processed"
     status = win.statusBar().currentMessage()
-    assert str(emr.resolve()) in status
-    assert "EMR" in status
+    assert str(emr.resolve()) not in status
+    assert "EMR folder set" in status
+    assert str(emr.resolve()) in win._footer.source.toolTip()
     win.close()
     qapp.processEvents()
 
@@ -187,6 +188,7 @@ def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch
     assert load_settings().get("wave_dir") == str(wave_root.resolve())
     status = win.statusBar().currentMessage()
     assert "Wave folder set" in status
-    assert str(wave_root.resolve()) in status
+    assert str(wave_root.resolve()) not in status
+    assert str(wave_root.resolve()) in win._footer.source.toolTip()
     win.close()
     qapp.processEvents()

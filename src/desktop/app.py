@@ -249,11 +249,6 @@ class MainWindow(QMainWindow):
         # A data reload asked for while a scan ran; it runs when the scan ends
         self._reload_after_scan = False
         self._worker: QThread | None = None
-        # While a path-free error dialog is modal, remember the latest prefix and
-        # show it without folder paths. The prefix is published with paths after.
-        self._status_path_prefix = ""
-        self._status_paths_hidden = 0
-        self._status_hidden_message: str | None = None
         self._ollama_worker: OllamaWorker | None = None
         self._ollama_available = False
         self._ollama_button_label: str | None = None
@@ -282,7 +277,7 @@ class MainWindow(QMainWindow):
         from src.desktop.accessibility import announce
 
         self.statusBar().messageChanged.connect(lambda message: announce(self.statusBar(), message))
-        self._update_status_paths("Ready")
+        self._set_status("Ready")
         self._updates = UpdateController(self._version, self)
         self._updates.found.connect(self._on_update_found)
         self._updates.ready.connect(self._on_update_ready)
@@ -486,26 +481,13 @@ class MainWindow(QMainWindow):
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
-        """Refresh status bar after path changes (sidebar no longer holds path fields)."""
-        self._update_status_paths()
-
-    def _update_status_paths(self, prefix: str = "") -> None:
-        self._status_path_prefix = prefix
-        self._publish_status_paths()
-
-    def _publish_status_paths(self) -> None:
+        """Refresh the footer after path changes (the folders live in the source field's tooltip and in Settings)."""
         self._refresh_footer()
-        prefix = self._status_path_prefix
-        if self._status_paths_hidden:
-            self._status_hidden_message = prefix
-            self.statusBar().showMessage(prefix)
-            return
-        wave = wave_dir()
-        wave_s = str(wave) if wave else "—"
-        self.statusBar().showMessage(
-            f"{prefix}  ·  EMR: {emr_dir()}  ·  Wave: {wave_s}  ·  "
-            f"Processed: {processed_dir()}"
-        )
+
+    def _set_status(self, message: str, timeout: int = 0) -> None:
+        """Show a temporary message. Folder paths never go here; the source field's tooltip holds them."""
+        self._refresh_footer()
+        self.statusBar().showMessage(message, timeout)
 
     def _browse_emr_folder(self) -> None:
         start = str(emr_dir())
@@ -522,7 +504,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Invalid EMR folder", str(e))
             return
-        self._update_status_paths("EMR folder set")
+        self._set_status("EMR folder set")
         self._autoload_processed()
 
     def _browse_wave_folder(self) -> None:
@@ -543,7 +525,7 @@ class MainWindow(QMainWindow):
             return
         # Waveforms are looked up from wave_dir() on demand, so the status bar is
         # the only thing to refresh (the old filters sidebar no longer exists).
-        self._update_status_paths("Wave folder set")
+        self._set_status("Wave folder set")
 
     def _browse_data_folder(self) -> None:
         """Menu shortcut: same as EMR browse (legacy)."""
@@ -556,7 +538,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Invalid data folder", str(e))
             return
-        self._update_status_paths("EMR folder set")
+        self._set_status("EMR folder set")
         self._autoload_processed()
 
     # ----- workers -----
@@ -590,7 +572,7 @@ class MainWindow(QMainWindow):
             # instead of dropping its result with no follow-up load.
             self._reload_after_scan = True
             if not (proc / "cases.parquet").exists():
-                self._update_status_paths(
+                self._set_status(
                     "No processed cache — run the pipeline or pick another folder"
                 )
                 self.research.set_status(
@@ -598,7 +580,7 @@ class MainWindow(QMainWindow):
                 )
             return
         if not (proc / "cases.parquet").exists():
-            self._update_status_paths(
+            self._set_status(
                 "No processed cache — run the pipeline or pick another folder"
             )
             self.research.set_status("No analyzed case cache. Indexed surgery search is available after setup.")
@@ -607,7 +589,7 @@ class MainWindow(QMainWindow):
             if not needs_first_run_setup():
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
-        self._update_status_paths("Loading data…")
+        self._set_status("Loading data…")
         self._worker = DataLoadWorker(processed=proc, parent=self)
         self._worker.finished_ok.connect(self._on_pipeline_ok)
         self._worker.failed.connect(self._on_load_fail)
@@ -633,7 +615,7 @@ class MainWindow(QMainWindow):
         if not self._data_job_is_current():
             return
         self._clear_loaded_sample()
-        self._update_status_paths("Could not load processed data")
+        self._set_status("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
         self._warn("Load error", f"{msg}\n\nPress Ctrl+K and choose Run pipeline to rebuild the analyzed sample for this EMR.")
 
@@ -799,7 +781,7 @@ class MainWindow(QMainWindow):
             self.research.set_setup_required(False)
         elif first_run:
             self.research.set_setup_required(True)
-        self._update_status_paths("Setup finished" if wiz.result() else ("Setup required" if first_run else "Setup cancelled"))
+        self._set_status("Setup finished" if wiz.result() else ("Setup required" if first_run else "Setup cancelled"))
         if wiz.result():
             self._autoload_processed()
             self._refresh_ollama_models()
@@ -821,7 +803,7 @@ class MainWindow(QMainWindow):
                 ready = False
             self.research.set_setup_required(not ready)
             self._sync_path_fields_from_runtime()
-            self._update_status_paths("Settings saved" if ready else "EMR setup required")
+            self._set_status("Settings saved" if ready else "EMR setup required")
             if ready:
                 self._autoload_processed()
                 self._refresh_ollama_models()
@@ -869,7 +851,7 @@ class MainWindow(QMainWindow):
         if preset not in ALLOWED_PRESETS:
             preset = "default"
         self._bind_data_context()
-        self._update_status_paths("Running pipeline…")
+        self._set_status("Running pipeline…")
         self._worker = PipelineWorker(
             n_cases=n_cases,
             preset=preset,
@@ -898,7 +880,7 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._bind_data_context()
-        self._update_status_paths("Scanning full EMR…")
+        self._set_status("Scanning full EMR…")
         worker = CorpusScanWorker(emr_dir(), processed_dir(), preset=self._next_run_preset(), parent=self)
         worker.progress.connect(lambda message: self.statusBar().showMessage(message))
         worker.finished_ok.connect(
@@ -934,13 +916,13 @@ class MainWindow(QMainWindow):
         if worker is not None:
             stamp = getattr(worker, "job_stamp", None)
             if stamp is not None and not current_context().accepts(stamp):
-                self._update_status_paths(
+                self._set_status(
                     "Full-EMR scan finished for a previous data folder; it was not loaded."
                 )
                 return
         if (processed is not None and processed != processed_dir()) or not scan_matches_emr(result.meta, emr_dir()):
             # The EMR or processed folder changed while the scan ran
-            self._update_status_paths("Full-EMR scan finished for a previous data folder; it was not loaded.")
+            self._set_status("Full-EMR scan finished for a previous data folder; it was not loaded.")
             self._drop_stale_scan()
             return
         self.corpus_scan = result
@@ -956,14 +938,14 @@ class MainWindow(QMainWindow):
         if failed_count:
             message += f"; {failed_count} could not be scored (see details)"
         self.statusBar().setToolTip(str(failures[0].get("error", ""))[:300] if failures else "")
-        self._update_status_paths(message)
+        self._set_status(message)
         self._push_cases_overview()
 
     def _on_corpus_scan_cancelled(self) -> None:
-        self._update_status_paths("Full-EMR scan cancelled; the previous scan was kept.")
+        self._set_status("Full-EMR scan cancelled; the previous scan was kept.")
 
     def _on_corpus_scan_fail(self, msg: str) -> None:
-        self._update_status_paths(msg.splitlines()[0])
+        self._set_status(msg.splitlines()[0])
         QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
 
     def _after_corpus_scan(self, worker: QThread) -> None:
@@ -1060,33 +1042,22 @@ class MainWindow(QMainWindow):
             )
         elif preset_changed:
             self.research.set_status(f"Data was reloaded with preset {self._active_preset}.")
-        self._update_status_paths(
-            f"Loaded {len(self.cases)} cases · {len(self.ts)} min rows · {len(self.flags)} flags"
-        )
+        # The footer fields already show the counts; this only confirms the load, then clears
+        self._set_status(f"Loaded {len(self.cases)} cases", 6000)
 
     def _on_pipeline_fail(self, msg: str) -> None:
         if not self._data_job_is_current():
             return
-        # critical() runs a nested loop. A queued reload may replace the prefix
-        # while the dialog is open; paths stay off until that loop returns.
-        self._status_paths_hidden += 1
-        try:
-            self._update_status_paths("Pipeline failed")
-            QMessageBox.critical(
-                self,
-                "Pipeline / guardrail error",
-                msg[:4000]
-                + (
-                    "\n\nEnsure the EMR folder has patient_information, "
-                    "patient_ventilator, and patient_vitals CSVs."
-                ),
-            )
-        finally:
-            self._status_paths_hidden = max(0, self._status_paths_hidden - 1)
-            if not self._status_paths_hidden:
-                if self.statusBar().currentMessage() == self._status_hidden_message:
-                    self._publish_status_paths()
-                self._status_hidden_message = None
+        self._set_status("Pipeline failed")
+        QMessageBox.critical(
+            self,
+            "Pipeline / guardrail error",
+            msg[:4000]
+            + (
+                "\n\nEnsure the EMR folder has patient_information, "
+                "patient_ventilator, and patient_vitals CSVs."
+            ),
+        )
 
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         self._start_ollama_worker("ensure" if start_if_needed else "probe")

@@ -433,3 +433,28 @@ def test_escape_on_the_case_page_works_with_focus_on_a_rail_button(window, qapp)
     QTest.keyClick(button, Qt.Key.Key_Escape)
     qapp.processEvents()
     assert window.research.stack.currentIndex() == 0
+
+
+def test_load_confirmation_is_short_clears_and_holds_no_paths(window, qapp, tmp_path):
+    bar = window.statusBar()
+    shown: list[tuple[str, int]] = []
+    real = bar.showMessage
+    bar.showMessage = lambda message, timeout=0: (shown.append((message, timeout)), real(message, timeout))[1]
+    try:
+        for practice in (False, True):
+            if practice:
+                window.rail.button("practice").click()
+                qapp.processEvents()
+            shown.clear()
+            window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
+            qapp.processEvents()
+            assert shown == [("Loaded 0 cases", 6000)]
+            message = bar.currentMessage()
+            assert str(tmp_path) not in message and "EMR:" not in message and "Processed:" not in message
+            assert "min rows" not in message and "flags" not in message, "the footer fields show the counts"
+    finally:
+        del bar.showMessage
+    # the folders stay in the source field's tooltip
+    window.rail.button("research").click()
+    qapp.processEvents()
+    assert str(tmp_path / "EMR") in window._footer.source.toolTip()
