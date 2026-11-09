@@ -324,10 +324,10 @@ def test_rail_item_is_reachable_and_activates_by_keyboard(window, qapp):
     assert _checked(window) == ["cases"]
 
 
-def _ink_of(button) -> str:
+def _ink_of(button, size: int = 22) -> str:
     from PySide6.QtGui import QIcon
 
-    image = button.icon().pixmap(22, QIcon.Mode.Normal, QIcon.State.Off).toImage()
+    image = button.icon().pixmap(size, QIcon.Mode.Normal, QIcon.State.Off).toImage()
     for y in range(image.height()):
         for x in range(image.width()):
             color = image.pixelColor(x, y)
@@ -347,6 +347,10 @@ def test_rail_icons_follow_the_theme(window, qapp):
         qapp.processEvents()
         assert _ink_of(window.rail.button("cases")) == tokens("dark")["ink_3"]
         assert _ink_of(window.rail.button("settings")) == tokens("dark")["ink_3"]
+        assert _ink_of(window.head.find_button, 15) == tokens("dark")["ink_3"]
+        apply_theme(qapp, "light")
+        qapp.processEvents()
+        assert _ink_of(window.head.find_button, 15) == tokens("light")["ink_3"]
     finally:
         apply_theme(qapp, "light")
 

@@ -271,6 +271,7 @@ class RunningHead(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setFixedHeight(40)
         self.setProperty("practice", False)
+        self._icons_theme = active_theme()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(32, 0, 32, 0)
         layout.setSpacing(20)
@@ -310,6 +311,13 @@ class RunningHead(QFrame):
 
     def crumb_text(self) -> str:
         return " / ".join(self.crumbs.parts())
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange,
+                            QEvent.Type.StyleChange) and self._icons_theme != active_theme():
+            self._icons_theme = active_theme()
+            self.find_button.setIcon(nav_icon("find", 15))
 
 
 class PracticeTabs(QFrame):
