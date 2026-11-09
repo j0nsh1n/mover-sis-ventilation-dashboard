@@ -280,7 +280,6 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._update_button)
         self._scan_cancel_button = QPushButton("Cancel scan", self)
         self._scan_cancel_button.setAutoDefault(True)
-        self._scan_cancel_button.setStyleSheet("QPushButton:focus { border: 2px solid #8c739f; }")
         self._scan_cancel_button.clicked.connect(self._cancel_corpus_scan)
         self._scan_cancel_button.hide()
         self.statusBar().addPermanentWidget(self._scan_cancel_button)
@@ -1059,7 +1058,7 @@ class MainWindow(QMainWindow):
             n = len(status.models)
             extra = " · started by app" if status.started_by_app else ""
             self.research.model_status.setText(
-                f"Ollama: <b style='color:#14b8a6'>running</b> · {n} model(s){extra}"
+                f"Ollama: <b>running</b> · {n} model(s){extra}"
             )
             self.research.model_status.setTextFormat(Qt.TextFormat.RichText)
             self.research.start_button.setEnabled(not busy)
@@ -1067,7 +1066,7 @@ class MainWindow(QMainWindow):
             self.research.unload_button.setEnabled(not busy)
         else:
             self.research.model_status.setText(
-                "Ollama: <b style='color:#f87171'>stopped</b> — click Start to activate"
+                "Ollama: <b>stopped</b> — click Start to activate"
             )
             self.research.model_status.setTextFormat(Qt.TextFormat.RichText)
             self.research.start_button.setEnabled(not busy)

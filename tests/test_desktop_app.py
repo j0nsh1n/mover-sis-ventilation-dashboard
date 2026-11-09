@@ -667,3 +667,31 @@ def _assert_card_readable(win, expected: str) -> None:
     assert scope_bottom <= view_bottom
     assert card_bottom <= view_bottom
     assert card_bottom <= win.statusBar().y()
+
+
+@requires_qt
+@pytest.mark.parametrize("available", [True, False])
+def test_ollama_state_is_a_word_not_a_color(qapp, monkeypatch, tmp_path, available):
+    from types import SimpleNamespace
+
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
+    win = MainWindow()
+    try:
+        win._set_ollama_status_ui(SimpleNamespace(available=available, models=["demo"], started_by_app=False))
+        text = win.research.model_status.text()
+        assert ("running" if available else "stopped") in text
+        assert "color" not in text, "one accent, no red or green state colors"
+        assert win._scan_cancel_button.styleSheet() == "", "the focus ring comes from the app stylesheet's accent"
+    finally:
+        win.close()
+
+
+def test_the_main_window_source_has_no_color_literals_outside_the_tokens():
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / "app.py").read_text(encoding="utf-8")
+    assert re.findall(r"#[0-9a-fA-F]{6}\b", source) == []
