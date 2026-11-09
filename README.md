@@ -1,7 +1,7 @@
 # MOVER Suite — Intraoperative Ventilation & Anesthesia Research
 
-MOVER Suite was called MOVER SIS Monitor up to v0.13.0. Its Monitoring page is the SIS Monitor; View also opens
-fictional Handoff practice, Medication and vitals, and WHO checklist practice.
+MOVER Suite was called MOVER SIS Monitor up to v0.13.0. Its Research pages are the SIS Monitor; the Practice item in the left
+navigation opens fictional Handoff practice, Medication and vitals, and WHO checklist practice. Press Ctrl+K to find any action.
 
 **Version 0.15.0**
 
@@ -199,7 +199,7 @@ PYTHONPATH=. streamlit run src/dashboard/app.py
 
 The **Research** workspace uses Ollama on this machine. Research searches indexed surgeries even when Ollama is stopped. Select **Local AI** to generate an answer from retrieved case extracts. **Start AI**, **Stop AI**, **Unload model**, and **Refresh** are in the question card. Models stay on the host, outside the executable.
 
-Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via the **⚙ Settings** icon (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
+Configure the **models directory** (e.g. `/var/mnt/games/LLM_Models`) via **Settings** in the left navigation (`Ctrl+,`) or first-run **Setup**; the app exports `OLLAMA_MODELS` when starting the server.
 
 ```bash
 # Install Ollama once: https://ollama.com
