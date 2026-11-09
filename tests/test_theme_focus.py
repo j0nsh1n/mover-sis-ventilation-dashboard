@@ -130,3 +130,58 @@ def test_focused_control_draws_a_two_pixel_ring(qapp, applied_theme, name):
         host.close()
         host.deleteLater()
         qapp.processEvents()
+
+
+def test_the_tab_focus_ring_keeps_clear_of_the_letters_and_the_tab_does_not_grow(qapp, applied_theme):
+    palette = tokens(applied_theme)
+    ring = QColor(palette["accent"]).rgb()
+    paper = QColor(palette["paper"]).rgb()
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    tabs = QTabWidget()
+    for name in ("General", "Data sources", "Rules"):
+        tabs.addTab(QWidget(), name)
+    elsewhere = QLineEdit()
+    layout.addWidget(elsewhere)
+    layout.addWidget(tabs)
+    host.resize(420, 240)
+    host.show()
+    host.activateWindow()
+    qapp.processEvents()
+    try:
+        bar = tabs.tabBar()
+        elsewhere.setFocus()
+        qapp.processEvents()
+        size_before = bar.tabSizeHint(0)
+        bar.setFocus(Qt.FocusReason.TabFocusReason)
+        qapp.processEvents()
+        assert bar.hasFocus()
+        rect = bar.tabRect(0)
+        assert bar.tabSizeHint(0) == size_before, "the tab must not change size when it takes focus"
+        image = bar.grab().toImage()
+        area = [(x, y) for y in range(rect.top(), rect.bottom() + 1) for x in range(rect.left(), rect.right() + 1)]
+        ring_pixels = [(x, y) for x, y in area if image.pixel(x, y) | 0xFF000000 == ring]
+        assert len(ring_pixels) >= MIN_RING_PIXELS
+        inner_left = min(x for x, _ in ring_pixels) + 2
+        inner_right = max(x for x, _ in ring_pixels) - 2
+        inner_top = min(y for _, y in ring_pixels) + 2
+        inner_bottom = max(y for _, y in ring_pixels) - 2
+        letters = [
+            (x, y)
+            for x, y in area
+            if inner_left <= x <= inner_right and inner_top <= y <= inner_bottom
+            and image.pixel(x, y) | 0xFF000000 not in (ring, paper)
+        ]
+        assert letters, "the tab text could not be found inside the ring"
+        gaps = {
+            "left": min(x for x, _ in letters) - inner_left,
+            "right": inner_right - max(x for x, _ in letters),
+            "top": min(y for _, y in letters) - inner_top,
+            "bottom": inner_bottom - max(y for _, y in letters),
+        }
+        # at least 4 px of clear space between the ring's inner edge and the letters, on every side
+        assert all(gap >= 4 for gap in gaps.values()), (applied_theme, gaps)
+    finally:
+        host.close()
+        host.deleteLater()
+        qapp.processEvents()

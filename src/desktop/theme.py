@@ -245,8 +245,8 @@ QTabBar::tab {{
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 8px 2px;
-    margin-right: 18px;
+    padding: 8px 10px;
+    margin-right: 2px;
     color: {ink_3};
     font-size: 13px;
     font-weight: 600;
@@ -258,9 +258,11 @@ QTabBar::tab:selected {{
     color: {ink};
     border-bottom: 2px solid {ink};
 }}
+/* the ring replaces the 2 px underline, so padding drops by 2 px at the sides and 1 px above and below
+   and the tab keeps its size; the side padding is what leaves clear space between ring and letters */
 QTabBar::tab:focus {{
     border: 2px solid {accent};
-    padding: 6px 0px;
+    padding: 7px 8px;
 }}
 
 /* —— lists and tables: one header line, faint row lines —— */
