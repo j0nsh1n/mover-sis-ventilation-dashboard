@@ -236,9 +236,12 @@ QWidget#casesPage QLabel#casesScope { font-weight: bold; }
 QWidget#casesPage QLabel#casesNote { color: #5a4f63; }
 QWidget#casesPage QLabel#casesEmpty { background: #fbfaf6; border: 1px dashed #9e93a3;
     border-radius: 9px; padding: 28px; font-size: 15px; }
-QWidget#casesPage QPushButton#casesBack { background: #f8f7f3; color: #4b3d5d;
+/* the page keeps its own light ground in both app themes, so every button on it sets its own text and fill */
+QWidget#casesPage QPushButton { background: #f8f7f3; color: #4b3d5d;
     border: 1px solid #b4afba; border-radius: 5px; padding: 8px 12px; min-height: 28px; }
-QWidget#casesPage QPushButton#casesBack:focus { border: 2px solid #4b3d5d; }
+QWidget#casesPage QPushButton:hover { background: #efece6; }
+QWidget#casesPage QPushButton:pressed, QWidget#casesPage QPushButton:checked { background: #e3dfd6; }
+QWidget#casesPage QPushButton:focus { border: 2px solid #4b3d5d; padding: 7px 11px; }
 QWidget#casesPage QComboBox { background: #fffefa; color: #302b35; border: 1px solid #b4afba;
     border-radius: 5px; padding: 6px 10px; min-height: 28px; }
 QWidget#casesPage QComboBox:focus { border: 2px solid #4b3d5d; }
@@ -248,6 +251,8 @@ QWidget#casesPage QTableView { background: #fffefa; color: #302b35; alternate-ba
     gridline-color: #ddd6dd; border: 1px solid #ddd6dd; selection-background-color: #332941;
     selection-color: #fff9f4; }
 QWidget#casesPage QTableView:focus { border: 2px solid #4b3d5d; }
+/* the columns have fixed widths sized for the text itself; the app's cell padding would elide ids and rules */
+QWidget#casesPage QTableView::item { padding: 0; border: none; }
 QWidget#casesPage QTableView::item:selected { background: #332941; color: #fff9f4; }
 QWidget#casesPage QTableView::item:selected:!active { background: #332941; color: #fff9f4; }
 /* the sort arrow takes this colour; the app palette's text is near-white in the dark theme */

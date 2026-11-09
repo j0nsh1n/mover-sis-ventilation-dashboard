@@ -783,3 +783,78 @@ def test_chart_areas_are_named_and_tab_order_follows_the_page(qapp):
         order.append(window.focusWidget())
     assert order == [overview.back_button, overview.charts_button, overview.top_chart._scroll,
                      overview.rules_chart._scroll, overview.table]
+
+
+def _button_ink_and_ground(page, button) -> tuple[str, str]:
+    """Text color and the color behind it, sampled from a render of the page around the button.
+
+    A button's own ``grab`` leaves a transparent button transparent, which hides the very
+    thing this checks: the text drawn over the page's background.
+    """
+    from PySide6.QtCore import QPoint, QRect
+
+    origin = button.mapTo(page, QPoint(0, 0))
+    image = page.grab().toImage().copy(QRect(origin, button.size()))
+    ground = image.pixel(image.width() // 2, 1) & 0xFFFFFF
+    pixels = [image.pixel(x, y) & 0xFFFFFF for y in range(2, image.height() - 2) for x in range(2, image.width() - 2)]
+
+    def distance(color: int) -> int:
+        return sum(abs(((color >> shift) & 255) - ((ground >> shift) & 255)) for shift in (16, 8, 0))
+
+    # the pixel farthest from the ground is the core of a glyph stroke
+    return f"#{max(pixels, key=distance):06x}", f"#{ground:06x}"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("expanded", [False, True])
+def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme, expanded):
+    from PySide6.QtWidgets import QPushButton
+
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, theme)
+    try:
+        view = _workspace(_cases())
+        view.show_cases()
+        overview = view._cases_overview
+        if expanded:
+            overview.charts_button.click()
+        QApplication.processEvents()
+        buttons = [b for b in overview.findChildren(QPushButton) if b.isVisibleTo(overview)]
+        assert overview.charts_button in buttons and overview.back_button in buttons
+        for button in buttons:
+            ink, ground = _button_ink_and_ground(overview, button)
+            assert _contrast(int(ink[1:], 16), int(ground[1:], 16)) >= 4.5, (theme, button.text(), ink, ground)
+        view.close()
+    finally:
+        apply_theme(qapp, "light")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_case_ids_and_top_rules_fit_their_columns_at_the_default_width(qapp, theme):
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, theme)
+    try:
+        cases = _cases()
+        assert len(cases.PID[0]) == 13
+        view = _workspace(cases)
+        view.show_cases()
+        QApplication.processEvents()
+        table = view._cases_overview.table
+        for column in (_column("PID"), _column("top_rules")):
+            for row in range(table.model().rowCount()):
+                index = table.model().index(row, column)
+                option = QStyleOptionViewItem()
+                table.itemDelegate().initStyleOption(option, index)
+                option.widget = table
+                option.rect = table.visualRect(index)
+                room = table.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, table).width()
+                wanted = QFontMetrics(option.font).horizontalAdvance(index.data())
+                assert wanted <= room, (theme, COLUMNS[column].key, index.data(), wanted, room)
+        view.close()
+    finally:
+        apply_theme(qapp, "light")
