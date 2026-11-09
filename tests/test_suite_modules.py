@@ -30,18 +30,19 @@ def window(qapp, monkeypatch, tmp_path):
     qapp.processEvents()
 
 
-def test_view_menu_opens_handoff_practice_and_monitoring_returns(window, qapp):
+def test_shortcuts_open_handoff_practice_and_monitoring_returns(window, qapp):
     assert window.module_stack.currentWidget() is window.research
     window._module_actions["handoff"].trigger()
     qapp.processEvents()
     assert window.module_stack.currentWidget().objectName() == "handoff-practice"
-    assert window.menuBar().cornerWidget(Qt.Corner.TopLeftCorner).text() == "Handoff"
+    assert window.head.crumb_text() == "Practice / Handoff practice"
     assert window._module_actions["handoff"].shortcut().toString() == "Ctrl+2"
 
     QTest.keyClick(window, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier)
     qapp.processEvents()
     assert window.module_stack.currentWidget() is window.research
-    assert window.menuBar().cornerWidget(Qt.Corner.TopLeftCorner).text() == "Monitoring"
+    assert window.head.crumb_text() == "Research"
+    assert window._module_actions["monitoring"].shortcut().toString() == "Ctrl+1"
 
 
 def test_medication_page_uses_the_fictional_demo_when_no_case_is_open(window, qapp):

@@ -161,7 +161,7 @@ def test_main_window_has_no_data_locations_sidebar(qapp):
 
 
 def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch):
-    """File > Open Wave folder saves the folder and refreshes the status bar (no crash)."""
+    """Open Wave folder saves the folder and refreshes the status bar (no crash)."""
     from src.desktop.app import MainWindow
     from src.runtime_paths import wave_dir
     from src.user_settings import load_settings

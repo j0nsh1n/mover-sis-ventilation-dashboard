@@ -8,34 +8,29 @@ Launch:
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import sys
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (
-    QAction,
-    QActionGroup,
-    QGuiApplication,
-    QIcon,
-    QPainter,
-    QPen,
-    QPixmap,
-)
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QStackedWidget,
     QStatusBar,
-    QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -44,7 +39,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.desktop.research_workspace import ResearchWorkspace, notify_purpose_combo_value
-from src.desktop.suite_chrome import install_suite_chrome, set_module_label, set_page_title
+from src.desktop.command_palette import Command, CommandPalette
+from src.desktop.shell import FooterFields, NavRail, PracticeTabs, RunningHead
+from src.desktop.suite_chrome import install_suite_chrome, set_page_title
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
 from src.services.articles import ArticleCatalog, ArticleCatalogError, ArticleSearchResult
@@ -65,6 +62,7 @@ from src.runtime_paths import (
 )
 from src.user_settings import (
     apply_ollama_env_from_settings,
+    get_theme,
     load_settings,
     needs_first_run_setup,
     settings_migration_note,
@@ -73,6 +71,16 @@ from src.user_settings import (
 
 if TYPE_CHECKING:
     from src.services.retrieval import RetrievalEngine
+
+# Practice tools in tab order: module key and the page name used in titles and the breadcrumb.
+PRACTICE_TOOLS = (
+    ("handoff", "Handoff practice"),
+    ("medications", "Medication and vitals"),
+    ("who", "WHO checklist"),
+)
+_PRACTICE_TITLES = dict(PRACTICE_TOOLS)
+SIGNAL_NEEDS_CASE = "Signal needs an open case. Open one from Research or Cases first."
+SIGNAL_TIP = "Signal: the open case's signals, rule episodes and source rows"
 
 NO_VENT_MESSAGE = (
     "this surgery has no ventilator rows in the EMR export, so there are no "
@@ -259,12 +267,17 @@ class MainWindow(QMainWindow):
         self._research_engine = None
         self._pending_case: tuple[str, bool, bool, bool] | None = None
         self._queued_case: tuple[str, bool, bool, bool] | None = None
+        self._current_module = "monitoring"
+        self._last_practice = PRACTICE_TOOLS[0][0]
+        # unchecked, busy:<words>, ready, stopped or failed
+        self._model_state = "unchecked"
+        self._palette: CommandPalette | None = None
 
-        self._build_menu()
+        self._build_actions()
         install_suite_chrome(self, self._version)
+        self.setStatusBar(QStatusBar())
         self._build_ui()
         self._refresh_rule_reference()
-        self.setStatusBar(QStatusBar())
         from src.desktop.accessibility import announce
 
         self.statusBar().messageChanged.connect(lambda message: announce(self.statusBar(), message))
@@ -291,115 +304,128 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, self._startup)
 
-    # ----- menu -----
-    def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
-        open_emr = QAction("Open EMR folder…", self)
-        open_emr.setShortcut("Ctrl+O")
-        open_emr.triggered.connect(self._browse_emr_folder)
-        file_menu.addAction(open_emr)
-        open_wave = QAction("Open Wave folder…", self)
-        open_wave.setShortcut("Ctrl+Shift+O")
-        open_wave.triggered.connect(self._browse_wave_folder)
-        file_menu.addAction(open_wave)
-        import_articles = QAction("Import articles…", self)
-        import_articles.triggered.connect(self._import_articles)
-        file_menu.addAction(import_articles)
-        reload_act = QAction("Reload processed data", self)
-        reload_act.setShortcut("Ctrl+R")
-        reload_act.triggered.connect(self._autoload_processed)
-        file_menu.addAction(reload_act)
-        run_pipe = QAction("Run pipeline (50 cases)…", self)
-        run_pipe.triggered.connect(self._run_pipeline_menu)
-        file_menu.addAction(run_pipe)
-        scan_act = QAction("Scan full EMR (all ventilated surgeries)…", self)
-        scan_act.triggered.connect(self._run_corpus_scan)
-        file_menu.addAction(scan_act)
-        file_menu.addSeparator()
-        setup_act = QAction("&Setup…", self)
-        setup_act.triggered.connect(self._open_setup_wizard)
-        file_menu.addAction(setup_act)
-        file_menu.addSeparator()
-        quit_act = QAction("E&xit", self)
-        quit_act.setShortcut("Ctrl+Q")
-        quit_act.triggered.connect(self.close)
-        file_menu.addAction(quit_act)
+    # ----- actions -----
+    def _build_actions(self) -> None:
+        """Every command is an action on the window.
 
-        view_menu = self.menuBar().addMenu("&View")
-        theme_light = QAction("Theme: &Light", self)
-        theme_light.triggered.connect(lambda: self._set_theme_quick("light"))
-        view_menu.addAction(theme_light)
-        theme_dark = QAction("Theme: &Dark", self)
-        theme_dark.triggered.connect(lambda: self._set_theme_quick("dark"))
-        view_menu.addAction(theme_dark)
-        theme_sys = QAction("Theme: &System", self)
-        theme_sys.triggered.connect(lambda: self._set_theme_quick("system"))
-        view_menu.addAction(theme_sys)
-
-        help_menu = self.menuBar().addMenu("&Help")
-        about = QAction("&About", self)
-        about.triggered.connect(self._about)
-        help_menu.addAction(about)
-        self.update_act = QAction("Restart to finish update", self)
-        self.update_act.setVisible(False)
-        self.update_act.triggered.connect(self._restart_for_update)
-        help_menu.addAction(self.update_act)
-
-        self._module_group = QActionGroup(self)
-        self._module_group.setExclusive(True)
+        There is no menu bar. The actions stay on the window so their shortcuts work, and
+        Ctrl+K lists these same objects, so a command and its shortcut cannot drift apart.
+        """
+        self._commands: list[Command] = []
         self._module_actions: dict[str, QAction] = {}
-        view_menu.addSeparator()
+        self._theme_actions: dict[str, QAction] = {}
+
+        def add(name: str, text: str, handler, *, group: str, shortcut: str = "",
+                keywords: str = "", shortcut_hint: str = "") -> QAction:
+            action = QAction(text, self)
+            action.setObjectName(name)
+            if shortcut:
+                action.setShortcut(shortcut)
+                action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            # triggered carries a "checked" flag that none of the handlers take
+            action.triggered.connect(lambda _checked=False, run=handler: run())
+            self.addAction(action)
+            self._commands.append(Command(action, group, keywords, shortcut_hint))
+            return action
+
+        places = "Go to"
+        self._module_actions["monitoring"] = add(
+            "suite-module-monitoring", "Research", partial(self._go, "research"), group=places,
+            shortcut="Ctrl+1", keywords="monitoring evidence question board home",
+        )
+        self._nav_cases = add(
+            "suite-nav-cases", "Cases", partial(self._go, "cases"), group=places,
+            keywords="overview table list analyzed indexed",
+        )
+        self._nav_signal = add(
+            "suite-nav-signal", "Signal", partial(self._go, "signal"), group=places,
+            keywords="case detail chart episodes minute source rows",
+        )
+        self._nav_signal.setToolTip(SIGNAL_NEEDS_CASE)
+        self._nav_signal.setEnabled(False)
         for key, label, shortcut in (
-            ("monitoring", "Monitoring", "Ctrl+1"),
             ("handoff", "Handoff practice", "Ctrl+2"),
             ("medications", "Medication and vitals", "Ctrl+3"),
             ("who", "WHO checklist", "Ctrl+4"),
         ):
-            action = QAction(label, self)
+            self._module_actions[key] = add(
+                f"suite-module-{key}", label, partial(self._go, key), group=places,
+                shortcut=shortcut, keywords="practice fictional",
+            )
+        self._nav_rules = add(
+            "suite-nav-rules", "Rules", partial(self._go, "rules"), group=places,
+            keywords="reference thresholds drawer search rule",
+            shortcut_hint="Ctrl+R on research pages",
+        )
+        self.settings_act = add(
+            "action-settings", "Settings\u2026", self._open_settings, group=places, shortcut="Ctrl+,",
+            keywords="preferences data folders models theme appearance",
+        )
+        self.settings_act.setToolTip("Settings (Ctrl+,) \u2014 data folders, Ollama models dir, theme")
+
+        data = "Data"
+        add("action-open-emr", "Open EMR folder\u2026", self._browse_emr_folder, group=data,
+            shortcut="Ctrl+O", keywords="file choose source")
+        add("action-open-wave", "Open Wave folder\u2026", self._browse_wave_folder, group=data,
+            shortcut="Ctrl+Shift+O", keywords="file choose waveforms")
+        add("action-import-articles", "Import articles\u2026", self._import_articles, group=data,
+            keywords="file csv jsonl catalog")
+        add("action-reload", "Reload processed data", self._autoload_processed, group=data,
+            shortcut="Ctrl+R", keywords="file refresh cache")
+        add("action-run-pipeline", "Run pipeline (50 cases)\u2026", self._run_pipeline_menu, group=data,
+            keywords="file analyze rebuild")
+        add("action-scan-emr", "Scan full EMR (all ventilated surgeries)\u2026", self._run_corpus_scan,
+            group=data, keywords="file score corpus")
+        add("action-setup", "Setup\u2026", self._open_setup_wizard, group=data,
+            keywords="file wizard first-time")
+
+        appearance = "Appearance"
+        self._theme_group = QActionGroup(self)
+        self._theme_group.setExclusive(True)
+        for mode, label in (("light", "Theme: Light"), ("dark", "Theme: Dark"), ("system", "Theme: System")):
+            action = add(f"action-theme-{mode}", label, partial(self._set_theme_quick, mode),
+                         group=appearance, keywords="view dark mode colors")
             action.setCheckable(True)
-            action.setShortcut(shortcut)
-            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-            action.setObjectName(f"suite-module-{key}")
-            action.triggered.connect(lambda _checked=False, name=key: self._show_suite_module(name))
-            self._module_group.addAction(action)
-            view_menu.addAction(action)
-            self._module_actions[key] = action
+            self._theme_group.addAction(action)
+            self._theme_actions[mode] = action
+        self._sync_theme_actions()
 
-        # Settings lives on a gear icon in the menu-bar corner, not under Edit
-        self.settings_act = QAction(self._gear_icon(), "Settings…", self)
-        self.settings_act.setShortcut("Ctrl+,")
-        self.settings_act.setToolTip("Settings (Ctrl+,) — data folders, Ollama models dir, theme")
-        self.settings_act.triggered.connect(self._open_settings)
-        self.addAction(self.settings_act)  # keep the shortcut alive app-wide
+        app = "App"
+        add("action-about", "About", self._about, group=app, keywords="help version")
+        self.update_act = add("action-restart-update", "Restart to finish update", self._restart_for_update,
+                              group=app, keywords="help upgrade version")
+        self.update_act.setVisible(False)
+        add("action-exit", "Exit", self._quit_app, group=app, shortcut="Ctrl+Q", keywords="file quit close")
+        self._find_act = QAction("Find", self)
+        self._find_act.setObjectName("action-find")
+        self._find_act.setShortcut("Ctrl+K")
+        self._find_act.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        self._find_act.triggered.connect(lambda _checked=False: self._open_palette())
+        self.addAction(self._find_act)
 
-        gear = QToolButton(self)
-        gear.setDefaultAction(self.settings_act)
-        gear.setAutoRaise(True)
-        gear.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        gear.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.menuBar().setCornerWidget(gear, Qt.Corner.TopRightCorner)
+    def _sync_theme_actions(self) -> None:
+        action = self._theme_actions.get(get_theme())
+        if action is not None:
+            action.setChecked(True)
 
-    @staticmethod
-    def _gear_icon() -> QIcon:
-        """Theme gear icon, with a drawn fallback for minimal icon themes."""
-        icon = QIcon.fromTheme("preferences-system")
-        if not icon.isNull():
-            return icon
-        pm = QPixmap(20, 20)
-        pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QApplication.palette().windowText().color(), 1.6)
-        p.setPen(pen)
-        p.drawEllipse(6, 6, 8, 8)
-        for angle in range(0, 360, 45):  # eight teeth
-            p.save()
-            p.translate(10, 10)
-            p.rotate(angle)
-            p.drawLine(0, -9, 0, -6)
-            p.restore()
-        p.end()
-        return QIcon(pm)
+    def _quit_app(self) -> None:
+        self.close()
+
+    def _open_palette(self) -> None:
+        if self._palette is not None:
+            return
+        # An action hidden from view (an update that is not ready) is not offered either
+        commands = [command for command in self._commands if command.action.isVisible()]
+        palette = CommandPalette(commands, self)
+        palette.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        palette.finished.connect(self._palette_closed)
+        self._palette = palette
+        palette.open_over(self)
+
+    def _palette_closed(self) -> None:
+        self._palette = None
+        # Some platforms leave no window active after a frameless dialog closes, and shortcuts need one
+        self.activateWindow()
 
     # ----- layout -----
     def _build_ui(self) -> None:
@@ -429,8 +455,33 @@ class MainWindow(QMainWindow):
         self.module_stack.setContentsMargins(0, 0, 0, 0)
         self.module_stack.addWidget(self.research)
         self._suite_pages: dict[str, QWidget] = {"monitoring": self.research}
-        self.setCentralWidget(self.module_stack)
+        self._build_frame()
+        self._footer = FooterFields(self.statusBar())
+        self.research.place_changed.connect(self._sync_frame)
         self._show_suite_module("monitoring")
+
+    def _build_frame(self) -> None:
+        """Rail on the left; running head, practice tabs and the pages on the right."""
+        self.rail = NavRail()
+        self.rail.item_clicked.connect(self._go)
+        self.head = RunningHead()
+        self.head.find_requested.connect(self._open_palette)
+        self.practice_tabs = PracticeTabs(PRACTICE_TOOLS)
+        self.practice_tabs.tool_selected.connect(self._go)
+        body = QWidget()
+        column = QVBoxLayout(body)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self.head)
+        column.addWidget(self.practice_tabs)
+        column.addWidget(self.module_stack, 1)
+        frame = QWidget()
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.rail)
+        row.addWidget(body, 1)
+        self.setCentralWidget(frame)
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -442,6 +493,7 @@ class MainWindow(QMainWindow):
         self._publish_status_paths()
 
     def _publish_status_paths(self) -> None:
+        self._refresh_footer()
         prefix = self._status_path_prefix
         if self._status_paths_hidden:
             self._status_hidden_message = prefix
@@ -582,7 +634,7 @@ class MainWindow(QMainWindow):
         self._clear_loaded_sample()
         self._update_status_paths("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
-        self._warn("Load error", f"{msg}\n\nRun File > Run pipeline to rebuild the analyzed sample for this EMR.")
+        self._warn("Load error", f"{msg}\n\nPress Ctrl+K and choose Run pipeline to rebuild the analyzed sample for this EMR.")
 
     def _warn(self, title: str, text: str) -> None:
         # open() returns immediately. exec() would hold startup until the box closed.
@@ -672,7 +724,7 @@ class MainWindow(QMainWindow):
             f"Version {self._version}\n\n"
             "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
             "Monitoring (SIS Monitor) plus fictional handoff, medication, and checklist practice.\n"
-            "Configure paths via the ⚙ Settings icon (top-right) or File → Setup…\n"
+            "Change folders, the rules preset and the theme in Settings (Ctrl+,); press Ctrl+K to find any action.\n"
             "Not for clinical care.",
         )
 
@@ -753,6 +805,7 @@ class MainWindow(QMainWindow):
 
             update_settings(theme=theme)
             apply_theme(QApplication.instance(), theme)
+            self._sync_theme_actions()
             self.research.refresh_charts()
         if self.cases is None:
             preset = str(vals.get("preset") or load_settings().get("preset") or "default")
@@ -765,11 +818,12 @@ class MainWindow(QMainWindow):
 
         update_settings(theme=mode)
         concrete = apply_theme(QApplication.instance(), mode)
+        self._sync_theme_actions()
         self.research.refresh_charts()
         self.statusBar().showMessage(f"Theme: {mode} ({concrete})", 4000)
 
     def _run_pipeline_menu(self) -> None:
-        """File-menu pipeline run (sidebar pipeline controls removed)."""
+        """The Run pipeline command: the 50-case sample."""
         self._run_pipeline(n_cases=50, preset=self._next_run_preset())
 
     def _next_run_preset(self) -> str:
@@ -1053,6 +1107,8 @@ class MainWindow(QMainWindow):
 
     def _set_ollama_status_ui(self, status) -> None:
         self._ollama_available = status.available
+        self._model_state = "ready" if status.available else "stopped"
+        self._refresh_footer()
         busy = self._ollama_worker is not None and self._ollama_worker.isRunning()
         if status.available:
             n = len(status.models)
@@ -1089,6 +1145,8 @@ class MainWindow(QMainWindow):
         for button in (self.research.start_button, self.research.stop_button, self.research.unload_button):
             button.setEnabled(False)
         message = {"probe": "Checking local model…", "stop": "Stopping local model…"}.get(action, "Starting local model…")
+        self._model_state = "busy:" + {"probe": "checking", "stop": "stopping"}.get(action, "starting")
+        self._refresh_footer()
         self.research.model_status.setText(message)
         self.research.set_status(message)
         self.statusBar().showMessage(message)
@@ -1121,6 +1179,8 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._ollama_available = False
+        self._model_state = "failed"
+        self._refresh_footer()
         self.research.model_status.setTextFormat(Qt.TextFormat.PlainText)
         self.research.model_status.setText(f"Local model failed: {message}")
         self.research.set_status(f"Local model failed: {message}")
@@ -1154,6 +1214,7 @@ class MainWindow(QMainWindow):
                 chat_model=text,
                 embed_model=current_context().embed_model,
             )
+            self._refresh_footer()
 
     def _make_session_snapshot(self):
         from src.llm.tools import SessionState
@@ -1278,6 +1339,7 @@ class MainWindow(QMainWindow):
             thresholds_sha256=self._thresholds_sha256,
         )
         self._refresh_rule_reference()
+        self._refresh_footer()
         if changed:
             self._data_changed()
         return changed
@@ -1324,6 +1386,7 @@ class MainWindow(QMainWindow):
                 self.research.set_answer(NO_MODEL_ANSWER, request_id, state="no_model")
             return
         self.research.set_results(result)
+        self._refresh_footer()
         turn = self.research.conversation.turn(request_id)
         unanswerable = result.empty_reason or (
             "" if result.candidates else "No matching indexed surgery records were found for this question."
@@ -1471,20 +1534,143 @@ class MainWindow(QMainWindow):
             return
         page = self._suite_page(name)
         stack.setCurrentWidget(page)
-        labels = {
-            "monitoring": "Monitoring",
-            "handoff": "Handoff",
-            "medications": "Medications",
-            "who": "Checklist",
-        }
-        set_module_label(self, labels[name])
-        pages = {"handoff": "Handoff practice", "medications": "Medication and vitals", "who": "WHO checklist"}
-        set_page_title(self, pages.get(name))
-        action = self._module_actions.get(name)
-        if action is not None:
-            action.setChecked(True)
+        self._current_module = name
+        if name != "monitoring":
+            self._last_practice = name
+        self._sync_frame()
         if name == "medications":
             self._offer_open_case_to_medication()
+
+    def _go(self, key: str) -> None:
+        """Open a rail place or a practice tool; Rules and Settings act on top of the current page."""
+        if key == "settings":
+            self._open_settings()
+            return
+        if key == "practice":
+            key = self._last_practice
+        if key in _PRACTICE_TITLES:
+            self._show_suite_module(key)
+            self.practice_tabs.bar.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        elif key == "signal" and not self.research.has_open_case():
+            self.statusBar().showMessage(SIGNAL_NEEDS_CASE, 6000)
+            return
+        elif key == "rules":
+            self._show_suite_module("monitoring")
+            self.research.open_rules(self.rail.button("rules"))
+            return
+        else:
+            self._show_suite_module("monitoring")
+            if key == "cases":
+                self.research.show_cases()
+            elif key == "signal":
+                self.research.show_signal()
+                self.research.back_button.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            else:
+                self.research.show_canvas()
+                self._focus_research_question()
+        from src.desktop.accessibility import announce
+
+        announce(self.head.crumbs, self.head.crumb_text())
+
+    def _breadcrumb(self) -> list[str]:
+        if self._current_module != "monitoring":
+            return ["Practice", _PRACTICE_TITLES[self._current_module]]
+        place = self.research.place()
+        question = f"Question {place.question}" if place.question else None
+        if place.page == "cases":
+            return ["Cases"]
+        if place.page == "signal":
+            minute = [f"Minute {place.minute:g}"] if place.minute is not None else []
+            origin = ["Cases"] if place.from_overview else ["Research", *([question] if question else [])]
+            return [*origin, str(place.pid), *minute]
+        return ["Research", *([f"{question} of {place.questions}"] if question else [])]
+
+    def _sync_frame(self) -> None:
+        """Bring the rail, running head, window title and footer in line with the page that is showing."""
+        if not hasattr(self, "_footer"):
+            return
+        practice = self._current_module != "monitoring"
+        place = self.research.place()
+        self.rail.set_current("practice" if practice else place.page)
+        self.head.set_place(self._breadcrumb(), practice=practice)
+        self.practice_tabs.setVisible(practice)
+        if practice:
+            self.practice_tabs.select(self._current_module)
+        has_case = self.research.has_open_case()
+        self._nav_signal.setEnabled(has_case)
+        self._nav_signal.setToolTip(SIGNAL_TIP if has_case else SIGNAL_NEEDS_CASE)
+        self.rail.set_item_state("signal", enabled=has_case, tip=SIGNAL_TIP if has_case else SIGNAL_NEEDS_CASE)
+        title: str | None = None
+        if practice:
+            title = _PRACTICE_TITLES[self._current_module]
+        elif place.page == "cases":
+            title = "Cases"
+        elif place.page == "signal":
+            title = f"Case {place.pid}"
+        set_page_title(self, title)
+        self._refresh_footer()
+
+    def _indexed_count(self) -> int | None:
+        result = self.research.result
+        indexed = getattr(result, "indexed_count", 0)
+        if isinstance(indexed, int) and indexed > 0:
+            return indexed
+        meta = getattr(self.corpus_scan, "meta", None)
+        scan = meta.get("n_indexed_surgeries") if isinstance(meta, dict) else None
+        return scan if isinstance(scan, int) and scan > 0 else None
+
+    def _refresh_footer(self) -> None:
+        """Source, counts, rules and local model for every research page; practice pages say they read no data."""
+        footer = getattr(self, "_footer", None)
+        if footer is None:
+            return
+        if self._current_module != "monitoring":
+            footer.show_practice()
+            return
+        analyzed = len(self.cases) if self.cases is not None else None
+        indexed = self._indexed_count()
+        if analyzed is None:
+            counts = ("no analyzed cases loaded", "no analyzed cases loaded")
+        elif indexed is None:
+            counts = (f"<b>{analyzed:,}</b> analyzed \u00b7 indexed count after the first search",
+                      f"{analyzed:,} analyzed, indexed count after the first search")
+        else:
+            counts = (f"<b>{analyzed:,}</b> analyzed of <b>{indexed:,}</b> indexed",
+                      f"{analyzed:,} analyzed of {indexed:,} indexed")
+        preset = html.escape(self._active_preset)
+        sha = self._thresholds_sha256[:6] if self._thresholds_sha256 else ""
+        rules_plain = f"rules {self._active_preset}" + (f" at {sha}" if sha else "")
+        if not self._preset_recorded:
+            rules_plain += ", preset not recorded in the cache"
+        rules = (
+            f"rules <b>{preset}</b>" + (f" @{sha}" if sha else "")
+            + ("" if self._preset_recorded else " (not recorded)"),
+            rules_plain,
+        )
+        footer.show_research(
+            source_tip=self._source_tooltip(), counts=counts, rules=rules, model=self._model_field(),
+        )
+
+    def _source_tooltip(self) -> str:
+        wave = wave_dir()
+        return f"EMR: {emr_dir()}\nProcessed: {processed_dir()}\nWave: {wave if wave else 'not set'}"
+
+    def _model_field(self) -> tuple[str, str]:
+        name = self.research.selected_model()
+        state = self._model_state
+        if state.startswith("busy:"):
+            word = state.split(":", 1)[1]
+        elif state == "failed":
+            word = "failed"
+        elif state == "unchecked":
+            word = "not checked"
+        elif state == "ready" and name:
+            return (f"local model <b>{html.escape(name)}</b> ready", f"local model {name} ready")
+        elif state == "ready":
+            word = "ready, none installed"
+        else:
+            word = "stopped"
+        return (f"local model <b>{word}</b>", f"local model {word}")
 
     def _suite_page(self, name: str) -> QWidget:
         pages = self._suite_pages

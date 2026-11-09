@@ -403,7 +403,7 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
         assert "Missing processed files: cases.parquet" in dialogs[0]
-        assert "File > Run pipeline" in dialogs[0]
+        assert "choose Run pipeline" in dialogs[0]
         assert str(tmp_path / "missing") not in dialogs[0]
     finally:
         win.close()

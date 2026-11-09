@@ -1053,13 +1053,21 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
 
 
 def import_articles(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QFileDialog
 
     original = QFileDialog.getOpenFileName
     QFileDialog.getOpenFileName = lambda *args, **kwargs: (str(ROOT / "tests/fixtures/articles_sample.jsonl"), "")
     try:
-        menu = next(a.menu() for a in run.win.menuBar().actions() if a.text() == "&File")
-        next(a for a in menu.actions() if a.text() == "Import articles…").trigger()
+        # The File menu is gone: Ctrl+K lists the command, and Enter runs it after the palette closes
+        QTest.keyClick(run.win, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
+        run.settle()
+        palette = run.win._palette
+        assert palette is not None
+        QTest.keyClicks(palette.search, "Import articles")
+        QTest.keyClick(palette.search, Qt.Key.Key_Return)
+        run.settle()
     finally:
         QFileDialog.getOpenFileName = original
     research = run.win.research

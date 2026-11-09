@@ -678,8 +678,7 @@ def test_ctrl_r_opens_rules_and_file_action_still_reloads(qapp, monkeypatch, tmp
         QTest.keyClick(window.research.question_edit, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
         assert window.research.rules_drawer.is_open
         assert len(reloads) == before
-        file_menu = window.menuBar().actions()[0].menu()
-        next(action for action in file_menu.actions() if action.text() == "Reload processed data").trigger()
+        next(action for action in window.actions() if action.text() == "Reload processed data").trigger()
         assert len(reloads) == before + 1
     finally:
         _dispose(window, qapp)

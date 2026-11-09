@@ -158,7 +158,7 @@ def test_absent_processed_autoload_names_path_after_setup(window, monkeypatch, t
     win._autoload_processed()
     assert len(dialogs) == 1
     assert "Missing processed files: cases.parquet" in dialogs[0]
-    assert "File > Run pipeline" in dialogs[0]
+    assert "choose Run pipeline" in dialogs[0]
     assert str(root) not in dialogs[0]
 
 
