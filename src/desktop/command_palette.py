@@ -147,21 +147,33 @@ def heading_text(index: QModelIndex | QPersistentModelIndex) -> str:
 
 
 class _ClickRows(QObject):
-    """A click runs the row under it; a click on a section heading painted above a row runs nothing."""
+    """A left click runs the row it was pressed and released on; a click on a section heading runs nothing.
+
+    Like itemClicked, which this replaces: other buttons and drags between rows run nothing, because some
+    commands act at once (Reload clears the sample, Exit closes the app).
+    """
 
     def __init__(self, palette: CommandPalette):
         super().__init__(palette)
         self._palette = palette
+        self._pressed: object = None
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        if event.type() != QEvent.Type.MouseButtonRelease or not isinstance(event, QMouseEvent):
+        kind = event.type()
+        if kind not in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease) or not isinstance(event, QMouseEvent):
             return False
+        if event.button() != Qt.MouseButton.LeftButton:
+            return kind == QEvent.Type.MouseButtonRelease
         results = self._palette.results
         pos = event.position().toPoint()
         item = results.itemAt(pos)
-        if item is None:
+        if item is not None and item.data(HEADING_ROLE) and pos.y() < results.visualItemRect(item).top() + HEADING_HEIGHT:
+            item = None
+        if kind == QEvent.Type.MouseButtonPress:
+            self._pressed = item
             return False
-        if item.data(HEADING_ROLE) and pos.y() < results.visualItemRect(item).top() + HEADING_HEIGHT:
+        pressed, self._pressed = self._pressed, None
+        if item is None or item is not pressed:
             return True
         results.setCurrentItem(item)
         self._palette.run_current()

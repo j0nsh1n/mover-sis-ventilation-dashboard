@@ -399,3 +399,24 @@ def test_a_click_on_a_heading_runs_nothing_and_a_click_on_the_row_runs_it(window
                      pos=rect.topLeft() + QPoint(40, HEADING_HEIGHT + (rect.height() - HEADING_HEIGHT) // 2))
     qapp.processEvents()
     assert calls == [handler]
+
+
+def test_only_a_left_click_on_one_row_runs_it(window, qapp, calls):
+    palette = _open_palette(window, qapp)
+    palette.search.setText("Reload")
+    qapp.processEvents()
+    results = palette.results
+    item = results.item(0)
+    centre = results.visualItemRect(item).center()
+    for button in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+        QTest.mouseClick(results.viewport(), button, pos=centre)
+        qapp.processEvents()
+        assert calls == [] and palette.isVisible(), button
+    elsewhere = results.visualItemRect(results.item(results.count() - 1)).center() if results.count() > 1 else centre + QPoint(0, 400)
+    QTest.mousePress(results.viewport(), Qt.MouseButton.LeftButton, pos=elsewhere)
+    QTest.mouseRelease(results.viewport(), Qt.MouseButton.LeftButton, pos=centre)
+    qapp.processEvents()
+    assert calls == [] and palette.isVisible(), "a press on another spot then release on the row runs nothing"
+    QTest.mouseClick(results.viewport(), Qt.MouseButton.LeftButton, pos=centre)
+    qapp.processEvents()
+    assert calls == ["_autoload_processed"]
