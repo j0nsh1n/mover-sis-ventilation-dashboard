@@ -134,10 +134,10 @@ def test_set_models_keeps_the_choice_and_never_counts_as_a_choice(qapp):
 
 def test_an_empty_list_says_why_and_offers_no_model(qapp):
     button = LocalModelButton()
-    button.set_models([], placeholder="(Ollama stopped — click Start)")
+    button.set_models([], placeholder="(Ollama stopped — choose Start AI)")
     assert button.selected_model() is None and button.model_actions() == []
-    assert button.placeholder_text() == "(Ollama stopped — click Start)"
-    shown = [action for action in button.menu_widget.actions() if action.text() == "(Ollama stopped — click Start)"]
+    assert button.placeholder_text() == "(Ollama stopped — choose Start AI)"
+    shown = [action for action in button.menu_widget.actions() if action.text() == "(Ollama stopped — choose Start AI)"]
     assert len(shown) == 1 and not shown[0].isEnabled()
     button.set_models([])
     assert button.placeholder_text() == "(AI unavailable · search still works)"
@@ -208,6 +208,24 @@ def test_a_gap_in_the_samples_breaks_the_line_instead_of_joining_across_it(qapp)
         assert count_near(gap, color) == 0, "no line is drawn where samples are missing"
         assert count_near(image.copy(0, 0, int(width * 2 / 11), image.height()), color) > 10
         assert count_near(image.copy(int(width * 9 / 11), 0, int(width * 2 / 11), image.height()), color) > 10
+    finally:
+        spark.close()
+
+
+def test_the_minute_line_shows_where_the_value_is_missing_and_the_trace_takes_its_signal_colour(qapp):
+    spark = Sparkline("waiting")
+    spark.resize(400, 72)
+    spark.set_series([35.0, 36.0, None, 37.0, 35.0], 2, label="ETCO₂", color="s_etco2")
+    spark.show()
+    qapp.processEvents()
+    try:
+        image = spark.grab().toImage()
+        x = round(2 + 2 * (image.width() - 4) / 4)
+        line = image.copy(x - 2, 16, 5, image.height() - 24)
+        assert count_near(line, token_color("accent")) > 20, "the observed minute is marked although its value is missing"
+        assert count_near(image, token_color("s_etco2")) > 10
+        assert count_near(image, token_color("s_pip")) == 0, "an ETCO2 trace is not drawn in the PIP colour"
+        assert spark.signal() == ("ETCO₂", "s_etco2")
     finally:
         spark.close()
 

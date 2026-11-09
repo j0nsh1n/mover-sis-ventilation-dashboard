@@ -909,7 +909,7 @@ def test_model_menu_announces_a_new_state_and_a_choice_but_a_refresh_is_not_a_ch
         assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
         assert chosen == ["second"] and view.selected_model() == "second"
         view.set_models(["first", "second", "third"], "first")
-        view.set_models([], placeholder="(Ollama stopped — click Start)")
+        view.set_models([], placeholder="(Ollama stopped — choose Start AI)")
         assert chosen == ["second"], "only a person's choice is a choice"
         assert view.selected_model() is None
     finally:
@@ -939,7 +939,7 @@ def test_apply_ollama_status_updates_the_menu_without_counting_as_a_choice(qapp,
         assert chosen == []
         assert win.research.selected_model() is None
         assert menu.text() == "Local AI stopped"
-        assert menu.placeholder_text() == "(Ollama stopped — click Start)"
+        assert menu.placeholder_text() == "(Ollama stopped — choose Start AI)"
         assert menu.model_actions() == []
     finally:
         win.close()
@@ -1009,6 +1009,25 @@ def test_signal_detail_does_not_scroll_sideways_at_900_px_with_the_drawer_open(e
     assert right <= scroll.viewport().width()
 
 
+def _without_case_page(source: str) -> str:
+    """The module with only the case page's own colours blanked: its stylesheet and its detail builder.
+
+    The case page is the next stage; everything else, the research board included, must use the tokens.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    spans = [(node.lineno, node.end_lineno) for node in ast.walk(tree)
+             if (isinstance(node, ast.FunctionDef) and node.name == "_build_signal_detail")
+             or (isinstance(node, ast.Constant) and isinstance(node.value, str) and "QWidget#signalPage" in node.value)]
+    assert len(spans) == 2, "the case page's stylesheet and detail builder were moved; update this exclusion"
+    lines = source.splitlines(keepends=True)
+    for start, end in spans:
+        for number in range(start - 1, end or start):
+            lines[number] = "\n"
+    return "".join(lines)
+
+
 def test_the_research_page_and_conversation_carry_no_colors_of_their_own(qapp):
     """Only the case page (the next stage) keeps its own colours; the question board and conversation use the tokens."""
     import re
@@ -1022,8 +1041,7 @@ def test_the_research_page_and_conversation_carry_no_colors_of_their_own(qapp):
         for name in ("research_workspace.py", "conversation_panel.py", "evidence_trail.py", "research_controls.py"):
             source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / name).read_text(encoding="utf-8")
             if name == "research_workspace.py":
-                # The case page's remaining literals are its own stylesheet and metric colours.
-                source = source[: source.index("        # The case page keeps its own dark look")]
+                source = _without_case_page(source)
             assert re.findall(r"#[0-9a-fA-F]{6}\b|QColor\(\"#", source) == [], name
     finally:
         view.close()

@@ -142,7 +142,7 @@ def test_changing_the_scope_clears_the_board_once_and_a_silent_set_does_not(view
     assert view.scope == "Cases"
 
 
-def test_the_tab_order_runs_question_switch_trace_model_menu_then_the_trail(view, qapp):
+def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_then_the_trail(view, qapp):
     board_with_case(view)
     view.activateWindow()
     view.question_edit.setFocus()
@@ -299,6 +299,45 @@ def test_the_trail_shows_the_observation_its_rows_and_where_they_sit(view, qapp)
     assert view.source_title.text() == "SYN-000"
 
 
+def test_a_missing_etco2_observation_draws_the_etco2_trace_with_its_gap_and_minute(view, qapp):
+    view.begin_question("Where is ETCO2 missing?", 1)
+    board_with_case(view)
+    qapp.processEvents()
+    assert view.finding_title.text() == "ETCO₂ missing at 4 min"
+    assert view.sparkline.signal() == ("ETCO₂", "s_etco2")
+    _placeholder, values, marker = view.sparkline.state()
+    assert marker == 4 and values[4] is None and values[3] == 35.0, "the trace is ETCO2, with the gap at the minute"
+    assert view.sparkline.accessibleDescription() == "ETCO₂ over the case, observation at minute 4"
+
+
+def test_a_pip_observation_draws_the_pip_trace(view, qapp):
+    board_with_case(view)
+    assert view.sparkline.signal() == ("PIP", "s_pip")
+    assert view.sparkline.state()[1][3] == 31.4
+
+
+def test_an_empty_board_shows_no_blank_shortlist_and_new_question_hides_it_again(view, qapp):
+    view.show()
+    qapp.processEvents()
+    assert not view.candidate_table.isVisibleTo(view), "no empty table on first open"
+    board_with_case(view)
+    qapp.processEvents()
+    assert view.candidate_table.isVisibleTo(view)
+    view.new_question_button.click()
+    qapp.processEvents()
+    assert view.candidate_table.rowCount() == 0
+    assert not view.candidate_table.isVisibleTo(view), "New question leaves no blank block"
+
+
+def test_trail_tables_draw_no_column_lines_and_headings_sit_over_their_cells(view):
+    for table, right in ((view.candidate_table, {0, 3}), (view.source_table, {0, 1, 2, 3})):
+        assert not table.showGrid(), table.objectName()
+        for column in range(table.columnCount()):
+            side = table.horizontalHeaderItem(column).textAlignment() & 0x0F
+            expected = Qt.AlignmentFlag.AlignRight if column in right else Qt.AlignmentFlag.AlignLeft
+            assert side == expected.value, (table.objectName(), column)
+
+
 def test_a_missing_source_cell_is_hatched_with_its_word(view, qapp):
     from src.desktop.marks import MISSING_ROLE
 
@@ -449,6 +488,16 @@ def test_copy_with_sources_puts_the_question_answer_and_numbered_sources_on_the_
     assert QApplication.clipboard().text() == "Where?\n\nSYN-000 peaks at minute 3.\n\nSources:\n1  SYN-000 · Chole"
     view.begin_question("Pending?", 2)
     assert not view.conversation.turn_widgets[2].copy_button.isEnabled(), "nothing to copy before an answer"
+
+
+def test_copy_with_sources_copies_the_answer_as_read_without_markdown_marks(view, qapp):
+    view.begin_question("Where?", 1)
+    view.set_results(RetrievalResult(candidates=(candidate("SYN-000", "Chole"),)))
+    view.set_answer("SYN-000 peaks at minute 3.\n\n**Verification note:** kept *as written*.", 1)
+    view.conversation.turn_widgets[1].copy_button.click()
+    copied = QApplication.clipboard().text()
+    assert "Verification note: kept as written." in copied
+    assert "*" not in copied
 
 
 def test_the_conversation_keeps_its_actions(view):

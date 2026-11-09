@@ -81,11 +81,16 @@ class Sparkline(QWidget):
         self._values: tuple[float | None, ...] = ()
         self._marker: int | None = None
         self._placeholder = placeholder
+        self._label = "PIP"
+        self._color = "s_pip"
         self.setAccessibleName("Signal trace")
 
-    def set_series(self, values: Sequence[float | None], marker: int | None, description: str = "") -> None:
+    def set_series(self, values: Sequence[float | None], marker: int | None, description: str = "", *,
+                   label: str = "PIP", color: str = "s_pip") -> None:
+        """Draw ``values`` as the signal ``label`` in the token ``color``, with the minute ``marker`` marked."""
         self._values = tuple(values)
         self._marker = marker if marker is not None and 0 <= marker < len(self._values) else None
+        self._label, self._color = label, color
         self.setAccessibleDescription(description)
         self.update()
 
@@ -99,6 +104,10 @@ class Sparkline(QWidget):
     def state(self) -> tuple[str, tuple[float | None, ...], int | None]:
         """What is drawn, so a test can tell whether the board changed."""
         return self._placeholder, self._values, self._marker
+
+    def signal(self) -> tuple[str, str]:
+        """The drawn signal's name and colour token."""
+        return self._label, self._color
 
     def has_series(self) -> bool:
         return bool(self._values)
@@ -120,7 +129,7 @@ class Sparkline(QWidget):
             x = round(step * (width - 1) / _SPARK_GRID_LINES) + 0.5
             painter.drawLine(QPointF(x, 0), QPointF(x, height))
         known = [value for value in self._values if value is not None]
-        low, high = min(known), max(known)
+        low, high = (min(known), max(known)) if known else (0.0, 1.0)
         span = max(high - low, 1.0)
         top, bottom = 8.0, height - 8.0
         last = max(len(self._values) - 1, 1)
@@ -139,12 +148,23 @@ class Sparkline(QWidget):
             else:
                 path.moveTo(point(index, value))
                 drawing = True
-        painter.setPen(QPen(token_color("s_pip"), 1.5))
+        painter.setPen(QPen(token_color(self._color), 1.5))
         painter.drawPath(path)
         marker = self._marker
-        if marker is not None and self._values[marker] is not None:
-            spot = point(marker, float(self._values[marker]))  # type: ignore[arg-type]
+        if marker is not None:
+            # The minute line always shows; the dot only where a value was recorded, so a gap stays a gap.
+            # Snapped to the pixel grid like the grid lines, so the mark stays crisp.
+            x = round(2 + marker * (width - 4) / last) + 0.5
             painter.setPen(QPen(token_color("accent"), 1.5))
-            painter.drawLine(QPointF(spot.x(), 0), QPointF(spot.x(), height))
-            painter.setBrush(token_color("paper"))
-            painter.drawEllipse(spot, 4.0, 4.0)
+            painter.drawLine(QPointF(x, 0), QPointF(x, height))
+            value = self._values[marker]
+            if value is not None:
+                painter.setBrush(token_color("paper"))
+                painter.drawEllipse(point(marker, value), 4.0, 4.0)
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(token_color(self._color))
+        painter.drawText(QRectF(4, 0, width - 8, 14), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
+                         self._label)

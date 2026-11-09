@@ -100,7 +100,8 @@ ARTICLES_PLACEHOLDER = "Search titles and abstracts in the local catalog"
 CASES_EXTRACTS = "The local model reads at most three retrieved source extracts."
 ARTICLES_EXTRACTS = "The local model reads at most five article abstracts."
 SPARK_WAITING = "PIP / source samples load on demand"
-SPARK_NONE = "PIP / no observed samples"
+# The observation's signal column: its label on the sparkline and its colour token.
+_SPARK_SIGNALS = {"PIP": ("PIP", "s_pip"), "ETCO2": ("ETCO₂", "s_etco2")}
 SHORTLIST_COLUMNS = ("#", "Case", "Procedure", "Duration", "Status")
 SOURCE_COLUMNS = ("Min", "PIP", "ETCO₂", "HR")
 SHORTLIST_COLLAPSED_ROWS = 3
@@ -168,12 +169,13 @@ def _step_heading(text: str, number: int | None = None) -> QWidget:
     return holder
 
 
-def _align_headers_right(table: QTableWidget, columns: tuple[int, ...]) -> None:
-    """Number columns are right-aligned, so their headings sit over the digits."""
-    for column in columns:
+def _align_headers(table: QTableWidget, right: tuple[int, ...]) -> None:
+    """Headings sit over their cells: right over the number columns in ``right``, left over text."""
+    for column in range(table.columnCount()):
         header = table.horizontalHeaderItem(column)
         if header is not None:
-            header.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            side = Qt.AlignmentFlag.AlignRight if column in right else Qt.AlignmentFlag.AlignLeft
+            header.setTextAlignment(side | Qt.AlignmentFlag.AlignVCenter)
 
 
 def _fit_rows(table: QTableWidget, rows: int) -> None:
@@ -426,7 +428,9 @@ class ResearchWorkspace(QWidget):
         self.candidate_table.setObjectName("shortlistTable")
         self.candidate_table.setAccessibleName("Retrieved cases")
         self.candidate_table.setHorizontalHeaderLabels(list(SHORTLIST_COLUMNS))
-        _align_headers_right(self.candidate_table, (0, 3))
+        _align_headers(self.candidate_table, right=(0, 3))
+        # No column lines (design rule 2); a drawn transparent grid would leave gaps in tinted rows.
+        self.candidate_table.setShowGrid(False)
         self.candidate_table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.candidate_table.setWordWrap(False)
         self.candidate_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -510,7 +514,8 @@ class ResearchWorkspace(QWidget):
         self.source_table.setObjectName("sourceRows")
         self.source_table.setAccessibleName("Source rows behind the observation")
         self.source_table.setHorizontalHeaderLabels(list(SOURCE_COLUMNS))
-        _align_headers_right(self.source_table, (0, 1, 2, 3))
+        _align_headers(self.source_table, right=(0, 1, 2, 3))
+        self.source_table.setShowGrid(False)
         self.source_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.source_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.source_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -573,6 +578,7 @@ class ResearchWorkspace(QWidget):
         self.stack.addWidget(self.canvas_scroll)
         self._extract_text = ""
         self._show_all_rows = False
+        self._fit_shortlist()
         self._set_case_actions(False)
         self._set_extract_text(CASES_EXTRACTS)
 
@@ -1237,6 +1243,7 @@ class ResearchWorkspace(QWidget):
         self.source_title.setText("Choose a case")
         self.source_label.setText("No case selected.")
         self._show_all_rows = False
+        self._fit_shortlist()
         self._clear_observation()
         self.answer_text.clear()
         self.comparison_card.hide()
@@ -1270,15 +1277,18 @@ class ResearchWorkspace(QWidget):
 
     def _show_observation(self, view: CaseView, ts: pd.DataFrame) -> str:
         """Draw the observation's sparkline, button and rows; returns the rows' provenance sentence."""
-        index = self._observation(view)[2]
+        index, column = self._observed(view)[2:]
+        label, color = _SPARK_SIGNALS[column]
         minute = float(ts.iloc[index]["t_min"]) if not ts.empty and "t_min" in ts else None
-        if "PIP" not in ts or not ts["PIP"].notna().any():
-            self.sparkline.clear(SPARK_NONE)
+        if column not in ts or not ts[column].notna().any():
+            self.sparkline.clear(f"{label} / no observed samples")
         else:
-            values = pd.to_numeric(ts["PIP"], errors="coerce")
+            values = pd.to_numeric(ts[column], errors="coerce")
             self.sparkline.set_series(
                 [None if pd.isna(value) else float(value) for value in values], index,
-                f"PIP over the case, observation at minute {minute:g}" if minute is not None else "PIP over the case",
+                f"{label} over the case, observation at minute {minute:g}" if minute is not None
+                else f"{label} over the case",
+                label=label, color=color,
             )
         if minute is not None:
             self.finding_open.setText(f"Open at minute {minute:g}")
@@ -1598,9 +1608,14 @@ class ResearchWorkspace(QWidget):
             self.case_requested.emit(pid, comparison, open_detail)
 
     def _observation(self, view: CaseView) -> tuple[str, str, int]:
+        title, copy, index, _signal = self._observed(view)
+        return title, copy, index
+
+    def _observed(self, view: CaseView) -> tuple[str, str, int, str]:
+        """The observation's title, sentence, row index, and the signal column it is about."""
         ts = view.timeseries
         if ts.empty:
-            return "Signal source unavailable", "This case has no time series to inspect.", 0
+            return "Signal source unavailable", "This case has no time series to inspect.", 0, "PIP"
         question = self._question.lower()
         if any(word in question for word in ("missing", "gap", "coverage")) and "ETCO2" in ts:
             missing = ts["ETCO2"].isna()
@@ -1611,6 +1626,7 @@ class ResearchWorkspace(QWidget):
                     f"ETCO₂ missing at {minute:g} min",
                     "This source row has no ETCO₂ value. The gap remains unknown in the trace and source table.",
                     index,
+                    "ETCO2",
                 )
         if "PIP" in ts and ts["PIP"].notna().any():
             values = pd.to_numeric(ts["PIP"], errors="coerce")
@@ -1620,8 +1636,9 @@ class ResearchWorkspace(QWidget):
                 f"Peak sampled PIP {values.iloc[index]:g} cmH₂O at {row['t_min']:g} min",
                 "This is the highest observed PIP in the loaded case. The measurements do not establish its cause.",
                 index,
+                "PIP",
             )
-        return "Case signals loaded", "Open F to inspect the recorded samples and missing values.", 0
+        return "Case signals loaded", "Open F to inspect the recorded samples and missing values.", 0, "PIP"
 
     def _case_summary(self, view: CaseView) -> str:
         ts = view.timeseries

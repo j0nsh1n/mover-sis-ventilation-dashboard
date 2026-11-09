@@ -14,6 +14,14 @@ class _TextOnlyDocument(QTextDocument):
         return None
 
 
+def plain_text(markdown: str) -> str:
+    """The answer as a reader sees it, without Markdown marks, for the clipboard."""
+    document = _TextOnlyDocument()
+    document.setMarkdown(markdown, QTextDocument.MarkdownFeature.MarkdownNoHTML)
+    # An image becomes an object character in plain text; the answer keeps only words.
+    return document.toPlainText().replace("\ufffc", "").strip()
+
+
 class MarkdownAnswer(QTextBrowser):
     """Selectable answer display with no link navigation or resource loading."""
 

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from src.desktop.answer_markdown import MarkdownAnswer
+from src.desktop.answer_markdown import MarkdownAnswer, plain_text
 
 if TYPE_CHECKING:
     from src.desktop.research_workspace import QuestionState
@@ -205,7 +205,7 @@ class TurnWidget(QFrame):
 
     def copy_text(self, turn: Turn) -> str:
         """The question, the answer and its numbered sources, as plain text with no markup."""
-        parts = [turn.question, turn.answer.strip()]
+        parts = [turn.question, plain_text(turn.answer)]
         sources = self._source_lines(turn)
         if sources:
             parts.append("Sources:\n" + "\n".join(sources))
