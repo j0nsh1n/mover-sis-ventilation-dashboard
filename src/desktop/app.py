@@ -271,7 +271,8 @@ class MainWindow(QMainWindow):
 
         self._build_actions()
         install_suite_chrome(self, self._version)
-        self.setStatusBar(QStatusBar())
+        # The footer sits inside the page column, so the rail runs the full window height beside it
+        self._footer_bar = QStatusBar()
         self._build_ui()
         self._refresh_rule_reference()
         from src.desktop.accessibility import announce
@@ -424,6 +425,10 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     # ----- layout -----
+    def statusBar(self) -> QStatusBar:  # noqa: N802
+        """The footer. It lives in the page column, not in the window's own status bar slot."""
+        return self._footer_bar
+
     def _build_ui(self) -> None:
         self.research = ResearchWorkspace()
         self._article_catalog = None
@@ -471,6 +476,7 @@ class MainWindow(QMainWindow):
         column.addWidget(self.head)
         column.addWidget(self.practice_tabs)
         column.addWidget(self.module_stack, 1)
+        column.addWidget(self._footer_bar)
         frame = QWidget()
         row = QHBoxLayout(frame)
         row.setContentsMargins(0, 0, 0, 0)

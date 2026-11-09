@@ -458,3 +458,42 @@ def test_load_confirmation_is_short_clears_and_holds_no_paths(window, qapp, tmp_
     window.rail.button("research").click()
     qapp.processEvents()
     assert str(tmp_path / "EMR") in window._footer.source.toolTip()
+
+
+def test_the_rail_runs_the_full_window_height_and_the_footer_starts_right_of_it(window, qapp):
+    bar = window.statusBar()
+    assert window.centralWidget().isAncestorOf(bar)
+    rail_top = window.rail.mapTo(window, window.rail.rect().topLeft())
+    rail_bottom = window.rail.mapTo(window, window.rail.rect().bottomLeft())
+    bar_top_left = bar.mapTo(window, bar.rect().topLeft())
+    bar_bottom_right = bar.mapTo(window, bar.rect().bottomRight())
+    assert rail_top.y() == 0 and rail_bottom.y() + 1 == window.centralWidget().height() == window.height()
+    assert bar_top_left.x() >= window.rail.width()
+    assert bar_bottom_right.y() + 1 == window.height(), "the footer is the bottom edge of the window"
+    assert bar_bottom_right.x() + 1 == window.width()
+    assert bar.isVisible() and bar.height() > 0
+
+
+def _left_strip(button, x: int) -> str:
+    image = button.grab().toImage()
+    return image.pixelColor(x, image.height() // 2).name().upper()
+
+
+def test_the_current_place_keeps_its_mark_while_it_has_keyboard_focus(window, qapp):
+    from src.desktop.theme import tokens
+
+    window.activateWindow()
+    accent = tokens("light")["accent"].upper()
+    current = window.rail.button("research")
+    other = window.rail.button("cases")
+    assert _left_strip(current, 1) == accent  # the mark alone
+    current.setFocus()
+    qapp.processEvents()
+    assert current.hasFocus()
+    # ring (2 px) and mark (5 px on the left) are both there
+    assert _left_strip(current, 1) == accent and _left_strip(current, 4) == accent
+    assert current.grab().toImage().pixelColor(32, 0).name().upper() == accent, "the ring runs along the top"
+    # a focused item that is not the current place has the ring only
+    other.setFocus()
+    qapp.processEvents()
+    assert _left_strip(other, 1) == accent and _left_strip(other, 4) != accent

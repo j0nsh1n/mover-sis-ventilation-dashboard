@@ -331,6 +331,12 @@ QToolButton#railButton:focus {{
     border: 2px solid {accent};
     padding: 6px 1px 4px 1px;
 }}
+/* the current place keeps its mark under the ring: the left side stays the thicker one */
+QToolButton#railButton:focus:checked {{
+    border: 2px solid {accent};
+    border-left: 5px solid {accent};
+    padding: 6px 3px 4px 0;
+}}
 QFrame#runningHead {{
     background: {paper};
     border: none;
