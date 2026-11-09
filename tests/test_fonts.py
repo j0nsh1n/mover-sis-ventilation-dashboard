@@ -41,7 +41,7 @@ def test_the_families_come_from_the_bundled_files(qapp):
         font_id = QFontDatabase.addApplicationFont(str(fonts.FONT_DIR / name))
         assert font_id >= 0, name
         assert QFontDatabase.applicationFontFamilies(font_id), name
-    assert fonts.serif_family() == "Bitstream Charter"
+    assert fonts.serif_family() == "Charter"
 
 
 def test_loading_happens_once(qapp, monkeypatch):
@@ -58,9 +58,64 @@ def test_the_application_default_font_is_inter_at_body_size(qapp):
     assert qapp.font().pixelSize() == fonts.BODY_PIXEL_SIZE == 14
 
 
-def test_digits_have_equal_width_so_numbers_line_up(qapp):
-    metrics = QFontMetricsF(fonts.body_font())
-    assert metrics.horizontalAdvance("1111") == pytest.approx(metrics.horizontalAdvance("8888"))
+def _widths(font) -> tuple[float, float]:
+    metrics = QFontMetricsF(font)
+    return metrics.horizontalAdvance("1111"), metrics.horizontalAdvance("8888")
+
+
+def test_the_body_font_has_proportional_figures_and_normal_hyphens(qapp):
+    body = fonts.body_font()
+    assert body.featureTags() == []
+    ones, eights = _widths(body)
+    assert ones < eights
+    # tabular figures widen the hyphen too; ordinary text and IDs ("end-tidal", "FAKE-ART-LOW") keep Inter's own
+    assert QFontMetricsF(body).horizontalAdvance("-") < QFontMetricsF(fonts.tabular(body)).horizontalAdvance("-")
+
+
+def test_tabular_figures_make_digits_equal_width_so_numbers_line_up(qapp):
+    ones, eights = _widths(fonts.tabular(fonts.body_font()))
+    assert ones == pytest.approx(eights)
+
+
+def test_table_views_and_headers_use_tabular_figures_and_other_widgets_do_not(qapp, applied_theme):
+    from PySide6.QtWidgets import QLabel, QTableWidget
+
+    table = QTableWidget(2, 2)
+    label = QLabel("12-34")
+    for widget in (table, table.horizontalHeader(), table.viewport()):
+        widget.show()
+    label.show()
+    qapp.processEvents()
+    try:
+        for widget in (table, table.horizontalHeader()):
+            ones, eights = _widths(widget.font())
+            assert ones == pytest.approx(eights), (applied_theme, type(widget).__name__)
+        ones, eights = _widths(label.font())
+        assert ones < eights, "plain text keeps proportional figures"
+    finally:
+        table.close()
+        label.close()
+
+
+def test_number_readouts_use_tabular_figures(qapp, applied_theme):
+    from src.desktop.research_workspace import ResearchWorkspace
+    from src.desktop.rules_drawer import RulesDrawer
+
+    workspace = ResearchWorkspace()
+    drawer = RulesDrawer()
+    readouts = [workspace.minute_stamp, *workspace.metric_values.values(), drawer.count_label]
+    for readout in readouts:
+        ones, eights = _widths(readout.font())
+        assert ones == pytest.approx(eights), readout.objectName() or readout.text()
+
+
+def test_a_font_that_fails_to_load_is_logged(qapp, monkeypatch, caplog):
+    monkeypatch.setattr(fonts, "_loaded_families", None)
+    monkeypatch.setattr(fonts.QFontDatabase, "addApplicationFont", lambda path: -1)
+    with caplog.at_level("WARNING", logger=fonts.__name__):
+        fonts.load_bundled_fonts()
+    assert [name for name in fonts.BUNDLED_FONT_FILES if any(name in r.getMessage() for r in caplog.records)] == list(
+        fonts.BUNDLED_FONT_FILES)
 
 
 def test_applying_a_theme_installs_the_app_font(qapp):

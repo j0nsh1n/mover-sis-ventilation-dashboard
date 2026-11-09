@@ -250,7 +250,8 @@ def test_spec_bundles_fonts_and_their_license_files():
 
     fonts = ROOT / "src" / "desktop" / "assets" / "fonts"
     on_disk = {path.name for path in fonts.iterdir()}
-    assert {"Inter-Regular.ttf", "Inter-SemiBold.ttf", "c0648bt_.pfb", "c0632bt_.pfb"} <= on_disk
+    assert {"Inter-Regular.ttf", "Inter-SemiBold.ttf", "Charter-Regular.ttf", "Charter-Bold.ttf"} <= on_disk
+    assert not any(name.endswith(".pfb") for name in on_disk), "Type 1 files do not load on every platform"
     assert {"Inter-LICENSE.txt", "Charter-NOTICE.txt"} <= on_disk
     collected = {
         Path(source).name

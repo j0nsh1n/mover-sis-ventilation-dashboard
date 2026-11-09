@@ -50,6 +50,7 @@ from src.desktop.accessibility import (
 )
 from src.desktop.charts import FocusedSignalChart, focused_minute_rows
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
+from src.desktop.fonts import make_tabular
 from src.desktop.marks import MissingCellDelegate, mark_missing, severity_label
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
@@ -609,6 +610,7 @@ class ResearchWorkspace(QWidget):
         stamp.addWidget(stamp_label, alignment=Qt.AlignmentFlag.AlignRight)
         self.minute_stamp = QLabel("— min")
         self.minute_stamp.setObjectName("minuteStamp")
+        make_tabular(self.minute_stamp)
         stamp.addWidget(self.minute_stamp, alignment=Qt.AlignmentFlag.AlignRight)
         stamp.addWidget(QLabel("relative to incision"), alignment=Qt.AlignmentFlag.AlignRight)
         header.addLayout(stamp)
@@ -631,6 +633,7 @@ class ResearchWorkspace(QWidget):
             metric.addWidget(QLabel(label.upper()))
             value = QLabel("—")
             value.setStyleSheet("font-size: 25px; color: #c4ed93; border: 0;")
+            make_tabular(value)
             metric.addWidget(value)
             metric.addWidget(QLabel(unit))
             metric_row.addLayout(metric, 1)

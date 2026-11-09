@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
+from src.desktop.fonts import make_tabular
 from src.rules import PARAMETER_METADATA, RuleCatalog, RuleSpec
 
 STYLE = """
@@ -182,6 +183,7 @@ class RulesDrawer(QFrame):
         self.count_label = QLabel()
         self.count_label.setObjectName("drawerCount")
         self.count_label.setAccessibleName("Rule count")
+        make_tabular(self.count_label)
         layout.addWidget(self.count_label)
         self.notice_label = QLabel()
         self.notice_label.setObjectName("drawerNotice")
