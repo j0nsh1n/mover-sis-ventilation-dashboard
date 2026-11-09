@@ -20,28 +20,32 @@ _BULLETS = {QTextListFormat.Style.ListDisc, QTextListFormat.Style.ListCircle, QT
 def plain_text(markdown: str) -> str:
     """The answer as a reader sees it, without Markdown marks, for the clipboard.
 
-    List items keep their number or a "-" bullet, which plain text would otherwise drop;
-    paragraphs are separated by a blank line and items of one list by a single newline.
+    List items keep their number or a "-" bullet, indented two spaces per nesting level, which
+    plain text would otherwise drop. Code keeps its indentation. Paragraphs are separated by a
+    blank line; consecutive list items and code lines by a single newline.
     """
     document = _TextOnlyDocument()
     document.setMarkdown(markdown, QTextDocument.MarkdownFeature.MarkdownNoHTML)
     out: list[str] = []
-    previous_list = None
+    previous = ""  # the kind of the last block written: "list", "code" or "text"
     block = document.begin()
     while block.isValid():
-        # An image becomes an object character in plain text; the answer keeps only words.
-        text = block.text().replace("\ufffc", "").strip()
+        code = block.blockFormat().hasProperty(QTextFormat.Property.BlockCodeFence)
+        # An image becomes an object character; a hard line break is a line separator.
+        text = block.text().replace("\ufffc", "").replace("\u2028", "\n").replace("\xa0", " ")
+        text = text.rstrip() if code else text.strip()
         items = block.textList()
-        if text:
+        kind = "code" if code else "list" if items is not None else "text"
+        if text or code:
             if items is not None:
                 marker = "-" if items.format().style() in _BULLETS else items.itemText(block)
-                text = f"{marker} {text}"
+                text = "  " * max(items.format().indent() - 1, 0) + f"{marker} {text}"
             if out:
-                out.append("\n" if items is not None and items == previous_list else "\n\n")
+                out.append("\n" if kind == previous and kind in ("list", "code") else "\n\n")
             out.append(text)
-            previous_list = items
+            previous = kind
         block = block.next()
-    return "".join(out)
+    return "".join(out).strip("\n")
 
 
 class MarkdownAnswer(QTextBrowser):

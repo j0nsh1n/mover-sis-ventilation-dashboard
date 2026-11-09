@@ -506,7 +506,7 @@ def test_copy_with_sources_keeps_list_numbers_and_bullets(view, qapp):
     view.set_answer("Cases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n\n- PIP high\n- ETCO2 missing", 1)
     view.conversation.turn_widgets[1].copy_button.click()
     copied = QApplication.clipboard().text()
-    assert ("Which?\n\nCases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n\n- PIP high\n- ETCO2 missing"
+    assert ("Which?\n\nCases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n- PIP high\n- ETCO2 missing"
             "\n\nSources:\n1  SYN-000 · Chole") == copied
 
 

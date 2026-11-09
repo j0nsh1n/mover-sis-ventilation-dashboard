@@ -170,3 +170,20 @@ def test_tab_leaves_answer_and_rendered_height_fits(qapp):
     assert qapp.focusWidget() is next_button
     root.close()
     root.deleteLater()
+
+
+@pytest.mark.parametrize(("markdown", "expected"), [
+    ("Cases:\n\n1. a\n2. b", "Cases:\n\n1. a\n2. b"),
+    ("1. a\n2. b\n\n- c\n- d", "1. a\n2. b\n- c\n- d"),
+    ("1. a\n   1. x\n   2. y\n2. b", "1. a\n  1. x\n  2. y\n2. b"),
+    ("- outer\n  - inner\n- outer2", "- outer\n  - inner\n- outer2"),
+    ("```\ndef f():\n    return 1\n\n    x\n```", "def f():\n    return 1\n\n    x"),
+    # Qt keeps a hard line break as its own paragraph, and shows it as one.
+    ("Title\n\nline one  \nline two", "Title\n\nline one\n\nline two"),
+    ("a&nbsp;b", "a b"),
+    ("", ""),
+])
+def test_plain_text_keeps_what_the_reader_sees(qapp, markdown, expected):
+    from src.desktop.answer_markdown import plain_text
+
+    assert plain_text(markdown) == expected
