@@ -496,8 +496,18 @@ def test_copy_with_sources_copies_the_answer_as_read_without_markdown_marks(view
     view.set_answer("SYN-000 peaks at minute 3.\n\n**Verification note:** kept *as written*.", 1)
     view.conversation.turn_widgets[1].copy_button.click()
     copied = QApplication.clipboard().text()
-    assert "Verification note: kept as written." in copied
+    assert "SYN-000 peaks at minute 3.\n\nVerification note: kept as written." in copied, "paragraphs stay apart"
     assert "*" not in copied
+
+
+def test_copy_with_sources_keeps_list_numbers_and_bullets(view, qapp):
+    view.begin_question("Which?", 1)
+    view.set_results(RetrievalResult(candidates=(candidate("SYN-000", "Chole"),)))
+    view.set_answer("Cases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n\n- PIP high\n- ETCO2 missing", 1)
+    view.conversation.turn_widgets[1].copy_button.click()
+    copied = QApplication.clipboard().text()
+    assert ("Which?\n\nCases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n\n- PIP high\n- ETCO2 missing"
+            "\n\nSources:\n1  SYN-000 · Chole") == copied
 
 
 def test_the_conversation_keeps_its_actions(view):
