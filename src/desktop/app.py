@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -272,6 +272,7 @@ class MainWindow(QMainWindow):
         # unchecked, busy:<words>, ready, stopped or failed
         self._model_state = "unchecked"
         self._palette: CommandPalette | None = None
+        self._first_focus_done = False
 
         self._build_actions()
         install_suite_chrome(self, self._version)
@@ -655,6 +656,36 @@ class MainWindow(QMainWindow):
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
         self.raise_()
         self.activateWindow()
+        if not self._first_focus_done:
+            self._first_focus_done = True
+            self._focus_research_question()
+
+    @staticmethod
+    def _is_ctrl_r(event: QKeyEvent) -> bool:
+        return event.key() == Qt.Key.Key_R and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+
+    def event(self, event: QEvent) -> bool:  # noqa: N802
+        # Ctrl+R opens the rules on every research page, whichever frame widget (rail, Find) has focus,
+        # so the Reload action must not take the key there.
+        if (event.type() == QEvent.Type.ShortcutOverride and isinstance(event, QKeyEvent)
+                and self._is_ctrl_r(event) and self._current_module == "monitoring"):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # Keys that reach the window come from the frame (rail, Find, head); the workspace handles its own.
+        if self._current_module == "monitoring":
+            if self._is_ctrl_r(event):
+                event.accept()
+                self.research.open_rules(QApplication.focusWidget())
+                return
+            if (event.key() == Qt.Key.Key_Escape and self.research.stack.currentIndex() == 1
+                    and not self.research.rules_drawer.isVisible()):
+                event.accept()
+                self.research.return_to_canvas()
+                return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._updates.close()

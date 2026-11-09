@@ -27,7 +27,15 @@ def qapp():
 
 
 @pytest.fixture
-def window(qapp, monkeypatch, tmp_path):
+def reloads(monkeypatch):
+    """Calls of the Reload action. The window binds its handlers while it is built, so this patches first."""
+    calls: list[bool] = []
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: calls.append(True))
+    return calls
+
+
+@pytest.fixture
+def window(qapp, monkeypatch, tmp_path, reloads):
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "EMR"))
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
@@ -341,3 +349,63 @@ def test_rail_icons_follow_the_theme(window, qapp):
         assert _ink_of(window.rail.button("settings")) == tokens("dark")["ink_3"]
     finally:
         apply_theme(qapp, "light")
+
+
+def test_first_focus_is_the_question_field(window, qapp):
+    window.activateWindow()
+    qapp.processEvents()
+    assert qapp.focusWidget() is window.research.question_edit
+
+
+def test_ctrl_r_opens_the_rules_from_a_rail_button_and_does_not_reload(window, qapp, reloads):
+    window.activateWindow()
+    for widget in (window.rail.button("research"), window.rail.button("cases"), window.head.find_button):
+        window.research.rules_drawer.close_drawer()
+        window.research.show_canvas()
+        widget.setFocus()
+        qapp.processEvents()
+        assert qapp.focusWidget() is widget
+        QTest.keyClick(widget, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        qapp.processEvents()
+        assert window.research.rules_drawer.is_open, type(widget).__name__
+    assert reloads == []
+
+
+def test_ctrl_r_from_the_rail_works_on_the_cases_and_signal_pages_too(window, qapp, reloads):
+    window.activateWindow()
+    window.rail.button("cases").click()
+    window.rail.button("cases").setFocus()
+    QTest.keyClick(window.rail.button("cases"), Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    qapp.processEvents()
+    assert window.research.rules_drawer.is_open
+    window.research.rules_drawer.close_drawer()
+
+    _open_case(window, qapp)
+    window.rail.button("signal").setFocus()
+    QTest.keyClick(window.rail.button("signal"), Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    qapp.processEvents()
+    assert window.research.rules_drawer.is_open
+    assert reloads == []
+
+
+def test_ctrl_r_on_a_practice_page_still_reloads(window, qapp, reloads):
+    window.activateWindow()
+    window.rail.button("practice").click()
+    qapp.processEvents()
+    window.rail.button("practice").setFocus()
+    QTest.keyClick(window.rail.button("practice"), Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    qapp.processEvents()
+    assert reloads == [True]
+    assert not window.research.rules_drawer.is_open
+
+
+def test_escape_on_the_case_page_works_with_focus_on_a_rail_button(window, qapp):
+    window.activateWindow()
+    _open_case(window, qapp)
+    assert window.research.stack.currentIndex() == 1
+    button = window.rail.button("signal")
+    button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(button, Qt.Key.Key_Escape)
+    qapp.processEvents()
+    assert window.research.stack.currentIndex() == 0
