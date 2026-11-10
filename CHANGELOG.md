@@ -21,6 +21,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- New look, Handoff practice: the page shows the invented timeline on the left
+  as a chart (arterial MAP, noninvasive MAP and SpO2, a track with no readings
+  hatched and marked "no samples", traces that break at missing minutes, and a
+  lane of drug doses: a mark for a bolus, a bar for an infusion) and "Your
+  handoff" on the right, in light and dark. "Show as table" swaps the chart for
+  the same timeline minute by minute. The handoff has one text box for each I-PASS
+  section: Illness severity, Patient summary, Action list, Situation awareness
+  and contingency plans, and Synthesis by receiver. Checking an empty handoff
+  saves nothing. Feedback says "Matches the timeline", "Not on the timeline" or
+  "Left out" for each item, starts with "2 of 3 found", and a Show link marks the
+  item's minutes on the chart and in the table. Try again keeps your text; Next
+  fictional run moves to the next run and clears the boxes. History lists past
+  attempts, newest first. Attempts now keep the five sections apart as well as
+  the joined text; earlier attempts still load. Grading is unchanged.
+
 - New look, Cases page: the list of cases uses the same paper and night ledger
   colors as the other pages, in light and dark. The header is the title, one
   sentence that stays true for what is on screen ("21 of 28 analyzed cases have

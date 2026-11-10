@@ -144,3 +144,22 @@ def test_every_token_the_cases_page_draws_text_in_is_checked_on_each_ground_it_s
     for token in tokens_used:
         for ground in ("paper", "sel"):
             assert (token, ground, AA_TEXT) in PAIRS, (token, ground)
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_handoff_side_panel_ground_is_the_sheet_and_its_boxes_are_paper(theme):
+    """The Handoff page's colours are the tokens already checked: the panel on the sheet, its boxes on paper."""
+    from src.desktop.theme import _build_stylesheet
+
+    palette = tokens(theme)
+    sheet = _build_stylesheet(palette)
+    ground = re.search(r"QFrame#handoffSide \{\s*background:\s*(#[0-9A-Fa-f]{6});", sheet)
+    assert ground, "the handoff side panel no longer has one plain background in the stylesheet"
+    assert ground.group(1).lower() == palette["sheet"].lower(), "the panel ground changed: update these pairs"
+    boxes = re.search(r"QFrame#handoffSide QPlainTextEdit \{\s*background:\s*(#[0-9A-Fa-f]{6});", sheet)
+    assert boxes and boxes.group(1).lower() == palette["paper"].lower(), "the boxes' ground changed: update these pairs"
+    for ink in TEXT_INKS:
+        assert (ink, "sheet", AA_TEXT) in PAIRS and (ink, "paper", AA_TEXT) in PAIRS
+    for pair in (("accent", "sheet", AA_TEXT), ("on_accent", "accent", AA_TEXT), ("accent", "paper", AA_TEXT),
+                 ("rule_strong", "paper", AA_NON_TEXT), ("ink", "sel", AA_TEXT)):
+        assert pair in PAIRS, pair

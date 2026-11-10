@@ -295,7 +295,7 @@ def signal_info(column: str) -> SignalInfo:
 _family: str | None = None
 
 
-def _chart_family() -> str:
+def chart_family() -> str:
     """Inter for the chart's words: matplotlib does not see Qt's bundled fonts, so register the files once."""
     global _family
     if _family is None:
@@ -311,11 +311,11 @@ def _chart_family() -> str:
     return _family
 
 
-def _pt(px: float) -> float:
+def px_to_pt(px: float) -> float:
     return px * 72 / LOGICAL_DPI
 
 
-def _rgba(name: str, theme: str | None) -> tuple[float, float, float, float]:
+def token_rgba(name: str, theme: str | None) -> tuple[float, float, float, float]:
     from src.desktop.theme import token_color
 
     color = token_color(name, theme)
@@ -370,7 +370,7 @@ def _summary_canvas(width: int, height: int, dpi: float, theme: str | None):
 
 
 def _label(ax, x: float, y: float, text: str, color: str, px: float, **kwargs: Any) -> None:
-    ax.text(x, y, text, color=color, fontsize=_pt(px), **kwargs)
+    ax.text(x, y, text, color=color, fontsize=px_to_pt(px), **kwargs)
 
 
 def _elide(text: str, px: float, room: float) -> str:
@@ -378,7 +378,7 @@ def _elide(text: str, px: float, room: float) -> str:
     from matplotlib.font_manager import FontProperties
     from matplotlib.textpath import TextPath
 
-    props = FontProperties(family=_chart_family())
+    props = FontProperties(family=chart_family())
 
     def width(candidate: str) -> float:
         return float(TextPath((0, 0), candidate, size=px, prop=props).get_extents().width) if candidate else 0.0
@@ -405,7 +405,7 @@ def score_histogram_figure(
     values = [float(v) for v in scores if pd.notna(v)]
     edges = histogram_edges(values)
     counts = [int(n) for n in np.histogram(values, bins=edges)[0]]
-    with matplotlib.rc_context({"font.family": _chart_family()}):
+    with matplotlib.rc_context({"font.family": chart_family()}):
         fig, ax, colors = _summary_canvas(width, height, dpi, theme)
         left, base, label_gap = 22.0, height - 16.0, 14.0
         slot = (width - left) / len(counts)
@@ -415,7 +415,7 @@ def score_histogram_figure(
                 bar = (base - label_gap) * count / peak
                 ax.add_patch(Rectangle((left + index * slot + 1, base - bar), max(slot - 3, 1.0), bar,
                                        facecolor=colors["ink_2"], edgecolor="none"))
-        ax.plot([left, width], [base, base], color=colors["ink_3"], lw=_pt(1), solid_capstyle="butt")
+        ax.plot([left, width], [base, base], color=colors["ink_3"], lw=px_to_pt(1), solid_capstyle="butt")
         # With narrow slots every other edge is named, so the numbers never touch.
         every = 1 if slot >= 24 else 2
         last = len(edges) - 1
@@ -434,7 +434,7 @@ def rule_minutes_figure(
     """Rules, most frequent first, as ink bars with the rule's name before each and its number at the bar's end."""
     from matplotlib.patches import Rectangle
 
-    with matplotlib.rc_context({"font.family": _chart_family()}):
+    with matplotlib.rc_context({"font.family": chart_family()}):
         fig, ax, colors = _summary_canvas(width, height, dpi, theme)
         name_room = min(150.0, width * 0.5)
         bar_left = name_room + 8
@@ -464,7 +464,7 @@ def duration_ticks_figure(
     # about one axis number per 55 px, so the numbers of a narrow chart never touch
     ticks = tick_values(low, high, max(2, min(5, int(width // 55))))
     first, last = ticks[0], ticks[-1]
-    with matplotlib.rc_context({"font.family": _chart_family()}):
+    with matplotlib.rc_context({"font.family": chart_family()}):
         fig, ax, colors = _summary_canvas(width, height, dpi, theme)
         # room at each end for half of the first and last axis numbers, which are centred on their ticks
         pad, pad_right = 14.0, 16.0
@@ -474,13 +474,13 @@ def duration_ticks_figure(
             return pad + (value - first) / (last - first) * (width - pad - pad_right)
 
         # one collection for every tick: a line per case would cost a second for a few thousand cases
-        ax.vlines([at(value) for value in values], axis_y - 32, axis_y - 6, colors=colors["ink_2"], linewidth=_pt(1.3))
+        ax.vlines([at(value) for value in values], axis_y - 32, axis_y - 6, colors=colors["ink_2"], linewidth=px_to_pt(1.3))
         if values:
-            ax.plot([at(median)] * 2, [axis_y - 48, axis_y], color=colors["ink"], lw=_pt(2), solid_capstyle="butt")
+            ax.plot([at(median)] * 2, [axis_y - 48, axis_y], color=colors["ink"], lw=px_to_pt(2), solid_capstyle="butt")
             near_right = at(median) > width * 0.75
             _label(ax, at(median) + (-4 if near_right else 4), axis_y - 48, "median", colors["ink_2"], 11,
                    ha="right" if near_right else "left", va="top")
-        ax.plot([pad, width - pad_right], [axis_y, axis_y], color=colors["ink_3"], lw=_pt(1), solid_capstyle="butt")
+        ax.plot([pad, width - pad_right], [axis_y, axis_y], color=colors["ink_3"], lw=px_to_pt(1), solid_capstyle="butt")
         for value in ticks:
             _label(ax, at(value), label_y, f"{value:g}", colors["ink_3"], 11, ha="center", va="top")
         _label(ax, width - pad_right, height - 3, "min", colors["ink_3"], 11, ha="right", va="baseline")
@@ -593,7 +593,7 @@ def _build_focused_in_style(
     from src.desktop.theme import tokens
 
     colors = tokens(theme)
-    family = _chart_family()
+    family = chart_family()
     labels = dict(rule_labels or {})
     columns = [*BASE_TRACKS, *extra_signals[:3]]
     episode_frame = episodes if episodes is not None and not episodes.empty else _episodes_from_flags(flags)
@@ -616,7 +616,7 @@ def _build_focused_in_style(
             side.set_visible(False)
         ax.set_xlim(low_x, high_x)
         ax.set_axisbelow(True)
-        ax.tick_params(length=0, labelsize=_pt(11), labelcolor=colors["ink_3"], pad=6)
+        ax.tick_params(length=0, labelsize=px_to_pt(11), labelcolor=colors["ink_3"], pad=6)
         ax.xaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 5, 10], integer=True))
         ax.grid(True, axis="x", color=colors["grid"], lw=0.8)
         return ax
@@ -644,7 +644,7 @@ def _build_focused_in_style(
         y_low, y_high = ax.get_ylim()
         for start, end in gap_spans(values):
             ax.add_patch(Rectangle((start, y_low), end - start, y_high - y_low, facecolor="none", lw=0, zorder=1,
-                                   edgecolor=_rgba("hatch", theme), hatch="////"))
+                                   edgecolor=token_rgba("hatch", theme), hatch="////"))
         for minute in marks.values():
             if low_x <= minute <= high_x:
                 ax.axvline(minute, **event_style)
@@ -658,7 +658,7 @@ def _build_focused_in_style(
     lane.set_ylim(lane_rows, 0)
     lane.spines["bottom"].set_visible(True)
     lane.spines["bottom"].set_color(colors["rule_strong"])
-    lane.tick_params(axis="x", labelsize=_pt(11), pad=8)
+    lane.tick_params(axis="x", labelsize=px_to_pt(11), pad=8)
     for minute in marks.values():
         if low_x <= minute <= high_x:
             lane.axvline(minute, **event_style)
@@ -666,14 +666,14 @@ def _build_focused_in_style(
     scale = fig.dpi / LOGICAL_DPI
 
     def text_px(text: str, size: float, weight: int) -> float:
-        probe = fig.text(0, 0, text, fontsize=_pt(size), fontfamily=family, fontweight=weight)
+        probe = fig.text(0, 0, text, fontsize=px_to_pt(size), fontfamily=family, fontweight=weight)
         measured = probe.get_window_extent(renderer).width / scale
         probe.remove()
         return measured
 
     def put(x_px: float, y_px: float, text: str, size: float, color: str, weight: int = 400, ha: str = "left",
             va: str = "top"):
-        return fig.text(x_px / width, 1 - y_px / height, text, fontsize=_pt(size), color=color,
+        return fig.text(x_px / width, 1 - y_px / height, text, fontsize=px_to_pt(size), color=color,
                         fontfamily=family, fontweight=weight, ha=ha, va=va)
 
     # Every track says its name and unit on one line; the value at the cursor is the widget's to place under it.
@@ -686,7 +686,7 @@ def _build_focused_in_style(
     first = axes[0][0]
     for word, minute in marks.items():
         if low_x <= minute <= high_x:
-            first.text(minute, 1.0, word, transform=first.get_xaxis_transform(), fontsize=_pt(11), color=colors["ink_3"],
+            first.text(minute, 1.0, word, transform=first.get_xaxis_transform(), fontsize=px_to_pt(11), color=colors["ink_3"],
                        fontfamily=family, ha="center", va="bottom", clip_on=False)
     put(4, lane_top + 2, "Rule episodes", 12, colors["ink"], 600)
     put(4, lane_top + 19, "screening only", 11, colors["ink_3"])
@@ -700,19 +700,19 @@ def _build_focused_in_style(
         y_low, y_high = ax.get_ylim()
         for start, end in gap_spans(values):
             if (end - start) * px_per_minute >= no_samples:
-                ax.text((start + end) / 2, y_low + (y_high - y_low) * 0.62, "no samples", fontsize=_pt(11),
+                ax.text((start + end) / 2, y_low + (y_high - y_low) * 0.62, "no samples", fontsize=px_to_pt(11),
                         fontfamily=family, fontweight=600, color=colors["ink_2"], ha="center", va="center", zorder=5,
                         bbox={"facecolor": colors["paper"], "edgecolor": "none", "pad": 1.5})
 
     if not bands:
         lane.text(0.5, 0.5, "No flags in this case", transform=lane.transAxes, color=colors["ink_2"],
-                  ha="center", va="center", fontsize=_pt(12), fontfamily=family)
+                  ha="center", va="center", fontsize=px_to_pt(12), fontfamily=family)
     # Info is a hollow circle: a full marker in the ground's colour, so the band's hatch does not run through it.
     shapes = {"info": ("o", "full"), "warn": ("^", "left"), "critical": ("D", "full")}
     taken: dict[int, list[tuple[float, float]]] = {}
     for band in bands:
         lane.add_patch(Rectangle((band.start, band.row + 0.16), band.end - band.start, 0.68, facecolor="none", lw=0,
-                                 edgecolor=_rgba("hatch", theme), hatch="////", zorder=1))
+                                 edgecolor=token_rgba("hatch", theme), hatch="////", zorder=1))
         lane.add_patch(Rectangle((band.start, band.row + 0.16), band.end - band.start, 0.68, fill=False,
                                  edgecolor=colors["ink_2"], lw=0.9, zorder=2))
         taken.setdefault(band.row, []).append((band.start, band.end))
@@ -735,10 +735,10 @@ def _build_focused_in_style(
         left_room = max([n_right for _n_left, n_right in neighbours if n_right <= band_left] + [lane_left_px])
         y_mid = band.row + 0.5
         if band_right + 6 + text_width <= right_room:
-            lane.text(band.end + 6 / px_per_minute, y_mid, name, fontsize=_pt(12), fontfamily=family,
+            lane.text(band.end + 6 / px_per_minute, y_mid, name, fontsize=px_to_pt(12), fontfamily=family,
                       color=colors["ink"], ha="left", va="center", zorder=5)
         elif band_left - 10 - text_width >= left_room:
-            lane.text(band.start - 10 / px_per_minute, y_mid, name, fontsize=_pt(12), fontfamily=family,
+            lane.text(band.start - 10 / px_per_minute, y_mid, name, fontsize=px_to_pt(12), fontfamily=family,
                       color=colors["ink"], ha="right", va="center", zorder=5)
     if selected_minute is not None:
         for ax in [item[0] for item in axes] + [lane]:
@@ -747,7 +747,7 @@ def _build_focused_in_style(
 
 
 def _build_focused(ts: pd.DataFrame, selected_minute: float | None, **kwargs: Any) -> tuple[plt.Figure, list[Band]]:
-    with matplotlib.rc_context({"font.family": _chart_family(), "hatch.linewidth": 0.8}):
+    with matplotlib.rc_context({"font.family": chart_family(), "hatch.linewidth": 0.8}):
         return _build_focused_in_style(ts, selected_minute, **kwargs)
 
 

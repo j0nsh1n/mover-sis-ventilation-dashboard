@@ -1314,7 +1314,7 @@ def test_the_focused_chart_code_names_no_color_of_its_own():
     source = path.read_text(encoding="utf-8")
     lines = source.splitlines()
     names = {"_build_focused_in_style", "_build_focused", "focused_signals_figure", "FocusedSignalChart",
-             "_rgba", "signal_info", "case_marks", "gap_spans", "pack_episodes"}
+             "token_rgba", "signal_info", "case_marks", "gap_spans", "pack_episodes"}
     spans = [(node.lineno, node.end_lineno) for node in ast.parse(source).body
              if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
     assert len(spans) == len(names), "a focused-chart function was renamed; update this list"

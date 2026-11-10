@@ -705,6 +705,29 @@ QLabel#previewTitle {{
     color: {ink};
 }}
 
+/* —— handoff practice: the handoff panel, its boxes and section labels —— */
+QFrame#handoffSide {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#handoffSide[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#handoffSide QPlainTextEdit {{
+    background: {paper};
+    font-size: 14px;
+}}
+QLabel#handoffSectionLabel {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QTableView#handoffTable {{
+    border: 2px solid transparent;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;

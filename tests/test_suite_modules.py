@@ -73,12 +73,19 @@ def _accessible(widget):
 def test_tab_leaves_the_handoff_text_and_the_medication_table(window, qapp):
     window._module_actions["handoff"].trigger()
     qapp.processEvents()
-    handoff = window.module_stack.currentWidget().handoff
-    handoff.setFocus()
-    QTest.keyClick(handoff, Qt.Key.Key_Tab)
+    boxes = list(window.module_stack.currentWidget().sections.values())
+    assert len(boxes) == 5
+    # Tab goes from each of the five boxes to the next, and out of the last one.
+    for here, there in zip(boxes, boxes[1:], strict=False):
+        here.setFocus()
+        QTest.keyClick(here, Qt.Key.Key_Tab)
+        qapp.processEvents()
+        assert qapp.focusWidget() is there
+    boxes[-1].setFocus()
+    QTest.keyClick(boxes[-1], Qt.Key.Key_Tab)
     qapp.processEvents()
-    assert "\t" not in handoff.toPlainText()
-    assert not handoff.hasFocus()
+    assert qapp.focusWidget() not in boxes
+    assert all("\t" not in box.toPlainText() for box in boxes)
 
     window._module_actions["medications"].trigger()
     qapp.processEvents()
