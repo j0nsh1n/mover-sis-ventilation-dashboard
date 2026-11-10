@@ -605,6 +605,77 @@ QProgressBar#turnProgress::chunk {{
     background: {accent};
 }}
 
+/* —— case page: header, chart readouts, minute slider, inspector —— */
+QLabel#caseTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#caseFacts {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#minuteStamp {{
+    font-size: 28px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#minuteCaption {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#trackValue {{
+    font-size: 20px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#trackValue[missing="true"] {{
+    font-size: 14px;
+    font-weight: 400;
+    font-style: italic;
+    color: {ink_3};
+    padding-top: 4px;
+}}
+QSlider#minuteSlider::groove:horizontal {{
+    height: 2px;
+    background: {rule_strong};
+}}
+QSlider#minuteSlider::handle:horizontal {{
+    background: {accent};
+    border: 2px solid {paper};
+    width: 10px;
+    height: 10px;
+    margin: -6px 0;
+    border-radius: 7px;
+}}
+QSlider#minuteSlider::handle:horizontal:hover {{
+    background: {accent_hover};
+}}
+/* the ring: the handle turns hollow with a thick accent edge, which reads on the paper without color alone */
+QSlider#minuteSlider::handle:horizontal:focus {{
+    background: {paper};
+    border: 3px solid {accent};
+    width: 8px;
+    height: 8px;
+    margin: -6px 0;
+    border-radius: 7px;
+}}
+QFrame#caseInspector {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#caseInspector[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#caseInspector QTableView, QFrame#caseInspector QListView {{
+    background: transparent;
+}}
+QFrame#caseInspector QHeaderView, QFrame#caseInspector QHeaderView::section {{
+    background: transparent;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;

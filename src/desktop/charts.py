@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple, cast
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.colors import to_hex  # noqa: E402
+from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 import pandas as pd  # noqa: E402
-from PySide6.QtCore import QPointF, Qt, QRectF, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPointF, Qt, QRectF, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+
+from src.desktop.fonts import make_tabular
+from src.desktop.theme import token_color
 
 
 CHART_DPI = 120
@@ -329,64 +333,352 @@ def focused_minute_rows(ts: pd.DataFrame) -> pd.DataFrame:
     return rows.set_axis(rows.index + first).rename_axis("t_min")
 
 
-# The F chart draws on its own dark panel whatever the app theme is.
-SIGNAL_PANEL_COLOR = "#142124"
+# The focused chart's layout, in logical pixels (the figure's size in inches times LOGICAL_DPI).
+LOGICAL_DPI = 110
+LABEL_WIDTH = 148  # track name and unit, the value at the cursor, and the y-axis numbers
+RIGHT_PAD = 14
+TOP_PAD = 26  # room for the incision and closure words
+TRACK_GAP = 14
+MIN_TRACK = 88
+LANE_ROW = 22
+LANE_PAD = 10
+AXIS_HEIGHT = 34
+NAME_OFFSET = 4
+VALUE_OFFSET = 24
+MAX_LANE_ROWS = 6
+BASE_TRACKS = ("PIP", "ETCO2", "HR")
+
+
+class SignalInfo(NamedTuple):
+    label: str
+    unit: str
+    token: str  # colour token of the trace
+
+
+# Signals the case page names and colours; the three signal hues are data identity, any other track is ink_2.
+_SIGNAL_INFO = {
+    "PIP": SignalInfo("PIP", "cmH₂O", "s_pip"),
+    "ETCO2": SignalInfo("ETCO₂", "mmHg", "s_etco2"),
+    "HR": SignalInfo("Heart rate", "bpm", "s_hr"),
+    "SPO2": SignalInfo("SpO₂", "%", "s_spo2"),
+    "nMAP": SignalInfo("NIBP MAP", "mmHg", "s_map"),
+    "TV": SignalInfo("TV", "mL", "ink_2"),
+    "PEEP": SignalInfo("PEEP", "cmH₂O", "ink_2"),
+    "RR": SignalInfo("RR", "/min", "ink_2"),
+    "FIO2": SignalInfo("FiO₂", "%", "ink_2"),
+    "TV_mlkg": SignalInfo("TV per IBW", "mL/kg", "ink_2"),
+}
+
+
+def signal_info(column: str) -> SignalInfo:
+    """Name, unit and colour token for a timeseries column."""
+    return _SIGNAL_INFO.get(column, SignalInfo(column, "", "ink_2"))
+
+
+_family: str | None = None
+
+
+def _chart_family() -> str:
+    """Inter for the chart's words: matplotlib does not see Qt's bundled fonts, so register the files once."""
+    global _family
+    if _family is None:
+        from matplotlib import font_manager
+
+        from src.desktop.fonts import FONT_DIR, SANS_FAMILY
+
+        files = [FONT_DIR / name for name in ("Inter-Regular.ttf", "Inter-SemiBold.ttf")]
+        for path in files:
+            if path.exists():
+                font_manager.fontManager.addfont(str(path))
+        _family = SANS_FAMILY if all(path.exists() for path in files) else "DejaVu Sans"
+    return _family
+
+
+def _pt(px: float) -> float:
+    return px * 72 / LOGICAL_DPI
+
+
+def _rgba(name: str, theme: str | None) -> tuple[float, float, float, float]:
+    from src.desktop.theme import token_color
+
+    color = token_color(name, theme)
+    return color.redF(), color.greenF(), color.blueF(), color.alphaF()
+
+
+@dataclass(frozen=True)
+class Band:
+    """One rule episode on the lane: its position in the episode frame, its minutes and its row."""
+
+    index: int
+    rule_id: str
+    severity: str
+    start: float
+    end: float
+    row: int
+
+
+def case_marks(ts: pd.DataFrame) -> dict[str, float]:
+    """Incision and closure, in minutes from incision, for a case whose surgery times were recorded."""
+    marks: dict[str, float] = {}
+    if "Surgery_start" not in ts or "t_min" not in ts:
+        return marks
+    start = pd.to_datetime(ts["Surgery_start"], errors="coerce").dropna()
+    if start.empty:
+        return marks
+    marks["Incision"] = 0.0
+    if "Surgery_end" in ts:
+        end = pd.to_datetime(ts["Surgery_end"], errors="coerce").dropna()
+        if not end.empty:
+            closure = (end.iloc[0] - start.iloc[0]).total_seconds() / 60
+            if closure > 0:
+                marks["Closure"] = closure
+    return marks
+
+
+def gap_spans(values: pd.Series) -> list[tuple[float, float]]:
+    """Runs of missing minutes inside the span a signal was recorded, as minute-bin edges (start, end)."""
+    present = values.notna()
+    if not present.any():
+        return []
+    inside = values.loc[present.idxmax():present[::-1].idxmax()]
+    missing = inside.isna()
+    spans: list[tuple[float, float]] = []
+    run: list[float] = []
+    for minute, is_missing in missing.items():
+        if is_missing:
+            run.append(float(minute))
+        elif run:
+            spans.append((run[0] - 0.5, run[-1] + 0.5))
+            run = []
+    return spans
+
+
+def _episodes_from_flags(flags: pd.DataFrame | None) -> pd.DataFrame:
+    """Contiguous same-rule runs of flagged minutes, for callers that pass flags but no episode frame."""
+    columns = ["rule_id", "severity", "t_start_min", "t_end_min"]
+    if flags is None or flags.empty or not {"t_min", "severity"} <= set(flags.columns):
+        return pd.DataFrame(columns=columns)
+    rule = flags["rule_id"].astype(str) if "rule_id" in flags else pd.Series("flag", index=flags.index)
+    frame = pd.DataFrame({"rule_id": rule, "severity": flags["severity"].astype(str),
+                          "t_min": pd.to_numeric(flags["t_min"], errors="coerce")}).dropna(subset=["t_min"])
+    frame = frame.sort_values(["rule_id", "t_min"])
+    frame["run"] = (frame.groupby("rule_id")["t_min"].diff().gt(1.5) | frame["t_min"].isna()).groupby(
+        frame["rule_id"]).cumsum()
+    rank = {"critical": 0, "warn": 1, "info": 2}
+    grouped = frame.groupby(["rule_id", "run"]).agg(
+        severity=("severity", lambda s: min(s, key=lambda word: rank.get(word, 3))),
+        t_start_min=("t_min", "min"), t_end_min=("t_min", "max")).reset_index()
+    return grouped.drop(columns="run").sort_values(["t_start_min", "rule_id"]).reset_index(drop=True)
+
+
+def pack_episodes(episodes: pd.DataFrame) -> list[Band]:
+    """Give each episode a lane row so overlapping episodes sit one above the other, in the frame's order.
+
+    Past MAX_LANE_ROWS an episode shares the row that frees up first, so the lane never grows without bound.
+    """
+    bands: list[Band] = []
+    row_ends: list[float] = []
+    for index, episode in enumerate(cast(list[dict[Any, Any]], episodes.to_dict("records"))):
+        start, end = float(episode["t_start_min"]) - 0.5, float(episode["t_end_min"]) + 0.5
+        row = next((r for r, last in enumerate(row_ends) if last <= start), None)
+        if row is not None:
+            row_ends[row] = end
+        elif len(row_ends) < MAX_LANE_ROWS:
+            row = len(row_ends)
+            row_ends.append(end)
+        else:
+            row = min(range(len(row_ends)), key=row_ends.__getitem__)
+            row_ends[row] = max(row_ends[row], end)
+        bands.append(Band(index, str(episode["rule_id"]), str(episode["severity"]), start, end, row))
+    return bands
+
+
+def chart_min_height(tracks: int, lane_rows: int) -> int:
+    """The least height at which every track and lane row keeps its labels apart."""
+    return (TOP_PAD + tracks * MIN_TRACK + (tracks - 1) * TRACK_GAP + LANE_PAD
+            + max(lane_rows, 1) * LANE_ROW + AXIS_HEIGHT)
+
+
+def _build_focused_in_style(
+    ts: pd.DataFrame, selected_minute: float | None, *, flags: pd.DataFrame | None,
+    episodes: pd.DataFrame | None, rule_labels: Mapping[str, str] | None, extra_signals: tuple[str, ...],
+    figsize: tuple[float, float] | None, dpi: float, theme: str | None,
+) -> tuple[plt.Figure, list[Band]]:
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Rectangle
+    from matplotlib.ticker import MaxNLocator
+
+    from src.desktop.theme import tokens
+
+    colors = tokens(theme)
+    family = _chart_family()
+    labels = dict(rule_labels or {})
+    columns = [*BASE_TRACKS, *extra_signals[:3]]
+    episode_frame = episodes if episodes is not None and not episodes.empty else _episodes_from_flags(flags)
+    bands = pack_episodes(episode_frame)
+    lane_rows = max((band.row for band in bands), default=0) + 1
+    width_in, height_in = figsize or (11.0, chart_min_height(len(columns), lane_rows) / LOGICAL_DPI)
+    fig = plt.figure(figsize=(width_in, height_in), dpi=dpi)
+    fig.patch.set_facecolor(colors["paper"])
+    width, height = width_in * LOGICAL_DPI, height_in * LOGICAL_DPI
+    rows = focused_minute_rows(ts)
+    low_x, high_x = (float(rows.index.min()) - 0.5, float(rows.index.max()) + 0.5) if not rows.empty else (0.0, 1.0)
+    spare = height - TOP_PAD - AXIS_HEIGHT - LANE_PAD - lane_rows * LANE_ROW - (len(columns) - 1) * TRACK_GAP
+    track_px = max(spare / len(columns), 40.0)
+    left, plot_w = LABEL_WIDTH / width, (width - LABEL_WIDTH - RIGHT_PAD) / width
+
+    def axes_at(top_px: float, size_px: float):
+        ax = fig.add_axes((left, 1 - (top_px + size_px) / height, plot_w, size_px / height))
+        ax.set_facecolor(colors["paper"])
+        for side in ax.spines.values():
+            side.set_visible(False)
+        ax.set_xlim(low_x, high_x)
+        ax.set_axisbelow(True)
+        ax.tick_params(length=0, labelsize=_pt(11), labelcolor=colors["ink_3"], pad=6)
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 5, 10], integer=True))
+        ax.grid(True, axis="x", color=colors["grid"], lw=0.8)
+        return ax
+
+    marks = case_marks(ts)
+    event_style = {"color": colors["ink_3"], "lw": 1.0, "ls": (0, (1, 3)), "zorder": 2}
+    axes = []
+    top: float = TOP_PAD
+    for column in columns:
+        info = signal_info(column)
+        trace = colors[info.token]
+        ax = axes_at(top, track_px)
+        ax.set_label(column)
+        ax.tick_params(axis="x", labelbottom=False)
+        ax.grid(True, axis="y", color=colors["grid"], lw=0.8)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=3, steps=[1, 2, 2.5, 5, 10]))
+        values = pd.to_numeric(rows[column], errors="coerce") if column in rows else pd.Series(dtype=float)
+        finite = values.dropna()
+        if not finite.empty:
+            pad = max(float(finite.max() - finite.min()) * 0.1, 0.5)
+            ax.set_ylim(float(finite.min()) - pad, float(finite.max()) + pad)
+            ax.plot(rows.index, values, color=trace, lw=1.5, solid_joinstyle="round", zorder=3)
+        else:
+            ax.set_ylim(0, 1)
+        y_low, y_high = ax.get_ylim()
+        for start, end in gap_spans(values):
+            ax.add_patch(Rectangle((start, y_low), end - start, y_high - y_low, facecolor="none", lw=0, zorder=1,
+                                   edgecolor=_rgba("hatch", theme), hatch="////"))
+        for minute in marks.values():
+            if low_x <= minute <= high_x:
+                ax.axvline(minute, **event_style)
+        axes.append((ax, column, info, trace, top))
+        top += track_px + TRACK_GAP
+
+    lane_top = top - TRACK_GAP + LANE_PAD
+    lane = axes_at(lane_top, lane_rows * LANE_ROW)
+    lane.set_label("flags")
+    lane.set_yticks([])
+    lane.set_ylim(lane_rows, 0)
+    lane.spines["bottom"].set_visible(True)
+    lane.spines["bottom"].set_color(colors["rule_strong"])
+    lane.tick_params(axis="x", labelsize=_pt(11), pad=8)
+    for minute in marks.values():
+        if low_x <= minute <= high_x:
+            lane.axvline(minute, **event_style)
+    renderer = cast(FigureCanvasAgg, fig.canvas).get_renderer()
+    scale = fig.dpi / LOGICAL_DPI
+
+    def text_px(text: str, size: float, weight: int) -> float:
+        probe = fig.text(0, 0, text, fontsize=_pt(size), fontfamily=family, fontweight=weight)
+        measured = probe.get_window_extent(renderer).width / scale
+        probe.remove()
+        return measured
+
+    def put(x_px: float, y_px: float, text: str, size: float, color: str, weight: int = 400, ha: str = "left",
+            va: str = "top"):
+        return fig.text(x_px / width, 1 - y_px / height, text, fontsize=_pt(size), color=color,
+                        fontfamily=family, fontweight=weight, ha=ha, va=va)
+
+    # Every track says its name and unit on one line; the value at the cursor is the widget's to place under it.
+    for _ax, _column, info, trace, top_px in axes:
+        fig.add_artist(Line2D([4 / width, 16 / width], [1 - (top_px + NAME_OFFSET + 8) / height] * 2,
+                              transform=fig.transFigure, color=trace, lw=2.2, solid_capstyle="butt"))
+        put(22, top_px + NAME_OFFSET, info.label, 12, colors["ink"], 600)
+        if info.unit:
+            put(22 + text_px(info.label, 12, 600) + 5, top_px + NAME_OFFSET + 1, info.unit, 11, colors["ink_3"])
+    first = axes[0][0]
+    for word, minute in marks.items():
+        if low_x <= minute <= high_x:
+            first.text(minute, 1.0, word, transform=first.get_xaxis_transform(), fontsize=_pt(11), color=colors["ink_3"],
+                       fontfamily=family, ha="center", va="bottom", clip_on=False)
+    put(4, lane_top + 2, "Rule episodes", 12, colors["ink"], 600)
+    put(4, lane_top + 19, "screening only", 11, colors["ink_3"])
+    put(LABEL_WIDTH - 8, height - AXIS_HEIGHT + 14, "min from incision", 11, colors["ink_3"], ha="right", va="center")
+
+    # Gaps are hatched in every track; the words go in only where they fit.
+    px_per_minute = plot_w * width / (high_x - low_x)
+    no_samples = text_px("no samples", 11, 600) + 8
+    for ax, column, *_rest in axes:
+        values = pd.to_numeric(rows[column], errors="coerce") if column in rows else pd.Series(dtype=float)
+        y_low, y_high = ax.get_ylim()
+        for start, end in gap_spans(values):
+            if (end - start) * px_per_minute >= no_samples:
+                ax.text((start + end) / 2, y_low + (y_high - y_low) * 0.62, "no samples", fontsize=_pt(11),
+                        fontfamily=family, fontweight=600, color=colors["ink_2"], ha="center", va="center", zorder=5,
+                        bbox={"facecolor": colors["paper"], "edgecolor": "none", "pad": 1.5})
+
+    if not bands:
+        lane.text(0.5, 0.5, "No flags in this case", transform=lane.transAxes, color=colors["ink_2"],
+                  ha="center", va="center", fontsize=_pt(12), fontfamily=family)
+    # Info is a hollow circle: a full marker in the ground's colour, so the band's hatch does not run through it.
+    shapes = {"info": ("o", "full"), "warn": ("^", "left"), "critical": ("D", "full")}
+    taken: dict[int, list[tuple[float, float]]] = {}
+    for band in bands:
+        lane.add_patch(Rectangle((band.start, band.row + 0.16), band.end - band.start, 0.68, facecolor="none", lw=0,
+                                 edgecolor=_rgba("hatch", theme), hatch="////", zorder=1))
+        lane.add_patch(Rectangle((band.start, band.row + 0.16), band.end - band.start, 0.68, fill=False,
+                                 edgecolor=colors["ink_2"], lw=0.9, zorder=2))
+        taken.setdefault(band.row, []).append((band.start, band.end))
+    for severity, (marker, fill) in shapes.items():
+        chosen = [band for band in bands if band.severity == severity]
+        if chosen:
+            lane.plot([band.start for band in chosen], [band.row + 0.5 for band in chosen], linestyle="none",
+                      marker=marker, markersize=6.5, fillstyle=fill, color=colors["ink"], markeredgewidth=1.1,
+                      markerfacecolor=colors["paper"] if severity == "info" else colors["ink"],
+                      markerfacecoloralt=colors["paper"], label=severity, zorder=4)
+    lane_left_px = LABEL_WIDTH
+    for band in bands:
+        name = labels.get(band.rule_id, band.rule_id)
+        text_width = text_px(name, 12, 400) + 6
+        band_left = lane_left_px + (band.start - low_x) * px_per_minute
+        band_right = lane_left_px + (band.end - low_x) * px_per_minute
+        neighbours = [(lane_left_px + (s - low_x) * px_per_minute, lane_left_px + (e - low_x) * px_per_minute)
+                      for s, e in taken[band.row] if (s, e) != (band.start, band.end)]
+        right_room = min([n_left for n_left, _n_right in neighbours if n_left >= band_right] + [width - RIGHT_PAD])
+        left_room = max([n_right for _n_left, n_right in neighbours if n_right <= band_left] + [lane_left_px])
+        y_mid = band.row + 0.5
+        if band_right + 6 + text_width <= right_room:
+            lane.text(band.end + 6 / px_per_minute, y_mid, name, fontsize=_pt(12), fontfamily=family,
+                      color=colors["ink"], ha="left", va="center", zorder=5)
+        elif band_left - 10 - text_width >= left_room:
+            lane.text(band.start - 10 / px_per_minute, y_mid, name, fontsize=_pt(12), fontfamily=family,
+                      color=colors["ink"], ha="right", va="center", zorder=5)
+    if selected_minute is not None:
+        for ax in [item[0] for item in axes] + [lane]:
+            ax.axvline(selected_minute, color=colors["accent"], lw=1.5, zorder=6)
+    return fig, bands
+
+
+def _build_focused(ts: pd.DataFrame, selected_minute: float | None, **kwargs: Any) -> tuple[plt.Figure, list[Band]]:
+    with matplotlib.rc_context({"font.family": _chart_family(), "hatch.linewidth": 0.8}):
+        return _build_focused_in_style(ts, selected_minute, **kwargs)
 
 
 def focused_signals_figure(
     ts: pd.DataFrame, selected_minute: float | None, *,
     flags: pd.DataFrame | None = None, extra_signals: tuple[str, ...] = (),
-    figsize: tuple[float, float] | None = None, dpi: float = 110,
+    figsize: tuple[float, float] | None = None, dpi: float = LOGICAL_DPI,
+    episodes: pd.DataFrame | None = None, rule_labels: Mapping[str, str] | None = None,
+    theme: str | None = None,
 ) -> plt.Figure:
-    """Minute-aligned signal tracks and a severity lane; missing minutes break lines."""
-    style = {
-        "figure_facecolor": SIGNAL_PANEL_COLOR, "axes_facecolor": SIGNAL_PANEL_COLOR,
-        "text": "#dce8dd", "muted": "#a3b8b2", "grid": "#3b5755", "spine": "#35484a",
-    }
-    tracks = [("PIP", "PIP", "cmH₂O", "#f2b173"),
-              ("ETCO2", "ETCO₂", "mmHg", "#8fd8c8"),
-              ("HR", "Heart rate", "bpm", "#c7ace0")]
-    tracks.extend((signal, signal, "", "#c4ed93") for signal in extra_signals[:3])
-    fig, axes = plt.subplots(len(tracks) + 1, 1, figsize=figsize or (11, 2.8 + .65 * len(extra_signals[:3])), dpi=dpi,
-                             sharex=True, gridspec_kw={"height_ratios": [1] * len(tracks) + [.5]})
-    fig.patch.set_facecolor(style["figure_facecolor"])
-    grid = focused_minute_rows(ts)
-    for ax, (column, label, unit, color) in zip(axes[:-1], tracks, strict=True):
-        _style_axes(ax, style)
-        ax.set_label(column)
-        if column in grid:
-            ax.plot(grid.index, pd.to_numeric(grid[column], errors="coerce"), color=color, lw=1.5)
-        if selected_minute is not None:
-            ax.axvline(selected_minute, color="#c4ed93", alpha=.8, lw=1, ls="--")
-        ax.set_ylabel(f"{label}\n{unit}".strip(), fontsize=8)
-    lane = axes[-1]
-    _style_axes(lane, style)
-    lane.set_label("flags")
-    lane.set_yticks([])
-    lane.set_ylim(-1, 1)
-    lane.set_ylabel("Flags", fontsize=8)
-    marks = flag_minutes(flags)
-    if marks:
-        from src.desktop.theme import tokens
-
-        # This figure always draws on its own dark panel, so the flags take the dark theme's ink.
-        ink = tokens("dark")["ink"]
-        # The design's fill rule: info a hollow circle, warn a half-filled triangle, critical a solid diamond.
-        for severity, marker, fill in (("info", "o", "none"), ("warn", "^", "left"), ("critical", "D", "full")):
-            minutes = [minute for minute, level in marks.items() if level == severity]
-            if minutes:
-                lane.plot(minutes, [0] * len(minutes), linestyle="none", marker=marker, markersize=5.5,
-                          fillstyle=fill, color=ink, markeredgewidth=1.1, label=severity)
-    else:
-        lane.text(.5, .5, "No flags in this case", transform=lane.transAxes,
-                  color=style["text"], ha="center", va="center", fontsize=8)
-    if not grid.empty:
-        low, high = float(grid.index.min()), float(grid.index.max())
-        lane.set_xlim(low - .5, high + .5)
-    lane.set_xlabel("Minutes from incision", fontsize=9)
-    fig.subplots_adjust(left=max(.10, .72 / fig.get_figwidth()), right=.99, top=.98,
-                        bottom=max(.14, .48 / fig.get_figheight()), hspace=.25)
-    return fig
+    """Minute-aligned signal tracks and a rule-episode lane in the design's tokens; missing minutes break lines."""
+    return _build_focused(ts, selected_minute, flags=flags, episodes=episodes, rule_labels=rule_labels,
+                          extra_signals=extra_signals, figsize=figsize, dpi=dpi, theme=theme)[0]
 
 
 def flag_minutes(flags: pd.DataFrame | None) -> dict[float, str]:
@@ -404,49 +696,89 @@ class _FocusedChartImage:
     xlim: tuple[float, float]
     axes: tuple[QRectF, ...]
     tracks: tuple[tuple[str, tuple[float, float], str], ...]
+    bands: tuple[tuple[Band, QRectF], ...]
+    tick_labels: tuple[QRectF, ...]
 
 
 class FocusedSignalChart(QWidget):
-    """Keep the source image stable while the minute cursor moves."""
+    """The case page's chart: a matplotlib image kept stable while a painted cursor moves over it.
 
-    minute_clicked = Signal(float)
+    The value under each track's name is a real label, so a screen reader can read it; the cursor line,
+    the rings on the traces and the minute tag are painted from the tokens on every repaint.
+    """
+
+    episode_clicked = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("chartView")
+        self.setObjectName("focusedChart")
         self.setAccessibleName("Signal chart")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._ts = pd.DataFrame()
         self._rows = pd.DataFrame()
         self._flags = pd.DataFrame()
+        self._episodes = pd.DataFrame()
+        self._rule_labels: dict[str, str] = {}
         self._extras: tuple[str, ...] = ()
-        self._images: dict[tuple[tuple[str, ...], int, int, float], _FocusedChartImage] = {}
+        self._images: dict[tuple[tuple[str, ...], int, int, float, str], _FocusedChartImage] = {}
         self._pixmap = QPixmap()
         self._minute: float | None = None
+        self._selected: int | None = None
+        self._base_description = ""
         self.lane_marks: dict[float, str] = {}
         self._xlim = (0., 1.)
         self._axes_rects: tuple[QRectF, ...] = ()
         self._tracks: tuple[tuple[str, tuple[float, float], str], ...] = ()
+        self._bands: tuple[tuple[Band, QRectF], ...] = ()
+        self._tick_labels: tuple[QRectF, ...] = ()
+        # One readout per track, under its name. The first three never go away.
+        self.value_labels: dict[str, QLabel] = {}
+        for column in BASE_TRACKS:
+            self._value_label(column)
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(120)
         self._resize_timer.timeout.connect(self._render_tracks)
 
-    def set_case(self, ts: pd.DataFrame, flags: pd.DataFrame) -> None:
+    def _value_label(self, column: str) -> QLabel:
+        label = self.value_labels.get(column)
+        if label is None:
+            label = QLabel(self)
+            label.setObjectName("trackValue")
+            label.setAccessibleName(f"{signal_info(column).label} at the selected minute")
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            make_tabular(label)
+            label.hide()
+            self.value_labels[column] = label
+        return label
+
+    def set_case(self, ts: pd.DataFrame, flags: pd.DataFrame, episodes: pd.DataFrame | None = None,
+                 rule_labels: Mapping[str, str] | None = None) -> None:
+        """Show a case. ``episodes`` is the frame the episode list shows, so a lane band's index is its row."""
         self._ts, self._flags = ts, flags
-        self._rows = focused_minute_rows(ts) if "t_min" in ts else pd.DataFrame()
+        self._rows = focused_minute_rows(ts) if "t_min" in ts and not ts.empty else pd.DataFrame()
+        self._episodes = episodes if episodes is not None else pd.DataFrame()
+        self._rule_labels = dict(rule_labels or {})
         self._images.clear()
         self._extras = ()
+        self._selected = None
         self.lane_marks = flag_minutes(flags)
         counts = ", ".join(
             f"{sum(level == severity for level in self.lane_marks.values())} {severity} minutes"
             for severity in ("info", "warn", "critical")
         )
-        self.setAccessibleDescription(
+        self._base_description = (
             f"Minute-aligned PIP, ETCO2 and heart rate. Flag lane: {counts}. "
-            "Exact measurements and episodes are available in the source rows and Flag episodes list."
+            "Exact measurements and episodes are available in the source rows and the rule episodes list."
         )
         self._render_tracks()
+
+    def set_rule_labels(self, rule_labels: Mapping[str, str]) -> None:
+        """New rule names, for example after the loaded preset changed."""
+        if dict(rule_labels) != self._rule_labels:
+            self._rule_labels = dict(rule_labels)
+            self._images.clear()
+            self._render_tracks()
 
     def set_tracks(self, extras: list[str]) -> None:
         chosen = tuple(extras[:3])
@@ -454,48 +786,141 @@ class FocusedSignalChart(QWidget):
             self._extras = chosen
             self._render_tracks()
 
+    def set_selected_episode(self, index: int | None) -> None:
+        """Outline the lane band of episode ``index`` of the frame given to ``set_case``."""
+        self._selected = index
+        self.update()
+
+    def refresh(self) -> None:
+        """Draw again in the current theme, never from an image made under the other one."""
+        self._images.clear()
+        self._render_tracks()
+
+    def _episode_frame(self) -> pd.DataFrame:
+        return self._episodes if not self._episodes.empty else _episodes_from_flags(self._flags)
+
     def _render_tracks(self) -> None:
+        from src.desktop.theme import active_theme, tokens
+
         self._resize_timer.stop()
-        self.setMinimumHeight(250 + 65 * len(self._extras))
-        width, height, dpr = self.width(), self.height(), self.devicePixelRatioF()
-        key = (self._extras, width, height, dpr)
+        if self._rows.empty:
+            self._pixmap, self._tracks, self._axes_rects, self._bands, self._tick_labels = QPixmap(), (), (), (), ()
+            self._place_labels()
+            self.update()
+            return
+        columns = [*BASE_TRACKS, *self._extras]
+        lane_rows = max((band.row for band in pack_episodes(self._episode_frame())), default=0) + 1
+        self.setMinimumHeight(chart_min_height(len(columns), lane_rows))
+        width, height, dpr = self.width(), max(self.height(), self.minimumHeight()), self.devicePixelRatioF()
+        theme = active_theme()
+        key = (self._extras, width, height, dpr, theme)
         if key not in self._images:
-            fig = focused_signals_figure(self._ts, None, flags=self._flags, extra_signals=self._extras,
-                                        figsize=(width / 110, height / 110), dpi=110 * dpr)
+            fig, bands = _build_focused(
+                self._ts, None, flags=self._flags, episodes=self._episodes, rule_labels=self._rule_labels,
+                extra_signals=self._extras, figsize=(width / LOGICAL_DPI, height / LOGICAL_DPI),
+                dpi=LOGICAL_DPI * dpr, theme=theme)
             axes = tuple(QRectF(box.x0 * width, (1 - box.y1) * height, box.width * width, box.height * height)
                          for ax in fig.axes for box in [ax.get_position()])
             buf = io.BytesIO()
             fig.savefig(buf, format="png", dpi=fig.dpi, facecolor=fig.get_facecolor())
             xlim = fig.axes[-1].get_xlim()
-            tracks = tuple((str(ax.get_label()), ax.get_ylim(), to_hex(ax.lines[0].get_color()) if ax.lines else "")
-                           for ax in fig.axes[:-1])
+            palette = tokens(theme)
+            tracks = tuple(
+                (str(ax.get_label()), ax.get_ylim(),
+                 palette[signal_info(str(ax.get_label())).token]
+                 if str(ax.get_label()) in self._rows and self._rows[str(ax.get_label())].notna().any() else "")
+                for ax in fig.axes[:-1])
+            lane = axes[-1]
+            row_px = lane.height() / lane_rows
+            placed = tuple(
+                (band, QRectF(lane.left() + lane.width() * (band.start - xlim[0]) / (xlim[1] - xlim[0]),
+                              lane.top() + (band.row + 0.16) * row_px,
+                              lane.width() * (band.end - band.start) / (xlim[1] - xlim[0]), 0.68 * row_px))
+                for band in bands)
+            # Where the time axis's numbers sit, so the minute tag can cover whole numbers and not cut one.
+            renderer = cast(FigureCanvasAgg, fig.canvas).get_renderer()
+            ticks = tuple(
+                QRectF(box.x0 / dpr, height - box.y1 / dpr, box.width / dpr, box.height / dpr)
+                for label in fig.axes[-1].get_xticklabels() if label.get_text()
+                for box in [label.get_window_extent(renderer)])
             plt.close(fig)
             pixmap = QPixmap()
             pixmap.loadFromData(buf.getvalue())
             pixmap.setDevicePixelRatio(dpr)
-            self._images[key] = _FocusedChartImage(pixmap, xlim, axes, tracks)
+            self._images[key] = _FocusedChartImage(pixmap, xlim, axes, tracks, placed, ticks)
         rendered = self._images[key]
         self._pixmap, self._xlim, self._axes_rects = rendered.pixmap, rendered.xlim, rendered.axes
-        self._tracks = rendered.tracks
+        self._tracks, self._bands, self._tick_labels = rendered.tracks, rendered.bands, rendered.tick_labels
+        self._place_labels()
         self.update()
+
+    def _place_labels(self) -> None:
+        shown = [column for column, _limits, _color in self._tracks]
+        for column in shown:
+            self._value_label(column)
+        for column in [name for name in self.value_labels if name not in shown]:
+            label = self.value_labels[column]
+            label.hide()
+            if column not in BASE_TRACKS:
+                del self.value_labels[column]
+                label.deleteLater()
+        for axis, column in zip(self._axes_rects, shown, strict=False):
+            label = self.value_labels[column]
+            label.setGeometry(4, int(axis.top()) + VALUE_OFFSET, LABEL_WIDTH - 34, 28)
+            label.show()
+        self._update_values()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if not self._ts.empty:
             self._resize_timer.start()
 
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange) and not self._rows.empty:
+            self._render_tracks()
+
     def set_minute(self, minute: float) -> None:
         self._minute = minute
+        self._update_values()
         self.update()
+
+    def _row_at_cursor(self) -> pd.Series | None:
+        if self._minute is None or self._rows.empty:
+            return None
+        hit = self._rows.index.get_indexer([self._minute], method="nearest", tolerance=1e-6)[0]
+        return None if hit < 0 else self._rows.iloc[hit]
+
+    def _update_values(self) -> None:
+        row = self._row_at_cursor()
+        for column, _limits, _color in self._tracks:
+            label = self.value_labels[column]
+            value = pd.to_numeric(row.get(column), errors="coerce") if row is not None else float("nan")
+            missing = row is not None and bool(pd.isna(value))
+            label.setText("" if row is None else "missing" if missing else f"{float(value):g}")
+            if label.property("missing") != missing:
+                label.setProperty("missing", missing)
+                label.style().unpolish(label)
+                label.style().polish(label)
+        self.setAccessibleDescription(f"{self._base_description} {self.cursor_summary()}".strip())
+
+    def cursor_summary(self) -> str:
+        """The values at the cursor minute in words, for a screen reader; a missing one says so."""
+        row = self._row_at_cursor()
+        if row is None or self._minute is None:
+            return ""
+        parts = []
+        for column, _limits, _color in self._tracks:
+            info = signal_info(column)
+            value = pd.to_numeric(row.get(column), errors="coerce")
+            parts.append(f"{info.label} {'missing' if pd.isna(value) else f'{float(value):g} {info.unit}'.strip()}")
+        return f"Minute {self._minute:g}: " + ", ".join(parts)
 
     def cursor_points(self) -> list[tuple[str, QPointF, str]]:
         """Each track's value at the cursor minute; a missing value has no point."""
-        if self._minute is None or self._rows.empty or not self._tracks:
+        row = self._row_at_cursor()
+        if row is None or not self._tracks:
             return []
-        hit = self._rows.index.get_indexer([self._minute], method="nearest", tolerance=1e-6)[0]
-        if hit < 0:
-            return []
-        row = self._rows.iloc[hit]
         low, high = self._xlim
         points = []
         for axis, (column, (y_low, y_high), color) in zip(self._axes_rects, self._tracks, strict=False):
@@ -507,39 +932,74 @@ class FocusedSignalChart(QWidget):
             points.append((column, QPointF(x, y), color))
         return points
 
+    def cursor_x(self) -> float | None:
+        """The cursor's x position in widget pixels, or None before a chart and a minute exist."""
+        if self._minute is None or not self._axes_rects:
+            return None
+        low, high = self._xlim
+        axis = self._axes_rects[0]
+        return axis.left() + axis.width() * (self._minute - low) / (high - low)
+
+    def band_rects(self) -> list[tuple[Band, QRectF]]:
+        """Each rule episode's band on the lane, in widget pixels."""
+        return list(self._bands)
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(SIGNAL_PANEL_COLOR))
+        painter.fillRect(self.rect(), token_color("paper"))
         if self._pixmap.isNull():
             return
         painter.drawPixmap(QPointF(0, 0), self._pixmap)
-        if self._minute is not None:
-            low, high = self._xlim
-            painter.setPen(QPen(QColor("#c4ed93"), 1, Qt.PenStyle.DashLine))
-            for axis in self._axes_rects:
-                x = axis.left() + axis.width() * (self._minute - low) / (high - low)
-                painter.drawLine(QPointF(x, axis.top()), QPointF(x, axis.bottom()))
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor(SIGNAL_PANEL_COLOR), 1.5))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        accent = token_color("accent")
+        if self._selected is not None:
+            painter.setPen(QPen(accent, 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for band, rect in self._bands:
+                if band.index == self._selected:
+                    painter.drawRect(rect.adjusted(-2, -2, 2, 2))
+        x = self.cursor_x()
+        if x is not None:
+            painter.setPen(QPen(accent, 1.5))
+            first, lane = self._axes_rects[0], self._axes_rects[-1]
+            painter.drawLine(QPointF(x, first.top() - 6), QPointF(x, lane.bottom()))
             for _column, point, color in self.cursor_points():
-                painter.setBrush(QColor(color))
-                painter.drawEllipse(point, 4, 4)
+                painter.setPen(QPen(QColor(color), 1.8))
+                painter.setBrush(token_color("paper"))
+                painter.drawEllipse(point, 4.5, 4.5)
+            self._paint_tag(painter, x, lane.bottom() + 6)
         if self.hasFocus():
-            painter.setPen(QPen(QColor("#8c739f"), 2))
+            painter.setPen(QPen(accent, 2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
+    def _paint_tag(self, painter: QPainter, x: float, top: float) -> None:
+        """The minute written on the time axis, where the cursor meets it."""
+        text = f"{self._minute:g} min"
+        font = QFont(self.font())
+        font.setPixelSize(12)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        box = QRectF(0, top, painter.fontMetrics().horizontalAdvance(text) + 18, 20)
+        box.moveLeft(min(max(x - box.width() / 2, 0.0), self.width() - box.width()))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color("paper"))
+        for label in self._tick_labels:
+            if label.intersects(box):
+                painter.drawRect(label.adjusted(-3, -2, 3, 2))
+        painter.setBrush(token_color("accent"))
+        painter.drawRoundedRect(box, 3, 3)
+        painter.setPen(token_color("on_accent"))
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
         point = event.position()
-        if self.lane_marks and self._axes_rects and self._axes_rects[-1].contains(point):
-            lane = self._axes_rects[-1]
-            low, high = self._xlim
-            minute = low + (point.x() - lane.left()) / lane.width() * (high - low)
-            nearest = min(self.lane_marks, key=lambda marked: abs(marked - minute))
-            mark_x = lane.left() + lane.width() * (nearest - low) / (high - low)
-            if abs(point.x() - mark_x) <= 6:
-                self.minute_clicked.emit(nearest)
+        for band, rect in self._bands:
+            if rect.adjusted(-3, -3, 3, 3).contains(point):
+                self.episode_clicked.emit(band.index)
+                break
         super().mousePressEvent(event)
+
 
 
 def _legend(ax, style: dict[str, str] | None = None) -> None:

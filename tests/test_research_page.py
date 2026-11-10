@@ -98,7 +98,8 @@ def test_only_the_trace_button_is_filled(view, qapp):
     board_with_case(view)
     view.begin_question("Is it?", 1)
     qapp.processEvents()
-    filled = [button for button in view.findChildren(QPushButton) if button.objectName() == "primaryBtn"]
+    # One filled button per view: the research page has the Trace button; the case page has its own Ask button.
+    filled = [button for button in view.canvas_scroll.findChildren(QPushButton) if button.objectName() == "primaryBtn"]
     assert filled == [view.ask_button]
     assert view.ask_button.accessibleName() == "Trace the evidence"
     assert "Ctrl+Enter" in view.ask_button.text() and "Ctrl+Enter" in view.ask_button.accessibleDescription()

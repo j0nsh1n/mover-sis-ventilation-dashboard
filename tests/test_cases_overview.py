@@ -237,7 +237,7 @@ def test_overview_case_opens_f_and_returns_to_the_overview(qapp):
     series = pd.DataFrame({"t_min": [0, 1], "PIP": [20.0, 30.0], "ETCO2": [35.0, 36.0], "HR": [70, 71]})
     view.set_case_data(pid, series, pd.DataFrame(), open_detail=True)
     assert view.stack.currentIndex() == 1
-    assert pid in view.detail_title.text()
+    assert pid in view.detail_context.text()
     assert view.back_button.text() == "← Back to cases"
     assert view._primary_pid is None
     view.back_button.click()
@@ -298,7 +298,7 @@ def test_scan_only_case_goes_through_the_fetch_path(qapp, monkeypatch, tmp_path)
         assert overview.status_label.text() == f"Loading this case: {scan_pid}…"
         _GatedFetch.gate.set()
         _pump(qapp, lambda: win.research.stack.currentIndex() == 1)
-        assert scan_pid in win.research.detail_title.text()
+        assert scan_pid in win.research.detail_context.text()
     finally:
         _GatedFetch.gate.set()
         if win._case_worker is not None:
@@ -434,7 +434,7 @@ def test_overview_shortlist_open_preserves_the_question_board(request_window):
     view._open_overview_case(pids[1])
     win._case_worker.complete()
     assert _board_state(view) == before
-    assert pids[1] in view.detail_title.text()
+    assert pids[1] in view.detail_context.text()
     assert view.back_button.text() == "← Back to cases"
 
 
@@ -463,13 +463,13 @@ def test_queued_overview_opens_keep_their_return_destination(request_window):
     first = win._case_worker
     view._open_overview_case(pids[2])
     first.complete()
-    assert pids[1] in view.detail_title.text()
+    assert pids[1] in view.detail_context.text()
     assert view.back_button.text() == "← Back to cases"
     second = win._case_worker
     assert second is not first
     second.complete()
     assert _board_state(view) == before
-    assert pids[2] in view.detail_title.text()
+    assert pids[2] in view.detail_context.text()
     assert view.back_button.text() == "← Back to cases"
     view.back_button.click()
     assert view.stack.currentIndex() == CASES_PAGE
@@ -478,7 +478,7 @@ def test_queued_overview_opens_keep_their_return_destination(request_window):
     assert view.back_button.text() == "← Back to cases"
     assert _board_state(view) == before
     view._open_or_request(pids[1], comparison=False)
-    assert view.back_button.text() == "← Back to evidence workspace"
+    assert view.back_button.text() == "← Back to evidence trail"
 
 
 @pytest.mark.parametrize("overview_first", [False, True])
@@ -501,7 +501,7 @@ def test_overlapping_same_pid_opens_follow_each_request_origin(request_window, o
     second_open()
     first.complete()
     if overview_first or not comparison:
-        assert view.back_button.text() == ("← Back to cases" if overview_first else "← Back to evidence workspace")
+        assert view.back_button.text() == ("← Back to cases" if overview_first else "← Back to evidence trail")
     else:
         assert view.stack.currentIndex() == CASES_PAGE
     if overview_first:
@@ -509,7 +509,7 @@ def test_overlapping_same_pid_opens_follow_each_request_origin(request_window, o
     after_first = _board_state(view)
     win._case_worker.complete()
     question_detail = overview_first and not comparison
-    assert view.back_button.text() == ("← Back to evidence workspace" if question_detail else "← Back to cases")
+    assert view.back_button.text() == ("← Back to evidence trail" if question_detail else "← Back to cases")
     if not overview_first:
         assert _board_state(view) == after_first
     assert (view._comparison_pid if comparison else view._primary_pid) == pids[1]

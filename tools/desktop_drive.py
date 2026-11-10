@@ -149,8 +149,8 @@ def open_case(run: Run) -> dict[str, Any]:
     run.wait(lambda: research.stack.currentIndex() == 1, "the signal detail view")
     return {
         "view": "detail",
-        "case": research.detail_title.text(),
-        "sample": research.sample_label.text(),
+        "case": f"{research.detail_context.text()} · {research.detail_title.text()}",
+        "sample": research.detail_chart.cursor_summary(),
     }
 
 
@@ -533,7 +533,7 @@ def f_facts(run: Run) -> dict[str, Any]:
         "selected_rule_id": research.selected_rule_id,
         "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
         "chart_minute": research.detail_chart._minute,
-        "rule_detail": research.rule_detail.text(),
+        "rule_detail": research.selected_rule_text(),
         "signal_statistics": research.signal_statistics,
         "chart_track_names": research.chart_track_names,
         "lane_marks": len(research.detail_chart.lane_marks),
@@ -723,9 +723,9 @@ def open_top_case(run: Run) -> dict[str, Any]:
     research = run.win.research
     pid = _click_row(run, 0)
     run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the signal detail view")
-    if pid not in research.detail_title.text():
-        raise RuntimeError(f"F opened {research.detail_title.text()!r}, not {pid}")
-    return {"pid": pid, "detail": research.detail_title.text(), "back": research.back_button.text()}
+    if pid not in research.detail_context.text():
+        raise RuntimeError(f"F opened {research.detail_context.text()!r}, not {pid}")
+    return {"pid": pid, "detail": research.detail_context.text(), "back": research.back_button.text()}
 
 
 def sample_pipeline(run: Run) -> dict[str, Any]:
@@ -986,7 +986,7 @@ def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
             if not inside.empty:
                 gaps[str(pid)] = [float(value) for value in inside]
         facts.update(first_missing_minute=first_missing, internal_etco2_gaps=gaps)
-    research.signal_scroll.ensureWidgetVisible(research.minute_label)
+    research.signal_scroll.ensureWidgetVisible(research.minute_stamp)
     return facts
 
 

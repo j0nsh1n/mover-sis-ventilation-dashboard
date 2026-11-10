@@ -21,6 +21,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- New look, case page: the page that shows one case now uses the same paper
+  and night ledger colors as the research page, in light and dark. The header
+  is the procedure with one line of facts (surgery length, age, sampling, rule
+  preset and its 12-character hash, number of rule episodes) and the selected
+  minute at the right. The chart has no boxes: each track shows its name, unit
+  and the value at the cursor (or "missing"), every gap inside a recorded span is
+  hatched and says "no samples" where there is room, incision and closure are
+  dotted lines, and the rule episodes sit under the tracks as hatched bands
+  that you can click. The source row, rule episodes and selected rule are in a
+  panel at the right (below the chart when the window is narrow). The selected
+  rule has a threshold ruler that shows its limits and where the episode's
+  extreme fell. Back says where it returns, "More signals" is "+ Track", and the
+  keys line lists only keys that work.
+
 - New look, first step: warm paper (light) and "night ledger" (dark) colors with
   one indigo accent, Inter and Charter fonts bundled with the app, quieter
   controls and tables, and a 2 px accent focus ring on every control that can

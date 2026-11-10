@@ -6,7 +6,6 @@ import itertools
 
 import pytest
 
-from src.desktop.charts import SIGNAL_PANEL_COLOR
 from src.desktop.marks import MISSING_BACKING_SELECTED_TOKEN, MISSING_BACKING_TOKEN, MISSING_TEXT_TOKEN
 from src.desktop.theme import tokens
 
@@ -57,6 +56,14 @@ PAIRS: list[tuple[str, str, float]] = [
     ("rule_strong", "sheet", AA_NON_TEXT),
     ("practice_bar", "paper", AA_NON_TEXT),
     *[(signal, "paper", AA_NON_TEXT) for signal in SIGNALS],
+    # The case page: trace swatches in the inspector table sit on the side panel's sheet, and the cursor's rings,
+    # the selected episode's outline, the minute slider's handle and the ruler's pointer are accent on paper or sheet.
+    *[(signal, "sheet", AA_NON_TEXT) for signal in SIGNALS],
+    ("accent", "sel", AA_NON_TEXT),
+    ("ink_3", "sheet", AA_TEXT),
+    ("ink_2", "paper", AA_TEXT),
+    ("ink", "sel", AA_TEXT),
+    ("ink_3", "sel", AA_TEXT),
 ]
 
 
@@ -87,8 +94,3 @@ def test_every_color_the_design_names_exists(theme):
     assert names <= palette.keys()
     for name in names - {"hatch"}:
         assert len(palette[name]) == 7 and palette[name].startswith("#"), name
-
-
-def test_the_flag_ink_reads_on_the_signal_chart_panel():
-    # The F chart draws on its own dark panel under both app themes, with the dark theme's ink for flags.
-    assert contrast(tokens("dark")["ink"], SIGNAL_PANEL_COLOR) >= AA_NON_TEXT

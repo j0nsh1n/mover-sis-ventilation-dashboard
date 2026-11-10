@@ -66,7 +66,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view.open_detail("caseA")
     assert view.stack.currentIndex() == 1
     assert view.minute_slider.value() == 1
-    assert "33" in view.sample_label.text()
+    assert "PIP 33 cmH₂O" in view.detail_chart.cursor_summary()
 
     def inspect_dialog(self):
         table = self.findChild(QTableWidget)
@@ -331,9 +331,13 @@ def episode_view(qapp):
 
 
 def test_episode_list_writes_each_severity_as_its_shape_and_word(episode_view):
+    """Each row is the shape, the rule's name, the severity word and the minutes, in time order."""
     view, _ = episode_view
-    lines = [view.episode_list.item(row).text().split("\n")[0] for row in range(view.episode_list.count())]
-    assert [" · ".join(line.split(" · ")[1:2]) for line in lines] == ["△ warn", "◆ critical"]
+    assert [view.episode_list.item(row).text() for row in range(view.episode_list.count())] == [
+        "△ High end-tidal CO2 · warn · min 1–2",
+        "◆ Low oxygen saturation · critical · min 1–4",
+    ]
+    assert view.episode_list.accessibleName() == "Rule episodes"
 
 
 def test_episode_order_lane_and_keyboard(episode_view, qapp):
@@ -356,9 +360,10 @@ def test_episode_order_lane_and_keyboard(episode_view, qapp):
     assert view.selected_rule_id is None
     assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
     assert not view.rule_link.isEnabled()
-    view._select_flag_minute(2.)
+    view.detail_chart.episode_clicked.emit(1)
     assert view.selected_rule_id == "spo2_low"
-    assert view.minute_slider.value() == 2
+    assert view.minute_slider.value() == 1
+    assert view.episode_list.currentRow() == 1
     view.return_to_canvas()
     assert "SPO2" not in view.chart_track_names
     pd.testing.assert_frame_equal(view._case_views["caseA"].cases, fetched.cases)
@@ -574,29 +579,34 @@ def test_duplicate_minutes_open_detail_and_keep_last_measurement(episode_view):
     plt.close(figure)
 
 
-def test_lane_empty_space_and_outside_axis_do_not_select(qapp):
+def test_lane_clicks_select_only_when_they_land_on_an_episode_band(qapp):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
     from src.desktop.charts import FocusedSignalChart
 
     chart = FocusedSignalChart()
-    chart.resize(900, 320)
-    chart.set_case(pd.DataFrame({"t_min": [0, 100], "PIP": [20., 21.]}),
-                   pd.DataFrame({"t_min": [0.], "severity": ["warn"]}))
+    chart.resize(900, 420)
+    # One episode over minutes 40-60 of a 0-100 case.
+    chart.set_case(pd.DataFrame({"t_min": [0, 100], "PIP": [20., 21.]}), pd.DataFrame(),
+                   pd.DataFrame([{"rule_id": "pip_high", "severity": "warn", "t_start_min": 40., "t_end_min": 60.}]))
     chart.show()
     QTest.qWait(180)
     clicked = []
-    chart.minute_clicked.connect(clicked.append)
-    y = int(chart._axes_rects[-1].center().y())
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(chart.width() // 2, y))
+    chart.episode_clicked.connect(clicked.append)
     lane = chart._axes_rects[-1]
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(lane.left()) - 1, y))
     low, high = chart._xlim
-    mark_x = lane.left() + lane.width() * (0 - low) / (high - low)
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(mark_x) + 8, y))
+
+    def x_of(minute):
+        return int(lane.left() + lane.width() * (minute - low) / (high - low))
+
+    y = int(lane.center().y())
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(10), y))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(90), y))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(50), int(chart._axes_rects[0].center().y())))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(lane.left()) - 40, y))
     assert clicked == []
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(mark_x) + 5, y))
-    assert clicked == [0.]
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(50), y))
+    assert clicked == [0]
     chart.close()
 
 
@@ -630,10 +640,12 @@ def test_chart_renders_at_widget_size_after_debounced_resize(qapp, monkeypatch, 
 
     chart = FocusedSignalChart()
     monkeypatch.setattr(chart, "devicePixelRatioF", lambda: dpr)
-    chart.resize(650, 320)
+    # Above the chart's least height, which three tracks and a one-row lane set at 384 px.
+    chart.resize(650, 430)
     chart.set_case(pd.DataFrame({"t_min": [0., 1.], "PIP": [20., 21.]}), pd.DataFrame())
     chart.show()
     QTest.qWait(180)
+    assert chart.height() == 430
     assert chart._pixmap.width() == int(chart.width() * dpr)
     assert chart._pixmap.height() == int(chart.height() * dpr)
     assert chart._pixmap.devicePixelRatioF() == dpr
@@ -641,34 +653,42 @@ def test_chart_renders_at_widget_size_after_debounced_resize(qapp, monkeypatch, 
     chart.set_minute(1.)
     chart.repaint()
     assert chart._pixmap.cacheKey() == old_image
-    chart.resize(1000, 380)
+    chart.resize(1000, 500)
     qapp.processEvents()
     assert chart._pixmap.cacheKey() == old_image
     QTest.qWait(180)
     assert chart._pixmap.width() == int(1000 * dpr)
-    assert chart._pixmap.height() == int(380 * dpr)
-    chart.resize(650, 320)
+    assert chart._pixmap.height() == int(500 * dpr)
+    chart.resize(650, 430)
     QTest.qWait(180)
     assert chart._pixmap.cacheKey() == old_image
     chart.close()
 
 
 @pytest.mark.parametrize("width,extras", [(650, ()), (650, ("SPO2",)), (1150, ())])
-def test_sized_chart_keeps_axis_titles_inside_image(width, extras):
+def test_sized_chart_keeps_every_word_inside_the_image(width, extras):
     import matplotlib.pyplot as plt
-    from src.desktop.charts import focused_signals_figure
+    from src.desktop.charts import chart_min_height, focused_signals_figure
 
-    height = 250 + 65 * len(extras)
-    figure = focused_signals_figure(pd.DataFrame({"t_min": [0., 1.], "PIP": [20., 21.]}),
-                                    None, extra_signals=extras, figsize=(width / 110, height / 110))
+    height = chart_min_height(3 + len(extras), 1)
+    figure = focused_signals_figure(pd.DataFrame({"t_min": [0., 1., 2.], "PIP": [20., 21., 22.]}),
+                                    None, extra_signals=extras, figsize=(width / 110, height / 110),
+                                    flags=pd.DataFrame({"t_min": [1.], "severity": ["warn"], "rule_id": ["pip_high"]}),
+                                    rule_labels={"pip_high": "High PIP"})
     figure.canvas.draw()
     renderer = figure.canvas.get_renderer()
-    for axis in figure.axes:
-        for title in (axis.xaxis.label, axis.yaxis.label):
-            if title.get_text():
-                bounds = title.get_window_extent(renderer)
-                assert bounds.x0 >= 0 and bounds.y0 >= 0
-                assert bounds.x1 <= width and bounds.y1 <= height
+    words = [text for text in figure.texts + [t for ax in figure.axes for t in ax.texts]
+             if text.get_text().strip()]
+    for ax in figure.axes:
+        low, high = ax.get_xlim()
+        # A tick the axis does not draw (its place is outside the limits) is not a word on the image.
+        words += [tick.label1 for tick in ax.xaxis.get_major_ticks()
+                  if tick.label1.get_text().strip() and low <= tick.get_loc() <= high]
+    assert any(text.get_text() == "min from incision" for text in words)
+    for text in words:
+        bounds = text.get_window_extent(renderer)
+        assert bounds.x0 >= -1 and bounds.y0 >= -1, text.get_text()
+        assert bounds.x1 <= width + 1 and bounds.y1 <= height + 1, text.get_text()
     plt.close(figure)
 
 
@@ -704,12 +724,15 @@ def test_missing_episode_start_has_exact_cursor_and_missing_sample(episode_view)
     view.set_case_data("caseA", fetched.timeseries, fetched.flags, fetched=fetched, open_detail=True)
     view.episode_list.setCurrentRow(1)
     assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 1
-    assert "PIP: missing" in view.sample_label.text()
+    assert "PIP missing" in view.detail_chart.cursor_summary()
+    assert view.detail_chart.value_labels["PIP"].text() == "missing"
     assert view.signal_statistics["SPO2"]["missing"] == 1
 
 
 @pytest.mark.parametrize("width", [900, 1400])
-def test_lane_mouse_click_selects_worst_episode_and_flagged_minute(episode_view, width):
+@pytest.mark.parametrize("row,rule", [(0, "etco2_high"), (1, "spo2_low")])
+def test_lane_mouse_click_selects_the_episode_under_it(episode_view, width, row, rule):
+    """The two episodes overlap, so they sit in two lane rows; the row clicked, not the worst severity, decides."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
@@ -719,25 +742,24 @@ def test_lane_mouse_click_selects_worst_episode_and_flagged_minute(episode_view,
     chart = view.detail_chart
     low, high = chart._xlim
     lane = chart._axes_rects[-1]
-    x = int(lane.left() + lane.width() * (2 - low) / (high - low))
-    y = int(lane.center().y())
+    x = int(lane.left() + lane.width() * (1.5 - low) / (high - low))
+    y = int(lane.top() + lane.height() * (row + 0.5) / 2)
     QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x, y))
-    assert view.selected_rule_id == "spo2_low"
-    assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 2
+    assert view.selected_rule_id == rule
+    assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 1
 
 
-def test_tab_reaches_episode_list_and_rule_link(episode_view, qapp):
+def test_tab_follows_the_screen_from_the_slider_to_the_rule_link(episode_view, qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     view, _ = episode_view
     view.minute_slider.setFocus()
-    QTest.keyClick(view.minute_slider, Qt.Key.Key_Tab)
-    assert view.follow_up_edit.hasFocus()
-    QTest.keyClick(view.follow_up_edit, Qt.Key.Key_Tab)
-    assert view.follow_up_button.hasFocus()
-    QTest.keyClick(view.follow_up_button, Qt.Key.Key_Tab)
-    assert view.episode_list.hasFocus()
+    chain = [view.follow_up_edit, view.follow_up_button, view.open_table_button, view.source_row_table,
+             view.context_button, view.episode_list]
+    for expected in chain:
+        QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+        assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
     QTest.keyClick(view.episode_list, Qt.Key.Key_Home)
     QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
     assert view.clear_episode_button.hasFocus()
@@ -754,8 +776,9 @@ def test_unknown_rule_phase_and_extra_track_limit(episode_view):
     episodes.loc[1, "rule_id"] = "unknown_synthetic_rule"
     fetched.episodes = episodes
     view.set_case_data("caseA", fetched.timeseries, fetched.flags, fetched=fetched, open_detail=True)
-    assert "maintenance → emergence" in view.episode_list.item(0).text()
+    assert "maintenance → emergence" in view.episode_list.item(0).toolTip()
     view.episode_list.setCurrentRow(0)
+    assert "Phase: maintenance → emergence" in view.rule_detail.text()
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "SPO2", "TV", "RR"]
     assert "TV_mlkg: min missing, max missing, mean missing; 2 missing minutes; not charted" in view.rule_detail.text()
     assert "likely_mech_vent" not in view.signal_statistics
@@ -820,14 +843,14 @@ def test_more_signals_choices_persist_across_episodes_clear_and_cases(episode_vi
     view.episode_list.setCurrentRow(0)
     assert view.selected_rule_id == "etco2_high"
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
-    view.detail_chart.minute_clicked.emit(3.)
+    view.detail_chart.episode_clicked.emit(1)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
     view.set_results(RetrievalResult(candidates=(_candidate("caseA"), _candidate("caseB"))))
     other = replace(fetched, timeseries=fetched.timeseries.assign(PID="caseB"))
     view.set_case_data("caseB", other.timeseries, fetched.flags, fetched=other, open_detail=True)
     assert view._current_pid == "caseB"
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
 
 
 def test_chosen_extras_take_the_slots_before_a_rules_signals(episode_view, monkeypatch):
@@ -852,7 +875,7 @@ def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(e
     view.episode_list.setCurrentRow(1)
     _choose_extras(view, monkeypatch, "PEEP", accept=False)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
     seen = {}
 
     def inspect(dialog):
@@ -985,7 +1008,7 @@ def test_a_chosen_signal_without_samples_gets_a_note_not_an_empty_track(episode_
     assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
     assert view.extras_note.isVisibleTo(view)
     assert view.extras_note.text() == "No TV samples in this case"
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
     _with_extra_columns(view, fetched, TV=[400.] * 6)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
     assert not view.extras_note.isVisibleTo(view)
@@ -1009,39 +1032,83 @@ def test_signal_detail_does_not_scroll_sideways_at_900_px_with_the_drawer_open(e
     assert right <= scroll.viewport().width()
 
 
-def _without_case_page(source: str) -> str:
-    """The module with only the case page's own colours blanked: its stylesheet and its detail builder.
-
-    The case page is the next stage; everything else, the research board included, must use the tokens.
-    """
-    import ast
-
-    tree = ast.parse(source)
-    spans = [(node.lineno, node.end_lineno) for node in ast.walk(tree)
-             if (isinstance(node, ast.FunctionDef) and node.name == "_build_signal_detail")
-             or (isinstance(node, ast.Constant) and isinstance(node.value, str) and "QWidget#signalPage" in node.value)]
-    assert len(spans) == 2, "the case page's stylesheet and detail builder were moved; update this exclusion"
-    lines = source.splitlines(keepends=True)
-    for start, end in spans:
-        for number in range(start - 1, end or start):
-            lines[number] = "\n"
-    return "".join(lines)
-
-
 def test_the_research_page_and_conversation_carry_no_colors_of_their_own(qapp):
-    """Only the case page (the next stage) keeps its own colours; the question board and conversation use the tokens."""
+    """Every screen of the workspace, the case page included, takes its colours from the tokens."""
     import re
     from pathlib import Path
 
     view = ResearchWorkspace()
     try:
-        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", view.styleSheet()):
-            if re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", body):
-                assert "signal" in selector.lower(), selector.strip()
-        for name in ("research_workspace.py", "conversation_panel.py", "evidence_trail.py", "research_controls.py"):
+        assert view.styleSheet() == ""
+        for name in ("research_workspace.py", "conversation_panel.py", "evidence_trail.py", "research_controls.py",
+                     "case_page.py", "threshold_ruler.py"):
             source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / name).read_text(encoding="utf-8")
-            if name == "research_workspace.py":
-                source = _without_case_page(source)
-            assert re.findall(r"#[0-9a-fA-F]{6}\b|QColor\(\"#", source) == [], name
+            assert re.findall(r"#[0-9a-fA-F]{6}\b|QColor\(\"#|rgba?\(", source) == [], name
     finally:
         view.close()
+
+
+def test_the_focused_chart_code_names_no_color_of_its_own():
+    """The case chart's source holds no colour literal; case_timeline_figure and the older figures are out of scope."""
+    import ast
+    import re
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "src" / "desktop" / "charts.py"
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    names = {"_build_focused_in_style", "_build_focused", "focused_signals_figure", "FocusedSignalChart",
+             "_rgba", "signal_info", "case_marks", "gap_spans", "pack_episodes"}
+    spans = [(node.lineno, node.end_lineno) for node in ast.parse(source).body
+             if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
+    assert len(spans) == len(names), "a focused-chart function was renamed; update this list"
+    for start, end in spans:
+        code = "\n".join(lines[start - 1:end])
+        assert re.findall(r"#[0-9a-fA-F]{3,8}\b|QColor\(\"|rgba?\(\d", code) == [], lines[start - 1]
+    assert "SIGNAL_PANEL_COLOR" not in source
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_focused_figure_draws_with_the_themes_tokens(qapp, theme):
+    """Paper ground, the three signal hues on their tracks, the accent for an outline, ink for the flag shapes."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_hex
+
+    from src.desktop.charts import focused_signals_figure
+    from src.desktop.theme import tokens
+
+    palette = tokens(theme)
+    ts = pd.DataFrame({"t_min": range(6), "PIP": [20., 21., 22., 23., 24., 25.], "ETCO2": [30.] * 6, "HR": [70.] * 6})
+    flags = pd.DataFrame({"t_min": [2.], "severity": ["warn"], "rule_id": ["pip_high"]})
+    figure = focused_signals_figure(ts, None, flags=flags, theme=theme)
+    assert to_hex(figure.get_facecolor()) == palette["paper"].lower()
+    assert [to_hex(ax.lines[0].get_color()) for ax in figure.axes[:3]] == [
+        palette[t].lower() for t in ("s_pip", "s_etco2", "s_hr")]
+    warn = next(line for line in figure.axes[-1].lines if line.get_label() == "warn")
+    assert to_hex(warn.get_markeredgecolor()) == palette["ink"].lower()
+    plt.close(figure)
+
+
+def test_the_chart_redraws_in_the_new_theme_and_keeps_no_stale_image(qapp):
+    from PySide6.QtTest import QTest
+
+    from src.desktop.charts import FocusedSignalChart
+    from src.desktop.theme import apply_theme, tokens
+
+    chart = FocusedSignalChart()
+    chart.resize(700, 430)
+    chart.set_case(pd.DataFrame({"t_min": [0., 1., 2.], "PIP": [10., 30., 20.], "ETCO2": [35., 36., 40.],
+                                 "HR": [60., 70., 80.]}), pd.DataFrame())
+    chart.set_minute(1.)
+    chart.show()
+    QTest.qWait(180)
+    try:
+        for theme in ("light", "dark", "light"):
+            apply_theme(qapp, theme)
+            QTest.qWait(20)
+            corner = chart._pixmap.toImage().pixelColor(2, 2).name().lower()
+            assert corner == tokens(theme)["paper"].lower(), theme
+            assert dict((c, color) for c, _p, color in chart.cursor_points())["PIP"] == tokens(theme)["s_pip"]
+    finally:
+        apply_theme(qapp, "light")
+        chart.close()

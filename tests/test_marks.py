@@ -55,21 +55,23 @@ def _flags() -> pd.DataFrame:
 
 def test_the_flag_lane_follows_the_fill_rule_in_one_ink(qapp, applied_theme):
     ts = pd.DataFrame({"t_min": range(5), "PIP": [10, 11, 12, 13, 14], "ETCO2": [30] * 5, "HR": [70] * 5})
-    lane = focused_signals_figure(ts, 2, flags=_flags()).axes[-1]
+    lane = focused_signals_figure(ts, None, flags=_flags()).axes[-1]
     marks = {line.get_label(): line for line in lane.lines}
     assert set(marks) == {"info", "warn", "critical"}
-    # info is a hollow circle, warn a half-filled triangle, critical a solid diamond
+    # info is a hollow circle (a circle filled with the ground), warn a half-filled triangle, critical a solid diamond
     assert [(marks[s].get_marker(), marks[s].get_fillstyle()) for s in ("info", "warn", "critical")] == [
-        ("o", "none"), ("^", "left"), ("D", "full")]
-    # The lane's figure is always dark, so its ink is the dark theme's ink under either app theme.
-    ink = to_rgba(tokens("dark")["ink"])
+        ("o", "full"), ("^", "left"), ("D", "full")]
+    # The lane is drawn in the active theme, so its ink is that theme's ink.
+    palette = tokens(applied_theme)
+    ink, paper = to_rgba(palette["ink"]), to_rgba(palette["paper"])
     for severity, line in marks.items():
         assert to_rgba(line.get_markeredgecolor()) == pytest.approx(ink), severity
-    assert to_rgba(marks["info"].get_markerfacecolor())[3] == 0
+    # a hollow shape is filled with the ground so the band's hatch does not run through it
+    assert to_rgba(marks["info"].get_markerfacecolor()) == pytest.approx(paper)
     for severity in ("warn", "critical"):
         assert to_rgba(marks[severity].get_markerfacecolor()) == pytest.approx(ink), severity
     # the half-filled triangle's other half stays open
-    assert to_rgba(marks["warn"].get_markerfacecoloralt())[3] == 0
+    assert to_rgba(marks["warn"].get_markerfacecoloralt()) == pytest.approx(paper)
 
 
 def test_the_fallback_chart_colors_come_from_the_light_tokens(qapp, monkeypatch):
