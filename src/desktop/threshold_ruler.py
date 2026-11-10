@@ -2,7 +2,18 @@
 
 The research page's selected-rule panel uses it, and the rule reference can reuse it. It is painted from the
 design tokens, so it follows the theme, and it carries the same numbers as words for a screen reader.
-Rules without a single numeric limit (duration, band and composite rules) get no ruler.
+
+Exactly these rules get a ruler, in every preset (``test_the_modules_docstring_names_the_rules_that_get_a_ruler``
+checks this list against the catalog):
+
+- threshold rules that fire at or beyond a warn and a critical limit: pip_high, peep_high, tv_low_mlkg,
+  tv_high_mlkg, rr_low, rr_high, etco2_high, etco2_low, agent_high, spo2_low, hr_high, hr_low, map_low;
+- the slope rule pip_rising, which has one limit, written "fires ≥ 0.5";
+- agent_low_maint, which has one limit, written "fires < 0.3": the pipeline flags a MAC strictly below it.
+
+Rules without a single numeric limit get no ruler: the duration rules (peep_zero_long, etco2_zero_vent,
+fio2_high_long, fio2_room_air_vent, agent_drift, agent_fi_et_gap), the band rule tv_abs_extreme and the
+composite rules (compliance_concern, hypoventilation_pattern, desat_with_vent_issue).
 """
 
 from __future__ import annotations
@@ -29,6 +40,8 @@ _FONT_PIXELS = 12
 # Every threshold of a threshold rule is one of these severities, in the order the ruler reads them.
 _SEVERITY_KEYS = (("warn", ("warn", "warn_mac")), ("critical", ("critical", "critical_mac")))
 _SLOPE_KEY = "min_slope_cmh2o_per_min"
+# A threshold rule with this one key fires strictly below it (the pipeline compares with <), so it is written "<".
+_BELOW_KEY = "max_mac"
 
 
 def pretty_unit(unit: str) -> str:
@@ -47,6 +60,7 @@ class RulerMark:
     value: float
     word: str
     label: str
+    strict: bool = False  # the rule fires strictly beyond the value, not at it
 
 
 @dataclass(frozen=True)
@@ -62,9 +76,18 @@ class RulerSpec:
 
     def description(self) -> str:
         """The ruler's numbers in words, for a screen reader and for tests."""
-        side = "or more" if self.direction == "high" else "or less"
         unit = f" {self.unit}" if self.unit else ""
-        limits = "; ".join(f"{mark.word} at {_number(mark.value)}{unit} {side}" for mark in self.marks)
+
+        def side(mark: RulerMark) -> str:
+            if mark.strict:
+                return "more than" if self.direction == "high" else "less than"
+            return "or more" if self.direction == "high" else "or less"
+
+        limits = "; ".join(
+            f"{mark.word} at {side(mark)} {_number(mark.value)}{unit}" if mark.strict
+            else f"{mark.word} at {_number(mark.value)}{unit} {side(mark)}"
+            for mark in self.marks
+        )
         if self.observed is None:
             seen = "No value was recorded for this signal during the episode."
         else:
@@ -88,6 +111,10 @@ def ruler_for(spec: RuleSpec, observed: float | None) -> RulerSpec | None:
                 value = spec.params.get(key)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     marks.append(RulerMark(float(value), word, f"{word} {sign} {_number(float(value))}"))
+        value = spec.params.get(_BELOW_KEY)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and not marks:
+            below = "<" if spec.direction == "low" else ">"
+            marks.append(RulerMark(float(value), "fires", f"fires {below} {_number(float(value))}", strict=True))
     elif spec.kind == "slope":
         value = spec.params.get(_SLOPE_KEY)
         if isinstance(value, (int, float)) and not isinstance(value, bool):

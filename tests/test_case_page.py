@@ -86,8 +86,9 @@ def test_header_names_the_case_where_it_came_from_the_procedure_and_one_facts_li
     assert view.detail_context.text().startswith("caseA · opened from the evidence trail")
     assert view.detail_title.text() == "Laparoscopic cholecystectomy"
     # duration is the last minute of the opened case; age is shown as the search record shows it
+    # no analyzed-case table here, so the length is the last minute of the data, which is not a surgery length
     assert view.detail_facts.text() == (
-        f"39 min surgery · age 55 · 1 sample/min · rules default @{catalog.thresholds_sha256[:12]} · 2 rule episodes")
+        f"39 min recorded · age 55 · 1 sample/min · rules default @{catalog.thresholds_sha256[:12]} · 2 rule episodes")
     assert view.minute_stamp.text() == "30"  # the peak PIP, where the case opens
     assert "min from incision" in _texts(view)
     assert view.back_button.text() == "← Back to evidence trail"
@@ -95,6 +96,73 @@ def test_header_names_the_case_where_it_came_from_the_procedure_and_one_facts_li
     view.open_detail("caseA", from_overview=True)
     assert view.detail_context.text().startswith("caseA · opened from the Cases list")
     assert view.back_button.text() == "← Back to cases"
+
+
+def test_the_facts_line_says_surgery_only_for_a_recorded_length(page):
+    view, _ = page
+    assert "39 min recorded" in view.detail_facts.text() and "surgery" not in view.detail_facts.text()
+    # the research page's own Duration text keeps both branches as they were
+    assert view._duration_text("caseA") == "39 min"
+    view.set_cases_data(pd.DataFrame({"PID": ["caseA"], "case_duration_min": [35.]}), None, None)
+    view.open_detail("caseA")
+    assert view.detail_facts.text().startswith("35 min surgery · ")
+    assert view._duration_text("caseA") == "35 min"
+
+
+def test_chart_keys_do_what_the_slider_and_the_episode_list_do(page, qapp):
+    """The chart only asks; the slider and the episode list act, so the results are theirs, ends and wrap included."""
+    view, _ = page
+    chart, slider = view.detail_chart, view.minute_slider
+    for modifiers, slider_key in ((Qt.KeyboardModifier.NoModifier, Qt.Key.Key_Right),
+                                  (Qt.KeyboardModifier.ShiftModifier, Qt.Key.Key_PageUp)):
+        for start in (0, 5, slider.maximum() - 3, slider.maximum()):  # both ends clamp as the slider does
+            slider.setValue(start)
+            QTest.keyClick(slider, slider_key)
+            wanted = slider.value()
+            slider.setValue(start)
+            QTest.keyClick(chart, Qt.Key.Key_Right, modifiers)
+            assert slider.value() == wanted, (modifiers, start)
+            assert view.minute_stamp.text() == f"{view._minute_rows['t_min'].iloc[wanted]:g}"
+    for modifiers, slider_key in ((Qt.KeyboardModifier.NoModifier, Qt.Key.Key_Left),
+                                  (Qt.KeyboardModifier.ShiftModifier, Qt.Key.Key_PageDown)):
+        for start in (0, 4, slider.maximum()):
+            slider.setValue(start)
+            QTest.keyClick(slider, slider_key)
+            wanted = slider.value()
+            slider.setValue(start)
+            QTest.keyClick(chart, Qt.Key.Key_Left, modifiers)
+            assert slider.value() == wanted, (modifiers, start)
+    # E walks the episodes in time order, as Down does in the list, and goes round after the last
+    view.clear_episode_selection()
+    order = []
+    for _ in range(3):
+        QTest.keyClick(chart, Qt.Key.Key_E)
+        order.append((view.episode_list.currentRow(), view.selected_rule_id))
+    assert order == [(0, "etco2_high"), (1, "spo2_low"), (0, "etco2_high")]
+    QTest.keyClick(chart, Qt.Key.Key_E)
+    assert view.minute_stamp.text() == "20"  # the selected episode's start, as choosing it in the list does
+    # other keys, and E with a modifier, do nothing here
+    before = (slider.value(), view.selected_rule_id)
+    QTest.keyClick(chart, Qt.Key.Key_E, Qt.KeyboardModifier.ControlModifier)
+    QTest.keyClick(chart, Qt.Key.Key_Up)
+    assert (slider.value(), view.selected_rule_id) == before
+
+
+def test_e_on_the_chart_does_nothing_when_the_case_has_no_episodes(page, qapp, monkeypatch):
+    import sys
+
+    raised = []  # an error inside a Qt slot goes to the excepthook, not to the caller
+    monkeypatch.setattr(sys, "excepthook", lambda *error: raised.append(error))
+    view, _ = page
+    view.clear_episode_selection()
+    view._episodes = view._episodes.iloc[0:0]
+    view._build_episode_list()
+    value = view.minute_slider.value()
+    view.detail_chart.setFocus()
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    assert view.selected_rule_id is None and view.minute_slider.value() == value
+    assert view.episode_list.currentRow() == -1 and not view.episode_list.selectedItems()
+    assert raised == []
 
 
 def test_the_old_header_and_foot_are_gone(page):
@@ -194,6 +262,7 @@ def test_the_selected_rule_shows_its_name_id_description_ruler_and_numbers(page)
     ("hr_low", "low", [("warn", 45.), ("critical", 40.)], 41.),
     ("pip_rising", "high", [("fires", 0.5)], 0.82),
     ("agent_high", "high", [("warn", 1.5), ("critical", 2.0)], None),
+    ("agent_low_maint", "low", [("fires", 0.3)], 0.2),
 ])
 def test_ruler_for_a_rule_with_numeric_limits(rule, direction, marks, observed):
     spec = ruler_for(load_rule_catalog("default").get(rule), observed)
@@ -211,6 +280,34 @@ def test_ruler_for_a_rule_with_numeric_limits(rule, direction, marks, observed):
     assert tick_values(spec)[0] >= low and tick_values(spec)[-1] <= high
 
 
+def test_a_low_maintenance_agent_rule_fires_strictly_below_its_one_limit():
+    """src/pipeline/flags.py flags MAC_Et < max_mac, so the ruler writes "<", not "≤"."""
+    spec = ruler_for(load_rule_catalog("default").get("agent_low_maint"), 0.2)
+    assert [mark.label for mark in spec.marks] == ["fires < 0.3"]
+    assert spec.observed_label == "min 0.2"
+    assert "fires at less than 0.3 MAC" in spec.description()
+    assert "or less" not in spec.description()
+    # a threshold rule with a warn and a critical limit still fires at the limit
+    assert "warn at 92 % or less" in ruler_for(load_rule_catalog("default").get("spo2_low"), 90.).description()
+
+
+@pytest.mark.parametrize("preset", ["default", "strict", "lenient"])
+def test_the_modules_docstring_names_the_rules_that_get_a_ruler(preset):
+    import re
+
+    import src.desktop.threshold_ruler as module
+
+    doc = module.__doc__ or ""
+    with_ruler, _, without = doc.partition("Rules without a single numeric limit get no ruler:")
+    named = set(re.findall(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b", with_ruler.split("Exactly these rules get a ruler", 1)[1]))
+    named = {name for name in named if not name.startswith("test_")}
+    named_without = set(re.findall(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b", without))
+    catalog = load_rule_catalog(preset)
+    has_ruler = {spec.id for spec in catalog.specs if ruler_for(spec, 1.0) is not None}
+    assert named == has_ruler, (named ^ has_ruler)
+    assert named_without == {spec.id for spec in catalog.specs} - has_ruler
+
+
 @pytest.mark.parametrize("rule", ["compliance_concern", "hypoventilation_pattern", "peep_zero_long", "tv_abs_extreme",
                                   "fio2_high_long", "agent_drift"])
 def test_a_rule_without_one_numeric_limit_has_no_ruler(rule):
@@ -225,6 +322,38 @@ def test_ruler_labels_that_would_collide_go_to_another_row(qapp):
     rows = dict(ruler.label_rows())
     assert len({rows["warn ≤ 92"], rows["critical ≤ 88"], rows["min 90"]}) >= 2
     assert ruler.height() >= 44 + 15 * (max(rows.values()))
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("rule,observed", [("etco2_high", 52.), ("hr_low", 41.), ("spo2_low", 90.), ("agent_low_maint", 0.2)])
+def test_the_ruler_shades_the_side_where_the_rule_fires(qapp, theme, rule, observed):
+    """Read the painted pixels along the axis band: the firing side is tinted and the other side is bare ground."""
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, theme)
+    try:
+        ruler = ThresholdRuler()
+        ruler.resize(400, 60)
+        spec = ruler_for(load_rule_catalog("default").get(rule), observed)
+        ruler.set_ruler(spec)
+        image = ruler.grab().toImage()
+        ground = image.pixelColor(2, 2)
+        low, high, _step = scale_for(spec)
+        marks = [ruler._x_of(mark.value, low, high) for mark in spec.marks]
+        edge = min(marks) if spec.direction == "high" else max(marks)
+        band_y = 23  # inside the band under the axis line, clear of the ticks, the pointer and the labels
+        checked = 0
+        for step in range(1, 40):
+            x = ruler._x_of(low + (high - low) * step / 40, low, high)
+            if any(abs(x - mark) < 4 for mark in marks) or abs(x - edge) < 4:
+                continue  # a limit's own line and the band's edge are not shading
+            on_firing_side = x > edge if spec.direction == "high" else x < edge
+            tinted = image.pixelColor(int(x), band_y) != ground
+            assert tinted == on_firing_side, f"{rule} {theme}: x={x:.0f} firing side {on_firing_side}, tinted {tinted}"
+            checked += 1
+        assert checked > 20
+    finally:
+        apply_theme(qapp, "light")
 
 
 def test_the_ruler_paints_its_pointer_in_the_accent(qapp):
@@ -254,11 +383,26 @@ def test_inspector_sits_beside_the_chart_when_wide_and_below_it_when_narrow(page
 def test_the_keys_line_names_only_keys_that_work(page, qapp):
     view, _ = page
     line = view.keys_label.text()
-    for advertised in ("← →", "Page Up", "Page Down", "↑ ↓", "Esc", "Ctrl+R"):
+    for advertised in ("Chart: ← → one minute", "Shift+← Shift+→ ten", "E next episode", "← →", "Page Up", "Page Down",
+                       "↑ ↓", "Esc", "Ctrl+R"):
         assert advertised in line
-    for not_built in ("Shift", "drag", "E next", "click the time axis"):
+    for not_built in ("drag", "click the time axis"):
         assert not_built not in line
-    slider = view.minute_slider
+    chart, slider = view.detail_chart, view.minute_slider
+    chart.setFocus()
+    here = slider.value()
+    QTest.keyClick(chart, Qt.Key.Key_Left)
+    assert slider.value() == here - 1
+    QTest.keyClick(chart, Qt.Key.Key_Right)
+    assert slider.value() == here
+    QTest.keyClick(chart, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+    assert slider.value() == here - 10
+    QTest.keyClick(chart, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    assert slider.value() == here
+    view.clear_episode_selection()
+    QTest.keyClick(chart, Qt.Key.Key_E)
+    assert view.selected_rule_id == "etco2_high"
+    slider.setValue(25)
     slider.setFocus()
     start = slider.value()
     QTest.keyClick(slider, Qt.Key.Key_Left)

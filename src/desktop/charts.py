@@ -708,6 +708,8 @@ class FocusedSignalChart(QWidget):
     """
 
     episode_clicked = Signal(int)
+    minute_step = Signal(int)  # the keys' request to move the selected minute by this many minutes
+    next_episode_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -992,11 +994,33 @@ class FocusedSignalChart(QWidget):
         painter.setPen(token_color("on_accent"))
         painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        """Left and Right move the minute by one, with Shift by ten; E asks for the next rule episode.
+
+        The chart only asks: the page moves the slider and the episode list, so a key here does what the same
+        key on those controls does.
+        """
+        key, modifiers = event.key(), event.modifiers()
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and modifiers in (
+                Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier):
+            step = 10 if modifiers == Qt.KeyboardModifier.ShiftModifier else 1
+            self.minute_step.emit(-step if key == Qt.Key.Key_Left else step)
+            event.accept()
+            return
+        if key == Qt.Key.Key_E and modifiers == Qt.KeyboardModifier.NoModifier:
+            self.next_episode_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802
         point = event.position()
-        for band, rect in self._bands:
-            if rect.adjusted(-3, -3, 3, 3).contains(point):
-                self.episode_clicked.emit(band.index)
+        # Bands are drawn in list order, so the last one under the point is the one the user sees on top.
+        for margin in (0, 3):
+            hit = next((band for band, rect in reversed(self._bands)
+                        if rect.adjusted(-margin, -margin, margin, margin).contains(point)), None)
+            if hit is not None:
+                self.episode_clicked.emit(hit.index)
                 break
         super().mousePressEvent(event)
 

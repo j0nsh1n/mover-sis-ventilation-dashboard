@@ -120,8 +120,9 @@ SOURCE_COLUMNS = ("Min", "PIP", "ETCO₂", "HR")
 SOURCE_ROW_COLUMNS = ("Signal", "Value", "Unit")
 EPISODE_ROWS_SHOWN = 6
 NO_EPISODE_SELECTED = "Select an episode to inspect its rule and measurements."
-# Only keys that work on this page: the slider's own keys, the episode list's, Escape and Ctrl+R.
-KEYS_LINE = ("Minute slider: ← → one minute, Page Up and Page Down ten · Episode list: ↑ ↓ pick an episode · "
+# Only keys that work on this page: the chart's, the slider's own, the episode list's, Escape and Ctrl+R.
+KEYS_LINE = ("Chart: ← → one minute, Shift+← Shift+→ ten, E next episode · "
+             "Minute slider: ← → one minute, Page Up and Page Down ten · Episode list: ↑ ↓ pick an episode · "
              "Esc back · Ctrl+R rules")
 SHORTLIST_COLLAPSED_ROWS = 3
 SOURCE_ROWS = 3
@@ -677,6 +678,8 @@ class ResearchWorkspace(QWidget):
         column.addLayout(toolbar)
         self.detail_chart = FocusedSignalChart()
         self.detail_chart.episode_clicked.connect(self._pick_episode)
+        self.detail_chart.minute_step.connect(self._step_minute)
+        self.detail_chart.next_episode_requested.connect(self._select_next_episode)
         self.detail_chart.setMinimumWidth(260)
         self.metric_values = self.detail_chart.value_labels
         column.addWidget(self.detail_chart, stretch=1)
@@ -1480,17 +1483,25 @@ class ResearchWorkspace(QWidget):
         self._set_case_actions(bool(result.candidates))
         self._save_board()
 
-    def _duration_text(self, pid: str) -> str:
-        """Minutes from the analyzed-case table, or from the opened case; a dash while neither is known."""
+    def _case_duration(self, pid: str) -> tuple[str, bool]:
+        """The case's length as text, and whether it is the analyzed-case table's own figure.
+
+        The second value is False for the fallback, the last minute of the opened case's data, which is how long
+        the signals run and not a recorded surgery length. A dash while neither is known.
+        """
         cases = self._cases_data[0] if self._cases_data is not None else None
         if cases is not None and {"PID", "case_duration_min"} <= set(cases.columns):
             known = pd.to_numeric(cases.loc[cases["PID"].astype(str) == pid, "case_duration_min"], errors="coerce").dropna()
             if not known.empty:
-                return f"{known.iloc[0]:g} min"
+                return f"{known.iloc[0]:g} min", True
         view = self._case_views.get(pid)
         if view is not None and "t_min" in view.timeseries and not view.timeseries.empty:
-            return f"{float(view.timeseries['t_min'].max()):g} min"
-        return "—"
+            return f"{float(view.timeseries['t_min'].max()):g} min", False
+        return "—", False
+
+    def _duration_text(self, pid: str) -> str:
+        """Minutes from the analyzed-case table, or from the opened case; a dash while neither is known."""
+        return self._case_duration(pid)[0]
 
     def _refresh_durations(self) -> None:
         for row in range(self.candidate_table.rowCount()):
@@ -1776,9 +1787,9 @@ class ResearchWorkspace(QWidget):
         self.detail_title.setText(view.candidate.procedure or "Procedure not recorded")
         age = view.candidate.age
         facts = []
-        duration = self._duration_text(pid)
+        duration, from_table = self._case_duration(pid)
         if duration != "—":
-            facts.append(f"{duration} surgery")
+            facts.append(f"{duration} surgery" if from_table else f"{duration} recorded")
         if age is None or pd.isna(age):
             facts.append("age not recorded")
         else:
@@ -2135,6 +2146,15 @@ class ResearchWorkspace(QWidget):
     def _pick_episode(self, index: int) -> None:
         """A click on the lane selects the episode exactly as choosing it in the list does."""
         self.episode_list.setCurrentRow(index)
+
+    def _step_minute(self, steps: int) -> None:
+        """A key on the chart moves the minute exactly as the same distance on the slider does."""
+        self.minute_slider.setValue(self.minute_slider.value() + steps)
+
+    def _select_next_episode(self) -> None:
+        """The episode after the selected one in time order, the first after the last or when none is selected."""
+        if len(self._episodes):  # no row is current at -1, so the next is the first
+            self.episode_list.setCurrentRow((self.episode_list.currentRow() + 1) % len(self._episodes))
 
     def selected_rule_text(self) -> str:
         """The selected rule as the inspector writes it, name and id first; empty when no episode is selected."""

@@ -610,6 +610,60 @@ def test_lane_clicks_select_only_when_they_land_on_an_episode_band(qapp):
     chart.close()
 
 
+def test_a_click_on_overlapping_bands_picks_the_one_drawn_on_top(qapp):
+    """Past six lane rows a band shares a row with an earlier one and is drawn over it; the click follows the picture."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from src.desktop.charts import MAX_LANE_ROWS, FocusedSignalChart
+
+    count = MAX_LANE_ROWS + 1
+    chart = FocusedSignalChart()
+    chart.resize(900, 700)
+    ts = pd.DataFrame({"t_min": [float(m) for m in range(60)], "PIP": [20.] * 60, "ETCO2": [35.] * 60, "HR": [70.] * 60})
+    episodes = pd.DataFrame([{"rule_id": f"r{i}", "severity": "warn", "t_start_min": 10. + i, "t_end_min": 40.}
+                             for i in range(count)])
+    chart.set_case(ts, pd.DataFrame(), episodes)
+    chart.show()
+    QTest.qWait(180)
+    bands = dict((band.index, (band, rect)) for band, rect in chart.band_rects())
+    last = bands[count - 1]
+    assert last[0].row in {band.row for band, _ in bands.values() if band.index != count - 1}  # it shares a row
+    clicked = []
+    chart.episode_clicked.connect(clicked.append)
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=last[1].center().toPoint())
+    assert clicked == [count - 1]
+    # one pixel outside its left edge the picture shows the earlier band, not the later band's click margin
+    clicked.clear()
+    just_outside = QPoint(int(last[1].left()) - 1, int(last[1].center().y()))
+    assert not last[1].contains(just_outside.toPointF()) and bands[0][1].contains(just_outside.toPointF())
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=just_outside)
+    assert clicked == [0]
+    # a point only an earlier band covers still picks that band
+    first = bands[0]
+    only_first = first[1].adjusted(0, 0, 0, 0)
+    only_first.setRight(min(rect.left() for index, (_, rect) in bands.items() if index and bands[index][0].row == first[0].row) - 6)
+    clicked.clear()
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=only_first.center().toPoint())
+    assert clicked == [0]
+    chart.close()
+
+
+def test_a_click_on_the_selected_episode_keeps_the_selected_minute(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    chart = view.detail_chart
+    view.episode_list.setCurrentRow(0)
+    qapp.processEvents()
+    view.minute_slider.setValue(view.minute_slider.maximum())
+    minute = view.minute_stamp.text()
+    selected_band = next(rect for band, rect in chart.band_rects() if band.index == 0)
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=selected_band.center().toPoint())
+    assert view.minute_stamp.text() == minute
+    assert view.episode_list.currentRow() == 0
+
+
 def test_cursor_marks_each_track_value_and_skips_missing(qapp):
     from PySide6.QtTest import QTest
     from src.desktop.charts import FocusedSignalChart
