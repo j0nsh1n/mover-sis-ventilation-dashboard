@@ -349,7 +349,7 @@ class ResearchWorkspace(QWidget):
 
         self._build_actions()
 
-        choices = QHBoxLayout()
+        choices = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         choices.setSpacing(12)
         choices.addWidget(self.scope_switch)
         choices.addWidget(self.model_menu)
@@ -972,12 +972,17 @@ class ResearchWorkspace(QWidget):
 
         One row when everything fits; otherwise the actions drop under the choices, on the right;
         and when even the actions are too wide, the Trace button drops under the other actions.
+        The scope switch and the model menu stack the same way when they are too wide for the board.
         """
         # Unpolished buttons report plainer, narrower sizes than the styled ones will have.
         for control in (self.scope_switch, self.model_menu, self.new_question_button, self.add_comparison_button,
                         self.cancel_button, self.ask_button):
             control.ensurePolished()
-        choices = self._choices_row.sizeHint().width()
+        # Summed from the parts, not read from the layout, whose own width changes when it stacks.
+        choices = self.scope_switch.sizeHint().width() + self._choices_row.spacing() + self.model_menu.sizeHint().width()
+        self._choices_row.setDirection(
+            QBoxLayout.Direction.LeftToRight if choices <= room else QBoxLayout.Direction.TopToBottom
+        )
         secondary = self._secondary_row.sizeHint().width()
         ask = self.ask_button.sizeHint().width()
         actions = secondary + self._actions_row.spacing() + ask

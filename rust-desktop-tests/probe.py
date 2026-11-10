@@ -234,11 +234,18 @@ def errors(root, variant):
 
 
 def announcements(root):
-    from PySide6.QtGui import QAccessible
+    from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent
 
     app = qt()
     events = []
-    with patch.object(QAccessible, "updateAccessibility", lambda event: events.append((event.type().name, event.message()))):
+
+    def record(event):
+        # Only an announcement has a message; building the window also sends property-change events,
+        # such as the Local AI button's new description, which are cleared below and checked by type after.
+        message = event.message() if isinstance(event, QAccessibleAnnouncementEvent) else None
+        events.append((event.type().name, message))
+
+    with patch.object(QAccessible, "updateAccessibility", record):
         win = window()
         events.clear()
         win.research.set_status("Synthetic status complete")
@@ -264,6 +271,7 @@ def accessible_name(widget):
 def names(root):
     from PySide6.QtWidgets import QPushButton, QTableWidget
     from src.desktop.settings_ui import PathsForm
+    from src.desktop.shell import RailButton
 
     app = qt()
     with no_ollama():
@@ -272,10 +280,13 @@ def names(root):
     result = {key: accessible_name(widget) for key, widget in [
         ("emr", form.edit_emr), ("wave", form.edit_wave), ("processed", form.edit_processed),
         ("models", form.edit_ollama_models), ("question", win.research.question_edit)]}
-    for label in ["Cases", "New question", "Reset", "Rules"]:
-        buttons = [button for button in win.findChildren(QPushButton) if button.text() == label]
-        result[label.replace(" ", "_").lower()] = accessible_name(buttons[0]) if buttons else ""
-    result["table"] = "\n".join(accessible_name(table) for table in win.findChildren(QTableWidget))
+    actions = {button.text(): button for button in win.findChildren(QPushButton)}
+    actions.update({button.text(): button for button in win.rail.findChildren(RailButton)})
+    actions.update({"Local AI": win.research.model_menu, "Trace the evidence": win.research.ask_button})
+    for label in ["Research", "Cases", "Signal", "Practice", "Rules", "Settings", "New question", "Reset",
+                  "Local AI", "Trace the evidence"]:
+        result[label.replace(" ", "_").lower()] = accessible_name(actions[label]) if label in actions else ""
+    result["tables"] = "\n".join(accessible_name(table) for table in win.findChildren(QTableWidget))
     form.close()
     win.close()
     app.processEvents()
@@ -295,9 +306,14 @@ def focus(root):
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QMessageBox
 
+    from src.services.retrieval import RetrievalResult, SearchCandidate
+
     app = qt()
     win = window()
     win.research.set_setup_required(False)
+    # The shortlist table stays hidden until a search returns a case, and a hidden table has no focus to show.
+    candidate = SearchCandidate("SYN_A", "analyzed case", True, "Synthetic procedure", 55, "F", "PID SYN_A.", "keyword", 0.5)
+    win.research.set_results(RetrievalResult(candidates=(candidate,)))
     win.show()
     pump(app)
     stops = []
@@ -308,7 +324,8 @@ def focus(root):
         QTest.keyClick(win, Qt.Key.Key_Tab)
         app.processEvents()
     result = {"tab_stops": len(stops), "unnamed_stops": sum(not text.strip() for text in stops)}
-    for key, widget in [("combo", win.research.model_combo), ("table", win.research.candidate_table)]:
+    for key, widget in [("model_menu", win.research.model_menu), ("trace", win.research.ask_button),
+                        ("rail", win.rail.button("cases")), ("table", win.research.candidate_table)]:
         win.research.question_edit.setFocus()
         pump(app)
         before, _ = border_image(widget)
@@ -329,29 +346,61 @@ def focus(root):
     return result
 
 
+def painted(view, item, role):
+    """True when the row's pixels change once the delegate's data for ``role`` is taken away."""
+    rect = view.visualItemRect(item)
+    before = view.viewport().grab(rect).toImage()
+    kept = item.data(role)
+    item.setData(role, "")
+    after = view.viewport().grab(rect).toImage()
+    item.setData(role, kept)
+    return before != after
+
+
 def chart(root):
     import pandas as pd
-    from PySide6.QtWidgets import QLabel
+    from src.desktop.case_page import GLYPH_ROLE, SEVERITY_ROLE
     from src.desktop.charts import FocusedSignalChart, focused_signals_figure
+    from src.rules import load_rule_catalog
+    from src.services.case_fetch import FetchResult
+    from src.services.retrieval import RetrievalResult, SearchCandidate
 
     app = qt()
     ts = pd.concat([frames("SYN_A")[1]] * 3, ignore_index=True)
     ts["t_min"] = [0., 1., 2.]
     ts["Obs_time"] = pd.date_range("2016-01-01", periods=3, freq="min")
-    flags = pd.DataFrame({"t_min": [0., 1., 2.], "severity": ["info", "warn", "critical"]})
+    # One rule per severity, so each severity is its own episode in the lane and in the list.
+    flags = pd.DataFrame({"PID": "SYN_A", "t_min": [0., 1., 2.], "severity": ["info", "warn", "critical"],
+                          "rule_id": ["pip_rising", "etco2_high", "spo2_low"], "value": 1., "message": "synthetic",
+                          "phase": "maintenance", "Obs_time": ts["Obs_time"]})
     widget = FocusedSignalChart()
     widget.set_case(ts, flags)
     figure = focused_signals_figure(ts, None, flags=flags)
     figure.savefig(root / "severity.png")
-    paths = [repr(collection.get_paths()[0].vertices.tolist()) for collection in figure.axes[-1].collections]
+    lane = figure.axes[-1]
+    shapes = [f"{line.get_label()}:{line.get_marker()}:{line.get_fillstyle()}" for line in lane.lines
+              if line.get_label() in {"info", "warn", "critical"}]
     win = window()
+    catalog = load_rule_catalog("default")
+    win.research.set_rule_catalog(catalog)
+    candidate = SearchCandidate("SYN_A", "analyzed case", True, "Synthetic procedure", 55, "F", "PID SYN_A.", "keyword", 0.5)
+    win.research.set_results(RetrievalResult(candidates=(candidate,)))
+    fetched = FetchResult(cases=pd.DataFrame({"PID": ["SYN_A"], "Age": [55]}), timeseries=ts, flags=flags, events=pd.DataFrame())
+    win.research.set_case_data("SYN_A", ts, flags, fetched=fetched, thresholds_sha256=catalog.thresholds_sha256)
     win.show()
-    win.research.stack.setCurrentIndex(1)
+    win.research.open_detail("SYN_A")
     pump(app)
-    legend = next((label for label in win.findChildren(QLabel) if "Flag marks" in label.text()), None)
+    episodes = win.research.episode_list
+    rows = []
+    for index in range(episodes.count()):
+        item = episodes.item(index)
+        in_view = episodes.isVisible() and episodes.viewport().rect().contains(episodes.visualItemRect(item))
+        rows.append("|".join([str(item.data(SEVERITY_ROLE)), str(item.data(GLYPH_ROLE)), item.text(),
+                              str(int(painted(episodes, item, GLYPH_ROLE))),
+                              str(int(painted(episodes, item, SEVERITY_ROLE))), str(int(in_view))]))
     result = {"name": accessible_name(widget), "description": widget.accessibleDescription(),
-              "marker_paths": "\n".join(paths),
-              "legend": legend.text() if legend else "", "legend_visible": legend.isVisible() if legend else False}
+              "lane_markers": "\n".join(shapes), "lane_hatched_bands": sum(bool(patch.get_hatch()) for patch in lane.patches),
+              "episode_rows": "\n".join(rows), "episode_list_name": accessible_name(episodes)}
     widget.close()
     win.close()
     app.processEvents()
@@ -395,6 +444,7 @@ def layout(root):
 def startup_layout(root):
     from PySide6.QtWidgets import QApplication
     from src.desktop.app import MainWindow, main as desktop_main
+    from src.desktop.shell import ACTIONS, PLACES
 
     app = qt()
     result = {}
@@ -409,9 +459,20 @@ def startup_layout(root):
                       window_width=win.width(), window_height=win.height(),
                       board_height=win.research.board_scroll.viewport().height())
         viewport = win.research.board_scroll.viewport()
+        research = win.research
+        # The controls row under the question: scope, Local AI, the secondary actions and the one filled button.
+        header = [("Question scope", research.scope_switch), ("Local AI", research.model_menu),
+                  ("New question", research.new_question_button), ("Add comparison", research.add_comparison_button),
+                  ("Trace the evidence", research.ask_button)]
+        result["header_action_names"] = "\n".join(name for name, widget in header if widget.isVisible())
         result["header_actions"] = "\n".join(
-            f"{button.mapTo(viewport, QPoint(0, 0)).x()},{button.width()},{viewport.width()}"
-            for button in win.research._header_buttons
+            f"{widget.mapTo(viewport, QPoint(0, 0)).x()},{widget.width()},{viewport.width()}"
+            for _name, widget in header if widget.isVisible()
+        )
+        rail = [win.rail.button(key) for key, _label, _icon in [*PLACES, *ACTIONS]]
+        result["rail_buttons"] = "\n".join(
+            f"{button.mapTo(win.rail, QPoint(0, 0)).y()},{button.height()},{win.rail.height()},{int(button.isVisible())}"
+            for button in rail
         )
         win.grab().save(str(root / "startup.png"))
         win.close()

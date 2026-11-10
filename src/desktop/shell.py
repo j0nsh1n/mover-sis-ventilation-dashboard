@@ -209,6 +209,17 @@ class NavRail(QFrame):
                 button.refresh_icon()
 
 
+class ShrinkableLabel(QLabel):
+    """A label a narrow window may clip: its least width is zero, so the window can shrink to a small screen.
+
+    A plain label never gets narrower than its text, and the footer and running head together would hold the
+    window wider than a screen at double scaling.
+    """
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, super().minimumSizeHint().height())
+
+
 class BreadcrumbLabel(QLabel):
     """The path to the current place. Long paths shorten in the middle; the last part stays whole."""
 
@@ -289,14 +300,16 @@ class RunningHead(QFrame):
         self.find_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.find_button.clicked.connect(self.find_requested)
         layout.addWidget(self.find_button)
-        self.stamp = QLabel(f"○ {RESEARCH_STAMP}", self)
+        self.stamp = ShrinkableLabel(f"○ {RESEARCH_STAMP}", self)
         self.stamp.setObjectName("stamp")
         self.stamp.setAccessibleName(RESEARCH_STAMP)
+        self.stamp.setToolTip(RESEARCH_STAMP)
         layout.addWidget(self.stamp)
-        self.fiction = QLabel(self)
+        self.fiction = ShrinkableLabel(self)
         self.fiction.setObjectName("fictionLabel")
         self.fiction.setText(f"{FICTION_LABEL} · {FICTION_NOTE}")
         self.fiction.setAccessibleName(f"{FICTION_LABEL}: {FICTION_NOTE}")
+        self.fiction.setToolTip(f"{FICTION_LABEL}: {FICTION_NOTE}")
         layout.addWidget(self.fiction)
         self.set_place(["Research"], practice=False)
 
@@ -371,7 +384,7 @@ class FooterFields:
 
     @staticmethod
     def _field(bar: QStatusBar, name: str) -> QLabel:
-        label = QLabel(bar)
+        label = ShrinkableLabel(bar)
         label.setObjectName("footerField")
         label.setProperty("field", name)
         label.setTextFormat(Qt.TextFormat.RichText)

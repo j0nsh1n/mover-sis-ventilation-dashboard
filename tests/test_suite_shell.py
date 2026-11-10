@@ -156,6 +156,23 @@ def test_rail_head_and_footer_stay_inside_a_900_pixel_window(window, qapp):
     assert footer.model.mapTo(window, footer.model.rect().bottomRight()).x() <= 900
 
 
+def test_the_window_can_shrink_to_a_double_scaled_screen_with_the_longest_footer(window, qapp):
+    """A 2x screen is a few hundred logical pixels wide: the footer and head clip their text, never widen the window."""
+    window._footer.show_research(
+        source_tip="",
+        counts=("<b>19,114</b> indexed · <b>1,200</b> analyzed", "19,114 indexed, 1,200 analyzed"),
+        rules=("rules default @0123456789ab", "rules default"),
+        model=("demo-model:3b-instruct-q4 ready", "model ready"),
+    )
+    qapp.processEvents()
+    assert window.minimumSizeHint().width() <= 400
+    window.rail.button("practice").click()  # the fiction label is the longer line on practice pages
+    qapp.processEvents()
+    assert window.minimumSizeHint().width() <= 400
+    assert window.head.stamp.toolTip() == window.head.stamp.accessibleName()
+    assert window.head.fiction.toolTip() == window.head.fiction.accessibleName()
+
+
 def test_repeated_install_leaves_one_rail_and_the_same_title(window, qapp):
     title = window.windowTitle()
     rail, head, research = window.rail, window.head, window.research

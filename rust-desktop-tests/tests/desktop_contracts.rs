@@ -149,11 +149,32 @@ fn fields_and_actions_expose_meaningful_accessible_names() {
             .to_lowercase()
             .contains("question")
     );
-    for label in ["Cases", "New question", "Reset", "Rules"] {
+    for label in [
+        "Research",
+        "Cases",
+        "Signal",
+        "Practice",
+        "Rules",
+        "Settings",
+        "New question",
+        "Reset",
+        "Local AI",
+        "Trace the evidence",
+    ] {
         let key = label.replace(' ', "_").to_lowercase();
-        assert!(observed.text(&key).contains(label));
+        assert_eq!(observed.text(&key), label, "name of {label}");
     }
-    assert_eq!(observed.text("table"), "Retrieved cases");
+    let tables = observed.text("tables");
+    let mut tables: Vec<&str> = tables.lines().collect();
+    tables.sort_unstable();
+    assert_eq!(
+        tables,
+        [
+            "Retrieved cases",
+            "Source row at the selected minute",
+            "Source rows behind the observation"
+        ]
+    );
     observed.finish();
 }
 
@@ -163,8 +184,12 @@ fn keyboard_focus_is_named_visible_and_recovers_after_warning() {
     let mut observed = probe("focus", "keyboard", &dir);
     assert!(observed.number("tab_stops") >= 5);
     assert_eq!(observed.number("unnamed_stops"), 0);
-    assert!(observed.number("combo_border_changes") > 0);
-    assert!(observed.number("table_border_changes") > 0);
+    for control in ["model_menu", "trace", "rail", "table"] {
+        assert!(
+            observed.number(&format!("{control}_border_changes")) > 0,
+            "{control} shows no focus"
+        );
+    }
     assert_eq!(observed.text("warning_focus_name"), "Research question");
     observed.finish();
 }
@@ -178,19 +203,50 @@ fn chart_has_text_and_shapes_beyond_color() {
     for severity in ["info", "warn", "critical"] {
         assert!(description.contains(&format!("1 {severity} minutes")));
     }
-    let markers = observed.text("marker_paths");
+    // The lane draws one shape per severity; the three differ, so color is not the only cue.
+    let lane = observed.text("lane_markers");
+    let markers: std::collections::BTreeMap<&str, &str> = lane
+        .lines()
+        .map(|row| {
+            let (severity, marker) = row.split_once(':').unwrap();
+            (severity, marker.split(':').next().unwrap())
+        })
+        .collect();
     assert_eq!(
-        markers
-            .split('\n')
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        3
+        markers,
+        [("info", "o"), ("warn", "^"), ("critical", "D")]
+            .into_iter()
+            .collect(),
+        "lane shapes: circle = info, triangle = warn, diamond = critical"
     );
-    let legend = observed.text("legend");
-    assert!(observed.boolean("legend_visible"));
-    for word in ["circle", "triangle", "diamond", "info", "warn", "critical"] {
-        assert!(legend.contains(word));
+    assert_eq!(observed.number("lane_hatched_bands"), 3);
+    // The design dropped the legend sentence: each row of the episode list carries the shape and the word.
+    assert_eq!(observed.text("episode_list_name"), "Rule episodes");
+    let rows = observed.text("episode_rows");
+    assert_eq!(rows.lines().count(), 3);
+    let mut glyphs = std::collections::BTreeSet::new();
+    for row in rows.lines() {
+        let fields: Vec<&str> = row.split('|').collect();
+        let [severity, glyph, text, glyph_painted, word_painted, in_view] = fields[..] else {
+            panic!("episode row: {row}")
+        };
+        let expected = match severity {
+            "info" => "\u{25cb}",
+            "warn" => "\u{25b3}",
+            "critical" => "\u{25c6}",
+            _ => panic!("unknown severity {severity}"),
+        };
+        assert_eq!(glyph, expected, "shape of {severity}");
+        assert!(
+            text.starts_with(glyph) && text.contains(severity),
+            "row text lacks the shape or the word: {text}"
+        );
+        assert_eq!(glyph_painted, "1", "{severity} shape is not painted");
+        assert_eq!(word_painted, "1", "{severity} word is not painted");
+        assert_eq!(in_view, "1", "{severity} row is not visible");
+        glyphs.insert(glyph);
     }
+    assert_eq!(glyphs.len(), 3);
     observed.finish();
 }
 
@@ -233,7 +289,20 @@ fn startup_at_double_scale_fits_screen_and_keeps_board_usable() {
     assert!(observed.number("window_width") <= screen_width);
     assert!(observed.number("window_height") <= screen_height);
     assert!(observed.number("board_height") >= 250);
-    for row in observed.text("header_actions").lines() {
+    let names = observed.text("header_action_names");
+    assert_eq!(
+        names.lines().collect::<Vec<_>>(),
+        [
+            "Question scope",
+            "Local AI",
+            "New question",
+            "Add comparison",
+            "Trace the evidence"
+        ]
+    );
+    let actions = observed.text("header_actions");
+    assert_eq!(actions.lines().count(), 5);
+    for row in actions.lines() {
         let bounds: Vec<i32> = row.split(',').map(|part| part.parse().unwrap()).collect();
         let [x, width, viewport_width] = bounds[..] else {
             panic!("header geometry")
@@ -241,6 +310,18 @@ fn startup_at_double_scale_fits_screen_and_keeps_board_usable() {
         assert!(
             x >= 0 && width > 0 && x + width <= viewport_width,
             "clipped header action: {row}"
+        );
+    }
+    let rail = observed.text("rail_buttons");
+    assert_eq!(rail.lines().count(), 6);
+    for row in rail.lines() {
+        let bounds: Vec<i32> = row.split(',').map(|part| part.parse().unwrap()).collect();
+        let [y, height, rail_height, visible] = bounds[..] else {
+            panic!("rail geometry")
+        };
+        assert!(
+            visible == 1 && y >= 0 && height > 0 && y + height <= rail_height,
+            "clipped rail button: {row}"
         );
     }
     observed.finish();

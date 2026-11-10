@@ -143,6 +143,22 @@ def test_changing_the_scope_clears_the_board_once_and_a_silent_set_does_not(view
     assert view.scope == "Cases"
 
 
+def test_the_controls_wrap_inside_a_narrow_board(view, qapp):
+    """Scope and the model menu stack when they are too wide together; nothing is cut off at the board's edge."""
+    view.resize(336, 700)
+    qapp.processEvents()
+    viewport = view.board_scroll.viewport()
+    controls = [view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
+                view.ask_button]
+    for control in controls:
+        left = control.mapTo(viewport, control.rect().topLeft()).x()
+        assert control.isVisible() and left >= 0 and left + control.width() <= viewport.width(), control.accessibleName()
+    assert view.model_menu.y() > view.scope_switch.y()  # stacked: the menu is under the switch, not clipped beside it
+    view.resize(1316, 800)
+    qapp.processEvents()
+    assert abs(view.model_menu.y() - view.scope_switch.y()) < 8  # one row again when it fits
+
+
 def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_then_the_trail(view, qapp):
     board_with_case(view)
     view.activateWindow()
