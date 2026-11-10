@@ -284,15 +284,24 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
-- **Visual overhaul, stage 1 (2026-11-08, branch `feat/visual-overhaul`, not
-  pushed):** design tokens for light and dark in `src/desktop/theme.py`
-  (`tokens()`, `token_color()`), bundled Charter and Inter
-  (`src/desktop/fonts.py`, `assets/fonts/`), the base stylesheet and focus
-  ring, one-ink flag marks and severity text (`src/desktop/marks.py`), the
-  hatched missing-data cell, and a WCAG contrast test. Plan:
-  `_work/mover-suite/VISUAL-OVERHAUL-PLAN.md`. Next: stage 2, the app frame.
-  Per-screen stylesheets in the research workspace, cases overview and
-  practice panels still use their own colors until their stages.
+- **Visual overhaul, stages 1 to 4 (2026-11-10, branch `feat/visual-overhaul`):**
+  stage 1 tokens, fonts, base stylesheet, flag marks and the hatched missing
+  cell; stage 2 the app frame (left rail, running head, footer, Ctrl+K, no
+  menu bar); stage 3 the research page; stage 4 the case page
+  (`src/desktop/case_page.py`, `threshold_ruler.py`, the focused chart in
+  `charts.py`). Stages 1 to 3 are pushed at `bed3906`; stage 4 and its review
+  fixes are local only. Plan and owner decisions:
+  `_work/mover-suite/VISUAL-OVERHAUL-PLAN.md`. Next: stage 5, Cases and Rules
+  (the Rules drawer is still light in dark mode). The cases overview, Rules
+  drawer, Settings and practice panels keep their own colors until their
+  stages.
+- **Desktop contract checks:** `rust-desktop-tests/` is run by neither CI nor
+  the pytest suite. Run it by hand after any change under `src/desktop/`; it
+  was red on this branch from stage 2 until `7f158a6` and found two real
+  layout faults.
+- **Open spec wording (needs the owner's approval):** F still says "a mark
+  on the lane" (now a band per episode), and the frame text does not say how
+  narrow windows shorten Find, the research-only line and the footer.
 - **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
 - **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
   Phase 2 commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`.

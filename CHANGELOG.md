@@ -23,7 +23,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 - New look, case page: the page that shows one case now uses the same paper
   and night ledger colors as the research page, in light and dark. The header
-  is the procedure with one line of facts (surgery length, age, sampling, rule
+  is the procedure with one line of facts (surgery or recording length, age, sampling, rule
   preset and its 12-character hash, number of rule episodes) and the selected
   minute at the right. The chart has no boxes: each track shows its name, unit
   and the value at the cursor (or "missing"), every gap inside a recorded span is
@@ -33,7 +33,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   panel at the right (below the chart when the window is narrow). The selected
   rule has a threshold ruler that shows its limits and where the episode's
   extreme fell. Back says where it returns, "More signals" is "+ Track", and the
-  keys line lists only keys that work.
+  keys line lists only keys that work. With the chart focused, Left and Right
+  move one minute, Shift with them ten, and E goes to the next rule episode.
+  Tab into the rule episodes list changes nothing; an arrow key, Enter or Space
+  picks an episode.
+
+- Narrow windows: the header never cuts its research-only line. The page path
+  and Find give up room first; then the line reads "Not for patient care" (on
+  practice pages, "Fictional practice"). The full sentence stays in the tooltip.
+  Footer fields shorten by whole words with "…" or hide. The window can now
+  shrink to fit a small screen at 200% scaling.
 
 - New look, first step: warm paper (light) and "night ledger" (dark) colors with
   one indigo accent, Inter and Charter fonts bundled with the app, quieter
