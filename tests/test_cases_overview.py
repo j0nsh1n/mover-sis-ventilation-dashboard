@@ -143,7 +143,7 @@ def test_missing_columns_show_empty_cells(qapp):
     assert {overview.cell_text(r, rules_column) for r in range(3)} == {""}
 
 
-def test_click_and_enter_request_the_right_case(qapp):
+def test_enter_requests_the_current_case_and_a_click_only_selects_it(qapp):
     view = _workspace(_cases((9, 100, 25)))
     requests = []
     view.case_requested.connect(lambda *args: requests.append(args))
@@ -152,13 +152,11 @@ def test_click_and_enter_request_the_right_case(qapp):
     table = overview.table
     viewport = table.viewport()
 
-    # Sorted by score descending: row 1 is the score-25 case
-    pid_at_row_1 = overview.cell_text(1, 0)
+    # Sorted by score descending: row 1 is the score-25 case. One click selects it and opens nothing.
     center = table.visualRect(table.model().index(1, 0)).center()
     QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
-    assert requests == [(pid_at_row_1, False, True)]
+    assert requests == [] and table.currentIndex().row() == 1
 
-    requests.clear()
     table.setFocus()
     table.setCurrentIndex(table.model().index(2, 0))
     QTest.keyClick(table, Qt.Key.Key_Return)
@@ -578,7 +576,7 @@ def test_escape_in_f_from_the_question_returns_to_the_canvas(request_window):
     assert view.status_label.text() == "Returned to the same question and comparison."
 
 
-def test_double_click_opens_the_case_once(qapp):
+def test_double_click_opens_the_case_once_and_a_later_click_does_not(qapp):
     view = _workspace(_cases((9, 100, 25)))
     requests = []
     view.case_requested.connect(lambda *args: requests.append(args))
@@ -593,9 +591,9 @@ def test_double_click_opens_the_case_once(qapp):
         send(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
     assert requests == [(pid, False, True)]
 
-    # A later single click is a new action
+    # A later single click is only a selection
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
-    assert requests == [(pid, False, True)] * 2
+    assert requests == [(pid, False, True)]
 
 
 def test_equal_scores_break_ties_by_pid_ascending_in_both_directions(qapp):
@@ -663,7 +661,7 @@ def _column(key: str) -> int:
     return next(i for i, column in enumerate(COLUMNS) if column.key == key)
 
 
-def test_agent_and_median_columns_show_their_own_values(qapp):
+def test_agent_and_median_fields_show_in_the_preview_with_their_own_values(qapp):
     cases = _cases((9, 100)).assign(primary_agent_name=["sevoflurane", "desflurane"],
                                     median_TV=[410.5, 505.0], median_PIP=[18.0, 24.5],
                                     median_ETCO2=[33.0, 41.5])
@@ -673,14 +671,17 @@ def test_agent_and_median_columns_show_their_own_values(qapp):
     titles = {column.key: column.title for column in COLUMNS}
     assert [titles[key] for key in ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
         "Primary agent", "Median TV (mL)", "Median PIP (cmH₂O)", "Median ETCO₂ (mmHg)"]
-    rows = {overview.cell_text(row, 0): row for row in range(2)}
-    first, second = rows["SYN0000000000"], rows["SYN0000000001"]
-    assert [overview.cell_text(first, _column(key)) for key in
-            ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
-        "sevoflurane", "410.5", "18", "33"]
-    assert [overview.cell_text(second, _column(key)) for key in
-            ("primary_agent_name", "median_TV", "median_PIP", "median_ETCO2")] == [
-        "desflurane", "505", "24.5", "41.5"]
+    # sorted by score descending, the 100 case (desflurane) is current first; the values are the row's own
+    assert overview.row_for("SYN0000000000")["median_TV"] == 410.5
+
+    def facts() -> list[str]:
+        return [label.text() for label in overview.preview.field_labels if label.isVisibleTo(overview)]
+
+    assert facts() == ["Primary agent: desflurane", "Median TV (mL): 505", "Median PIP (cmH₂O): 24.5",
+                       "Median ETCO₂ (mmHg): 41.5"]
+    overview.table.selectRow(1)
+    assert facts() == ["Primary agent: sevoflurane", "Median TV (mL): 410.5", "Median PIP (cmH₂O): 18",
+                       "Median ETCO₂ (mmHg): 33"]
 
 
 @pytest.mark.parametrize(("warn", "critical", "flagged"), [
@@ -816,6 +817,8 @@ def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme):
     apply_theme(qapp, theme)
     try:
         view = _workspace(_cases())
+        # tall enough that the preview's button, under the list at this width, is on screen to be sampled
+        view.resize(1000, 1800)
         view.show_cases()
         overview = view._cases_overview
         QApplication.processEvents()
@@ -831,7 +834,6 @@ def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme):
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_case_ids_and_top_rules_fit_their_columns_at_the_default_width(qapp, theme):
-    from PySide6.QtGui import QFontMetrics
     from PySide6.QtWidgets import QStyleOptionViewItem
 
     from src.desktop.theme import apply_theme
@@ -853,7 +855,7 @@ def test_case_ids_and_top_rules_fit_their_columns_at_the_default_width(qapp, the
                 option.rect = table.visualRect(index)
                 # the delegate pads each side of the text by CELL_PADDING
                 room = table.columnWidth(column) - 2 * CELL_PADDING
-                wanted = QFontMetrics(option.font).horizontalAdvance(index.data())
+                wanted = table.fontMetrics().horizontalAdvance(index.data())
                 assert wanted <= room, (theme, COLUMNS[column].key, index.data(), wanted, room)
         view.close()
     finally:

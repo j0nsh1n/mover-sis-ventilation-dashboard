@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +54,7 @@ from src.desktop.cases_preview import (
     PreviewSource,
 )
 from src.desktop.cases_summary import SummaryBlock, duration_spec, rules_spec, score_spec
+from src.desktop.fonts import tabular
 from src.desktop.shell import nav_icon
 from src.desktop.theme import active_theme, token_color
 
@@ -62,17 +63,22 @@ SCOPE_SCAN = "scan"
 
 EMPTY_MESSAGE = "No processed cases yet. Run Data setup or a full-EMR scan."
 
-# Page width from which the preview sits beside the list; below it the preview goes under the list, so the
-# page never scrolls sideways beside the open Rules drawer or at the window's least width.
-SIDE_BY_SIDE_WIDTH = 980
 # List-column widths below which the header controls and the three charts stack instead of sitting in a row.
 HEADER_ROW_WIDTH = 760
 CHARTS_ROW_WIDTH = 600
 ROW_HEIGHT = 33
-CELL_PADDING = 10
+HEADER_HEIGHT = 34
+HEADER_HEIGHT_WRAPPED = 48
+CELL_PADDING = 8
 # Room at the right of a number column's heading and cells for the sort arrow, so the arrow never covers a letter
-SORT_ARROW_ROOM = 16
-SCORE_BAR_WIDTH = 56
+SORT_ARROW_ROOM = 14
+LIST_MARGINS_WIDE = (32, 16, 28, 20)
+LIST_MARGINS_STACKED = (32, 16, 32, 24)
+# Where the list's rows end at the right: the vertical scroll bar's width plus the table's 2 px frame on each side
+TABLE_CHROME = 14
+# The page's own vertical scroll bar, which narrows the list when the page is taller than the window
+PAGE_SCROLLBAR = 14
+SCORE_BAR_WIDTH = 40
 SCORE_BAR_HEIGHT = 5
 SELECTED_BAR = 3
 SORT_ROLE = Qt.ItemDataRole.UserRole
@@ -86,6 +92,8 @@ class Column:
     kind: str  # "text" or "number"
     tooltip: str = ""
     first_sort_descending: bool = False
+    # False: the field is shown as a "label: value" fact in the preview and has no column
+    in_table: bool = True
 
 
 COLUMNS = (
@@ -101,17 +109,26 @@ COLUMNS = (
     Column("n_critical", "Critical count", "number", "Minutes with a critical flag.",
            first_sort_descending=True),
     Column("top_rules", "Top rules", "text", "Most frequent rules with their flagged-minute counts."),
-    Column("primary_agent_name", "Primary agent", "text"),
-    Column("median_TV", "Median TV (mL)", "number"),
-    Column("median_PIP", "Median PIP (cmH₂O)", "number"),
-    Column("median_ETCO2", "Median ETCO₂ (mmHg)", "number"),
+    Column("primary_agent_name", "Primary agent", "text", in_table=False),
+    Column("median_TV", "Median TV (mL)", "number", in_table=False),
+    Column("median_PIP", "Median PIP (cmH₂O)", "number", in_table=False),
+    Column("median_ETCO2", "Median ETCO₂ (mmHg)", "number", in_table=False),
 )
+# The table's columns are the leading ones, so a column's number is also its place in COLUMNS.
+TABLE_COLUMNS = tuple(column for column in COLUMNS if column.in_table)
+PREVIEW_FIELDS = tuple(column for column in COLUMNS if not column.in_table)
+assert COLUMNS[:len(TABLE_COLUMNS)] == TABLE_COLUMNS
 SCORE_COLUMN = next(i for i, c in enumerate(COLUMNS) if c.key == "anomaly_score")
 _COLUMN_INDEX = {column.key: i for i, column in enumerate(COLUMNS)}
 _COUNT_COLUMNS = (_COLUMN_INDEX["n_warn"], _COLUMN_INDEX["n_critical"])
-_MUTED_COLUMNS = (_COLUMN_INDEX["top_rules"], _COLUMN_INDEX["primary_agent_name"])
-# Column widths for the page's text at its size; a heading that needs more than this widens its column.
-_COLUMN_WIDTHS = (148, 200, 60, 60, 124, 150, 110, 120, 440, 150, 150, 180, 190)
+_MUTED_COLUMNS = (_COLUMN_INDEX["top_rules"],)
+# The two columns that give up room and shorten with "…"; every other column keeps its whole text.
+_FLEXIBLE = (_COLUMN_INDEX["Procedure_short"], _COLUMN_INDEX["top_rules"])
+# Widths a flexible column is given when there is room, and the least it is ever given
+_FLEX_IDEAL = {_FLEXIBLE[0]: 230, _FLEXIBLE[1]: 460}
+_FLEX_LEAST = 64
+_FLEX_READABLE = {_FLEXIBLE[0]: 150, _FLEXIBLE[1]: 260}
+SCORE_BAR_LEAST = 24
 _FLAG_COUNTS = ("n_info", "n_warn", "n_critical")
 
 _RULE_ENTRY = re.compile(r"^\s*([^\s(),]+)\s*(?:\((\d+)\))?\s*$")
@@ -140,6 +157,11 @@ class _CasesModel(QAbstractTableModel):
         self._labels: dict[str, str] = {}
         self._rule_text: dict[str, str] = {}
         self._search: dict[int, tuple[str, ...]] = {}
+        self._present: set[str] = set()
+
+    def has_field(self, key: str) -> bool:
+        """True when the loaded frame has this field at all; a value missing inside it is "missing" in the preview."""
+        return key in self._present
 
     @property
     def labels(self) -> Mapping[str, str]:
@@ -155,11 +177,13 @@ class _CasesModel(QAbstractTableModel):
     def set_frame(self, frame: pd.DataFrame | None) -> None:
         self.beginResetModel()
         self._search = {}
+        self._present = set()
         if frame is None or frame.empty or "PID" not in frame:
             self._cells = [[] for _ in COLUMNS]
             self._count = 0
             self._flagged = []
         else:
+            self._present = {column.key for column in COLUMNS if column.key in frame.columns}
             ordered = frame.assign(_pid=frame["PID"].astype(str)).sort_values("_pid", kind="stable")
             cells: list[list[Any]] = []
             for column in COLUMNS:
@@ -180,6 +204,13 @@ class _CasesModel(QAbstractTableModel):
                     flagged = flagged + pd.to_numeric(ordered[name], errors="coerce").fillna(0)
             self._flagged = [bool(v) for v in (flagged > 0)]
         self.endResetModel()
+
+    def shown_texts(self, column: int) -> set[str]:
+        """The distinct texts a column shows, for sizing it to the widest."""
+        values = self._cells[column]
+        if COLUMNS[column].kind == "number":
+            return {_number_text(v) for v in values if v is not None}
+        return {str(v) for v in values if v}
 
     def has_episodes(self, row: int) -> bool:
         """True when the case has at least one flagged minute, so it has rule episodes."""
@@ -208,7 +239,7 @@ class _CasesModel(QAbstractTableModel):
         return 0 if parent.isValid() else self._count
 
     def columnCount(self, parent=_NO_PARENT) -> int:  # noqa: N802
-        return 0 if parent.isValid() else len(COLUMNS)
+        return 0 if parent.isValid() else len(TABLE_COLUMNS)
 
     def pid_at(self, row: int) -> str:
         return str(self._cells[0][row])
@@ -253,7 +284,7 @@ class _CasesModel(QAbstractTableModel):
         return None
 
     def headerData(self, section: int, orientation, role: int = Qt.ItemDataRole.DisplayRole):  # noqa: N802
-        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(COLUMNS):
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(TABLE_COLUMNS):
             return None
         column = COLUMNS[section]
         if role == Qt.ItemDataRole.DisplayRole:
@@ -264,7 +295,8 @@ class _CasesModel(QAbstractTableModel):
             return Qt.SortOrder.DescendingOrder
         if role == Qt.ItemDataRole.TextAlignmentRole:
             side = Qt.AlignmentFlag.AlignRight if column.kind == "number" else Qt.AlignmentFlag.AlignLeft
-            return int(side | Qt.AlignmentFlag.AlignVCenter)
+            # a heading wraps to a second line before it is ever cut, once the list is as narrow as it gets
+            return int(side | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap)
         return None
 
 
@@ -306,33 +338,15 @@ class _CasesProxy(QSortFilterProxyModel):
 
 
 class _CasesTable(QTableView):
-    """Emits ``row_activated`` once per opening gesture: Enter, and a click or a double-click as ``CLICK_OPENS`` says."""
+    """Emits ``row_activated`` once per opening gesture: Enter, or a double-click. One click only selects the row."""
 
     row_activated = Signal(int)
-
-    # The one place that decides what a click does. True: a click opens the row's case, as the spec says today.
-    # False: a click only selects the row, so the preview follows it, and a double-click or Enter opens it.
-    CLICK_OPENS = True
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._double_click_pending = False
+    resized = Signal()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        # Qt sends press, release, double-click, release; with CLICK_OPENS the first release already opened the row
-        self._double_click_pending = True
         super().mouseDoubleClickEvent(event)
         index = self.indexAt(event.position().toPoint())
-        if not self.CLICK_OPENS and index.isValid() and event.button() == Qt.MouseButton.LeftButton:
-            self.row_activated.emit(index.row())
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        super().mouseReleaseEvent(event)
-        if self._double_click_pending:
-            self._double_click_pending = False
-            return
-        index = self.indexAt(event.position().toPoint())
-        if self.CLICK_OPENS and index.isValid() and event.button() == Qt.MouseButton.LeftButton:
+        if index.isValid() and event.button() == Qt.MouseButton.LeftButton:
             self.row_activated.emit(index.row())
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
@@ -341,6 +355,43 @@ class _CasesTable(QTableView):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.resized.emit()
+
+
+def plan_column_widths(available: int, tiers: Sequence[Sequence[int]], flexible: Sequence[int]) -> list[int]:
+    """Column widths that add up to ``available``, or to the first tier when even that does not fit.
+
+    ``tiers`` are widths in the order they are wanted, each at least the one before it: the least every column needs,
+    then more for the columns that matter first, and so on. Room goes to a tier completely before the next one gets
+    any; inside a step it is shared by how much each column still wants. Room beyond the last tier goes to the
+    ``flexible`` columns, so the widths always fill the list.
+    """
+    widths = [int(w) for w in tiers[0]]
+    spare = available - sum(widths)
+    for previous, target in zip(tiers, tiers[1:], strict=False):
+        if spare <= 0:
+            return widths
+        wanted = [t - p for p, t in zip(previous, target, strict=True)]
+        total = sum(wanted)
+        if total == 0:
+            continue
+        given = min(spare, total)
+        shares = [given * w // total for w in wanted]
+        # whole pixels left over by the division go to the columns that still wanted more, one each
+        for i in sorted(range(len(wanted)), key=lambda i: -wanted[i])[: given - sum(shares)]:
+            shares[i] += 1
+        widths = [w + share for w, share in zip(widths, shares, strict=True)]
+        spare -= given
+    if spare > 0:
+        weights = [tiers[-1][i] for i in flexible]
+        added = [spare * w // sum(weights) for w in weights]
+        added[-1] += spare - sum(added)
+        for i, extra in zip(flexible, added, strict=True):
+            widths[i] += extra
+    return widths
 
 
 def score_bar_length(value: float, peak: float, room: float) -> float:
@@ -369,6 +420,13 @@ class _CasesDelegate(QStyledItemDelegate):
         if column in _COUNT_COLUMNS and isinstance(value, float) and value == 0:
             return "ink_3"
         return "ink_2" if column in _MUTED_COLUMNS else "ink"
+
+    @staticmethod
+    def shown(text: str, metrics: QFontMetrics, column: int, width: int) -> str:
+        """``text`` as a cell of ``width`` shows it: whole, or cut with an ellipsis when it does not fit."""
+        number = COLUMNS[column].kind == "number"
+        room = width - 2 * CELL_PADDING - (SORT_ARROW_ROOM if number else 0)
+        return metrics.elidedText(text, Qt.TextElideMode.ElideRight, room)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
         opt = QStyleOptionViewItem(option)
@@ -400,8 +458,8 @@ class _CasesDelegate(QStyledItemDelegate):
                     token_color("ink_2"))
         painter.setFont(font)
         painter.setPen(token_color(self.text_token(index)))
-        shown = painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, right - left)
-        painter.drawText(left, rect.top(), right - left, rect.height(), flags, shown)
+        painter.drawText(left, rect.top(), right - left, rect.height(), flags,
+                         self.shown(text, painter.fontMetrics(), column, rect.width()))
         painter.restore()
 
 
@@ -445,6 +503,9 @@ class CasesOverview(QWidget):
         self._flags: pd.DataFrame | None = None
         self._preview_source = PreviewSource()
         self._wide: bool | None = None
+        # the nine columns' width tiers (see plan_column_widths) and the width each whole heading needs
+        self._tiers: list[list[int]] = [[]]
+        self._full: list[int] = []
         self._header_row: bool | None = None
         self._charts_row: bool | None = None
 
@@ -455,7 +516,7 @@ class CasesOverview(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         outer.addWidget(self._scroll)
         body = QWidget()
         self._body = QBoxLayout(QBoxLayout.Direction.LeftToRight, body)
@@ -553,7 +614,7 @@ class CasesOverview(QWidget):
         self.table.setObjectName("casesTable")
         self.table.setAccessibleName("Cases")
         self.table.setAccessibleDescription(
-            "Click a column heading to sort. Enter opens the current case; the preview beside it follows the arrow keys."
+            "Click a row to preview it. Enter or a double-click opens the case. Click a column heading to sort."
         )
         self.table.setModel(self._proxy)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -567,17 +628,20 @@ class CasesOverview(QWidget):
         self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        # Nine columns always fit the list's width, so it never scrolls sideways; below the least width the page does
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setMinimumHeight(240)
         self._delegate = _CasesDelegate(self.table)
         self.table.setItemDelegate(self._delegate)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setMinimumSectionSize(56)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        header.setMinimumSectionSize(1)
         header.setSortIndicatorClearable(False)
-        header.setFixedHeight(34)
+        header.setFixedHeight(HEADER_HEIGHT)
         self.table.row_activated.connect(self._activate_row)
-        header.sortIndicatorChanged.connect(self._refresh_summary)
+        self.table.resized.connect(self._layout_columns)
+        self.table.verticalScrollBar().rangeChanged.connect(self._layout_columns)
+        header.sortIndicatorChanged.connect(self._sort_changed)
         self._column.addWidget(self.table, 1)
         self.empty_label = QLabel(EMPTY_MESSAGE)
         self.empty_label.setObjectName("bodyText")
@@ -631,12 +695,20 @@ class CasesOverview(QWidget):
         super().resizeEvent(event)
         self._reflow()
 
+    def least_width(self) -> int:
+        """The narrowest page that shows all nine columns; narrower, the page scrolls sideways instead."""
+        return sum(self._tiers[0]) + TABLE_CHROME + PAGE_SCROLLBAR + sum(LIST_MARGINS_STACKED[::2])
+
+    def side_by_side_width(self) -> int:
+        """Page width from which the preview sits beside the list: the list keeps its nine columns beside it."""
+        return sum(self._tiers[0]) + TABLE_CHROME + PAGE_SCROLLBAR + sum(LIST_MARGINS_WIDE[::2]) + PREVIEW_WIDTH
+
     def _reflow(self) -> None:
-        wide = self.width() >= SIDE_BY_SIDE_WIDTH
+        wide = self.width() >= self.side_by_side_width()
         if wide != self._wide:
             self._wide = wide
             self._body.setDirection(QBoxLayout.Direction.LeftToRight if wide else QBoxLayout.Direction.TopToBottom)
-            self._column.setContentsMargins(*((32, 16, 28, 20) if wide else (32, 16, 32, 24)))
+            self._column.setContentsMargins(*(LIST_MARGINS_WIDE if wide else LIST_MARGINS_STACKED))
             if wide:
                 self.preview.setFixedWidth(PREVIEW_WIDTH)
             else:
@@ -785,7 +857,7 @@ class CasesOverview(QWidget):
         empty = self._model.rowCount() == 0
         if scan:
             self.empty_label.setText(
-                "The full-EMR scan scored no cases. Run File, Scan full EMR again after "
+                "The full-EMR scan scored no cases. Press Ctrl+K and choose Scan full EMR again after "
                 "checking the EMR folder in Data setup."
             )
         else:
@@ -794,9 +866,10 @@ class CasesOverview(QWidget):
         self._update_charts()
         self.charts_panel.setVisible(not empty)
         self.empty_label.setVisible(empty)
-        if not empty:
-            self._size_columns()
+        self._measure_columns()
         self._refresh_view()
+        self._reflow()
+        self._layout_columns()
 
     def _update_charts(self) -> None:
         """The charts describe every case in the scope on screen; the filter narrows the list, not the charts."""
@@ -856,9 +929,16 @@ class CasesOverview(QWidget):
         self._refresh_summary()
         self._update_preview()
 
+    def _sort_changed(self, section: int, _order: Qt.SortOrder) -> None:
+        """A sort on a field the table does not show falls back to the anomaly score, highest first."""
+        if not 0 <= section < len(TABLE_COLUMNS):
+            self.table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.DescendingOrder)
+            return
+        self._refresh_summary()
+
     def _sort_phrase(self) -> str:
         header = self.table.horizontalHeader()
-        column = COLUMNS[header.sortIndicatorSection()]
+        column = TABLE_COLUMNS[header.sortIndicatorSection()]
         descending = header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
         phrase = f"sorted by {_sort_name(column.title)}"
         if descending != column.first_sort_descending:
@@ -889,16 +969,65 @@ class CasesOverview(QWidget):
         verb = "has" if flagged == 1 else "have"
         self.summary_label.setText(f"{flagged:,} of {shown:,} {what} {verb} rule episodes · {self._sort_phrase()}")
 
-    def _size_columns(self) -> None:
+    def _measure_columns(self) -> None:
+        """What each column needs for the rows loaded: its whole text, and its heading whole or one word to a line."""
+        body = tabular(QFont(self.table.font()))
+        body.setPixelSize(13)
+        semibold = QFont(body)
+        semibold.setWeight(QFont.Weight.DemiBold)
+        heading = QFont(self.table.horizontalHeader().font())
+        heading.setPixelSize(13)
+        heading.setWeight(QFont.Weight.DemiBold)
+        body_metrics, semibold_metrics, heading_metrics = QFontMetrics(body), QFontMetrics(semibold), QFontMetrics(heading)
+        ideal: list[int] = []
+        least: list[int] = []
+        full: list[int] = []
+        whole_heading: list[int] = []
+        for index, column in enumerate(TABLE_COLUMNS):
+            number = column.kind == "number"
+            heading_pad = 2 * CELL_PADDING + SORT_ARROW_ROOM
+            whole = heading_metrics.horizontalAdvance(column.title) + heading_pad
+            word = max(heading_metrics.horizontalAdvance(w) for w in column.title.split()) + heading_pad
+            full.append(whole)
+            if index in _FLEXIBLE:
+                ideal.append(max(_FLEX_IDEAL[index], whole))
+                least.append(max(_FLEX_LEAST, word))
+                whole_heading.append(least[-1])
+                continue
+            # two spare pixels: the ellipsis test of the painter measures a hair wider than the layout does
+            pad = 2 * CELL_PADDING + (SORT_ARROW_ROOM if number else 0) + 2
+            texts = self._model.shown_texts(index)
+            if index == SCORE_COLUMN:
+                number_width = max((semibold_metrics.horizontalAdvance(t) for t in texts), default=0) + 8
+                cell_ideal, cell_least = number_width + SCORE_BAR_WIDTH + pad, number_width + SCORE_BAR_LEAST + pad
+            else:
+                cell_ideal = cell_least = max((body_metrics.horizontalAdvance(t) for t in texts), default=0) + pad
+            ideal.append(max(cell_ideal, whole) + 8)
+            least.append(max(cell_least, word))
+            whole_heading.append(max(least[-1], whole))
+        # least, then the flexible columns to a readable width, then every heading on one line, then everything
+        readable = [min(_FLEX_READABLE[i], ideal[i]) if i in _FLEXIBLE else least[i] for i in range(len(least))]
+        readable = [max(r, floor) for r, floor in zip(readable, least, strict=True)]
+        headings = [max(r, h) for r, h in zip(readable, whole_heading, strict=True)]
+        ideal = [max(i, h) for i, h in zip(ideal, headings, strict=True)]
+        self._tiers = [least, readable, headings, ideal]
+        self._full = full
+        self.table.setMinimumWidth(sum(least) + TABLE_CHROME)
+
+    def _layout_columns(self, *_args: Any) -> None:
+        """Fit the nine columns into the list's width: Procedure and Top rules shorten first, the rest keep their text."""
+        available = self.table.viewport().width()
+        if not self._full or available <= 0:
+            return
+        widths = plan_column_widths(available, self._tiers, _FLEXIBLE)
+        for column, width in enumerate(widths):
+            if self.table.columnWidth(column) != width:
+                self.table.setColumnWidth(column, width)
+        wrapped = any(width < whole for width, whole in zip(widths, self._full, strict=True))
+        height = HEADER_HEIGHT_WRAPPED if wrapped else HEADER_HEIGHT
         header = self.table.horizontalHeader()
-        font = QFont(header.font())
-        font.setPixelSize(13)
-        font.setWeight(QFont.Weight.DemiBold)
-        metrics = QFontMetrics(font)
-        for column, width in enumerate(_COLUMN_WIDTHS):
-            # a heading keeps its whole name, with room for its padding and the sort arrow
-            needed = metrics.horizontalAdvance(COLUMNS[column].title) + CELL_PADDING + SORT_ARROW_ROOM + 12
-            self.table.setColumnWidth(column, max(width, needed))
+        if header.height() != height:
+            header.setFixedHeight(height)
 
     # -- the preview ------------------------------------------------------------------------------------
 
@@ -925,10 +1054,20 @@ class CasesOverview(QWidget):
         if episodes is not None:
             facts.append(f"{len(episodes)} rule episode{'s' if len(episodes) != 1 else ''}" if episodes
                          else "no rule episodes")
+        fields = tuple(
+            (column.title, self._field_text(column, row.get(column.key)))
+            for column in PREVIEW_FIELDS if self._model.has_field(column.key)
+        )
         self.preview.show_case(PreviewCase(
             pid, str(row.get("Procedure_short") or ""), " · ".join(facts),
-            self._preview_source.traces(pid), episodes,
+            self._preview_source.traces(pid), episodes, fields,
         ))
+
+    @staticmethod
+    def _field_text(column: Column, value: Any) -> str:
+        if value is None or value == "":
+            return "missing"
+        return _number_text(value) if column.kind == "number" else str(value)
 
     def _open_current(self) -> None:
         index = self.table.currentIndex()
@@ -950,3 +1089,13 @@ class CasesOverview(QWidget):
 
     def cell_text(self, proxy_row: int, column: int) -> str:
         return str(self._proxy.index(proxy_row, column).data() or "")
+
+    def shown_text(self, proxy_row: int, column: int) -> str:
+        """What the cell draws: its text, cut with an ellipsis if the column is too narrow for it."""
+        index = self._proxy.index(proxy_row, column)
+        font = self.table.fontMetrics()
+        if column == SCORE_COLUMN:
+            bold = QFont(self.table.font())
+            bold.setWeight(QFont.Weight.DemiBold)
+            font = QFontMetrics(bold)
+        return self._delegate.shown(str(index.data() or ""), font, column, self.table.columnWidth(column))

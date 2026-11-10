@@ -692,15 +692,23 @@ def _click_header(run: Run, column: int) -> None:
     run.frame(STEP_HOLD_FRAMES)
 
 
-def _click_row(run: Run, row: int) -> str:
+def _open_row(run: Run, row: int) -> str:
+    """Open a row's case as a person does: one click selects it, then a double-click opens it."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     table = run.win.research._cases_overview.table
     pid = table.model().index(row, 0).data()
     center = table.visualRect(table.model().index(row, 0)).center()
+    viewport, none = table.viewport(), Qt.KeyboardModifier.NoModifier
+    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, none, center)
+    run.settle()
+    overview = run.win.research._cases_overview
+    if overview.preview.kicker.text() != f"Preview · {pid}" or run.win.research.stack.currentIndex() != 2:
+        raise RuntimeError(f"one click did not only select {pid}: {overview.preview.kicker.text()!r}")
     run.frame(STEP_HOLD_FRAMES)
-    QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
+    QTest.mouseDClick(viewport, Qt.MouseButton.LeftButton, none, center)
+    QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, none, center)
     return str(pid)
 
 
@@ -722,7 +730,7 @@ def sort_cases_by_score(run: Run) -> dict[str, Any]:
 
 def open_top_case(run: Run) -> dict[str, Any]:
     research = run.win.research
-    pid = _click_row(run, 0)
+    pid = _open_row(run, 0)
     run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the signal detail view")
     if pid not in research.detail_context.text():
         raise RuntimeError(f"F opened {research.detail_context.text()!r}, not {pid}")
@@ -761,7 +769,7 @@ def request_scan_only_case(run: Run) -> dict[str, Any]:
     )
     if row is None:
         raise RuntimeError("every scanned case is also in the loaded sample")
-    pid = _click_row(run, row)
+    pid = _open_row(run, row)
     facts = {
         "pid": pid,
         "in_sample": pid in sample,

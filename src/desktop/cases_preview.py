@@ -24,7 +24,7 @@ NO_CASES_TO_PREVIEW = "There are no cases to preview."
 SIGNALS_ON_OPEN = "Signals show when the case is opened."
 EPISODES_ON_OPEN = "Rule episodes show when the case is opened."
 NO_EPISODES = "No rule episodes in this case."
-KEYS_LINE = "Enter opens · ↑ ↓ moves · / filters · Esc goes back to the question"
+KEYS_LINE = "Click selects · Enter or double-click opens · ↑ ↓ moves · / filters · Esc goes back to the question"
 _SEVERITY_RANK = {"critical": 0, "warn": 1, "info": 2}
 
 
@@ -44,6 +44,8 @@ class PreviewCase:
     facts: str
     traces: Mapping[str, tuple[float | None, ...]] | None
     episodes: tuple[PreviewEpisode, ...] | None
+    # "label: value" facts for the fields the list does not have a column for
+    fields: tuple[tuple[str, str], ...] = ()
 
 
 class _ByPid:
@@ -179,6 +181,12 @@ class CasePreview(QFrame):
         self.episode_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.episode_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         column.addWidget(self.episode_list)
+        self.field_box = QWidget()
+        self._fields = QVBoxLayout(self.field_box)
+        self._fields.setContentsMargins(0, 0, 0, 0)
+        self._fields.setSpacing(4)
+        self.field_labels: list[QLabel] = []
+        column.addWidget(self.field_box)
         column.addStretch(1)
         self.open_button = QPushButton("Open case")
         self.open_button.setObjectName("primaryBtn")
@@ -202,6 +210,7 @@ class CasePreview(QFrame):
         self.trace_box.hide()
         self.trace_note.hide()
         self.episode_list.hide()
+        self.field_box.hide()
         self.open_button.setEnabled(False)
 
     def show_case(self, case: PreviewCase) -> None:
@@ -213,7 +222,22 @@ class CasePreview(QFrame):
         self.note.hide()
         self._show_traces(case.traces)
         self._show_episodes(case.episodes)
+        self._show_fields(case.fields)
         self.open_button.setEnabled(True)
+
+    def _show_fields(self, fields: tuple[tuple[str, str], ...]) -> None:
+        while len(self.field_labels) < len(fields):
+            label = QLabel(self.field_box)
+            label.setObjectName("caseFacts")
+            label.setWordWrap(True)
+            self._fields.addWidget(label)
+            self.field_labels.append(label)
+        for label, (name, value) in zip(self.field_labels, fields, strict=False):
+            label.setText(f"{name}: {value}")
+            label.show()
+        for label in self.field_labels[len(fields):]:
+            label.hide()
+        self.field_box.setVisible(bool(fields))
 
     def _show_traces(self, traces: Mapping[str, tuple[float | None, ...]] | None) -> None:
         self.trace_box.setVisible(traces is not None)

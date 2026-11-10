@@ -49,13 +49,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   ink with a caption that says what they count; they describe every case in the
   scope, not just the filtered ones. The table has no frame or grid lines, numbers
   line up under right-aligned headings, a zero count is muted text, and the
-  anomaly score has a short bar scaled to the largest score in view. A preview
-  panel at the right (under the list when the page is narrow) follows the current
-  row: procedure, duration, age, sex, small PIP, ETCO₂ and heart-rate traces from
-  data already loaded, its rule episodes and Open case. For a case whose minutes
-  are not loaded, such as one only the full-EMR scan knows, it says signals show
-  when the case is opened. The "Charts" button and the scope drop-down are gone.
-  The columns and their names are unchanged.
+  anomaly score has a short bar scaled to the largest score in view. The table
+  shows nine columns (PID, Procedure, Age, Sex, Duration, Anomaly score, Warn
+  count, Critical count, Top rules) and never scrolls sideways: Procedure and Top
+  rules shorten with "…" (the full text is in the tooltip) and a heading wraps to
+  two lines before it is cut. Primary agent and the median tidal volume, PIP and
+  ETCO₂ moved out of the table into the preview, where they are listed as "label:
+  value" facts ("missing" when a case has none) and can no longer be sorted on.
+  A click on a row selects it; Enter, a double-click or Open case opens the case.
+  A preview panel at the right (under the list when the page is narrow) follows the
+  current row: procedure, duration, age, sex, small PIP, ETCO₂ and heart-rate
+  traces from data already loaded, its rule episodes, those facts and Open case.
+  For a case whose minutes are not loaded, such as one only the full-EMR scan
+  knows, it says signals show when the case is opened. The "Charts" button and the
+  scope drop-down are gone. Below about 800 px of page width the page itself
+  scrolls sideways, because nine columns no longer fit. When a full-EMR scan
+  scored no cases, the page now says to press Ctrl+K and choose Scan full EMR.
 
 - New look, case page: the page that shows one case now uses the same paper
   and night ledger colors as the research page, in light and dark. The header

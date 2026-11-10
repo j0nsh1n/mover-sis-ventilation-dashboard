@@ -23,9 +23,12 @@ import src.desktop.cases_overview as cases_module  # noqa: E402
 from src.desktop.cases_overview import (  # noqa: E402
     COLUMNS,
     EMPTY_MESSAGE,
+    PREVIEW_FIELDS,
     SCORE_BAR_WIDTH,
     SCORE_COLUMN,
+    TABLE_COLUMNS,
     CasesOverview,
+    plan_column_widths,
     score_bar_length,
 )
 from src.desktop.cases_preview import (  # noqa: E402
@@ -139,12 +142,26 @@ def test_header_names_the_page_and_says_what_is_listed_in_one_sentence(qapp):
     ("anomaly_score", Qt.SortOrder.AscendingOrder, "sorted by anomaly score, lowest first"),
     ("PID", Qt.SortOrder.AscendingOrder, "sorted by PID"),
     ("Procedure_short", Qt.SortOrder.DescendingOrder, "sorted by procedure, Z to A"),
-    ("median_ETCO2", Qt.SortOrder.AscendingOrder, "sorted by median ETCO₂"),
+    ("n_critical", Qt.SortOrder.AscendingOrder, "sorted by critical count, lowest first"),
 ])
 def test_the_sentence_names_the_sort_on_screen(qapp, key, order, phrase):
     view, overview = _workspace()
     overview.table.sortByColumn(_column(key), order)
     assert overview.summary_label.text().endswith(f" · {phrase}")
+    view.close()
+
+
+@pytest.mark.parametrize("key", ["primary_agent_name", "median_TV", "median_PIP", "median_ETCO2"])
+@pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+def test_a_sort_on_a_field_the_table_does_not_show_falls_back_to_the_anomaly_score(qapp, key, order):
+    view, overview = _workspace()
+    overview.table.sortByColumn(_column("Age"), Qt.SortOrder.AscendingOrder)
+    overview.table.sortByColumn(_column(key), order)
+    header = overview.table.horizontalHeader()
+    assert (header.sortIndicatorSection(), header.sortIndicatorOrder()) == (
+        SCORE_COLUMN, Qt.SortOrder.DescendingOrder)
+    assert overview.summary_label.text().endswith(" · sorted by anomaly score")
+    assert _pids(overview) == ["SYN0000000001", "SYN0000000002", "SYN0000000003"]
     view.close()
 
 
@@ -292,16 +309,15 @@ def test_escape_clears_typed_text_first_and_goes_back_only_from_an_empty_filter(
 # -- the table -------------------------------------------------------------------------------------------
 
 
-def test_the_table_keeps_every_column_and_name_and_aligns_headings_over_their_cells(qapp):
+def test_the_table_shows_nine_columns_with_their_names_and_aligns_headings_over_their_cells(qapp):
     view, overview = _workspace()
     model = overview.table.model()
+    assert model.columnCount() == 9
     names = [model.headerData(i, Qt.Orientation.Horizontal) for i in range(model.columnCount())]
     assert names == ["PID", "Procedure", "Age", "Sex", "Duration (min)", "Anomaly score", "Warn count",
-                     "Critical count", "Top rules", "Primary agent", "Median TV (mL)", "Median PIP (cmH₂O)",
-                     "Median ETCO₂ (mmHg)"]
-    numbers = {"Age", "case_duration_min", "anomaly_score", "n_warn", "n_critical", "median_TV", "median_PIP",
-               "median_ETCO2"}
-    for i, column in enumerate(COLUMNS):
+                     "Critical count", "Top rules"]
+    numbers = {"Age", "case_duration_min", "anomaly_score", "n_warn", "n_critical"}
+    for i, column in enumerate(TABLE_COLUMNS):
         heading = int(model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.TextAlignmentRole))
         cell = model.data(model.index(0, i), Qt.ItemDataRole.TextAlignmentRole)
         side = Qt.AlignmentFlag.AlignRight if column.key in numbers else Qt.AlignmentFlag.AlignLeft
@@ -359,12 +375,13 @@ def _bar_pixels(overview: CasesOverview, proxy_row: int) -> int:
 
 def test_score_bars_are_drawn_against_the_largest_score_that_is_in_view(qapp):
     view, overview = _workspace()
-    # scores 50, 25, 0 in this order: the 25 bar is half the 50 bar
-    assert _bar_pixels(overview, 0) == pytest.approx(SCORE_BAR_WIDTH, abs=2)
-    assert _bar_pixels(overview, 1) == pytest.approx(SCORE_BAR_WIDTH / 2, abs=2)
+    # scores 50, 25, 0 in this order: the largest bar is as long as the cell allows, the 25 bar is half of it
+    top = _bar_pixels(overview, 0)
+    assert 24 <= top <= SCORE_BAR_WIDTH
+    assert _bar_pixels(overview, 1) == pytest.approx(top / 2, abs=2)
     assert _bar_pixels(overview, 2) == 0
     overview.filter_edit.setText("cranio")     # only the 25 is left in view, so it now has the full bar
-    assert _bar_pixels(overview, 0) == pytest.approx(SCORE_BAR_WIDTH, abs=2)
+    assert _bar_pixels(overview, 0) == pytest.approx(top, abs=2)
     view.close()
 
 
@@ -395,28 +412,51 @@ def _click(overview: CasesOverview, row: int, *, double: bool = False) -> None:
         QTest.mouseRelease(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
 
 
-def test_a_click_opens_the_case_today(qapp):
-    view, overview = _workspace()
-    opened = []
-    overview.case_requested.connect(opened.append)
-    _click(overview, 1)
-    assert opened == [overview.cell_text(1, 0)]
-    view.close()
-
-
-def test_one_flag_makes_a_click_only_select_and_a_double_click_or_enter_open(qapp, monkeypatch):
-    monkeypatch.setattr(cases_module._CasesTable, "CLICK_OPENS", False)
+def test_one_click_selects_and_previews_the_case_and_does_not_open_it(qapp):
     view, overview = _workspace()
     opened = []
     overview.case_requested.connect(opened.append)
     _click(overview, 1)
     assert opened == [] and overview.table.currentIndex().row() == 1
     assert overview.preview.kicker.text() == f"Preview · {overview.cell_text(1, 0)}"
-    overview.table.clearSelection()
+    assert view.stack.currentIndex() == 2
+    view.close()
+
+
+def test_a_click_on_the_row_that_is_already_current_does_nothing_more(qapp):
+    view, overview = _workspace()
+    opened, shown = [], []
+    overview.case_requested.connect(opened.append)
+    _click(overview, 1)
+    overview.table.selectionModel().currentRowChanged.connect(lambda *_: shown.append(1))
+    before = overview.preview.kicker.text()
+    for _ in range(3):
+        _click(overview, 1)
+    assert opened == [] and shown == []
+    assert overview.preview.kicker.text() == before and overview.table.currentIndex().row() == 1
+    view.close()
+
+
+def test_a_double_click_opens_the_case_exactly_once(qapp):
+    view, overview = _workspace()
+    opened = []
+    overview.case_requested.connect(opened.append)
     _click(overview, 2, double=True)
     assert opened == [overview.cell_text(2, 0)]
+    view.close()
+
+
+def test_enter_and_the_open_case_button_open_the_current_case(qapp):
+    view, overview = _workspace()
+    opened = []
+    overview.case_requested.connect(opened.append)
+    overview.table.setFocus()
+    overview.table.selectRow(1)
     QTest.keyClick(overview.table, Qt.Key.Key_Return)
-    assert opened == [overview.cell_text(2, 0)] * 2
+    assert opened == [overview.cell_text(1, 0)]
+    overview.table.selectRow(2)
+    overview.preview.open_button.click()
+    assert opened == [overview.cell_text(1, 0), overview.cell_text(2, 0)]
     view.close()
 
 
@@ -547,7 +587,9 @@ def test_open_case_opens_the_previewed_case_and_a_new_current_row_starts_nothing
 
 def test_the_keys_line_names_only_keys_that_work(qapp):
     view, overview = _workspace()
-    assert overview.preview.keys.text() == "Enter opens · ↑ ↓ moves · / filters · Esc goes back to the question"
+    assert overview.preview.keys.text() == (
+        "Click selects · Enter or double-click opens · ↑ ↓ moves · / filters · Esc goes back to the question")
+    assert "double-click" in overview.table.accessibleDescription()
     view.close()
 
 
@@ -597,7 +639,7 @@ def test_the_preview_sits_at_the_right_full_height_on_the_side_panel_ground(qapp
     view.close()
 
 
-@pytest.mark.parametrize("width", [900, 700])
+@pytest.mark.parametrize("width", [900])
 def test_a_narrow_page_puts_the_preview_under_the_list_and_never_scrolls_sideways(qapp, width):
     view, overview = _workspace(width)
     preview = overview.preview
@@ -658,6 +700,11 @@ def test_the_empty_states_are_plain_sentences_without_a_frame(qapp):
     view.set_cases_data(None, scan, load_rule_catalog("default"))
     overview.set_scope("scan")
     assert overview.empty_label.text().startswith("The full-EMR scan scored no cases.")
+    # there is no menu bar: the sentence points at Ctrl+K and an action that really has that name
+    assert "Press Ctrl+K and choose Scan full EMR" in overview.empty_label.text()
+    assert "File" not in overview.empty_label.text()
+    app_source = (SRC / "app.py").read_text(encoding="utf-8")
+    assert 'add("action-scan-emr", "Scan full EMR' in app_source
     assert overview.summary_label.text() == "No cases in the full-EMR scan."
     view.close()
 
@@ -771,3 +818,198 @@ def test_the_cases_page_carries_no_colors_of_its_own(qapp):
     for start, end in spans:
         assert re.findall(pattern, "\n".join(lines[start - 1:end])) == [], lines[start - 1]
     view.close()
+
+
+# -- nine columns that always fit, and the fields that moved to the preview ------------------------------
+
+
+def _wide_cases(count: int = 40) -> pd.DataFrame:
+    """Rows with the longest texts the table meets: 13-character IDs, long procedures, many rules, every field."""
+    frame = pd.DataFrame({
+        "PID": [f"SYN{i:04x}mWwWmWw" for i in range(count)],
+        "Procedure_short": [f"Laparoscopic cholecystectomy with exploration {i}" for i in range(count)],
+        "Age": [100 - i for i in range(count)], "Gender": ["F", "M"] * (count // 2),
+        "case_duration_min": [1000.0 + i for i in range(count)],
+        "anomaly_score": [1000 - i for i in range(count)], "n_warn": [10000 + i for i in range(count)],
+        "n_critical": [i % 3 for i in range(count)],
+        "top_rules": ["pip_high(12), pip_rising(11), peep_high(9), made_up_rule(3), tv_low_mlkg(2)"] * count,
+        "primary_agent_name": ["sevoflurane", "desflurane"] * (count // 2),
+        "median_TV": [410.5, 505.0] * (count // 2), "median_PIP": [18.0, 24.5] * (count // 2),
+        "median_ETCO2": [33.0, 41.5] * (count // 2),
+    })
+    return frame
+
+
+def _sweep_widths(overview: CasesOverview, top: int = 1700):
+    """Page widths from the page's least width up to ``top``, a step apart, plus the edges where the layout changes."""
+    least = overview.least_width()
+    edges = {least, least + 1, overview.side_by_side_width() - 1, overview.side_by_side_width(), top}
+    return sorted(edges | set(range(least, top, 61)))
+
+
+def _assert_nine_columns_fit(view: ResearchWorkspace, overview: CasesOverview, width: int) -> None:
+    view.resize(width, 800)
+    QApplication.processEvents()
+    table, header = overview.table, overview.table.horizontalHeader()
+    where = f"page {overview.width()} (window {width})"
+    assert table.horizontalScrollBar().maximum() == 0, where
+    assert overview._scroll.horizontalScrollBar().maximum() == 0, where
+    assert header.count() == 9
+    viewport = table.viewport().width()
+    for column in range(9):
+        left = header.sectionViewportPosition(column)
+        assert left >= 0 and left + header.sectionSize(column) <= viewport, (where, column)
+    # the columns use the whole width, so nothing is left over at the right
+    assert sum(header.sectionSize(c) for c in range(9)) == viewport, where
+
+
+@pytest.mark.parametrize("scope", ["sample", "scan"])
+def test_the_table_never_scrolls_sideways_and_shows_all_nine_columns_at_every_width(qapp, scope):
+    cases = _wide_cases()
+    scan = ScanResult(cases.assign(PID=cases.PID.str.replace("SYN", "SCN")), pd.DataFrame(),
+                      {"n_indexed_surgeries": 19114, "preset": "default"})
+    view, overview = _workspace(1500, cases=cases, scan=scan)
+    overview.set_scope(scope)
+    for width in _sweep_widths(overview):
+        _assert_nine_columns_fit(view, overview, width)
+    view.close()
+
+
+def test_the_table_fits_beside_the_open_rules_drawer(qapp):
+    view, overview = _workspace(1500, cases=_wide_cases())
+    view.open_rules()
+    QTest.qWait(50)
+    assert overview.width() < 1500 - 300 and not overview._wide
+    _assert_nine_columns_fit(view, overview, 1500)
+    _assert_nine_columns_fit(view, overview, 1380)
+    view.close()
+
+
+def test_below_the_least_width_the_page_scrolls_and_the_list_does_not(qapp):
+    view, overview = _workspace(1500, cases=_wide_cases())
+    view.resize(overview.least_width() - 150, 800)
+    QApplication.processEvents()
+    assert overview.table.horizontalScrollBar().maximum() == 0
+    assert overview._scroll.horizontalScrollBar().maximum() > 0
+    view.close()
+
+
+def test_the_number_columns_and_the_id_never_shorten_and_the_long_texts_do(qapp):
+    cases = _wide_cases()
+    view, overview = _workspace(1500, cases=cases)
+    fixed = [i for i in range(9) if i not in (_column("Procedure_short"), _column("top_rules"))]
+    for width in _sweep_widths(overview):
+        view.resize(width, 800)
+        QApplication.processEvents()
+        for row in range(0, len(cases), 7):
+            for column in fixed:
+                assert overview.shown_text(row, column) == overview.cell_text(row, column), (width, column)
+    view.resize(overview.least_width(), 800)
+    QApplication.processEvents()
+    procedure, rules = _column("Procedure_short"), _column("top_rules")
+    for column in (procedure, rules):
+        shown, full = overview.shown_text(0, column), overview.cell_text(0, column)
+        assert shown.endswith("…") and len(shown) < len(full) and full.startswith(shown[:-1])
+        # the full text is in the cell's tooltip
+        index = overview.table.model().index(0, column)
+        assert index.data(Qt.ItemDataRole.ToolTipRole) == full
+    view.resize(2400, 800)
+    QApplication.processEvents()
+    assert overview.shown_text(0, procedure) == overview.cell_text(0, procedure)
+    view.close()
+
+
+def test_a_cell_is_cut_with_an_ellipsis_only_when_it_does_not_fit(qapp):
+    view, overview = _workspace(1500, cases=_wide_cases())
+    metrics, delegate = overview.table.fontMetrics(), overview.table.itemDelegate()
+    text = "Total knee arthroplasty"
+    need = metrics.horizontalAdvance(text) + 16
+    procedure = _column("Procedure_short")
+    assert delegate.shown(text, metrics, procedure, need) == text
+    assert delegate.shown(text, metrics, procedure, need - 1).endswith("…")
+    view.close()
+
+
+def test_the_headings_wrap_to_two_lines_before_they_are_cut(qapp):
+    view, overview = _workspace(1500, cases=_wide_cases())
+    view.resize(overview.least_width(), 800)
+    QApplication.processEvents()
+    header = overview.table.horizontalHeader()
+    assert header.height() > 34
+    image = header.grab().toImage()
+    # a second line of heading text: ink in the lower half of the section over "Duration (min)"
+    cell = header.sectionViewportPosition(_column("case_duration_min"))
+    lower = [image.pixelColor(x, y) for x in range(cell, cell + header.sectionSize(_column("case_duration_min")))
+             for y in range(header.height() * 2 // 3, header.height() - 6)]
+    ground = image.pixelColor(2, 2)
+    assert any(abs(c.red() - ground.red()) > 60 for c in lower)
+    view.close()
+
+
+def test_the_fields_that_moved_out_of_the_table_are_the_four_the_preview_lists(qapp):
+    assert [c.title for c in PREVIEW_FIELDS] == ["Primary agent", "Median TV (mL)", "Median PIP (cmH₂O)",
+                                                 "Median ETCO₂ (mmHg)"]
+    assert not {c.key for c in PREVIEW_FIELDS} & {c.key for c in TABLE_COLUMNS}
+    assert len(TABLE_COLUMNS) + len(PREVIEW_FIELDS) == len(COLUMNS) == 13
+
+
+def _fact_lines(overview: CasesOverview) -> list[str]:
+    return [label.text() for label in overview.preview.field_labels if label.isVisibleTo(overview)]
+
+
+def test_the_moved_fields_show_in_the_preview_for_the_current_row_and_follow_it(qapp):
+    cases = _wide_cases(4)
+    cases.loc[2, ["primary_agent_name", "median_PIP"]] = [None, None]
+    view, overview = _workspace(1500, cases=cases)
+    overview.table.sortByColumn(_column("PID"), Qt.SortOrder.AscendingOrder)
+    overview.table.selectRow(0)
+    assert _fact_lines(overview) == ["Primary agent: sevoflurane", "Median TV (mL): 410.5",
+                                     "Median PIP (cmH₂O): 18", "Median ETCO₂ (mmHg): 33"]
+    overview.table.setFocus()
+    QTest.keyClick(overview.table, Qt.Key.Key_Down)
+    assert _fact_lines(overview) == ["Primary agent: desflurane", "Median TV (mL): 505",
+                                     "Median PIP (cmH₂O): 24.5", "Median ETCO₂ (mmHg): 41.5"]
+    QTest.keyClick(overview.table, Qt.Key.Key_Down)
+    # a value the case does not have is written "missing"
+    assert _fact_lines(overview) == ["Primary agent: missing", "Median TV (mL): 410.5",
+                                     "Median PIP (cmH₂O): missing", "Median ETCO₂ (mmHg): 33"]
+    assert overview.preview.field_box.isVisibleTo(overview)
+    view.close()
+
+
+def test_the_scan_scope_lists_only_the_moved_fields_its_cases_have(qapp):
+    scan_cases = _wide_cases(4).drop(columns=["median_TV", "median_ETCO2"]).assign(
+        PID=["SCN1", "SCN2", "SCN3", "SCN4"])
+    scan = ScanResult(scan_cases, pd.DataFrame(), {"n_indexed_surgeries": 50, "preset": "default"})
+    view, overview = _workspace(1500, cases=_wide_cases(4), scan=scan)
+    overview.set_scope("scan")
+    overview.table.selectRow(0)
+    assert _fact_lines(overview) == ["Primary agent: sevoflurane", "Median PIP (cmH₂O): 18"]
+    for width in (overview.least_width(), 1700):
+        _assert_nine_columns_fit(view, overview, width)
+    view.close()
+
+
+def test_no_moved_field_shows_when_nothing_is_current(qapp):
+    view, overview = _workspace(1500, cases=_wide_cases(4))
+    overview.filter_edit.setText("no such case")
+    assert not overview.preview.field_box.isVisibleTo(overview)
+    view.close()
+
+
+_TIERS = [[60, 60, 60, 60], [60, 100, 60, 180], [100, 100, 100, 180], [100, 100, 100, 200]]
+
+
+@pytest.mark.parametrize(("available", "expected"), [
+    (400, [60, 100, 60, 180]),         # the flexible columns (1 and 3) are filled first, up to their second tier
+    (300, [60, 75, 60, 105]),          # with less, they share what there is by how much each still wants
+    (301, [60, 75, 60, 106]),          # a pixel left over by the sharing goes to the column that wants most
+    (450, [85, 100, 85, 180]),         # only then do the other columns get more than their least
+    (1000, [100, 266, 100, 534]),      # room beyond the last tier goes to the flexible columns, by their size
+    (100, [60, 60, 60, 60]),           # never below the least, even when that is wider than the list
+])
+def test_column_widths_fill_the_flexible_columns_first_and_always_use_the_whole_width(available, expected):
+    widths = plan_column_widths(available, _TIERS, flexible=(1, 3))
+    assert widths == expected
+    if available >= sum(_TIERS[0]):
+        assert sum(widths) == available

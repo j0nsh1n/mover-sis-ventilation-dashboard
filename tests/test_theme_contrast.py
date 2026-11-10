@@ -135,11 +135,11 @@ def test_every_token_the_cases_page_draws_text_in_is_checked_on_each_ground_it_s
     """The table's text tokens sit on paper and on the selected row; each is a text pair above."""
     import pandas as pd
 
-    from src.desktop.cases_overview import COLUMNS, _CasesDelegate, _CasesModel
+    from src.desktop.cases_overview import TABLE_COLUMNS, _CasesDelegate, _CasesModel
 
     model = _CasesModel()
-    model.set_frame(pd.DataFrame({"PID": ["A", "B"], **{c.key: [0, 1] for c in COLUMNS if c.key != "PID"}}))
-    tokens_used = {_CasesDelegate.text_token(model.index(row, col)) for row in range(2) for col in range(len(COLUMNS))}
+    model.set_frame(pd.DataFrame({"PID": ["A", "B"], **{c.key: [0, 1] for c in TABLE_COLUMNS if c.key != "PID"}}))
+    tokens_used = {_CasesDelegate.text_token(model.index(row, col)) for row in range(2) for col in range(len(TABLE_COLUMNS))}
     assert tokens_used == {"ink", "ink_2", "ink_3"}
     for token in tokens_used:
         for ground in ("paper", "sel"):

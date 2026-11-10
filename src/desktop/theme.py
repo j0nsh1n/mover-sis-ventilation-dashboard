@@ -685,7 +685,7 @@ QLineEdit#casesFilter:focus {{
 }}
 /* number headings leave room at the right for the sort arrow; the cells keep the same room, so numbers sit under them */
 QTableView#casesTable QHeaderView::section {{
-    padding: 6px 26px 6px 10px;
+    padding: 6px 22px 6px 8px;
 }}
 QFrame#casePreview {{
     background: {sheet};
