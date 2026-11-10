@@ -215,8 +215,39 @@ def test_the_head_line_is_never_cut_and_keeps_its_full_form_while_that_fits(qapp
     holder.close()
 
 
-def test_a_footer_field_is_whole_or_shortened_to_whole_words_with_an_ellipsis_and_never_a_fragment(qapp):
+FOOTER_FIELDS = {
+    "counts": ("<b>19,114</b> indexed · <b>1,200</b> analyzed", "19,114 indexed, 1,200 analyzed"),
+    "rules": ("rules <b>default</b> @0123456789ab", "rules default"),
+    "model": ("local model <b>demo-model:3b-instruct-q4</b> ready", "local model demo-model ready"),
+}
+
+
+def _footer_state(field, where) -> str:
+    """"hidden", "whole" or "shortened"; fails on a fragment: cut text, a missing ellipsis or a cut inside a word."""
     from PySide6.QtGui import QFontMetrics, QTextDocument
+
+    if not field.isVisible():
+        return "hidden"
+    document = QTextDocument()
+    document.setDefaultFont(field.font())
+    document.setHtml(field._rich)
+    full = document.toPlainText().split()
+    text = field.text()
+    if text == field._rich:
+        assert field.width() >= document.idealWidth(), f"{full} is cut to {field.width()} px {where}"
+        return "whole"
+    assert text.endswith("…"), f"fragment without an ellipsis {where}: {text!r}"
+    kept = text[:-1].split()
+    assert kept and kept == full[:len(kept)] and len(kept) < len(full), f"cut inside a word {where}: {text!r}"
+    assert " ".join(full) in field.toolTip(), "the full text is lost"
+    plain = QTextDocument()
+    plain.setHtml(text)
+    assert field.width() >= QFontMetrics(field.font()).horizontalAdvance(plain.toPlainText()), \
+        f"{text!r} does not fit its field {where}"
+    return "shortened"
+
+
+def test_a_footer_field_is_whole_or_shortened_to_whole_words_with_an_ellipsis_and_never_a_fragment(qapp):
     from PySide6.QtWidgets import QStatusBar, QWidget
 
     from src.desktop.shell import FooterFields
@@ -228,49 +259,40 @@ def test_a_footer_field_is_whole_or_shortened_to_whole_words_with_an_ellipsis_an
     holder.resize(1500, 60)
     footer = FooterFields(bar)
     holder.show()
-
-    fields = {
-        "counts": ("<b>19,114</b> indexed · <b>1,200</b> analyzed", "19,114 indexed, 1,200 analyzed"),
-        "rules": ("rules <b>default</b> @0123456789ab", "rules default"),
-        "model": ("local model <b>demo-model:3b-instruct-q4</b> ready", "local model demo-model ready"),
-    }
-    footer.show_research(source_tip="EMR: /synthetic", **fields)
+    footer.show_research(source_tip="EMR: /synthetic", **FOOTER_FIELDS)
     shown = [footer.source, footer.counts, footer.rules, footer.model]
-
-    def words(rich: str) -> list[str]:
-        document = QTextDocument()
-        document.setHtml(rich)
-        return document.toPlainText().split()
-
     kinds = set()
     for width in range(40, 1400, 9):
         bar.setGeometry(0, 0, width, 40)
         qapp.processEvents()
-        for field in shown:
-            if not field.isVisible():
-                kinds.add("hidden")
-                continue
-            full = words(field._rich)
-            text = field.text()
-            if text == field._rich:
-                kinds.add("whole")
-                continue
-            kinds.add("shortened")
-            assert text.endswith("…"), f"fragment without an ellipsis at {width}: {text!r}"
-            kept = text[:-1].split()
-            assert kept and kept == full[:len(kept)] and len(kept) < len(full), f"cut inside a word at {width}: {text!r}"
-            assert " ".join(full) in field.toolTip(), "the full text is lost"
-            plain = QTextDocument()
-            plain.setHtml(text)
-            assert field.width() >= QFontMetrics(field.font()).horizontalAdvance(plain.toPlainText()), \
-                f"{text!r} does not fit its field at {width}"
+        kinds |= {_footer_state(field, f"at {width} px") for field in shown}
     assert kinds == {"whole", "shortened", "hidden"}, kinds
     # where it is shown whole it keeps its bold parts
     bar.setGeometry(0, 0, 1400, 40)
     qapp.processEvents()
-    assert footer.counts.text() == fields["counts"][0] and "<b>" in footer.counts.text()
+    assert footer.counts.text() == FOOTER_FIELDS["counts"][0] and "<b>" in footer.counts.text()
     assert "EMR: /synthetic" in footer.source.toolTip()
     holder.close()
+
+
+def test_the_footer_has_no_fragment_when_the_window_first_appears(qapp, monkeypatch, tmp_path):
+    """The status bar's one resize comes before it counts as visible; showing it must fit the fields as well."""
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, "light")
+    for name, folder in (("MOVER_CONFIG_DIR", "config"), ("MOVER_EMR_DIR", "EMR"), ("MOVER_PROCESSED_DIR", "processed")):
+        monkeypatch.setenv(name, str(tmp_path / folder))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    win = MainWindow()
+    win._footer.show_research(source_tip="EMR: /synthetic", **FOOTER_FIELDS)
+    win.resize(700, 600)
+    win.show()  # nothing resizes the footer after this
+    qapp.processEvents()
+    footer = win._footer
+    states = {_footer_state(field, "when first shown at 700 px")
+              for field in (footer.source, footer.counts, footer.rules, footer.model)}
+    assert "shortened" in states, "700 px is too narrow for the long footer, so some field must shorten"
+    win.close()
 
 
 def test_the_window_can_shrink_to_a_double_scaled_screen_with_the_longest_footer(window, qapp):

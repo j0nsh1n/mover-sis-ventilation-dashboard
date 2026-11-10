@@ -648,20 +648,157 @@ def test_a_click_on_overlapping_bands_picks_the_one_drawn_on_top(qapp):
     chart.close()
 
 
-def test_a_click_on_the_selected_episode_keeps_the_selected_minute(episode_view, qapp):
+def test_a_click_on_the_selected_episode_returns_the_minute_to_its_start(episode_view, qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     view, _ = episode_view
     chart = view.detail_chart
-    view.episode_list.setCurrentRow(0)
+    view.episode_list.setCurrentRow(1)  # spo2_low, minutes 1 to 4, adds the SpO2 track
     qapp.processEvents()
+    tracks = list(view.chart_track_names)
+    assert view.minute_slider.value() == 1 and "SPO2" in tracks
+    view.minute_slider.setValue(5)  # the cursor has moved away from the episode
+    band = next(rect for band, rect in chart.band_rects() if band.index == 1)
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=band.center().toPoint())
+    assert view.minute_slider.value() == 1 and view.minute_stamp.text() == "1"
+    # the episode stays selected and nothing else resets
+    assert view.selected_rule_id == "spo2_low" and view.episode_list.currentRow() == 1
+    assert [view.episode_list.row(item) for item in view.episode_list.selectedItems()] == [1]
+    assert view.chart_track_names == tracks and view.rule_link.isEnabled() and view.threshold_ruler.spec() is not None
+    assert chart._selected == 1
+
+
+def _shown_episode(view):
+    """The episode each of the three places shows, as an index or None: the highlighted row, the rule, the lane."""
+    rows = [view.episode_list.row(item) for item in view.episode_list.selectedItems()]
+    rule = None if view.selected_rule_id is None else list(view._episodes.rule_id).index(view.selected_rule_id)
+    return (rows[0] if rows else None), rule, view.detail_chart._selected
+
+
+def _nothing_selected(view, qapp):
+    view.clear_episode_selection()
     view.minute_slider.setValue(view.minute_slider.maximum())
-    minute = view.minute_stamp.text()
-    selected_band = next(rect for band, rect in chart.band_rects() if band.index == 0)
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=selected_band.center().toPoint())
-    assert view.minute_stamp.text() == minute
-    assert view.episode_list.currentRow() == 0
+    qapp.processEvents()
+
+
+def test_focus_alone_never_changes_the_page_from_the_episode_list(episode_view, qapp):
+    from PySide6.QtCore import Qt
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    minute, tracks = view.minute_stamp.text(), list(view.chart_track_names)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert view.episode_list.hasFocus()
+    assert not view.episode_list.selectedItems() and view.selected_rule_id is None
+    assert view.minute_stamp.text() == minute and view.chart_track_names == tracks
+    assert not view.threshold_ruler.isVisibleTo(view) and not view.rule_link.isEnabled()
+    assert _shown_episode(view) == (None, None, None)
+
+
+@pytest.mark.parametrize("key", ["Down", "Up", "Return", "Enter", "Space", "Home"])
+def test_a_picking_key_selects_the_first_episode_and_the_arrows_go_on_from_there(episode_view, qapp, key):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, getattr(Qt.Key, f"Key_{key}"))
+    assert _shown_episode(view) == (0, 0, 0)
+    assert view.selected_rule_id == "etco2_high" and view.threshold_ruler.isVisibleTo(view)
+    assert view.minute_slider.value() == 1  # the episode's start
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Down)
+    assert _shown_episode(view) == (1, 1, 1)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Up)
+    assert _shown_episode(view) == (0, 0, 0)
+
+
+def test_a_mouse_click_selects_the_clicked_row_and_a_selected_episode_survives_tabbing_in(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    rect = view.episode_list.visualItemRect(view.episode_list.item(1))
+    QTest.mouseClick(view.episode_list.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    assert _shown_episode(view) == (1, 1, 1) and view.selected_rule_id == "spo2_low"
+    minute = view.minute_slider.value()
+    view.minute_slider.setFocus()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert _shown_episode(view) == (1, 1, 1) and view.minute_slider.value() == minute
+
+
+def test_the_row_the_rule_and_the_lane_always_show_the_same_episode(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    seen = []
+
+    def check():
+        row, rule, lane = _shown_episode(view)
+        assert row == rule == lane, (row, rule, lane)
+        seen.append(row)
+
+    _nothing_selected(view, qapp)
+    check()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    check()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Space)
+    check()
+    view.detail_chart.episode_clicked.emit(1)
+    check()
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    check()
+    view.episode_list.clearSelection()
+    check()
+    view.episode_list.setCurrentRow(1)
+    check()
+    view.clear_episode_button.click()
+    check()
+    view.return_to_canvas()
+    view.open_detail("caseA")
+    check()
+    assert {None, 0, 1} <= set(seen)
+
+
+def test_tab_leaves_the_episode_list_both_ways_without_changing_the_page(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.context_button.setFocus()
+    QTest.keyClick(view.context_button, Qt.Key.Key_Tab)
+    assert view.episode_list.hasFocus()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
+    assert not view.episode_list.hasFocus() and view.window().focusWidget() is not None
+    QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Backtab)
+    assert view.episode_list.hasFocus()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Backtab)
+    assert view.context_button.hasFocus()
+    assert _shown_episode(view) == (None, None, None) and view.minute_slider.value() == view.minute_slider.maximum()
+
+
+def test_clear_episode_selection_is_off_while_nothing_is_selected_and_tab_skips_it(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    assert not view.clear_episode_button.isEnabled() and not view.rule_link.isEnabled()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
+    assert view.window().focusWidget() not in (view.clear_episode_button, view.rule_link)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Space)
+    assert view.clear_episode_button.isEnabled() and view.rule_link.isEnabled()
+    view.clear_episode_button.click()
+    assert not view.clear_episode_button.isEnabled() and not view.rule_link.isEnabled()
+    view.open_detail("caseA")
+    assert not view.clear_episode_button.isEnabled()
 
 
 def test_cursor_marks_each_track_value_and_skips_missing(qapp):
@@ -821,6 +958,16 @@ def test_tab_follows_the_screen_through_the_whole_case_page(episode_view, qapp):
     for expected in chain:
         QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
         assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
+    # with no episode selected the two buttons are off, so Tab goes past them; the rest of the order is the same
+    view.clear_episode_selection()
+    qapp.processEvents()
+    view.back_button.setFocus()
+    for expected in chain[:-2]:
+        QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+        assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
+    QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+    assert view.window().focusWidget() not in (view.rule_link, view.clear_episode_button)
+    assert not view.episode_list.selectedItems()
 
 
 def test_unknown_rule_phase_and_extra_track_limit(episode_view):

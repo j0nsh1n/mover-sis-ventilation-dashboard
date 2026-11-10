@@ -1000,7 +1000,8 @@ class FocusedSignalChart(QWidget):
         The chart only asks: the page moves the slider and the episode list, so a key here does what the same
         key on those controls does.
         """
-        key, modifiers = event.key(), event.modifiers()
+        # The number pad's arrows carry the keypad flag as well; it does not change what they mean.
+        key, modifiers = event.key(), event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and modifiers in (
                 Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier):
             step = 10 if modifiers == Qt.KeyboardModifier.ShiftModifier else 1

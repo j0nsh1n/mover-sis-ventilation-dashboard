@@ -148,6 +148,25 @@ def test_chart_keys_do_what_the_slider_and_the_episode_list_do(page, qapp):
     assert (slider.value(), view.selected_rule_id) == before
 
 
+def test_the_number_pads_arrows_move_the_minute_like_the_main_arrows(page, qapp):
+    view, _ = page
+    chart, slider = view.detail_chart, view.minute_slider
+    pad = Qt.KeyboardModifier.KeypadModifier
+    chart.setFocus()
+    here = slider.value()
+    QTest.keyClick(chart, Qt.Key.Key_Left, pad)
+    assert slider.value() == here - 1
+    QTest.keyClick(chart, Qt.Key.Key_Right, pad)
+    assert slider.value() == here
+    QTest.keyClick(chart, Qt.Key.Key_Left, pad | Qt.KeyboardModifier.ShiftModifier)
+    assert slider.value() == here - 10
+    QTest.keyClick(chart, Qt.Key.Key_Right, pad | Qt.KeyboardModifier.ShiftModifier)
+    assert slider.value() == here
+    # a keypad key with Control is still not ours
+    QTest.keyClick(chart, Qt.Key.Key_Left, pad | Qt.KeyboardModifier.ControlModifier)
+    assert slider.value() == here
+
+
 def test_e_on_the_chart_does_nothing_when_the_case_has_no_episodes(page, qapp, monkeypatch):
     import sys
 

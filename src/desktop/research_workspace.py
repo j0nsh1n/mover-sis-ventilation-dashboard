@@ -42,6 +42,7 @@ from src.desktop.case_page import (
     SEVERITY_ROLE,
     SWATCH_SIZE,
     EpisodeDelegate,
+    EpisodeList,
     SignalPage,
     swatch_icon,
 )
@@ -770,13 +771,12 @@ class ResearchWorkspace(QWidget):
         episodes_head.addWidget(screening)
         episodes_head.addStretch(1)
         episodes.addLayout(episodes_head)
-        self.episode_list = QListWidget()
+        self.episode_list = EpisodeList()
         self.episode_list.setObjectName("episodeList")
         self.episode_list.setAccessibleName("Rule episodes")
         self.episode_list.setItemDelegate(EpisodeDelegate(self.episode_list))
         self.episode_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.episode_list.currentRowChanged.connect(self._select_episode)
-        self.episode_list.itemSelectionChanged.connect(self._episode_selection_cleared)
+        self.episode_list.itemSelectionChanged.connect(self._episode_selection_changed)
         episodes.addWidget(self.episode_list)
         inspector.addLayout(episodes)
 
@@ -803,12 +803,12 @@ class ResearchWorkspace(QWidget):
         rule_actions.setSpacing(8)
         self.rule_link = _link_button("Rule reference")
         self.rule_link.setAccessibleName("Show the rule in the Rules drawer")
-        self.rule_link.setEnabled(False)
         self.rule_link.clicked.connect(self._show_selected_rule)
         rule_actions.addWidget(self.rule_link)
         self.clear_episode_button = _link_button("Clear episode selection")
         self.clear_episode_button.clicked.connect(self.clear_episode_selection)
         rule_actions.addWidget(self.clear_episode_button)
+        self._set_episode_actions(False)
         rule_actions.addStretch(1)
         rule.addLayout(rule_actions)
         inspector.addLayout(rule)
@@ -1757,7 +1757,7 @@ class ResearchWorkspace(QWidget):
         self.signal_statistics = {}
         self._show_rule_widgets(False)
         self.rule_detail.setText(NO_EPISODE_SELECTED)
-        self.rule_link.setEnabled(False)
+        self._set_episode_actions(False)
         self._episodes = view.episodes.sort_values(["t_start_min", "rule_id"]).reset_index(drop=True) if not view.episodes.empty else pd.DataFrame()
         self._build_episode_list()
         self.detail_chart.set_case(view.timeseries, view.flags, self._episodes, self._rule_label_map())
@@ -2120,13 +2120,26 @@ class ResearchWorkspace(QWidget):
             extreme = measured["max" if spec.direction == "high" else "min"] if measured else None
         self.threshold_ruler.set_ruler(ruler_for(spec, extreme) if spec is not None else None)
         self.detail_chart.set_selected_episode(index)
-        self.rule_link.setEnabled(True)
+        self._set_episode_actions(True)
+        self._seek_to_episode(episode)
+
+    def _seek_to_episode(self, episode) -> None:
+        """Put the selected minute on the episode's first minute: the one path for choosing it and for clicking it again."""
         index = int((self._minute_rows["t_min"] - episode["t_start_min"]).abs().argmin())
         self.minute_slider.setValue(index)
         self._render_minute(index)
 
-    def _episode_selection_cleared(self) -> None:
-        if not self.episode_list.selectedItems():
+    def _set_episode_actions(self, selected: bool) -> None:
+        """The rule reference and Clear mean something only while an episode is selected, so Tab skips them otherwise."""
+        self.rule_link.setEnabled(selected)
+        self.clear_episode_button.setEnabled(selected)
+
+    def _episode_selection_changed(self) -> None:
+        """The selected row is the one source: the rule, the tracks and the lane outline follow it, or all clear."""
+        rows = [self.episode_list.row(item) for item in self.episode_list.selectedItems()]
+        if rows:
+            self._select_episode(rows[0])
+        else:
             self.clear_episode_selection()
 
     def clear_episode_selection(self) -> None:
@@ -2138,13 +2151,19 @@ class ResearchWorkspace(QWidget):
         self.signal_statistics = {}
         self._show_rule_widgets(False)
         self.rule_detail.setText(NO_EPISODE_SELECTED)
-        self.rule_link.setEnabled(False)
+        self._set_episode_actions(False)
         self.detail_chart.set_selected_episode(None)
         self._rule_extras = []
         self._apply_extra_tracks()
 
     def _pick_episode(self, index: int) -> None:
-        """A click on the lane selects the episode exactly as choosing it in the list does."""
+        """A click on the lane selects the episode exactly as choosing it in the list does.
+
+        On the episode that is already selected the click returns the minute to its start; nothing else resets.
+        """
+        if self.selected_rule_id is not None and self.episode_list.currentRow() == index:
+            self._seek_to_episode(self._episodes.iloc[index])
+            return
         self.episode_list.setCurrentRow(index)
 
     def _step_minute(self, steps: int) -> None:

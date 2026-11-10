@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -115,6 +116,26 @@ class SignalPage(QWidget):
                 caption.setAlignment((Qt.AlignmentFlag.AlignRight if header_row else Qt.AlignmentFlag.AlignLeft)
                                      | Qt.AlignmentFlag.AlignVCenter)
                 reading.setStretch(0, 1 if header_row else 0)
+
+
+class EpisodeList(QListWidget):
+    """The rule episodes. Focus alone selects nothing; the first key that moves or picks selects the first episode.
+
+    Qt makes row 0 current when the list gets keyboard focus with no current row, and the page reads the
+    selection, so a person tabbing through the page must not change what the page shows.
+    """
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Home and Page Up would leave row 0 current, and Qt then selects nothing; they mean the first row too.
+        picks = (Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Home, Qt.Key.Key_PageUp, Qt.Key.Key_Return,
+                 Qt.Key.Key_Enter, Qt.Key.Key_Space)
+        first = self.item(0)
+        if (event.key() in picks and event.modifiers() == Qt.KeyboardModifier.NoModifier and not self.selectedItems()
+                and first is not None and first.flags() & Qt.ItemFlag.ItemIsSelectable):
+            self.setCurrentRow(0)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class EpisodeDelegate(QStyledItemDelegate):

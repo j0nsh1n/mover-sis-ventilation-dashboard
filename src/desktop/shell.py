@@ -533,7 +533,10 @@ class FooterField(QLabel):
 
 
 class _BarResized(QObject):
-    """Runs ``callback`` whenever the bar it watches changes size."""
+    """Runs ``callback`` whenever the bar it watches changes size or is shown.
+
+    The bar's first resize comes before it counts as visible, so showing it is a trigger of its own.
+    """
 
     def __init__(self, bar: QStatusBar, callback: Callable[[], None]):
         super().__init__(bar)
@@ -541,7 +544,7 @@ class _BarResized(QObject):
         bar.installEventFilter(self)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        if event.type() == QEvent.Type.Resize:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self._callback()
         return False
 
