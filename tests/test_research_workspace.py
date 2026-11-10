@@ -715,6 +715,59 @@ def test_a_picking_key_selects_the_first_episode_and_the_arrows_go_on_from_there
     assert _shown_episode(view) == (0, 0, 0)
 
 
+@pytest.mark.parametrize("key", ["Enter", "Down", "Up", "Home"])
+def test_number_pad_keys_pick_the_first_episode_like_the_main_keys(episode_view, qapp, key):
+    """A real number pad sends its Enter and arrows with the keypad flag set."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, getattr(Qt.Key, f"Key_{key}"), Qt.KeyboardModifier.KeypadModifier)
+    assert _shown_episode(view) == (0, 0, 0)
+    assert view.selected_rule_id == "etco2_high"
+
+
+def test_e_on_the_chart_picks_the_first_episode_after_tabbing_through_the_list(episode_view, qapp):
+    """Tabbing through the list leaves row 0 current but not selected; "next" still starts at the first episode."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert _shown_episode(view) == (None, None, None)
+    view.detail_chart.setFocus()
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    assert _shown_episode(view) == (0, 0, 0) and view.selected_rule_id == "etco2_high"
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    assert _shown_episode(view) == (1, 1, 1) and view.selected_rule_id == "spo2_low"
+
+
+@pytest.mark.parametrize("button", ["clear_episode_button", "rule_link"])
+def test_clearing_from_the_keyboard_leaves_focus_on_the_episode_list(episode_view, qapp, button):
+    """The focused button turns itself off; focus must not fall to Back, where the next Space would leave the page."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setCurrentRow(1)
+    focused = getattr(view, button)
+    focused.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert focused.hasFocus()
+    if button == "clear_episode_button":
+        QTest.keyClick(focused, Qt.Key.Key_Space)
+    else:
+        view.clear_episode_selection()
+    qapp.processEvents()
+    assert _shown_episode(view) == (None, None, None)
+    assert view.episode_list.hasFocus() and not view.back_button.hasFocus()
+
+
 def test_a_mouse_click_selects_the_clicked_row_and_a_selected_episode_survives_tabbing_in(episode_view, qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest

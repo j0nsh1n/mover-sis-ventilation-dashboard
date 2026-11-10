@@ -130,7 +130,9 @@ class EpisodeList(QListWidget):
         picks = (Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Home, Qt.Key.Key_PageUp, Qt.Key.Key_Return,
                  Qt.Key.Key_Enter, Qt.Key.Key_Space)
         first = self.item(0)
-        if (event.key() in picks and event.modifiers() == Qt.KeyboardModifier.NoModifier and not self.selectedItems()
+        # The number pad's Enter and arrows carry the keypad flag; it does not change what they mean.
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if (event.key() in picks and modifiers == Qt.KeyboardModifier.NoModifier and not self.selectedItems()
                 and first is not None and first.flags() & Qt.ItemFlag.ItemIsSelectable):
             self.setCurrentRow(0)
             event.accept()

@@ -2131,6 +2131,9 @@ class ResearchWorkspace(QWidget):
 
     def _set_episode_actions(self, selected: bool) -> None:
         """The rule reference and Clear mean something only while an episode is selected, so Tab skips them otherwise."""
+        if not selected and (self.clear_episode_button.hasFocus() or self.rule_link.hasFocus()):
+            # A focused button that turns itself off would hand focus to the page's first control, Back.
+            self.episode_list.setFocus()
         self.rule_link.setEnabled(selected)
         self.clear_episode_button.setEnabled(selected)
 
@@ -2172,8 +2175,10 @@ class ResearchWorkspace(QWidget):
 
     def _select_next_episode(self) -> None:
         """The episode after the selected one in time order, the first after the last or when none is selected."""
-        if len(self._episodes):  # no row is current at -1, so the next is the first
-            self.episode_list.setCurrentRow((self.episode_list.currentRow() + 1) % len(self._episodes))
+        if len(self._episodes):
+            # Counted from the selected row: focus alone makes row 0 current without selecting it.
+            selected = [self.episode_list.row(item) for item in self.episode_list.selectedItems()]
+            self.episode_list.setCurrentRow(((selected[0] if selected else -1) + 1) % len(self._episodes))
 
     def selected_rule_text(self) -> str:
         """The selected rule as the inspector writes it, name and id first; empty when no episode is selected."""
