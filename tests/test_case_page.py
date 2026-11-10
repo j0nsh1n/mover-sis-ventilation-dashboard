@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QHeaderView, QLabel  # noqa: E402
 
 from src.desktop.marks import MISSING_ROLE  # noqa: E402
 from src.desktop.research_workspace import ResearchWorkspace  # noqa: E402
@@ -124,6 +124,18 @@ def test_a_missing_value_is_hatched_and_says_missing(page):
     assert table.item(1, 1).text() == "missing" and table.item(1, 1).data(MISSING_ROLE) is True
     assert view.metric_values["ETCO2"].text() == "missing"
     assert "ETCO₂ missing" in view.detail_chart.cursor_summary()
+
+
+def test_the_value_column_keeps_the_whole_word_missing(page, word_is_whole):
+    """The Value column is sized by its content; it was too narrow for the italic word and cut it to "missi…"."""
+    view, _ = page
+    table = view.source_row_table
+    assert table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert table.item(4, 1).text() == "missing"
+    assert word_is_whole(table, 4, 1)
+    view.minute_slider.setValue(11)  # ETCO2 has no sample at minute 11: a second missing cell, and still whole
+    assert table.item(1, 1).text() == "missing"
+    assert word_is_whole(table, 1, 1)
 
 
 def test_a_charted_track_has_a_swatch_in_the_table_and_the_others_do_not(page):

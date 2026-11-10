@@ -749,22 +749,24 @@ def test_lane_mouse_click_selects_the_episode_under_it(episode_view, width, row,
     assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 1
 
 
-def test_tab_follows_the_screen_from_the_slider_to_the_rule_link(episode_view, qapp):
-    from PySide6.QtCore import Qt
+def test_tab_follows_the_screen_through_the_whole_case_page(episode_view, qapp):
+    from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
     view, _ = episode_view
-    view.minute_slider.setFocus()
-    chain = [view.follow_up_edit, view.follow_up_button, view.open_table_button, view.source_row_table,
-             view.context_button, view.episode_list]
+    view.episode_list.setCurrentRow(0)  # an episode must be selected for its rule reference to be reachable
+    qapp.processEvents()
+    # on screen the rule reference sits left of "Clear episode selection", so Tab reaches it first
+    reference = view.rule_link.mapTo(view.window(), QPoint(0, 0))
+    clear = view.clear_episode_button.mapTo(view.window(), QPoint(0, 0))
+    assert reference.y() == clear.y() and reference.x() < clear.x()
+    view.back_button.setFocus()
+    chain = [view.more_signals_button, view.detail_chart, view.minute_slider, view.follow_up_edit,
+             view.follow_up_button, view.open_table_button, view.source_row_table, view.context_button,
+             view.episode_list, view.rule_link, view.clear_episode_button]
     for expected in chain:
         QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
         assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
-    QTest.keyClick(view.episode_list, Qt.Key.Key_Home)
-    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
-    assert view.clear_episode_button.hasFocus()
-    QTest.keyClick(view.clear_episode_button, Qt.Key.Key_Tab)
-    assert view.rule_link.hasFocus()
 
 
 def test_unknown_rule_phase_and_extra_track_limit(episode_view):

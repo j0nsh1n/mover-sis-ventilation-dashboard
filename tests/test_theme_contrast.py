@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 
 import pytest
 
@@ -81,6 +82,21 @@ def test_color_pair_meets_aa(theme, foreground, background, needed):
     palette = tokens(theme)
     ratio = contrast(palette[foreground], palette[background])
     assert ratio >= needed, f"{theme}: {foreground} {palette[foreground]} on {background} {palette[background]} is {ratio:.2f}:1, needs {needed}:1"
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_inspector_ground_and_every_swatch_colour_are_checked_as_pairs(theme):
+    """The case page's inspector paints trace swatches on its own ground; each swatch colour must be a pair above."""
+    from src.desktop.charts import _SIGNAL_INFO
+    from src.desktop.theme import _build_stylesheet
+
+    palette = tokens(theme)
+    ground = re.search(r"QFrame#caseInspector \{\s*background:\s*(#[0-9A-Fa-f]{6});", _build_stylesheet(palette))
+    assert ground, "the inspector no longer has one plain background in the stylesheet"
+    assert ground.group(1).lower() == palette["sheet"].lower(), "the inspector ground changed: update these pairs"
+    for token in sorted({info.token for info in _SIGNAL_INFO.values()}):
+        needed = AA_TEXT if token in TEXT_INKS else AA_NON_TEXT
+        assert (token, "sheet", needed) in PAIRS, f"{token} on the inspector's sheet has no contrast check"
 
 
 @pytest.mark.parametrize("theme", THEMES)

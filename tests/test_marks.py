@@ -12,11 +12,19 @@ pytest.importorskip("PySide6")
 
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import to_rgba  # noqa: E402
-from PySide6.QtGui import QColor  # noqa: E402
-from PySide6.QtWidgets import QApplication, QStyledItemDelegate, QTableWidget, QTableWidgetItem  # noqa: E402
+from PySide6.QtGui import QColor, QFont, QFontMetrics  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QHeaderView,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTableWidget,
+    QTableWidgetItem,
+)
 
 from src.desktop.charts import flag_rules_figure, focused_signals_figure  # noqa: E402
 from src.desktop.marks import (  # noqa: E402
+    _CELL_PADDING,
     MISSING_ROLE,
     SEVERITY_GLYPHS,
     MissingCellDelegate,
@@ -147,6 +155,74 @@ def test_a_missing_cell_is_hatched_with_diagonal_lines_and_keeps_its_text(qapp, 
     assert _paint(with_text) != _paint(hatched_empty), "the cell's text must still be drawn on the hatch"
     plain_text = _table("missing", missing=False)
     assert len(_painted(_paint(plain_text), background)) < len(lines)
+
+
+@pytest.mark.parametrize("text", ["missing", "not recorded"])
+def test_a_content_sized_column_has_room_for_the_whole_missing_word(qapp, applied_theme, word_is_whole, text):
+    table = QTableWidget(2, 2)
+    table.setItemDelegate(MissingCellDelegate(table))
+    for row, (label, value) in enumerate([("Signal", text), ("Other", "12")]):
+        table.setItem(row, 0, QTableWidgetItem(label))
+        cell = QTableWidgetItem(value)
+        mark_missing(cell, value == text)
+        table.setItem(row, 1, cell)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    table.show()
+    QApplication.processEvents()
+    upright = QFontMetrics(table.font()).horizontalAdvance(text)
+    assert table.columnWidth(1) > upright  # sized by the cell, not left at the default
+    assert word_is_whole(table, 0, 1), text
+    index = table.model().index(0, 1)
+    option = QStyleOptionViewItem()
+    option.widget = table
+    table.itemDelegate().initStyleOption(option, index)
+    italic = QFont(table.font())
+    italic.setItalic(True)
+    assert table.itemDelegate().sizeHint(option, index).width() >= QFontMetrics(italic).horizontalAdvance(text)
+    # a cell that is not missing keeps the stock hint
+    plain = table.model().index(1, 1)
+    plain_option = QStyleOptionViewItem()
+    plain_option.widget = table
+    table.itemDelegate().initStyleOption(plain_option, plain)
+    assert table.itemDelegate().sizeHint(plain_option, plain) == QStyledItemDelegate(table).sizeHint(plain_option, plain)
+
+
+def test_the_hint_grows_by_what_the_italic_face_adds(qapp, word_is_whole):
+    """Some faces set their italics wider than the upright letters; the cell must hold that extra width too."""
+    from PySide6.QtGui import QFontDatabase
+
+    def widening(family: str) -> int:
+        upright = QFont(family)
+        upright.setPixelSize(16)
+        slanted = QFont(upright)
+        slanted.setItalic(True)
+        return QFontMetrics(slanted).horizontalAdvance("missing") - QFontMetrics(upright).horizontalAdvance("missing")
+
+    family = next((name for name in QFontDatabase.families() if widening(name) >= 2), None)
+    if family is None:
+        pytest.skip("no installed font sets its italics wider than its upright letters")
+    table = QTableWidget(1, 1)
+    table.setItemDelegate(MissingCellDelegate(table))
+    face = QFont(family)
+    face.setPixelSize(16)
+    cell = QTableWidgetItem("missing")
+    cell.setFont(face)
+    mark_missing(cell)
+    table.setItem(0, 0, cell)
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    table.show()
+    QApplication.processEvents()
+    index = table.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.widget = table
+    table.itemDelegate().initStyleOption(option, index)
+    stock = QStyledItemDelegate(table).sizeHint(option, index).width()
+    slanted = QFont(option.font)
+    slanted.setItalic(True)
+    extra = QFontMetrics(slanted).horizontalAdvance("missing") - QFontMetrics(option.font).horizontalAdvance("missing")
+    assert extra > 0
+    assert table.itemDelegate().sizeHint(option, index).width() == stock + extra + _CELL_PADDING
+    assert word_is_whole(table, 0, 0)
 
 
 def test_a_cell_that_is_not_missing_paints_as_before(qapp):

@@ -6,8 +6,8 @@ file's word stays next to the shape. Missing data is a hatch with the cell's own
 
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, Qt
-from PySide6.QtGui import QFont, QPainter
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
+from PySide6.QtGui import QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QStyle,
@@ -57,6 +57,21 @@ def mark_missing(item: QTableWidgetItem, missing: bool = True) -> None:
 
 class MissingCellDelegate(QStyledItemDelegate):
     """Draws cells marked with ``mark_missing`` on a diagonal hatch and keeps their text."""
+
+    def sizeHint(  # noqa: N802
+        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QSize:
+        size = super().sizeHint(option, index)
+        if not index.data(MISSING_ROLE):
+            return size
+        # The base hint measures the text upright; a missing cell paints it in italics and holds padding
+        # back from the elision, so a content-sized column would otherwise cut the word.
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        italic = QFont(opt.font)
+        italic.setItalic(True)
+        wider = QFontMetrics(italic).horizontalAdvance(opt.text) - QFontMetrics(opt.font).horizontalAdvance(opt.text)
+        return QSize(size.width() + max(wider, 0) + _CELL_PADDING, size.height())
 
     def paint(
         self,

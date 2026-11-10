@@ -814,8 +814,8 @@ class ResearchWorkspace(QWidget):
         # Focus follows the screen: back, the chart column from the top, then the inspector from the top.
         order = (self.back_button, self.more_signals_button, self.detail_chart, self.minute_slider,
                  self.follow_up_edit, self.follow_up_button, self.follow_up_cancel, self.open_table_button,
-                 self.source_row_table, self.context_button, self.episode_list, self.clear_episode_button,
-                 self.rule_link)
+                 self.source_row_table, self.context_button, self.episode_list, self.rule_link,
+                 self.clear_episode_button)
         for earlier, later in zip(order, order[1:], strict=False):
             QWidget.setTabOrder(earlier, later)
         self.signal_scroll = QScrollArea()

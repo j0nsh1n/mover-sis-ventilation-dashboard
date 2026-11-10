@@ -229,3 +229,29 @@ def applied_theme(request, qapp):
     apply_theme(qapp, request.param)
     yield request.param
     apply_theme(qapp, "light")
+
+
+@pytest.fixture
+def word_is_whole():
+    """``word_is_whole(table, row, column)``: whether the missing-cell delegate paints the text uncut at that column's width.
+
+    Worked out from font metrics, so it holds for any font and style on any platform.
+    """
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QFont, QFontMetrics
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from src.desktop.marks import _CELL_PADDING
+
+    def check(table, row: int, column: int) -> bool:
+        index = table.model().index(row, column)
+        option = QStyleOptionViewItem()
+        option.widget = table
+        table.itemDelegate().initStyleOption(option, index)
+        option.rect = QRect(0, 0, table.columnWidth(column), table.rowHeight(row))
+        room = table.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, table).width() - _CELL_PADDING
+        italic = QFont(option.font)
+        italic.setItalic(True)
+        return QFontMetrics(italic).elidedText(option.text, Qt.TextElideMode.ElideRight, room) == option.text
+
+    return check
