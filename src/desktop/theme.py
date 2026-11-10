@@ -676,6 +676,35 @@ QFrame#caseInspector QHeaderView, QFrame#caseInspector QHeaderView::section {{
     background: transparent;
 }}
 
+/* —— cases page: filter, preview panel —— */
+QLineEdit#casesFilter {{
+    padding: 7px 30px 7px 34px;
+}}
+QLineEdit#casesFilter:focus {{
+    padding: 6px 29px 6px 33px;
+}}
+/* number headings leave room at the right for the sort arrow; the cells keep the same room, so numbers sit under them */
+QTableView#casesTable QHeaderView::section {{
+    padding: 6px 26px 6px 10px;
+}}
+QFrame#casePreview {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#casePreview[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#casePreview QListView {{
+    background: transparent;
+}}
+QLabel#previewTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;

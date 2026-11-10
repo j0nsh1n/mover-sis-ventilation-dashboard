@@ -2239,13 +2239,20 @@ class ResearchWorkspace(QWidget):
         self.stack.setCurrentIndex(0)
         self.set_status("Returned to the same question and comparison.")
 
-    def set_cases_data(self, cases: pd.DataFrame | None, scan, catalog, flags: pd.DataFrame | None = None) -> None:
-        """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset."""
-        self._cases_data = (cases, scan, catalog, flags)
+    def set_cases_data(
+        self, cases: pd.DataFrame | None, scan, catalog, flags: pd.DataFrame | None = None,
+        timeseries: pd.DataFrame | None = None, episodes: pd.DataFrame | None = None,
+    ) -> None:
+        """Hand over the loaded sample, the full-EMR scan and the rule catalog of the loaded preset.
+
+        ``timeseries`` and ``episodes`` are the sample's minute data and rule episodes, already in memory, for
+        the Cases page's preview.
+        """
+        self._cases_data = (cases, scan, catalog, flags, timeseries, episodes)
         if self.scope != "Articles":
             self.scope_label.setText(self._case_scope())
         if self._cases_overview is not None:
-            self._cases_overview.set_data(cases, scan, catalog, flags)
+            self._cases_overview.set_data(cases, scan, catalog, flags, timeseries, episodes)
 
     def _case_scope(self) -> str:
         """The case scope line: the last search's counts, or the loaded sample before any search."""

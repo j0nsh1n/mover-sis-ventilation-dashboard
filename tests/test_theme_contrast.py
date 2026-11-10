@@ -65,6 +65,13 @@ PAIRS: list[tuple[str, str, float]] = [
     ("ink_2", "paper", AA_TEXT),
     ("ink", "sel", AA_TEXT),
     ("ink_3", "sel", AA_TEXT),
+    # The Cases page: the summary charts' bars and ticks and the score bars in the table are ink_2 on paper (or on
+    # the selected row), the median line is ink, and the page's text sits on paper, the selected row or the preview's
+    # sheet. The traces in the preview are signal hues on sheet, checked above.
+    ("ink_2", "paper", AA_NON_TEXT),
+    ("ink_2", "sel", AA_NON_TEXT),
+    ("ink", "paper", AA_NON_TEXT),
+    ("ink_3", "paper", AA_NON_TEXT),
 ]
 
 
@@ -110,3 +117,30 @@ def test_every_color_the_design_names_exists(theme):
     assert names <= palette.keys()
     for name in names - {"hatch"}:
         assert len(palette[name]) == 7 and palette[name].startswith("#"), name
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_cases_preview_ground_is_the_sheet_so_its_text_pairs_are_the_checked_ones(theme):
+    from src.desktop.theme import _build_stylesheet
+
+    palette = tokens(theme)
+    ground = re.search(r"QFrame#casePreview \{\s*background:\s*(#[0-9A-Fa-f]{6});", _build_stylesheet(palette))
+    assert ground, "the cases preview no longer has one plain background in the stylesheet"
+    assert ground.group(1).lower() == palette["sheet"].lower(), "the preview ground changed: update these pairs"
+    for ink in TEXT_INKS:
+        assert (ink, "sheet", AA_TEXT) in PAIRS
+
+
+def test_every_token_the_cases_page_draws_text_in_is_checked_on_each_ground_it_sits_on():
+    """The table's text tokens sit on paper and on the selected row; each is a text pair above."""
+    import pandas as pd
+
+    from src.desktop.cases_overview import COLUMNS, _CasesDelegate, _CasesModel
+
+    model = _CasesModel()
+    model.set_frame(pd.DataFrame({"PID": ["A", "B"], **{c.key: [0, 1] for c in COLUMNS if c.key != "PID"}}))
+    tokens_used = {_CasesDelegate.text_token(model.index(row, col)) for row in range(2) for col in range(len(COLUMNS))}
+    assert tokens_used == {"ink", "ink_2", "ink_3"}
+    for token in tokens_used:
+        for ground in ("paper", "sel"):
+            assert (token, ground, AA_TEXT) in PAIRS, (token, ground)

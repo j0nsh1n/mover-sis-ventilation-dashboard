@@ -21,6 +21,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- New look, Cases page: the list of cases uses the same paper and night ledger
+  colors as the other pages, in light and dark. The header is the title, one
+  sentence that stays true for what is on screen ("21 of 28 analyzed cases have
+  rule episodes · sorted by anomaly score"), a line stating the scope (the loaded
+  sample, or the full-EMR scan with the indexed-surgery count), "Analyzed" and
+  "Indexed" as text tabs, and a filter. Press / anywhere on the page to type in
+  the filter; it keeps the cases whose case ID, procedure or rule name contains
+  the text, says how many of how many show, and Escape clears it before Escape
+  goes back. The three summary charts (anomaly score per case, most frequent rules
+  by flagged minutes, surgery duration with its median) are always shown, drawn in
+  ink with a caption that says what they count; they describe every case in the
+  scope, not just the filtered ones. The table has no frame or grid lines, numbers
+  line up under right-aligned headings, a zero count is muted text, and the
+  anomaly score has a short bar scaled to the largest score in view. A preview
+  panel at the right (under the list when the page is narrow) follows the current
+  row: procedure, duration, age, sex, small PIP, ETCO₂ and heart-rate traces from
+  data already loaded, its rule episodes and Open case. For a case whose minutes
+  are not loaded, such as one only the full-EMR scan knows, it says signals show
+  when the case is opened. The "Charts" button and the scope drop-down are gone.
+  The columns and their names are unchanged.
+
 - New look, case page: the page that shows one case now uses the same paper
   and night ledger colors as the research page, in light and dark. The header
   is the procedure with one line of facts (surgery or recording length, age, sampling, rule

@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from src.desktop.cases_overview import COLUMNS, EMPTY_MESSAGE, SCORE_COLUMN
+from src.desktop.cases_overview import CELL_PADDING, COLUMNS, EMPTY_MESSAGE, SCORE_COLUMN
 from src.desktop.research_workspace import CASES_PAGE, ResearchWorkspace
 from src.pipeline.corpus_scan import ScanResult
 from src.services.retrieval import RetrievalResult, SearchCandidate
@@ -87,31 +87,35 @@ def test_scope_text_for_sample_scan_and_empty_states(qapp):
     view = _workspace(_cases())
     view.show_cases()
     overview = view._cases_overview
-    assert overview.scope_label.text() == "Analyzed cases, 3 (loaded sample) · with flags: 2 · max score: 100"
-    assert not overview.scope_combo.isVisibleTo(overview)
+    assert overview.scope_label.text() == "Loaded sample: 3 analyzed cases."
+    assert overview.sample_tab.text() == "Analyzed 3"
+    assert not overview.scan_tab.isVisibleTo(overview)
+    # two of the three cases have a flagged minute
+    assert overview.summary_label.text() == "2 of 3 analyzed cases have rule episodes · sorted by anomaly score"
 
     view.set_cases_data(_cases(), _scan(4), load_rule_catalog("default"))
-    assert overview.scope_label.text() == "Analyzed cases, 3 of 40 indexed surgeries (loaded sample) · with flags: 2 · max score: 100"
-    assert overview.scope_combo.isVisibleTo(overview)
-    assert overview.scope_combo.itemText(1) == "Full-EMR scan, 4 scored, 32 without ventilator data"
+    assert overview.scope_label.text() == "Loaded sample: 3 analyzed cases of 40 indexed surgeries."
+    assert overview.scan_tab.isVisibleTo(overview)
+    assert overview.scan_tab.text() == "Indexed 40"
 
-    overview.scope_combo.setCurrentIndex(1)
-    assert overview.scope_label.text() == "Full-EMR scan, 4 scored, 32 without ventilator data · with flags: 3 · max score: 4"
+    overview.set_scope("scan")
+    assert overview.scope_label.text() == "Full-EMR scan: 4 scored of 40 indexed surgeries, 32 without ventilator data."
+    assert overview.summary_label.text() == "3 of 4 scored cases have rule episodes · sorted by anomaly score"
     assert [overview.cell_text(r, 0)[:4] for r in range(4)] == ["SCAN"] * 4
 
     view.set_cases_data(None, None, load_rule_catalog("default"))
-    assert overview.scope_label.text() == "Analyzed cases, 0 (loaded sample) · with flags: 0 · max score: —"
+    assert overview.scope_label.text() == "Loaded sample: 0 analyzed cases."
+    assert overview.summary_label.text() == "No analyzed cases yet."
     assert overview.empty_label.text() == EMPTY_MESSAGE
     assert overview.empty_label.isVisibleTo(overview)
     assert not overview.table.isVisibleTo(overview)
-
-
+    assert not overview.charts_panel.isVisibleTo(overview)
 def test_scan_scope_reports_unscored_shards_and_preset_mismatch(qapp):
     scan = _scan(4, failed_shards=[{"shard": 1, "n_pids": 3, "error": "x"}], preset="strict")
     view = _workspace(_cases(), scan)
     view.show_cases()
     overview = view._cases_overview
-    overview.scope_combo.setCurrentIndex(1)
+    overview.set_scope("scan")
     text = overview.scope_label.text()
     assert "3 could not be scored" in text
     assert "scanned with preset strict" in text
@@ -189,7 +193,7 @@ def test_every_workspace_button_answers_enter(qapp):
     view.set_answer("An answer.", 1)
     buttons = view.findChildren(QPushButton)
     assert view.ask_button in buttons and view.new_question_button in buttons
-    assert {"Close", "Charts ▸", "Show on board", "Ask again"} <= {b.text() for b in buttons}
+    assert {"Close", "Open case", "Show on board", "Ask again"} <= {b.text() for b in buttons}
     assert [b.text() for b in buttons if not b.autoDefault()] == []
 
 
@@ -209,7 +213,7 @@ def test_refresh_after_reload_drops_old_rows(qapp):
     view = _workspace(_cases((9, 100, 25)), _scan(4))
     view.show_cases()
     overview = view._cases_overview
-    overview.scope_combo.setCurrentIndex(1)
+    overview.set_scope("scan")
     assert overview._proxy.rowCount() == 4
 
     fresh = _cases((5, 6))
@@ -218,7 +222,7 @@ def test_refresh_after_reload_drops_old_rows(qapp):
     assert overview.scope() == "sample"
     assert sorted(_first_column(view, 2)) == ["SYNnew0000001", "SYNnew0000002"]
     assert overview._proxy.rowCount() == 2
-    assert not overview.scope_combo.isVisibleTo(overview)
+    assert not overview.scan_tab.isVisibleTo(overview)
 
 
 def test_reload_keeps_the_overview_open_but_leaves_a_case(qapp):
@@ -289,7 +293,7 @@ def test_scan_only_case_goes_through_the_fetch_path(qapp, monkeypatch, tmp_path)
         win._push_cases_overview()
         win.research.show_cases()
         overview = win.research._cases_overview
-        overview.scope_combo.setCurrentIndex(1)
+        overview.set_scope("scan")
         scan_pid = overview.cell_text(0, 0)
         assert scan_pid.startswith("SCAN")
         overview.table.row_activated.emit(0)
@@ -325,7 +329,7 @@ def test_data_reload_and_preset_change_push_fresh_data(qapp, monkeypatch, tmp_pa
         assert overview._preset == "strict"
         win.corpus_scan = _scan(5)
         win._on_corpus_scan_ok(win.corpus_scan)
-        assert overview.scope_combo.isVisibleTo(overview)
+        assert overview.scan_tab.isVisibleTo(overview)
     finally:
         win.close()
 
@@ -337,7 +341,7 @@ def test_overview_opens_quickly_on_a_600_case_scan(qapp):
     QApplication.processEvents()
     started = time.perf_counter()
     view.show_cases()
-    view._cases_overview.scope_combo.setCurrentIndex(1)
+    view._cases_overview.set_scope("scan")
     QApplication.processEvents()
     elapsed = time.perf_counter() - started
     assert view._cases_overview._proxy.rowCount() == 600
@@ -522,7 +526,7 @@ def test_tab_leaves_the_table_so_the_whole_overview_is_reachable(qapp):
     view.show_cases()
     overview = view._cases_overview
     assert not overview.table.tabKeyNavigation()
-    table, combo, back = overview.table, overview.scope_combo, overview.back_button
+    table, filter_edit, back = overview.table, overview.filter_edit, overview.back_button
     window = view.window()
 
     table.setFocus()
@@ -542,9 +546,9 @@ def test_tab_leaves_the_table_so_the_whole_overview_is_reachable(qapp):
         for _ in range(8):
             QTest.keyClick(window.focusWidget(), key, modifier)
             reached.add(window.focusWidget())
-            if {back, combo, table} <= reached:
+            if {back, filter_edit, table, overview.preview.open_button} <= reached:
                 break
-    assert {back, combo, table} <= reached
+    assert {back, filter_edit, table, overview.preview.open_button} <= reached
 
 
 def test_escape_in_f_returns_to_the_overview_with_the_row_selected(qapp):
@@ -634,6 +638,8 @@ def test_sort_arrow_is_visible_in_both_app_themes(qapp, theme):
     apply_theme(qapp, theme)
     try:
         view = _workspace(_cases())
+        # wide enough that the score column, where the arrow sits, is inside the list's own window
+        view.resize(1800, 700)
         view.show_cases()
         QApplication.processEvents()
         header = view._cases_overview.table.horizontalHeader()
@@ -684,18 +690,20 @@ def test_agent_and_median_columns_show_their_own_values(qapp):
     ([1, 0, 1], [0, 1, 0], 3),
     ([1, 1, 0], [1, 0, 0], 2),
 ])
-def test_with_flags_counts_cases_with_one_or_more_flagged_minutes(qapp, warn, critical, flagged):
+def test_the_summary_counts_cases_with_one_or_more_flagged_minutes(qapp, warn, critical, flagged):
     cases = _cases((9, 100, 25)).assign(n_warn=warn, n_critical=critical)
     view = _workspace(cases)
     view.show_cases()
-    assert f"with flags: {flagged} ·" in view._cases_overview.scope_label.text()
+    verb = "has" if flagged == 1 else "have"
+    text = view._cases_overview.summary_label.text()
+    assert text.startswith(f"{flagged} of 3 analyzed cases {verb} rule episodes")
 
 
 def test_rule_chart_only_counts_flags_of_the_cases_in_scope(qapp, monkeypatch):
     import src.desktop.cases_overview as module
 
-    rules = Mock(wraps=module.flag_rules_figure)
-    monkeypatch.setattr(module, "flag_rules_figure", rules)
+    rules = Mock(wraps=module.rules_spec)
+    monkeypatch.setattr(module, "rules_spec", rules)
     cases = _cases((9, 100))
     scan = _scan(2)
     flags = pd.DataFrame({"PID": [cases.PID[0], cases.PID[1], "OTHER", scan.cases.PID[0]],
@@ -705,16 +713,13 @@ def test_rule_chart_only_counts_flags_of_the_cases_in_scope(qapp, monkeypatch):
     view.set_cases_data(cases, ScanResult(scan.cases, episodes, scan.meta), load_rule_catalog("default"), flags)
     view.show_cases()
     overview = view._cases_overview
-    overview.charts_button.click()
     assert sorted(rules.call_args.args[0]["PID"]) == sorted([cases.PID[0], cases.PID[1]])
-    overview.charts_button.click()
-    overview.scope_combo.setCurrentIndex(1)
-    overview.charts_button.click()
+    overview.set_scope("scan")
     assert sorted(rules.call_args.args[0]["PID"]) == sorted([scan.cases.PID[0], scan.cases.PID[1]])
 
 
 @pytest.mark.parametrize("width", [900, 1400, 1920])
-def test_charts_fit_their_areas_without_cropping(qapp, width):
+def test_charts_fit_their_areas_and_the_page_never_scrolls_sideways(qapp, width):
     rule_ids = [spec.id for spec in load_rule_catalog().specs][:20]
     cases = _cases(tuple(range(1, 19)))
     flags = pd.DataFrame({"PID": [cases.PID[i % 18] for i in range(len(rule_ids))], "rule_id": rule_ids,
@@ -725,37 +730,39 @@ def test_charts_fit_their_areas_without_cropping(qapp, width):
     view.set_cases_data(cases, None, load_rule_catalog("default"), flags)
     view.show_cases()
     overview = view._cases_overview
-    overview.charts_button.click()
-    QTest.qWait(250)
-    for chart in (overview.top_chart, overview.rules_chart):
-        viewport = chart._scroll.viewport()
-        assert chart._scroll.verticalScrollBar().maximum() == 0
-        assert chart._scroll.horizontalScrollBar().maximum() == 0
-        assert 0 < chart._label.height() <= viewport.height()
-        assert 0 < chart._label.width() <= viewport.width()
-        assert chart._label.height() >= viewport.height() * 0.8
+    QTest.qWait(100)
+    assert overview._scroll.horizontalScrollBar().maximum() == 0
+    for block in (overview.score_block, overview.rules_block, overview.duration_block):
+        chart = block.chart
+        assert chart.isVisible() and chart.has_chart()
+        # the picture is made for exactly the area it fills, so it is neither cropped nor stretched
+        assert chart.rendered().deviceIndependentSize().toSize() == chart.size()
+        assert chart.mapTo(overview, chart.rect().bottomRight()).x() <= overview.width()
     view.close()
 
 
 def test_charts_render_again_for_a_new_area(qapp, monkeypatch):
-    import src.desktop.cases_overview as module
+    import src.desktop.cases_summary as module
 
-    top = Mock(wraps=module.top_cases_figure)
-    monkeypatch.setattr(module, "top_cases_figure", top)
+    histogram = Mock(wraps=module.score_histogram_figure)
+    monkeypatch.setattr(module, "score_histogram_figure", histogram)
     view = ResearchWorkspace()
     view.resize(900, 900)
     view.show()
     view.set_cases_data(_cases(), None, load_rule_catalog("default"))
     view.show_cases()
     overview = view._cases_overview
-    overview.charts_button.click()
-    QTest.qWait(250)
-    before = top.call_count
-    first = top.call_args.kwargs["figsize"]
+    QTest.qWait(100)
+    chart = overview.score_block.chart
+    chart.rendered()
+    before = histogram.call_count
+    first = histogram.call_args.kwargs["width"]
+    assert first == chart.width()
     view.resize(1500, 900)
-    QTest.qWait(300)
-    assert top.call_count > before
-    assert top.call_args.kwargs["figsize"][0] > first[0] * 1.3
+    QTest.qWait(150)
+    chart.rendered()
+    assert histogram.call_count > before
+    assert histogram.call_args.kwargs["width"] == chart.width() > first * 1.2
     view.close()
 
 
@@ -763,17 +770,21 @@ def test_chart_areas_are_named_and_tab_order_follows_the_page(qapp):
     view = _workspace(_cases())
     view.show_cases()
     overview = view._cases_overview
-    overview.charts_button.click()
-    assert overview.top_chart.accessibleName() == "Top cases by anomaly score chart"
-    assert overview.rules_chart.accessibleName() == "Flag counts by rule chart"
+    names = [block.chart.accessibleName() for block in (overview.score_block, overview.rules_block,
+                                                       overview.duration_block)]
+    assert names == ["Anomaly score per case", "Most frequent rules", "Surgery duration"]
+    assert all(block.chart.accessibleDescription() for block in (overview.score_block, overview.duration_block))
     window = view.window()
     overview.back_button.setFocus()
     order = [window.focusWidget()]
-    for _ in range(4):
+    for _ in range(6):
         QTest.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
         order.append(window.focusWidget())
-    assert order == [overview.back_button, overview.charts_button, overview.top_chart._scroll,
-                     overview.rules_chart._scroll, overview.table]
+    # no full-EMR scan: the lone "Analyzed" tab is a label, not a stop. The rules chart has no flags to read.
+    assert not overview.rules_block.chart.has_chart()
+    assert order == [overview.back_button, overview.filter_edit, overview.score_block.chart,
+                     overview.duration_block.chart, overview.table, overview.preview.open_button,
+                     overview.back_button]
 
 
 def _button_ink_and_ground(page, button) -> tuple[str, str]:
@@ -797,8 +808,7 @@ def _button_ink_and_ground(page, button) -> tuple[str, str]:
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
-@pytest.mark.parametrize("expanded", [False, True])
-def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme, expanded):
+def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme):
     from PySide6.QtWidgets import QPushButton
 
     from src.desktop.theme import apply_theme
@@ -808,11 +818,9 @@ def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme, 
         view = _workspace(_cases())
         view.show_cases()
         overview = view._cases_overview
-        if expanded:
-            overview.charts_button.click()
         QApplication.processEvents()
         buttons = [b for b in overview.findChildren(QPushButton) if b.isVisibleTo(overview)]
-        assert overview.charts_button in buttons and overview.back_button in buttons
+        assert overview.preview.open_button in buttons and overview.back_button in buttons
         for button in buttons:
             ink, ground = _button_ink_and_ground(overview, button)
             assert _contrast(int(ink[1:], 16), int(ground[1:], 16)) >= 4.5, (theme, button.text(), ink, ground)
@@ -824,7 +832,7 @@ def test_every_button_on_the_cases_page_is_readable_in_both_themes(qapp, theme, 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_case_ids_and_top_rules_fit_their_columns_at_the_default_width(qapp, theme):
     from PySide6.QtGui import QFontMetrics
-    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+    from PySide6.QtWidgets import QStyleOptionViewItem
 
     from src.desktop.theme import apply_theme
 
@@ -843,7 +851,8 @@ def test_case_ids_and_top_rules_fit_their_columns_at_the_default_width(qapp, the
                 table.itemDelegate().initStyleOption(option, index)
                 option.widget = table
                 option.rect = table.visualRect(index)
-                room = table.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, table).width()
+                # the delegate pads each side of the text by CELL_PADDING
+                room = table.columnWidth(column) - 2 * CELL_PADDING
                 wanted = QFontMetrics(option.font).horizontalAdvance(index.data())
                 assert wanted <= room, (theme, COLUMNS[column].key, index.data(), wanted, room)
         view.close()

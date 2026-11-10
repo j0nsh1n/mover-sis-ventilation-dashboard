@@ -657,8 +657,9 @@ def _overview_facts(run: Run, rows: int = 3) -> dict[str, Any]:
     return {
         "page": research.stack.currentIndex(),
         "scope": overview.scope_label.text(),
-        "scope_switch_visible": overview.scope_combo.isVisibleTo(overview),
-        "scope_choices": [overview.scope_combo.itemText(i) for i in range(overview.scope_combo.count())],
+        "scope_switch_visible": overview.scan_tab.isVisibleTo(overview),
+        "scope_choices": [tab.text() for tab in (overview.sample_tab, overview.scan_tab)
+                          if tab.isVisibleTo(overview)],
         "table_visible": overview.table.isVisibleTo(overview),
         "empty_message": overview.empty_label.text() if overview.empty_label.isVisibleTo(overview) else "",
         "rows": overview._proxy.rowCount(),
@@ -744,9 +745,9 @@ def switch_to_scan_scope(run: Run) -> dict[str, Any]:
     run.win.research.show_cases()
     run.settle()
     overview = run.win.research._cases_overview
-    if overview.scope_combo.count() < 2:
+    if not overview.scan_tab.isVisibleTo(overview):
         raise RuntimeError("the scope switch does not offer the scan")
-    overview.scope_combo.setCurrentIndex(1)
+    overview.scan_tab.click()
     run.settle()
     return _overview_facts(run)
 
@@ -1100,11 +1101,11 @@ def workspace_charts(run: Run) -> dict[str, Any]:
     research = run.win.research
     research.show_cases()
     overview = research._cases_overview
-    assert not overview.charts_button.isChecked()
-    overview.charts_button.click()
     run.settle()
-    assert overview.charts_panel.isVisible() and not overview._charts_dirty
-    return {"view": "cases", "charts_expanded": True, "scope": overview.scope_label.text()}
+    charts = (overview.score_block, overview.rules_block, overview.duration_block)
+    assert overview.charts_panel.isVisible() and all(not block.chart.rendered().isNull()
+                                                    for block in charts if block.chart.has_chart())
+    return {"view": "cases", "charts_shown": True, "scope": overview.scope_label.text()}
 
 
 def workspace_signal(run: Run) -> dict[str, Any]:

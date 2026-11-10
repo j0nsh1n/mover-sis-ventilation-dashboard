@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QTableWidgetItem,
 )
 
-from src.desktop.charts import flag_rules_figure, focused_signals_figure  # noqa: E402
+from src.desktop.charts import focused_signals_figure  # noqa: E402
 from src.desktop.marks import (  # noqa: E402
     _CELL_PADDING,
     MISSING_ROLE,
@@ -99,20 +99,6 @@ def test_the_fallback_chart_colors_come_from_the_light_tokens(qapp, monkeypatch)
     assert style["spine"] == light["rule"]
     assert style["bar"] == light["ink_2"]
     assert {style["info"], style["warn"], style["critical"]} == {light["ink"]}
-
-
-def test_stacked_flag_counts_use_the_ink_and_tell_severities_apart_by_fill(qapp, applied_theme):
-    flags = pd.DataFrame({"rule_id": ["a", "a", "a"], "severity": ["info", "warn", "critical"]})
-    ax = flag_rules_figure(flags).axes[0]
-    ink = to_rgba(tokens(applied_theme)["ink"])
-    bars = {container.get_label(): container.patches[0] for container in ax.containers}
-    assert set(bars) == {"info", "warn", "critical"}
-    for severity, bar in bars.items():
-        assert tuple(bar.get_edgecolor()) == pytest.approx(ink), severity
-    assert bars["info"].get_facecolor()[3] == 0
-    assert tuple(bars["critical"].get_facecolor()) == pytest.approx(ink)
-    assert bars["warn"].get_hatch()
-    assert not bars["info"].get_hatch() and not bars["critical"].get_hatch()
 
 
 def _paint(table: QTableWidget):

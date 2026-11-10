@@ -13,7 +13,7 @@ Research **desktop app** (and optional web UI) for the [MOVER](https://mover.ics
 
 1. **Data pipeline** — load/clean SIS tables, time-align ventilator + vitals per surgery (`PID`), derive TV mL/kg & MAC, write parquet caches  
 2. **Anomaly flags** — rising PIP, ETCO₂ out of range, agent drift/high MAC, SpO₂, composite patterns (see `docs/DESIGN.md` and `src/config/thresholds.yaml`)  
-3. **Desktop app (primary)** — native PySide6 research workspace with setup, local AI search, focused signal inspection, Cases charts, and a Rules drawer
+3. **Desktop app (primary)** — native PySide6 research workspace with setup, local AI search, focused signal inspection, a Cases list with summary charts and a preview, and a Rules drawer
 4. **Streamlit UI (optional)** — browser views for the existing pipeline
 
 ## Data location
@@ -164,7 +164,7 @@ The desktop app:
 - Opens **Setup** before loading data if the EMR folder is missing or invalid
 - Starts in **Research**, where a question retrieves indexed surgeries using local embeddings or keyword fallback. A selected local chat model can answer from bounded case extracts.
 - Lets you select a retrieved case and open **F signal detail** with PIP, ETCO₂, heart rate, and source rows. Returning preserves the question and comparison.
-- Opens **Cases** for sortable case metrics and a **Charts** section, collapsed until you expand it
+- Opens **Cases** for sortable case metrics with a filter (`/`), three summary charts, and a preview panel that follows the current row
 - Offers **More signals** in F for up to three extra tracks, including tidal volume, PEEP, agent concentrations, MAC, SpO₂, and mean arterial pressure
 - Opens the searchable **Rules** drawer with `Ctrl+R`, including collapsible **Scoring** and **Age-40 MAC** sections below the rules
 - Provides **Settings** (`Ctrl+,`) for EMR, Wave, Processed, chat and embedding models, and theme

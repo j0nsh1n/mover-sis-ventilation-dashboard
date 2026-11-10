@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Mapping
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple, cast
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -164,91 +166,6 @@ def _new_fig(figsize, style: dict[str, str], **kwargs):
     return fig, ax
 
 
-def top_cases_figure(cases: pd.DataFrame, n: int = 15, *, figsize: tuple[float, float] | None = None) -> plt.Figure:
-    style = _style()
-    d = cases.nlargest(min(n, len(cases)), "anomaly_score").iloc[::-1]
-    labels = d["PID"].astype(str).str.slice(0, 8)
-    if "Procedure_short" in d.columns:
-        labels = labels + " | " + d["Procedure_short"].fillna("").astype(str).str.slice(0, 24)
-    fig, ax = _new_fig(figsize or (7.5, max(2.5, 0.28 * len(d))), style)
-    ax.barh(
-        range(len(d)),
-        d["anomaly_score"].astype(float),
-        color=style["bar"],
-        height=0.72,
-        edgecolor="none",
-    )
-    ax.set_yticks(range(len(d)))
-    ax.set_yticklabels(list(labels), fontsize=8, color=style["text"])
-    ax.set_xlabel("Anomaly score")
-    ax.set_title(f"Top {len(d)} cases by anomaly score", fontsize=11, pad=8)
-    ax.grid(True, axis="x", alpha=0.35, color=style["grid"])
-    ax.grid(False, axis="y")
-    fig.tight_layout()
-    return fig
-
-
-def flag_rules_figure(
-    flags: pd.DataFrame, *, count_column: str | None = None, figsize: tuple[float, float] | None = None,
-) -> plt.Figure:
-    style = _style()
-    fig, ax = _new_fig(figsize or (7.5, 3.2), style)
-    if flags is None or flags.empty:
-        ax.text(
-            0.5,
-            0.5,
-            "No flags",
-            ha="center",
-            va="center",
-            color=style["muted"],
-            fontsize=11,
-        )
-        ax.set_axis_off()
-        fig.tight_layout()
-        return fig
-    grouped = flags.groupby(["rule_id", "severity"], observed=False)
-    counts = (grouped[count_column].sum() if count_column else grouped.size()).unstack(fill_value=0)
-    for col in ("info", "warn", "critical"):
-        if col not in counts.columns:
-            counts[col] = 0
-    counts = counts[["info", "warn", "critical"]]
-    counts = counts.loc[counts.sum(axis=1).sort_values(ascending=False).index]
-    counts = counts.head(20)
-    colors = {
-        "info": style["info"],
-        "warn": style["warn"],
-        "critical": style["critical"],
-    }
-    # One ink for every severity. The design fills info hollow, warn half and critical solid; a bar
-    # cannot be half filled, so warn is hatched, which carries the same "partly filled" reading.
-    fills: dict[str, dict[str, Any]] = {
-        "info": {"facecolor": "none"},
-        "warn": {"facecolor": "none", "hatch": "////"},
-        "critical": {"facecolor": colors["critical"]},
-    }
-    bottom = None
-    x = range(len(counts))
-    for sev in ("info", "warn", "critical"):
-        vals = counts[sev].values
-        ax.bar(x, vals, bottom=bottom, label=sev, width=0.78, edgecolor=colors[sev], linewidth=0.8, **fills[sev])
-        bottom = vals if bottom is None else bottom + vals
-    # Headroom keeps the legend off the tallest bars
-    ax.set_ylim(0, max(float(counts.sum(axis=1).max()), 1.0) * 1.22)
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(list(counts.index), rotation=45, ha="right", fontsize=8, color=style["text"])
-    ax.set_ylabel("Minute-flags")
-    ax.set_title("Flag counts by rule", fontsize=11, pad=8)
-    leg = ax.legend(fontsize=8, frameon=True, fancybox=True, framealpha=0.9, loc="upper right", ncol=3)
-    leg.get_frame().set_facecolor(style["figure_facecolor"])
-    leg.get_frame().set_edgecolor(style["spine"])
-    for text in leg.get_texts():
-        text.set_color(style["text"])
-    ax.grid(True, axis="y", alpha=0.35, color=style["grid"])
-    ax.grid(False, axis="x")
-    fig.tight_layout()
-    return fig
-
-
 def case_timeline_figure(
     ts: pd.DataFrame,
     flags: pd.DataFrame | None = None,
@@ -403,6 +320,171 @@ def _rgba(name: str, theme: str | None) -> tuple[float, float, float, float]:
 
     color = token_color(name, theme)
     return color.redF(), color.greenF(), color.blueF(), color.alphaF()
+
+
+# —— the Cases page's summary charts ——
+
+SUMMARY_CHART_HEIGHT = 104
+_NICE_STEPS = (1.0, 2.0, 2.5, 5.0)
+
+
+def _nice_step(raw: float) -> float:
+    """The smallest 1, 2, 2.5 or 5 times a power of ten that is at least ``raw``."""
+    if raw <= 0:
+        return 1.0
+    scale = 10.0 ** math.floor(math.log10(raw))
+    return next(step * scale for step in (*_NICE_STEPS, 10.0) if step * scale >= raw * (1 - 1e-9))
+
+
+def histogram_edges(values: Sequence[float], max_bins: int = 8) -> list[float]:
+    """Whole-number-friendly bin edges from zero (or the lowest value) up past the highest, at most ``max_bins`` bins."""
+    known = [float(v) for v in values if pd.notna(v)]
+    high = max(known, default=0.0)
+    low = min(0.0, min(known, default=0.0))
+    step = _nice_step((high - low) / max_bins) if high > low else 1.0
+    first = math.floor(low / step) * step
+    count = max(int(math.floor((high - first) / step)) + 1, 1)
+    return [round(first + step * i, 10) for i in range(count + 1)]
+
+
+def tick_values(low: float, high: float, wanted: int = 4) -> list[float]:
+    """Round axis values covering ``low`` to ``high``, about ``wanted`` of them."""
+    step = _nice_step((high - low) / wanted) if high > low else 1.0
+    first = math.floor(low / step) * step
+    count = max(int(math.ceil((high - first) / step - 1e-9)), 1)
+    return [round(first + step * i, 10) for i in range(count + 1)]
+
+
+def _summary_canvas(width: int, height: int, dpi: float, theme: str | None):
+    """A figure whose one axes is the whole figure in logical pixels, origin at the top left, drawn in the tokens."""
+    from src.desktop.theme import tokens
+
+    colors = tokens(theme)
+    fig = plt.figure(figsize=(width / LOGICAL_DPI, height / LOGICAL_DPI), dpi=dpi)
+    fig.patch.set_facecolor(colors["paper"])
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.axis("off")
+    return fig, ax, colors
+
+
+def _label(ax, x: float, y: float, text: str, color: str, px: float, **kwargs: Any) -> None:
+    ax.text(x, y, text, color=color, fontsize=_pt(px), **kwargs)
+
+
+def _elide(text: str, px: float, room: float) -> str:
+    """``text`` cut with an ellipsis so it is at most ``room`` logical pixels wide at ``px`` size in the chart font."""
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+
+    props = FontProperties(family=_chart_family())
+
+    def width(candidate: str) -> float:
+        return float(TextPath((0, 0), candidate, size=px, prop=props).get_extents().width) if candidate else 0.0
+
+    if width(text) <= room:
+        return text
+    shown = text
+    while shown and width(shown + "…") > room:
+        shown = shown[:-1]
+    return shown.rstrip() + "…"
+
+
+def _count_text(value: float) -> str:
+    return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.1f}"
+
+
+def score_histogram_figure(
+    scores: Sequence[float], *, width: int, height: int = SUMMARY_CHART_HEIGHT,
+    dpi: float = LOGICAL_DPI, theme: str | None = None,
+) -> plt.Figure:
+    """Cases per anomaly-score range: ink bars on the paper, the tallest bar's count at the top left."""
+    from matplotlib.patches import Rectangle
+
+    values = [float(v) for v in scores if pd.notna(v)]
+    edges = histogram_edges(values)
+    counts = [int(n) for n in np.histogram(values, bins=edges)[0]]
+    with matplotlib.rc_context({"font.family": _chart_family()}):
+        fig, ax, colors = _summary_canvas(width, height, dpi, theme)
+        left, base, label_gap = 22.0, height - 16.0, 14.0
+        slot = (width - left) / len(counts)
+        peak = max(max(counts), 1)
+        for index, count in enumerate(counts):
+            if count:
+                bar = (base - label_gap) * count / peak
+                ax.add_patch(Rectangle((left + index * slot + 1, base - bar), max(slot - 3, 1.0), bar,
+                                       facecolor=colors["ink_2"], edgecolor="none"))
+        ax.plot([left, width], [base, base], color=colors["ink_3"], lw=_pt(1), solid_capstyle="butt")
+        # With narrow slots every other edge is named, so the numbers never touch.
+        every = 1 if slot >= 24 else 2
+        last = len(edges) - 1
+        for index, edge in enumerate(edges):
+            if index % every == 0:
+                _label(ax, left + index * slot, height - 3, f"{edge:g}", colors["ink_3"], 11,
+                       ha="right" if index == last and index else "center", va="baseline")
+        _label(ax, 0, 12, str(peak), colors["ink_3"], 11, ha="left", va="baseline")
+    return fig
+
+
+def rule_minutes_figure(
+    rows: Sequence[tuple[str, float]], *, width: int, height: int = SUMMARY_CHART_HEIGHT,
+    dpi: float = LOGICAL_DPI, theme: str | None = None,
+) -> plt.Figure:
+    """Rules, most frequent first, as ink bars with the rule's name before each and its number at the bar's end."""
+    from matplotlib.patches import Rectangle
+
+    with matplotlib.rc_context({"font.family": _chart_family()}):
+        fig, ax, colors = _summary_canvas(width, height, dpi, theme)
+        name_room = min(150.0, width * 0.5)
+        bar_left = name_room + 8
+        room = max(width - bar_left - 34, 10.0)
+        peak = max((float(value) for _name, value in rows), default=0.0) or 1.0
+        pitch = min(20.0, (height - 4) / max(len(rows), 1))
+        for index, (name, value) in enumerate(rows):
+            middle = 2 + (index + 0.5) * pitch
+            _label(ax, 0, middle, _elide(name, 12, name_room), colors["ink_2"], 12, ha="left", va="center")
+            length = max(float(value) / peak * room, 1.0)
+            ax.add_patch(Rectangle((bar_left, middle - 4.5), length, 9, facecolor=colors["ink_2"], edgecolor="none"))
+            _label(ax, bar_left + length + 6, middle, _count_text(float(value)), colors["ink_3"], 11,
+                   ha="left", va="center")
+    return fig
+
+
+def duration_ticks_figure(
+    minutes: Sequence[float], *, width: int, height: int = SUMMARY_CHART_HEIGHT,
+    dpi: float = LOGICAL_DPI, theme: str | None = None,
+) -> plt.Figure:
+    """One ink tick per case on a minutes axis, with the median as a heavier line named "median"."""
+    values = sorted(float(v) for v in minutes if pd.notna(v))
+    median = float(np.median(values)) if values else 0.0
+    low, high = (values[0], values[-1]) if values else (0.0, 1.0)
+    if high <= low:
+        low, high = low - 5, high + 5
+    # about one axis number per 55 px, so the numbers of a narrow chart never touch
+    ticks = tick_values(low, high, max(2, min(5, int(width // 55))))
+    first, last = ticks[0], ticks[-1]
+    with matplotlib.rc_context({"font.family": _chart_family()}):
+        fig, ax, colors = _summary_canvas(width, height, dpi, theme)
+        # room at each end for half of the first and last axis numbers, which are centred on their ticks
+        pad, pad_right = 14.0, 16.0
+        axis_y, label_y = height - 38.0, height - 24.0
+
+        def at(value: float) -> float:
+            return pad + (value - first) / (last - first) * (width - pad - pad_right)
+
+        # one collection for every tick: a line per case would cost a second for a few thousand cases
+        ax.vlines([at(value) for value in values], axis_y - 32, axis_y - 6, colors=colors["ink_2"], linewidth=_pt(1.3))
+        if values:
+            ax.plot([at(median)] * 2, [axis_y - 48, axis_y], color=colors["ink"], lw=_pt(2), solid_capstyle="butt")
+            near_right = at(median) > width * 0.75
+            _label(ax, at(median) + (-4 if near_right else 4), axis_y - 48, "median", colors["ink_2"], 11,
+                   ha="right" if near_right else "left", va="top")
+        ax.plot([pad, width - pad_right], [axis_y, axis_y], color=colors["ink_3"], lw=_pt(1), solid_capstyle="butt")
+        for value in ticks:
+            _label(ax, at(value), label_y, f"{value:g}", colors["ink_3"], 11, ha="center", va="top")
+        _label(ax, width - pad_right, height - 3, "min", colors["ink_3"], 11, ha="right", va="baseline")
+    return fig
 
 
 @dataclass(frozen=True)

@@ -225,10 +225,11 @@ def test_desktop_reload_of_another_emr_drops_the_old_scan(emr, tmp_path, monkeyp
         win._autoload_processed()  # no analyzed sample here: the early-return path
         assert win.corpus_scan is None
         win.research.show_cases()
-        scopes = win.research._cases_overview.scope_combo
-        labels = [scopes.itemText(i) for i in range(scopes.count())]
-        assert not any(label.startswith("Full-EMR scan") for label in labels)
-        assert not any("indexed" in label for label in labels)
+        overview = win.research._cases_overview
+        assert not overview.scan_tab.isVisibleTo(overview)
+        assert "Indexed" not in overview.sample_tab.text()
+        assert "Full-EMR scan" not in overview.scope_label.text()
+        assert "indexed" not in overview.scope_label.text()
     finally:
         win.close()
 
@@ -474,8 +475,10 @@ def test_desktop_scan_action_feeds_copilot_session(emr, tmp_path, monkeypatch, a
         time.sleep(0.05)
     assert win.corpus_scan is not None
     win.research.show_cases()
-    scopes = win.research._cases_overview.scope_combo
-    assert any(scopes.itemText(i).startswith("Full-EMR scan,") for i in range(scopes.count()))
+    overview = win.research._cases_overview
+    assert overview.scan_tab.isVisibleTo(overview)
+    overview.set_scope("scan")
+    assert overview.scope_label.text().startswith("Full-EMR scan: ")
     session = win._make_session_snapshot()
     assert session.has_corpus_scan()
     assert session.corpus_meta["n_scanned_cases"] == len(session.corpus)

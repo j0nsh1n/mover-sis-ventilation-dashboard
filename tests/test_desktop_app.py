@@ -62,23 +62,12 @@ def test_charts_pure_matplotlib_no_plotly():
     assert mods_after == mods_before
     import pandas as pd
 
-    cases = pd.DataFrame(
-        {
-            "PID": ["a", "b", "c"],
-            "anomaly_score": [10, 5, 1],
-            "Procedure_short": ["x", "y", "z"],
-        }
-    )
-    fig = charts.top_cases_figure(cases, n=3)
+    fig = charts.score_histogram_figure([10, 5, 1], width=250)
     assert fig is not None
-    flags = pd.DataFrame(
-        {
-            "rule_id": ["pip_high", "pip_high", "etco2_low"],
-            "severity": ["warn", "critical", "warn"],
-        }
-    )
-    fig2 = charts.flag_rules_figure(flags)
+    fig2 = charts.rule_minutes_figure([("pip_high", 2.0), ("etco2_low", 1.0)], width=320)
     assert fig2 is not None
+    fig4 = charts.duration_ticks_figure([60.0, 90.0, 120.0], width=250)
+    assert fig4 is not None
     ts = pd.DataFrame(
         {
             "t_min": list(range(10)),

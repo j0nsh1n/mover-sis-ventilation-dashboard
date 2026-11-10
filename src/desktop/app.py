@@ -1369,7 +1369,7 @@ class MainWindow(QMainWindow):
             catalog = load_rule_catalog(self._active_preset)
         except GuardrailError:
             catalog = None
-        self.research.set_cases_data(self.cases, self.corpus_scan, catalog, self.flags)
+        self.research.set_cases_data(self.cases, self.corpus_scan, catalog, self.flags, self.ts, self.episodes)
 
     def _invalidate_research_requests(self) -> None:
         self._active_research_request = None
