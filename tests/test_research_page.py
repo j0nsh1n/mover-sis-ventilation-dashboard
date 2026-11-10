@@ -159,6 +159,24 @@ def test_the_controls_wrap_inside_a_narrow_board(view, qapp):
     assert abs(view.model_menu.y() - view.scope_switch.y()) < 8  # one row again when it fits
 
 
+def test_the_board_never_scrolls_sideways_while_it_scrolls_down(view, qapp):
+    """A short window gives the board a vertical scroll bar, which narrows its room; the controls must fit beside it."""
+    bar = view.board_scroll.horizontalScrollBar()
+    controls = [view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
+                view.ask_button]
+    shown_bar = False
+    for width in range(336, 760, 8):
+        view.resize(width, 400)
+        qapp.processEvents()
+        viewport = view.board_scroll.viewport()
+        shown_bar |= view.board_scroll.verticalScrollBar().isVisible()
+        assert not bar.isVisible(), f"the board scrolls sideways at {width} px"
+        for control in controls:
+            left = control.mapTo(viewport, control.rect().topLeft()).x()
+            assert left >= 0 and left + control.width() <= viewport.width(), (width, control.accessibleName())
+    assert shown_bar, "the test never gave the board a vertical scroll bar"
+
+
 def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_then_the_trail(view, qapp):
     board_with_case(view)
     view.activateWindow()

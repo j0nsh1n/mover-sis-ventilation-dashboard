@@ -292,6 +292,8 @@ class ResearchWorkspace(QWidget):
         self.rules_drawer = RulesDrawer(self, fallback_focus=self._rules_fallback_focus)
         self.rules_drawer.closed.connect(self._apply_board_layout)
         root.addWidget(self.rules_drawer)
+        # The room the controls have is the board's viewport, which a scroll bar narrows; fit again when it changes.
+        self.board_scroll.viewport().installEventFilter(self)
 
     def _build_canvas(self) -> None:
         scroll = QScrollArea()
@@ -354,7 +356,7 @@ class ResearchWorkspace(QWidget):
         choices.addWidget(self.scope_switch)
         choices.addWidget(self.model_menu)
         choices.addStretch(1)
-        secondary = QHBoxLayout()
+        secondary = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         secondary.setSpacing(8)
         for widget in (self.new_question_button, self.add_comparison_button, self.cancel_button):
             secondary.addWidget(widget)
@@ -937,6 +939,11 @@ class ResearchWorkspace(QWidget):
         if self.ask_button.isEnabled():
             self._submit_question()
 
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.board_scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self._apply_board_layout()
+        return super().eventFilter(watched, event)
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self.rules_drawer.setFixedWidth(min(RULES_DRAWER_MAX_WIDTH, int(self.width() * RULES_DRAWER_SHARE)))
@@ -954,6 +961,8 @@ class ResearchWorkspace(QWidget):
                                          else [max(600, board_width - CONVERSATION_WIDTH), CONVERSATION_WIDTH])
         self._layout_mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
         room = board_width - (0 if stacked else CONVERSATION_WIDTH) - PAGE_MARGINS[0] - PAGE_MARGINS[2]
+        # The page never has more than its viewport, which a scroll bar narrows.
+        room = min(room, self.board_scroll.viewport().width() - PAGE_MARGINS[0] - PAGE_MARGINS[2])
         self._fit_controls(room)
         side_by_side = room - GUTTER >= SIDE_BY_SIDE_WIDTH
         self._observation_columns.setDirection(
@@ -983,7 +992,16 @@ class ResearchWorkspace(QWidget):
         self._choices_row.setDirection(
             QBoxLayout.Direction.LeftToRight if choices <= room else QBoxLayout.Direction.TopToBottom
         )
-        secondary = self._secondary_row.sizeHint().width()
+        shown = [button.sizeHint().width() for button in (self.new_question_button, self.add_comparison_button,
+                                                           self.cancel_button) if not button.isHidden()]
+        secondary = sum(shown) + self._secondary_row.spacing() * max(len(shown) - 1, 0)
+        # Even the two secondary actions side by side can be too wide for the board; then they stack too.
+        side_by_side = secondary <= room
+        self._secondary_row.setDirection(
+            QBoxLayout.Direction.LeftToRight if side_by_side else QBoxLayout.Direction.TopToBottom
+        )
+        for button in (self.new_question_button, self.add_comparison_button, self.cancel_button):
+            self._secondary_row.setAlignment(button, Qt.AlignmentFlag(0) if side_by_side else Qt.AlignmentFlag.AlignRight)
         ask = self.ask_button.sizeHint().width()
         actions = secondary + self._actions_row.spacing() + ask
         one_row = choices + CONTROLS_GAP + actions <= room

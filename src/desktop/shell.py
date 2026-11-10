@@ -6,16 +6,17 @@ control does, so this module holds no data and starts no work.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import cos, sin
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QFontMetrics, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QFontMetrics, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizeGrip,
     QSizePolicy,
     QStatusBar,
     QTabBar,
@@ -30,6 +31,15 @@ RAIL_WIDTH = 64
 RESEARCH_STAMP = "De-identified research data · not for patient care"
 FICTION_LABEL = "Fictional practice"
 FICTION_NOTE = "invented data, not patient records"
+# Each line from its full form to its short form; the short one still says what the full one says first.
+STAMP_FORMS = (f"○ {RESEARCH_STAMP}", "○ Not for patient care")
+FICTION_FORMS = (f"{FICTION_LABEL} · {FICTION_NOTE}", FICTION_LABEL)
+# Pixels added to a line's measured text so a rounding step can never clip its last letter.
+_LINE_SLACK = 4
+# Pixels the status bar's own layout leaves at its edges, beside the size grip, before the first field.
+_FOOTER_EDGES = 10
+# The gap the status bar's layout puts between its items when it cannot be asked.
+_FOOTER_GAP = 6
 PRACTICE_SOURCE = "Practice reads no data folder"
 PRACTICE_NOTE = "nothing here comes from MOVER cases"
 
@@ -209,17 +219,6 @@ class NavRail(QFrame):
                 button.refresh_icon()
 
 
-class ShrinkableLabel(QLabel):
-    """A label a narrow window may clip: its least width is zero, so the window can shrink to a small screen.
-
-    A plain label never gets narrower than its text, and the footer and running head together would hold the
-    window wider than a screen at double scaling.
-    """
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
-        return QSize(0, super().minimumSizeHint().height())
-
-
 class BreadcrumbLabel(QLabel):
     """The path to the current place. Long paths shorten in the middle; the last part stays whole."""
 
@@ -272,9 +271,16 @@ class BreadcrumbLabel(QLabel):
 
 
 class RunningHead(QFrame):
-    """Breadcrumb on the left; Find and the research stamp (or the fiction label) on the right."""
+    """Breadcrumb on the left; Find and the research stamp (or the fiction label) on the right.
+
+    The research-only line and the fiction line are never cut. As the head narrows, the breadcrumb shortens first,
+    then Find drops its Ctrl+K hint and then its word, and only then does the line switch to its short form.
+    """
 
     find_requested = Signal()
+
+    # Find from widest to narrowest: icon, word and key hint; icon and word; icon alone.
+    FIND_FORMS = ("Find  Ctrl+K", "Find", "")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -283,12 +289,14 @@ class RunningHead(QFrame):
         self.setFixedHeight(40)
         self.setProperty("practice", False)
         self._icons_theme = active_theme()
-        layout = QHBoxLayout(self)
+        self._practice = False
+        self._widths: dict[tuple[str, str], int] = {}
+        layout = self._row = QHBoxLayout(self)
         layout.setContentsMargins(32, 0, 32, 0)
         layout.setSpacing(20)
         self.crumbs = BreadcrumbLabel(self)
         layout.addWidget(self.crumbs, 1)
-        self.find_button = QPushButton("Find  Ctrl+K", self)
+        self.find_button = QPushButton(self.FIND_FORMS[0], self)
         self.find_button.setObjectName("findButton")
         self.find_button.setIcon(nav_icon("find", 15))
         self.find_button.setIconSize(QSize(15, 15))
@@ -300,14 +308,13 @@ class RunningHead(QFrame):
         self.find_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.find_button.clicked.connect(self.find_requested)
         layout.addWidget(self.find_button)
-        self.stamp = ShrinkableLabel(f"○ {RESEARCH_STAMP}", self)
+        self.stamp = QLabel(STAMP_FORMS[0], self)
         self.stamp.setObjectName("stamp")
         self.stamp.setAccessibleName(RESEARCH_STAMP)
         self.stamp.setToolTip(RESEARCH_STAMP)
         layout.addWidget(self.stamp)
-        self.fiction = ShrinkableLabel(self)
+        self.fiction = QLabel(FICTION_FORMS[0], self)
         self.fiction.setObjectName("fictionLabel")
-        self.fiction.setText(f"{FICTION_LABEL} · {FICTION_NOTE}")
         self.fiction.setAccessibleName(f"{FICTION_LABEL}: {FICTION_NOTE}")
         self.fiction.setToolTip(f"{FICTION_LABEL}: {FICTION_NOTE}")
         layout.addWidget(self.fiction)
@@ -315,22 +322,82 @@ class RunningHead(QFrame):
 
     def set_place(self, parts: Sequence[str], *, practice: bool) -> None:
         self.crumbs.set_parts(parts)
+        self._practice = practice
         self.stamp.setVisible(not practice)
         self.fiction.setVisible(practice)
         if bool(self.property("practice")) != practice:
             self.setProperty("practice", practice)
             self.style().unpolish(self)
             self.style().polish(self)
+        self.updateGeometry()
+        self._fit()
 
     def crumb_text(self) -> str:
         return " / ".join(self.crumbs.parts())
 
+    def line(self) -> QLabel:
+        """The line that is showing: the research stamp, or the fiction label on practice pages."""
+        return self.fiction if self._practice else self.stamp
+
+    # ----- fitting -----
+    def _forms(self) -> tuple[str, ...]:
+        return FICTION_FORMS if self._practice else STAMP_FORMS
+
+    def _width(self, widget: QLabel | QPushButton, text: str) -> int:
+        """The width ``widget`` needs to show ``text`` whole."""
+        key = (widget.objectName(), text)
+        if key not in self._widths:
+            if isinstance(widget, QPushButton):
+                shown = widget.text()
+                widget.setText(text)
+                widget.ensurePolished()
+                self._widths[key] = widget.sizeHint().width()
+                widget.setText(shown)
+            else:
+                widget.ensurePolished()
+                self._widths[key] = QFontMetrics(widget.font()).horizontalAdvance(text) + _LINE_SLACK
+        return self._widths[key]
+
+    def _least_width(self) -> int:
+        """The narrowest the head can be: shortened path, Find as its icon, and the line in its short form."""
+        margins = self._row.contentsMargins()
+        return (margins.left() + margins.right() + self.crumbs.minimumSizeHint().width()
+                + self._width(self.find_button, self.FIND_FORMS[-1]) + self._width(self.line(), self._forms()[-1])
+                + 2 * self._row.spacing())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self._least_width(), self.height())
+
+    def _fit(self) -> None:
+        margins = self._row.contentsMargins()
+        room = self.width() - margins.left() - margins.right() - 2 * self._row.spacing() - self.crumbs.minimumSizeHint().width()
+        line = self.line()
+        chosen = (self._forms()[-1], self.FIND_FORMS[-1])
+        for line_text in self._forms():
+            found = next((find for find in self.FIND_FORMS
+                          if self._width(self.find_button, find) + self._width(line, line_text) <= room), None)
+            if found is not None:
+                chosen = (line_text, found)
+                break
+        line_text, find_text = chosen
+        if line.text() != line_text:
+            line.setText(line_text)
+        if self.find_button.text() != find_text:
+            self.find_button.setText(find_text)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
+
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802
         super().changeEvent(event)
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange,
-                            QEvent.Type.StyleChange) and self._icons_theme != active_theme():
-            self._icons_theme = active_theme()
-            self.find_button.setIcon(nav_icon("find", 15))
+                            QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._widths.clear()
+            self._fit()
+            if self._icons_theme != active_theme():
+                self._icons_theme = active_theme()
+                self.find_button.setIcon(nav_icon("find", 15))
 
 
 class PracticeTabs(QFrame):
@@ -371,31 +438,138 @@ class PracticeTabs(QFrame):
         self.bar.blockSignals(False)
 
 
+class FooterField(QLabel):
+    """One footer field: shown whole, shortened to whole words with an ellipsis, or not shown at all.
+
+    It never paints a fragment of a word. Its least width is zero, so the window can shrink to a small screen;
+    ``FooterFields.fit`` decides what each field shows for the room the footer has.
+    """
+
+    def __init__(self, bar: QStatusBar):
+        super().__init__(bar)
+        self.setObjectName("footerField")
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self._rich = ""
+        self._visible_text = ""
+        self._tip = ""
+        self._wanted = True
+        self._shown_width = 0
+        self._padding = 0
+        self._natural = 0
+
+    def set_content(self, rich: str, plain: str, tip: str = "") -> None:
+        """``rich`` is what shows when it fits; ``plain`` is the accessible name; ``tip`` the tooltip."""
+        document = QTextDocument()
+        document.setHtml(rich)
+        self._rich, self._tip = rich, tip
+        self._visible_text = " ".join(document.toPlainText().split())
+        self.setAccessibleName(plain)
+        self.setText(rich)
+        self.setToolTip(tip)
+        self._measure()
+        self._shown_width = self._natural
+
+    def _measure(self) -> None:
+        """The label's padding and the width of its whole rich text, taken in the font it paints with."""
+        shown = self.text()
+        self.ensurePolished()
+        self.setText("")
+        self._padding = super().sizeHint().width()
+        self.setText(self._rich)
+        self._natural = super().sizeHint().width()
+        self.setText(shown)
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange) and self._rich:
+            self._measure()
+
+    def wanted(self) -> bool:
+        return self._wanted
+
+    def set_wanted(self, wanted: bool) -> None:
+        """Whether the page asks for this field; the footer may still hide it for want of room."""
+        self._wanted = wanted
+
+    def natural_width(self) -> int:
+        """The width of the whole text, bold parts included."""
+        return self._natural
+
+    def shortened(self, width: int) -> str:
+        """The longest run of whole words of the visible text that, with an ellipsis, fits ``width``; else empty."""
+        words = self._visible_text.split(" ")
+        metrics = QFontMetrics(self.font())
+        for count in range(len(words) - 1, 0, -1):
+            text = " ".join(words[:count]) + "…"
+            if self._padding + metrics.horizontalAdvance(text) <= width:
+                return text
+        first = words[0] + "…" if words and words[0] else ""
+        return first if first and self._padding + metrics.horizontalAdvance(first) <= width else ""
+
+    def least_width(self) -> int:
+        """The room one whole word and an ellipsis need; below it the field is not shown."""
+        words = self._visible_text.split(" ")
+        first = words[0] + "…" if words and words[0] else ""
+        return self._padding + QFontMetrics(self.font()).horizontalAdvance(first) + _LINE_SLACK
+
+    def show_in(self, width: int) -> None:
+        """Show the field in ``width``, which is at least its least width: whole when it fits, else shortened."""
+        if width >= self.natural_width():
+            self.setText(self._rich)
+            self.setToolTip(self._tip)
+            self._shown_width = self.natural_width()
+        else:
+            self.setText(self.shortened(width - _LINE_SLACK))
+            self.setToolTip("\n".join(part for part in (self._visible_text, self._tip) if part))
+            self._shown_width = width
+        self.updateGeometry()
+        self.setVisible(self._wanted)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self._shown_width, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, super().minimumSizeHint().height())
+
+
+class _BarResized(QObject):
+    """Runs ``callback`` whenever the bar it watches changes size."""
+
+    def __init__(self, bar: QStatusBar, callback: Callable[[], None]):
+        super().__init__(bar)
+        self._callback = callback
+        bar.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Resize:
+            self._callback()
+        return False
+
+
 class FooterFields:
     """The footer's permanent fields. A temporary status message still shows beside them."""
 
     def __init__(self, bar: QStatusBar):
+        self._bar = bar
         self.source = self._field(bar, "footerSource")
         self.counts = self._field(bar, "footerCounts")
         make_tabular(self.counts)
         self.rules = self._field(bar, "footerRules")
         self.model = self._field(bar, "footerModel")
         self.practice_note = self._field(bar, "footerPracticeNote")
+        # The last to give up room come last: the source and the counts say what the data is.
+        self._shrink_order = (self.model, self.rules, self.practice_note, self.counts, self.source)
+        self._watcher = _BarResized(bar, self.fit)
 
     @staticmethod
-    def _field(bar: QStatusBar, name: str) -> QLabel:
-        label = ShrinkableLabel(bar)
-        label.setObjectName("footerField")
+    def _field(bar: QStatusBar, name: str) -> FooterField:
+        label = FooterField(bar)
         label.setProperty("field", name)
-        label.setTextFormat(Qt.TextFormat.RichText)
         bar.addPermanentWidget(label)
         return label
 
-    @staticmethod
-    def _set(label: QLabel, rich: str, plain: str, tip: str = "") -> None:
-        label.setText(rich)
-        label.setAccessibleName(plain)
-        label.setToolTip(tip)
+    def _set(self, label: FooterField, rich: str, plain: str, tip: str = "") -> None:
+        label.set_content(rich, plain, tip)
 
     def show_research(self, *, source_tip: str, counts: tuple[str, str], rules: tuple[str, str],
                       model: tuple[str, str]) -> None:
@@ -404,13 +578,51 @@ class FooterFields:
         self._set(self.counts, *counts)
         self._set(self.rules, *rules)
         self._set(self.model, *model)
-        for label in (self.counts, self.rules, self.model):
-            label.show()
+        for label in (self.source, self.counts, self.rules, self.model):
+            label.set_wanted(True)
+        self.practice_note.set_wanted(False)
         self.practice_note.hide()
+        self.fit()
 
     def show_practice(self) -> None:
         self._set(self.source, "<b>Practice</b> reads no data folder", PRACTICE_SOURCE)
         self._set(self.practice_note, PRACTICE_NOTE, PRACTICE_NOTE)
         for label in (self.counts, self.rules, self.model):
+            label.set_wanted(False)
             label.hide()
-        self.practice_note.show()
+        self.source.set_wanted(True)
+        self.practice_note.set_wanted(True)
+        self.fit()
+
+    def _chrome_width(self) -> int:
+        """What the bar keeps for itself beside the fields: its size grip and the gaps around the message area."""
+        grip = self._bar.findChild(QSizeGrip)
+        return (grip.width() if grip is not None and grip.isVisible() else 0) + _FOOTER_EDGES
+
+    def fit(self) -> None:
+        """Give each wanted field the room the footer has: whole, shortened, or (last resort) hidden."""
+        fields = [field for field in (self.source, self.counts, self.rules, self.model, self.practice_note)
+                  if field.wanted()]
+        if not self._bar.isVisible():
+            for field in fields:
+                field.show_in(field.natural_width())
+            return
+        layout = self._bar.layout()
+        spacing = layout.spacing() if layout is not None else _FOOTER_GAP
+        room = self._bar.width() - self._chrome_width() - spacing * len(fields)
+        order = [field for field in self._shrink_order if field.wanted()]
+        for hidden in range(len(order) + 1):
+            active = [field for field in fields if field not in order[:hidden]]
+            widths = {field: field.natural_width() for field in active}
+            excess = sum(widths.values()) - room
+            for field in order[hidden:]:
+                give = min(max(widths[field] - field.least_width(), 0), max(excess, 0))
+                widths[field] -= give
+                excess -= give
+            if excess <= 0 or hidden == len(order):
+                break
+        for field in fields:
+            if field in widths:
+                field.show_in(widths[field])
+            else:
+                field.setVisible(False)

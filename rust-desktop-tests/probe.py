@@ -441,6 +441,16 @@ def layout(root):
     return result
 
 
+def line_is_whole(head, label):
+    """True when the head's line is shown with every letter: visible, inside the head, as wide as its text."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QFontMetrics
+
+    left = label.mapTo(head, QPoint(0, 0)).x()
+    return (label.isVisible() and left >= 0 and left + label.width() <= head.width()
+            and QFontMetrics(label.font()).horizontalAdvance(label.text()) <= label.width())
+
+
 def startup_layout(root):
     from PySide6.QtWidgets import QApplication
     from src.desktop.app import MainWindow, main as desktop_main
@@ -469,6 +479,21 @@ def startup_layout(root):
             f"{widget.mapTo(viewport, QPoint(0, 0)).x()},{widget.width()},{viewport.width()}"
             for _name, widget in header if widget.isVisible()
         )
+        conversation = win.research.conversation
+        reset = conversation.reset_button
+        result["reset_action"] = (f"{reset.mapTo(conversation.viewport(), QPoint(0, 0)).x()},{reset.width()},"
+                                  f"{conversation.viewport().width()},{int(reset.isVisible())}")
+        # A sideways scroll bar under the board means something is wider than the board.
+        result["board_sideways_scrollbar"] = win.research.board_scroll.horizontalScrollBar().isVisible()
+        result["research_line"] = win.head.stamp.text()
+        result["research_line_whole"] = line_is_whole(win.head, win.head.stamp)
+        win.rail.button("practice").click()
+        pump(app)
+        result["practice_line"] = win.head.fiction.text()
+        result["practice_line_whole"] = line_is_whole(win.head, win.head.fiction)
+        result["practice_window_width"] = win.width()
+        win.rail.button("research").click()
+        pump(app)
         rail = [win.rail.button(key) for key, _label, _icon in [*PLACES, *ACTIONS]]
         result["rail_buttons"] = "\n".join(
             f"{button.mapTo(win.rail, QPoint(0, 0)).y()},{button.height()},{win.rail.height()},{int(button.isVisible())}"

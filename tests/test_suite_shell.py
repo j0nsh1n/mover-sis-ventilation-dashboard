@@ -156,8 +156,125 @@ def test_rail_head_and_footer_stay_inside_a_900_pixel_window(window, qapp):
     assert footer.model.mapTo(window, footer.model.rect().bottomRight()).x() <= 900
 
 
+HEAD_LINES = {
+    # practice page?, full form, short form, the sentence the accessible name and tooltip keep
+    False: ("○ De-identified research data · not for patient care", "○ Not for patient care",
+            "De-identified research data · not for patient care", "stamp"),
+    True: ("Fictional practice · invented data, not patient records", "Fictional practice",
+           "Fictional practice: invented data, not patient records", "fictionLabel"),
+}
+
+
+@pytest.mark.parametrize("practice", [False, True])
+def test_the_head_line_is_never_cut_and_keeps_its_full_form_while_that_fits(qapp, practice):
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QLabel, QWidget
+
+    from src.desktop.shell import RunningHead, nav_icon
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, "light")
+    full, short, sentence, name = HEAD_LINES[practice]
+    holder = QWidget()  # a child is not held to its layout's least width the way a window is
+    holder.resize(2000, 60)
+    head = RunningHead(holder)
+    head.set_place(["Research", "A long page path that has to shorten"], practice=practice)
+    holder.show()
+    # What the full form needs, measured on stand-ins so the test does not lean on the head's own arithmetic:
+    # the line's text, Find as its icon alone, the least breadcrumb, and the head's margins and gaps.
+    reference = QLabel(full, head)
+    reference.setObjectName(name)
+    reference.ensurePolished()
+    line_width = QFontMetrics(reference.font()).horizontalAdvance(full)
+    icon_only = QPushButton("", head)
+    icon_only.setObjectName("findButton")
+    icon_only.setIcon(nav_icon("find", 15))
+    icon_only.ensurePolished()
+    margins = head.layout().contentsMargins()
+    full_fits_from = (margins.left() + margins.right() + 2 * head.layout().spacing() + head.crumbs.minimumSizeHint().width()
+                      + icon_only.sizeHint().width() + line_width)
+    line = head.fiction if practice else head.stamp
+    seen = set()
+    for width in range(head.minimumSizeHint().width(), full_fits_from + 240, 3):
+        head.setGeometry(0, 0, width, 40)
+        qapp.processEvents()
+        text = line.text()
+        seen.add(text)
+        assert text in (full, short), (width, text)
+        assert line.isVisible() and line.accessibleName() == sentence and line.toolTip() == sentence
+        assert line.width() >= QFontMetrics(line.font()).horizontalAdvance(text), f"{text!r} is cut at {width}"
+        assert 0 <= line.geometry().left() and line.geometry().right() < head.width()
+        assert head.find_button.isVisible() and head.find_button.accessibleName() == "Find"
+        assert head.crumbs.geometry().right() <= head.find_button.geometry().left()
+        assert head.find_button.geometry().right() < line.geometry().left()
+        if width >= full_fits_from + 8:
+            assert text == full, f"the full form was dropped at {width} where it fits (from {full_fits_from})"
+        if width < full_fits_from - 8:
+            assert text == short, f"{text!r} shown at {width}, narrower than the full form needs ({full_fits_from})"
+    assert seen == {full, short}
+    holder.close()
+
+
+def test_a_footer_field_is_whole_or_shortened_to_whole_words_with_an_ellipsis_and_never_a_fragment(qapp):
+    from PySide6.QtGui import QFontMetrics, QTextDocument
+    from PySide6.QtWidgets import QStatusBar, QWidget
+
+    from src.desktop.shell import FooterFields
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, "light")
+    holder = QWidget()  # a status bar of any width, not held to a window's least width
+    bar = QStatusBar(holder)
+    holder.resize(1500, 60)
+    footer = FooterFields(bar)
+    holder.show()
+
+    fields = {
+        "counts": ("<b>19,114</b> indexed · <b>1,200</b> analyzed", "19,114 indexed, 1,200 analyzed"),
+        "rules": ("rules <b>default</b> @0123456789ab", "rules default"),
+        "model": ("local model <b>demo-model:3b-instruct-q4</b> ready", "local model demo-model ready"),
+    }
+    footer.show_research(source_tip="EMR: /synthetic", **fields)
+    shown = [footer.source, footer.counts, footer.rules, footer.model]
+
+    def words(rich: str) -> list[str]:
+        document = QTextDocument()
+        document.setHtml(rich)
+        return document.toPlainText().split()
+
+    kinds = set()
+    for width in range(40, 1400, 9):
+        bar.setGeometry(0, 0, width, 40)
+        qapp.processEvents()
+        for field in shown:
+            if not field.isVisible():
+                kinds.add("hidden")
+                continue
+            full = words(field._rich)
+            text = field.text()
+            if text == field._rich:
+                kinds.add("whole")
+                continue
+            kinds.add("shortened")
+            assert text.endswith("…"), f"fragment without an ellipsis at {width}: {text!r}"
+            kept = text[:-1].split()
+            assert kept and kept == full[:len(kept)] and len(kept) < len(full), f"cut inside a word at {width}: {text!r}"
+            assert " ".join(full) in field.toolTip(), "the full text is lost"
+            plain = QTextDocument()
+            plain.setHtml(text)
+            assert field.width() >= QFontMetrics(field.font()).horizontalAdvance(plain.toPlainText()), \
+                f"{text!r} does not fit its field at {width}"
+    assert kinds == {"whole", "shortened", "hidden"}, kinds
+    # where it is shown whole it keeps its bold parts
+    bar.setGeometry(0, 0, 1400, 40)
+    qapp.processEvents()
+    assert footer.counts.text() == fields["counts"][0] and "<b>" in footer.counts.text()
+    assert "EMR: /synthetic" in footer.source.toolTip()
+    holder.close()
+
+
 def test_the_window_can_shrink_to_a_double_scaled_screen_with_the_longest_footer(window, qapp):
-    """A 2x screen is a few hundred logical pixels wide: the footer and head clip their text, never widen the window."""
+    """A 2x screen is a few hundred logical pixels wide: the footer and head shorten their text, never widen the window."""
     window._footer.show_research(
         source_tip="",
         counts=("<b>19,114</b> indexed · <b>1,200</b> analyzed", "19,114 indexed, 1,200 analyzed"),

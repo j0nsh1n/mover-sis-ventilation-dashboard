@@ -312,6 +312,41 @@ fn startup_at_double_scale_fits_screen_and_keeps_board_usable() {
             "clipped header action: {row}"
         );
     }
+    let reset = observed.text("reset_action");
+    let bounds: Vec<i32> = reset.split(',').map(|part| part.parse().unwrap()).collect();
+    let [x, width, panel_width, visible] = bounds[..] else {
+        panic!("reset geometry")
+    };
+    assert!(
+        visible == 1 && x >= 0 && width > 0 && x + width <= panel_width,
+        "clipped Reset: {reset}"
+    );
+    assert!(
+        !observed.boolean("board_sideways_scrollbar"),
+        "the research board scrolls sideways"
+    );
+    let research = observed.text("research_line");
+    assert!(
+        research.to_lowercase().contains("not for patient care"),
+        "research-only line: {research}"
+    );
+    assert!(
+        observed.boolean("research_line_whole"),
+        "research-only line is cut: {research}"
+    );
+    let practice = observed.text("practice_line");
+    assert!(
+        practice.starts_with("Fictional practice"),
+        "fiction line: {practice}"
+    );
+    assert!(
+        observed.boolean("practice_line_whole"),
+        "fiction line is cut: {practice}"
+    );
+    assert!(
+        observed.number("practice_window_width") <= screen_width,
+        "a practice page widens the window past the screen"
+    );
     let rail = observed.text("rail_buttons");
     assert_eq!(rail.lines().count(), 6);
     for row in rail.lines() {
