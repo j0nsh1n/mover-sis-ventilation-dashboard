@@ -575,6 +575,28 @@ def test_a_folder_change_does_not_rename_the_data_still_on_screen(window, qapp, 
     assert window.head.stamp.accessibleName() == DEMO_STAMP and window._footer.source.accessibleName() == DEMO_SOURCE[1]
 
 
+def test_the_same_case_number_after_a_reload_is_read_again(window, qapp, monkeypatch):
+    """Another data folder can hold a case with the same number; its drugs are that folder's, not the old one's."""
+    import pandas as pd
+
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    assert "Drug A" in " ".join(panel.table.item(row, 1).text() for row in range(panel.table.rowCount()))
+    window.rail.button("research").click()
+    qapp.processEvents()
+    window._clear_loaded_sample()  # the reload after a folder change
+    other = pd.DataFrame(
+        [{"Drug_name": "Drug Z", "Dose": 1, "Drug_units": "mg", "Start_time": "2000-01-01 08:10:00", "End_time": r"\N"}]
+    )
+    monkeypatch.setattr("src.llm.case_context.load_case_medications", lambda _pid: other)
+    window.research._current_pid = "SYN-1"
+    window.research._case_views["SYN-1"] = SimpleNamespace(
+        timeseries=pd.DataFrame([{"t_min": 0, "HR": 70}]), cases=pd.DataFrame())
+    window._go("medications")
+    qapp.processEvents()
+    drugs = " ".join(panel.table.item(row, 1).text() for row in range(panel.table.rowCount()))
+    assert "Drug Z" in drugs and "Drug A" not in drugs
+
+
 def test_the_medication_page_reads_a_case_from_disk_once_not_on_every_frame_update(window, qapp, monkeypatch):
     panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
     calls = []

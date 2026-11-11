@@ -656,6 +656,8 @@ class MainWindow(QMainWindow):
     def _clear_loaded_sample(self) -> None:
         # From here on whatever is shown comes from the folders in use now.
         self._shown_data_is_demo = demo_data_in_use()
+        # The same case number in another folder is another record, so the Medication page must read it again.
+        self._medication_shown = False
         self.cases = self.ts = self.flags = self.episodes = self.events = None
         self._analysis_facts = {}
         self._thresholds_sha256 = None
