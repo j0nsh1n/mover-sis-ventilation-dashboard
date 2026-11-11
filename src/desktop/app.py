@@ -961,6 +961,9 @@ class MainWindow(QMainWindow):
         update_settings(theme=mode)
         concrete = apply_theme(QApplication.instance(), mode)
         self._sync_theme_actions()
+        page = self._settings_page()
+        if page is not None:
+            page.theme_saved(mode)
         self.research.refresh_charts()
         self.statusBar().showMessage(f"Theme: {mode} ({concrete})", 4000)
 

@@ -8,16 +8,26 @@ rewords an error: ``why`` is the message the caller already had, and the detail 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from src.desktop.errors import log_path
+from src.desktop.marks import severity_label
 from src.desktop.theme import token_color
 
 # error_message() puts its code in parentheses: (load:ValueError)
 _CODE = re.compile(r"\(([A-Za-z0-9_-]+:[A-Za-z0-9_]+)\)")
+
+
+def _with_home_as_tilde(path: Path) -> str:
+    """The path with the home folder written ``~``, so the account name is not on screen or in a copy."""
+    try:
+        return f"~/{path.relative_to(Path.home()).as_posix()}"
+    except ValueError:
+        return str(path)
 
 
 def failure_detail(message: str) -> str:
@@ -27,31 +37,55 @@ def failure_detail(message: str) -> str:
     if code:
         lines.append(f"Code: {code.group(1)}")
     if "app-errors.log" in message:
-        lines.append(f"Log: {log_path()}")
+        lines.append(f"Log: {_with_home_as_tilde(log_path())}")
     return "\n".join(lines)
 
 
-def _glyph(px: int = 40) -> QPixmap:
-    """A neutral outlined triangle with a bar: an alert that is not a stop sign."""
+# How a card's level is written: the rule flags' shape and word (marks.py), never colour alone.
+_LEVEL_SEVERITY = {"critical": "critical", "warning": "warn"}
+
+
+def _glyph(severity: str, px: int = 40) -> QPixmap:
+    """The level's shape over its word: a solid diamond for a failure, an outlined triangle for a warning."""
     screen_ratio = 2.0
-    pixmap = QPixmap(round(px * screen_ratio), round(px * screen_ratio))
+    word_px = 16
+    pixmap = QPixmap(round(px * screen_ratio * 1.6), round((px + word_px) * screen_ratio))
     pixmap.setDevicePixelRatio(screen_ratio)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(token_color("ink_2"), 1.8)
+    ink = token_color("ink_2")
+    pen = QPen(ink, 1.8)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
     unit = px / 24.0
-    path = QPainterPath()
-    path.moveTo(QPointF(12 * unit, 3.5 * unit))
-    path.lineTo(QPointF(21.5 * unit, 20 * unit))
-    path.lineTo(QPointF(2.5 * unit, 20 * unit))
-    path.closeSubpath()
-    painter.drawPath(path)
-    painter.drawLine(QPointF(12 * unit, 9.5 * unit), QPointF(12 * unit, 14.5 * unit))
-    painter.drawPoint(QPointF(12 * unit, 17.2 * unit))
+    left = (px * 1.6 - px) / 2
+    painter.translate(left, 0)
+    if severity == "critical":
+        painter.setBrush(ink)
+        diamond = QPainterPath()
+        diamond.moveTo(QPointF(12 * unit, 2.5 * unit))
+        diamond.lineTo(QPointF(21.5 * unit, 12 * unit))
+        diamond.lineTo(QPointF(12 * unit, 21.5 * unit))
+        diamond.lineTo(QPointF(2.5 * unit, 12 * unit))
+        diamond.closeSubpath()
+        painter.drawPath(diamond)
+    else:
+        path = QPainterPath()
+        path.moveTo(QPointF(12 * unit, 3.5 * unit))
+        path.lineTo(QPointF(21.5 * unit, 20 * unit))
+        path.lineTo(QPointF(2.5 * unit, 20 * unit))
+        path.closeSubpath()
+        painter.drawPath(path)
+        painter.drawLine(QPointF(12 * unit, 9.5 * unit), QPointF(12 * unit, 14.5 * unit))
+        painter.drawPoint(QPointF(12 * unit, 17.2 * unit))
+    painter.translate(-left, 0)
+    font = painter.font()
+    font.setPixelSize(12)
+    font.setBold(True)
+    painter.setFont(font)
+    painter.drawText(QRectF(0, px, px * 1.6, word_px), Qt.AlignmentFlag.AlignCenter, severity)
     painter.end()
     return pixmap
 
@@ -67,7 +101,10 @@ class ErrorCard(QMessageBox):
         self.setObjectName("errorCard")
         self.setWindowTitle(title)
         self.setIcon(QMessageBox.Icon.Warning)
-        self.setIconPixmap(_glyph())
+        severity = _LEVEL_SEVERITY.get(level, "warn")
+        # The same shape and word the rule flags use, spoken too since the picture is not read out
+        self.mark = severity_label(severity)
+        self.setIconPixmap(_glyph(severity))
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setText(what)
         self.why, self.next_step = why, next_step
@@ -78,7 +115,7 @@ class ErrorCard(QMessageBox):
         self.setStandardButtons(QMessageBox.StandardButton.Ok)
         self.setDefaultButton(QMessageBox.StandardButton.Ok)
         self.setAccessibleName(what)
-        self.setAccessibleDescription(self.words())
+        self.setAccessibleDescription(f"{self.mark}. {self.words()}")
 
     def words(self) -> str:
         """Everything the card says outside its collapsed detail."""

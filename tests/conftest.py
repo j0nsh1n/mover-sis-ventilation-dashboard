@@ -266,3 +266,30 @@ def error_cards(monkeypatch):
     monkeypatch.setattr(ErrorCard, "exec", lambda box: shown.append(box) or 0)
     monkeypatch.setattr(ErrorCard, "open", lambda box: shown.append(box))
     return shown
+
+
+@pytest.fixture
+def dispose():
+    """Return ``keep(widget)``: every widget passed to it is closed and really deleted when the test ends.
+
+    A closed top-level widget is not deleted by Qt, and a window holds Python callbacks that point back at
+    itself, so left alone every window of every test stays alive and each later theme change restyles it too.
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    made: list = []
+
+    def keep(widget):
+        made.append(widget)
+        return widget
+
+    yield keep
+    for widget in reversed(made):
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:  # already deleted by its owner
+            pass
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCoreApplication.processEvents()

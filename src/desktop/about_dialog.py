@@ -30,7 +30,7 @@ SUMMARY = (
 LICENSE_LINE = "GNU General Public License v3.0 or later"
 FONT_CREDITS = (
     "Inter, © 2016 The Inter Project Authors, SIL Open Font License 1.1",
-    "Charter, © 1989–1992 Bitstream Inc., free licence kept with the font files",
+    "Charter, © 1989–1992 Bitstream Inc., free license kept with the font files",
 )
 DATA_FACT = "MOVER SIS export, read from your own folders. Nothing is uploaded."
 DEMO_DATA_FACT = "Fictional demo data generated on this computer. These are not patient records."
@@ -59,13 +59,13 @@ def build_line(rules: str | None) -> str:
 
 
 def version_details(version: str, rules: str | None) -> str:
-    lines = [f"{PRODUCT} version {version}", f"Licence: {LICENSE_LINE}", f"Build: {build_line(rules)}",
+    lines = [f"{PRODUCT} version {version}", f"License: {LICENSE_LINE}", f"Build: {build_line(rules)}",
              "Fonts:", *(f"  {credit}" for credit in FONT_CREDITS)]
     return "\n".join(lines)
 
 
 def licence_text() -> str:
-    """The font licence files shipped with the app, whole, under the app's own licence line."""
+    """The font license files shipped with the app, whole, under the app's own license line."""
     chunks = [f"{PRODUCT} is licensed under the {LICENSE_LINE}. The full text is the LICENSE file of the source."]
     for name in LICENSE_FILES:
         try:
@@ -123,7 +123,7 @@ class AboutDialog(QDialog):
         grid.setHorizontalSpacing(28)
         grid.setVerticalSpacing(12)
         rows = [*facts(demo_data_in_use() if demo is None else demo), ("Build", build_line(rules)),
-                ("Licence", LICENSE_LINE), ("Fonts", "\n".join(FONT_CREDITS))]
+                ("License", LICENSE_LINE), ("Fonts", "\n".join(FONT_CREDITS))]
         for row, (key, value) in enumerate(rows):
             label = QLabel(key)
             label.setObjectName("quietText")

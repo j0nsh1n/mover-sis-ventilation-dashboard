@@ -8,14 +8,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QComboBox,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QMessageBox,
     QPushButton,
@@ -63,6 +64,7 @@ SECTIONS = (
 )
 PRESETS = (("Default", "default"), ("Lenient", "lenient"), ("Strict", "strict"))
 LEAVE_SAVE, LEAVE_DISCARD, LEAVE_STAY = "save", "discard", "stay"
+_UNBOUNDED = 16777215
 
 
 class SettingsPage(QWidget):
@@ -74,6 +76,9 @@ class SettingsPage(QWidget):
     about_requested = Signal()
     section_changed = Signal(str)
     dirty_changed = Signal(bool)
+
+    # Below this width the section list moves above the form
+    NARROW_BELOW = 760
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -89,7 +94,6 @@ class SettingsPage(QWidget):
         self.sections = QListWidget()
         self.sections.setObjectName("settingsSections")
         self.sections.setAccessibleName("Settings sections")
-        self.sections.setFixedWidth(180)
         self.sections.setFrameShape(QFrame.Shape.NoFrame)
         self.sections.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         for name, _intro in SECTIONS:
@@ -116,28 +120,80 @@ class SettingsPage(QWidget):
         self.save_button.clicked.connect(self.save)
         self.bar = QWidget()
         self.bar.setObjectName("settingsBar")
-        bar = QHBoxLayout(self.bar)
-        bar.setContentsMargins(32, 12, 32, 16)
-        bar.setSpacing(12)
-        bar.addWidget(self.status, 1)
-        bar.addWidget(self.discard_button)
-        bar.addWidget(self.save_button)
+        self._bar = QGridLayout(self.bar)
+        self._bar.setHorizontalSpacing(12)
+        self._bar.setVerticalSpacing(8)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(32, 16, 0, 0)
-        body.setSpacing(24)
-        body.addWidget(self.sections, 0, Qt.AlignmentFlag.AlignTop)
-        body.addWidget(self.stack, 1)
+        self._body = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._body.addWidget(self.sections, 0, Qt.AlignmentFlag.AlignTop)
+        self._body.addWidget(self.stack, 1)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addLayout(body, 1)
+        outer.addLayout(self._body, 1)
         outer.addWidget(self.bar)
+        self._narrow: bool | None = None
+        self._reflow(self.NARROW_BELOW)
 
         chain: list[QWidget] = [self.sections, *self._tab_stops, self.discard_button, self.save_button]
         for first, second in zip(chain, chain[1:], strict=False):
             QWidget.setTabOrder(first, second)
         self.sections.setCurrentRow(0)
+
+    def _reflow(self, width: int) -> None:
+        """Wide, the section list sits left of the form; narrow, it moves above it as a wrapped strip.
+
+        Nothing is cut and no control needs sideways scrolling at the window's least width.
+        """
+        narrow = width < self.NARROW_BELOW
+        if narrow != self._narrow:
+            self._narrow = narrow
+            self.sections.setProperty("narrow", narrow)
+            self.sections.style().unpolish(self.sections)
+            self.sections.style().polish(self.sections)
+            for widget in (self.status, self.discard_button, self.save_button):
+                self._bar.removeWidget(widget)
+            if narrow:
+                self._body.setDirection(QBoxLayout.Direction.TopToBottom)
+                self._body.setContentsMargins(16, 12, 16, 0)
+                self._body.setSpacing(8)
+                self.sections.setFlow(QListView.Flow.LeftToRight)
+                self.sections.setWrapping(True)
+                self.sections.setResizeMode(QListView.ResizeMode.Adjust)
+                self.sections.setMinimumWidth(0)
+                self._bar.setContentsMargins(16, 10, 16, 12)
+                self._bar.addWidget(self.status, 0, 0, 1, 3)
+                self._bar.addWidget(self.discard_button, 1, 1)
+                self._bar.addWidget(self.save_button, 1, 2)
+                self._bar.setColumnStretch(0, 1)
+            else:
+                self._body.setDirection(QBoxLayout.Direction.LeftToRight)
+                self._body.setContentsMargins(32, 16, 0, 0)
+                self._body.setSpacing(24)
+                self.sections.setFlow(QListView.Flow.TopToBottom)
+                self.sections.setWrapping(False)
+                self.sections.setMinimumHeight(0)
+                self.sections.setMaximumHeight(_UNBOUNDED)
+                self.sections.setFixedWidth(180)
+                self._bar.setContentsMargins(32, 12, 32, 16)
+                self._bar.addWidget(self.status, 0, 0)
+                self._bar.addWidget(self.discard_button, 0, 1)
+                self._bar.addWidget(self.save_button, 0, 2)
+                self._bar.setColumnStretch(0, 1)
+        if narrow:
+            self._fit_section_strip(width)
+
+    def _fit_section_strip(self, width: int) -> None:
+        """Give the wrapped strip the width the layout will give it and exactly the height its rows need."""
+        self.sections.setFixedWidth(max(120, width - 32))
+        self.sections.doItemsLayout()
+        bottom = max((self.sections.visualItemRect(self.sections.item(row)).bottom()
+                      for row in range(self.sections.count())), default=0)
+        self.sections.setFixedHeight(bottom + 6)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._reflow(self.width())
 
     def _section_page(self, index: int) -> tuple[QWidget, QVBoxLayout]:
         name, intro = SECTIONS[index]
@@ -305,8 +361,10 @@ class SettingsPage(QWidget):
         for row, (name, keys) in enumerate(entries):
             label = QLabel(name)
             label.setObjectName("bodyText")
+            label.setWordWrap(True)
             key_label = QLabel(keys)
             key_label.setObjectName("quietText")
+            key_label.setWordWrap(True)
             key_label.setAccessibleName(f"{name} shortcut")
             self.shortcut_grid.addWidget(label, row, 0)
             self.shortcut_grid.addWidget(key_label, row, 1)
@@ -399,6 +457,20 @@ class SettingsPage(QWidget):
                 self.combo_model.addItem(preferred)
                 index = self.combo_model.findText(preferred)
             self.combo_model.setCurrentIndex(max(0, index))
+
+    def theme_saved(self, theme: str) -> None:
+        """A theme chosen elsewhere (the Find box) is already saved: show it and count it as the saved value."""
+        index = self.combo_theme.findData(theme)
+        if index < 0:
+            return
+        was = self._loading
+        self._loading = True
+        try:
+            self.combo_theme.setCurrentIndex(index)
+        finally:
+            self._loading = was
+        self._baseline["theme"] = theme
+        self._refresh_bar()
 
     def changes(self) -> list[str]:
         return changed_labels(self._baseline, self.values())

@@ -237,6 +237,7 @@ class SetupFlow(QWidget):
                 text.setWordWrap(True)
                 cell.addWidget(title)
                 cell.addWidget(text)
+                cell.addStretch(1)
                 pair.addLayout(cell, 1)
             pair.setAlignment(Qt.AlignmentFlag.AlignTop)
             grid.addLayout(pair)

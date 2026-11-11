@@ -191,10 +191,34 @@ def test_a_real_folder_never_gets_the_label_even_where_the_demo_would_live(tmp_p
     assert not demo_data_in_use()
 
 
+def test_a_demo_folder_that_overlaps_the_emr_folder_is_refused_in_plain_words(tmp_path, synthetic_emr):
+    configure_emr_directory(synthetic_emr, persist=False)
+    for root in (synthetic_emr, synthetic_emr / "demo", synthetic_emr.parent):
+        with pytest.raises(DemoDataError) as caught:
+            check_demo_folder(root.resolve())
+        assert "EMR folder" in str(caught.value) and str(synthetic_emr.resolve()) in str(caught.value), root
+    check_demo_folder((tmp_path / "apart").resolve())
+
+
+def test_a_demo_folder_inside_any_folder_of_emr_tables_is_refused_even_when_it_is_not_the_configured_one(
+        tmp_path, synthetic_emr):
+    # nothing is configured: the default EMR folder is elsewhere, yet this folder holds the tables
+    with pytest.raises(DemoDataError, match="folder of EMR tables"):
+        check_demo_folder((synthetic_emr / "demo").resolve())
+
+
+def test_the_demo_that_is_the_emr_in_use_may_be_built_again_and_is_reused(tmp_path):
+    root = (tmp_path / "demo-data").resolve()
+    build_demo_data(root)
+    demo_data.use_demo_data(root)
+    check_demo_folder(root)
+    assert build_demo_data(root) == root / "EMR"
+
+
 # ----- the flow -----
 @pytest.fixture
-def flow(qapp):
-    widget = SetupFlow("9.9.9")
+def flow(qapp, dispose):
+    widget = dispose(SetupFlow("9.9.9"))
     widget.resize(1100, 760)
     widget.show()
     qapp.processEvents()
@@ -214,6 +238,21 @@ def test_the_flow_has_three_steps_and_says_what_the_app_is(flow):
     assert flow.welcome_kicker.text() == "Step 1 of 3"
     assert [flow.side._rows[i][1].text() for i in range(3)] == ["Welcome", "Data folders", "Done"]
     assert "current step" in flow.side._rows[0][1].accessibleName()
+
+
+def test_the_two_promises_of_a_row_start_their_title_and_their_text_at_the_same_height(flow, qapp):
+    from PySide6.QtWidgets import QFrame, QLabel
+
+    box = flow.findChild(QFrame, "setupPromises")
+    labels = box.findChildren(QLabel)
+    titles = [label for label in labels if label.objectName() == "settingName"]
+    bodies = [label for label in labels if label.objectName() == "bodyText"]
+    assert len(titles) == len(bodies) == 4
+    top = lambda label: label.mapTo(box, label.rect().topLeft()).y()  # noqa: E731
+    for left, right in ((0, 1), (2, 3)):
+        assert top(titles[left]) == top(titles[right]), "titles of one row"
+        assert top(bodies[left]) == top(bodies[right]), "texts of one row, whatever the neighbour's length"
+    assert top(bodies[0]) - top(titles[0]) == top(bodies[1]) - top(titles[1]) == top(bodies[3]) - top(titles[3])
 
 
 def test_continue_checks_the_emr_folder_and_stores_what_the_old_wizard_stored(flow, qapp, env, synthetic_emr):
@@ -319,9 +358,9 @@ def test_a_refusal_about_the_wave_folder_opens_advanced_and_is_marked_there(flow
     assert qapp.focusWidget() is flow.row_wave.edit
 
 
-def test_leaving_after_continue_has_saved_counts_as_finishing(flow, synthetic_emr):
+def test_leaving_after_continue_has_saved_counts_as_finishing(flow, synthetic_emr, dispose):
     for leave in ("escape_on_done", "back_then_not_now", "back_to_welcome_then_not_now"):
-        widget = SetupFlow("9.9.9")
+        widget = dispose(SetupFlow("9.9.9"))
         widget.resize(1100, 760)
         widget.show()
         done, dismissed = [], []
@@ -342,8 +381,6 @@ def test_leaving_after_continue_has_saved_counts_as_finishing(flow, synthetic_em
             widget.not_now_welcome.click()
         assert len(done) == 1 and done[0]["emr_dir"] == str(synthetic_emr.resolve()), leave
         assert not dismissed, leave
-        widget.close()
-        widget.deleteLater()
 
 
 def test_escape_during_a_demo_build_does_nothing_and_the_build_finishes(flow, qapp, env, monkeypatch):
@@ -429,12 +466,12 @@ def test_a_demo_that_cannot_be_made_says_why_and_leaves_a_way_back(flow, qapp, e
 
 # ----- in the window -----
 @pytest.fixture
-def window(qapp, monkeypatch, env):
+def window(qapp, monkeypatch, env, dispose):
     reloads: list[bool] = []
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(True))
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kw: None)
-    win = MainWindow()
+    win = dispose(MainWindow())
     win.reloads = reloads
     win.resize(1380, 860)
     win.show()
@@ -564,13 +601,13 @@ def _every_name_on_screen(*roots):
 
 
 def test_while_demo_data_is_in_use_nothing_calls_it_research_or_mover_data_and_real_data_reads_as_before(
-        window, qapp, env, synthetic_emr):
+        window, qapp, env, synthetic_emr, dispose):
     from src.desktop.about_dialog import AboutDialog
     from src.desktop.shell import DEMO_STAMP, RESEARCH_STAMP
 
     head = window.head
     assert head.stamp.text() == f"○ {RESEARCH_STAMP}" and head.stamp.accessibleName() == RESEARCH_STAMP
-    real_about = " ".join(_every_name_on_screen(AboutDialog("9.9.9", None)))
+    real_about = " ".join(_every_name_on_screen(dispose(AboutDialog("9.9.9", None))))
     assert "MOVER SIS export, read from your own folders" in real_about
     window._open_setup_wizard()
     window._setup_flow.start_demo()
@@ -579,7 +616,7 @@ def test_while_demo_data_is_in_use_nothing_calls_it_research_or_mover_data_and_r
     assert head.stamp.text() == f"○ {DEMO_STAMP}" == "○ Fictional demo data · not for patient care"
     assert head.stamp.accessibleName() == DEMO_STAMP and head.stamp.toolTip() == DEMO_STAMP
     window._open_settings()
-    about = AboutDialog("9.9.9", None)
+    about = dispose(AboutDialog("9.9.9", None))
     about_words = " ".join(_every_name_on_screen(about))
     assert "Fictional demo data generated on this computer" in about_words
     assert "MOVER SIS export" not in about_words
@@ -591,4 +628,4 @@ def test_while_demo_data_is_in_use_nothing_calls_it_research_or_mover_data_and_r
     page.row_emr.set_text(str(synthetic_emr))
     assert page.save() is True
     assert head.stamp.text() == f"○ {RESEARCH_STAMP}" and head.stamp.accessibleName() == RESEARCH_STAMP
-    assert "MOVER SIS export, read from your own folders" in " ".join(_every_name_on_screen(AboutDialog("9.9.9", None)))
+    assert "MOVER SIS export, read from your own folders" in " ".join(_every_name_on_screen(dispose(AboutDialog("9.9.9", None))))

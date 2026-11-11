@@ -893,6 +893,15 @@ QListWidget#settingsSections::item:selected, QListWidget#settingsSections::item:
 QListWidget#settingsSections:focus {{
     border: 2px solid {accent};
 }}
+QListWidget#settingsSections[narrow="true"]::item {{
+    padding: 6px 10px;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+}}
+QListWidget#settingsSections[narrow="true"]::item:selected, QListWidget#settingsSections[narrow="true"]::item:selected:!active {{
+    border-left: none;
+    border-bottom: 3px solid {accent};
+}}
 QLabel#folderCheck {{
     color: {ink_2};
     font-size: 12.5px;

@@ -58,8 +58,8 @@ def env(monkeypatch, tmp_path, synthetic_emr):
 
 
 @pytest.fixture
-def page(qapp):
-    widget = SettingsPage()
+def page(qapp, dispose):
+    widget = dispose(SettingsPage())
     widget.resize(1100, 700)
     widget.show()
     qapp.processEvents()
@@ -292,11 +292,11 @@ def test_every_setting_the_dialog_had_is_on_the_page(page):
 
 @pytest.mark.parametrize("saved,expected", [("default", "default"), ("lenient", "lenient"), ("strict", "strict"),
                                             ("unknown", "default"), (None, "default")])
-def test_the_page_loads_the_saved_preset(qapp, env, saved, expected):
+def test_the_page_loads_the_saved_preset(qapp, env, saved, expected, dispose):
     from src.user_settings import update_settings
 
     update_settings(preset=saved)
-    widget = SettingsPage()
+    widget = dispose(SettingsPage())
     assert widget.combo_preset.currentData() == expected
     widget.close()
 
@@ -311,11 +311,11 @@ def setup_calls(monkeypatch):
 
 
 @pytest.fixture
-def window(qapp, monkeypatch, setup_calls):
+def window(qapp, monkeypatch, setup_calls, dispose):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: None)
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kw: None)
-    win = MainWindow()
+    win = dispose(MainWindow())
     win.resize(1380, 860)
     win.show()
     qapp.processEvents()
@@ -417,3 +417,125 @@ def test_the_pages_of_this_stage_hold_no_hard_coded_colours():
     for module in (settings_page, settings_ui, setup_flow, about_dialog, error_card, demo_data):
         found = colour.findall(Path(module.__file__).read_text(encoding="utf-8"))
         assert not found, f"{module.__name__} names a colour itself: {found}"
+
+
+def test_a_theme_chosen_from_find_while_settings_is_open_is_the_saved_theme_and_survives_a_later_save(
+        window, qapp, env):
+    window._open_settings()
+    page = window._suite_pages["settings"]
+    assert page.values()["theme"] == "dark"
+    window._set_theme_quick("light")
+    assert page.values()["theme"] == "light" and not page.is_dirty()
+    page.combo_preset.setCurrentIndex(page.combo_preset.findData("lenient"))
+    assert page.changes() == ["rule preset"]
+    assert page.save() is True
+    assert load_settings()["theme"] == "light" and load_settings()["preset"] == "lenient"
+
+
+@pytest.mark.parametrize("content,records", [
+    (b"PID,Age\nA,1\nB,2\nC,3\n", 3),
+    (b"PID,Age\nA,1\nB,2\nC,3", 3),  # no line break after the last record
+    (b"PID,Age\r\nA,1\r\nB,2\r\n", 2),
+    (b"PID,Procedure\nA,\"Knee, total\"\nB,\"two\nlines\"\nC,\"say \"\"hi\"\"\nthere\"\n", 3),  # a quoted line break
+    (b"PID,Age\n", 0),
+    (b"", 0),
+])
+def test_the_surgeries_count_is_the_records_of_the_table(tmp_path, content, records):
+    from src.desktop.settings_ui import _count_surgeries
+
+    table = tmp_path / "patient_information.csv"
+    table.write_bytes(content)
+    assert _count_surgeries(table) == records
+
+
+def test_the_count_reads_in_bounded_chunks_and_is_left_out_above_the_size_limit(tmp_path, monkeypatch):
+    from src.desktop import settings_ui
+
+    table = tmp_path / "patient_information.csv"
+    table.write_bytes(b"PID\n" + b"".join(b'"x\ny"\n' for _ in range(5000)))  # quoted breaks across many chunks
+    monkeypatch.setattr(settings_ui, "_COUNT_CHUNK_BYTES", 64)
+    assert settings_ui._count_surgeries(table) == 5000
+    monkeypatch.setattr(settings_ui, "_COUNT_LIMIT_BYTES", table.stat().st_size - 1)
+    assert settings_ui._count_surgeries(table) is None
+    folder = tmp_path / "emr"
+    folder.mkdir()
+    for name in ("patient_information.csv", "patient_ventilator.csv", "patient_vitals.csv"):
+        (folder / name).write_bytes(table.read_bytes())
+    result = settings_ui.check_emr_folder(str(folder))
+    assert result.state == "ok" and "surgeries indexed" not in result.text and "3 of 3 required tables found" in result.text
+
+
+def _check_no_cut_text_and_no_sideways_reach(window, page, qapp):
+    """Everything on the current section sits inside the viewport, whole, with no horizontal scroll bar needed."""
+    from PySide6.QtWidgets import QAbstractScrollArea, QLabel, QPushButton, QWidget
+
+    scroll = page.stack.currentWidget()
+    assert isinstance(scroll, QAbstractScrollArea)
+    viewport = scroll.viewport()
+    problems = []
+    if scroll.horizontalScrollBar().maximum() > 0:
+        problems.append(f"sideways scroll of {scroll.horizontalScrollBar().maximum()} px")
+    for widget in scroll.widget().findChildren(QWidget):
+        if not widget.isVisibleTo(scroll.widget()):
+            continue
+        right = widget.mapTo(viewport, widget.rect().topRight()).x()
+        if right > viewport.width():
+            problems.append(f"{type(widget).__name__} {widget.objectName() or widget.accessibleName()!r} ends {right - viewport.width()} px past the edge")
+        if isinstance(widget, QLabel) and widget.text():
+            if widget.wordWrap():
+                if widget.height() < widget.heightForWidth(widget.width()):
+                    problems.append(f"wrapped label cut: {widget.text()[:40]!r}")
+            elif widget.width() < widget.sizeHint().width():
+                problems.append(f"label cut: {widget.text()[:40]!r} ({widget.width()} < {widget.sizeHint().width()})")
+        if isinstance(widget, QPushButton) and widget.width() < widget.sizeHint().width():
+            problems.append(f"button cut: {widget.text()!r}")
+    return problems
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_scrolling(
+        window, qapp, theme, tmp_path):
+    from src.desktop.settings_page import SECTIONS
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, theme)
+    window._open_settings()
+    page = window._suite_pages["settings"]
+    window.resize(100, 700)  # the window refuses to go below its least width
+    qapp.processEvents()
+    qapp.processEvents()
+    least = window.width()
+    assert least == max(window.minimumSizeHint().width(), window.minimumWidth()) and page.width() < page.NARROW_BELOW
+    # an unsaved change and a long status make the bar's worst case
+    page.row_processed.edit.setText(str(tmp_path / "a-processed-folder-with-a-rather-long-name"))
+    page.combo_preset.setCurrentIndex(page.combo_preset.findData("lenient"))
+    page.row_emr.edit.setText(str(tmp_path / "an-emr-folder-with-a-rather-long-name"))
+    page.row_emr.run_check()
+    for _ in range(3):  # the bar grows to its wrapped text on the pass after the text changes
+        qapp.processEvents()
+    assert page._narrow is True
+    strip, form = page.sections.geometry(), page.stack.geometry()
+    assert strip.bottom() <= form.top(), "the section list sits above the form"
+    viewport = page.sections.viewport().rect()
+    assert page.sections.width() <= page.width() and all(
+        viewport.contains(page.sections.visualItemRect(page.sections.item(row)))
+        for row in range(page.sections.count())), "every section name shows whole, none cut or hidden"
+    assert page.status.width() >= page.width() - 40, "the status line gets the bar's whole width above the buttons"
+    bar_problems = []
+    for widget in (page.status, page.discard_button, page.save_button):
+        if widget.mapTo(page, widget.rect().bottomRight()).x() > page.width():
+            bar_problems.append(widget.objectName() or widget.text())
+    assert not bar_problems, bar_problems
+    assert page.status.height() >= page.status.heightForWidth(page.status.width())
+    for name, _intro in SECTIONS:
+        page.show_section(name)
+        for _ in range(3):
+            qapp.processEvents()
+        assert not _check_no_cut_text_and_no_sideways_reach(window, page, qapp), name
+    # wide again: the list is back at the left and the bar is one row
+    window.resize(1380, 860)
+    qapp.processEvents()
+    assert page._narrow is False and page.sections.geometry().right() < page.stack.geometry().left()
+    assert page.discard_button.geometry().top() == page.status.geometry().top() or \
+        abs(page.discard_button.geometry().center().y() - page.status.geometry().center().y()) < 30
+    apply_theme(qapp, "dark")

@@ -20,6 +20,7 @@ from src.runtime_paths import (
     data_dir,
     demo_data_dir,
     emr_dir,
+    looks_like_emr_dir,
     processed_dir,
     read_demo_marker,
     set_session_paths,
@@ -43,6 +44,30 @@ def _marker(root: Path) -> Path:
     return root / DEMO_MARKER
 
 
+def _refuse_overlap_with_emr(root: Path) -> None:
+    """The demo folder and the configured EMR folder must stay apart, so neither can be written into by the other.
+
+    The one overlap allowed is the app's own demo being the EMR in use, which is how a built demo is reused.
+    """
+    emr = emr_dir().resolve()
+    if root == emr or root.is_relative_to(emr):
+        raise DemoDataError(
+            f"The demo data folder ({root}) is the same as, or inside, your EMR folder ({emr}), and demo data is "
+            "never written there. Set MOVER_DEMO_DATA_DIR to a folder outside your data."
+        )
+    holder = next((folder for folder in (root, *root.parents) if looks_like_emr_dir(folder)), None)
+    if holder is not None:
+        raise DemoDataError(
+            f"The demo data folder ({root}) is, or is inside, a folder of EMR tables ({holder}), and demo data is "
+            "never written there. Set MOVER_DEMO_DATA_DIR to a folder outside your data."
+        )
+    if emr.is_relative_to(root) and not (emr == root / "EMR" and read_demo_marker(root) is not None):
+        raise DemoDataError(
+            f"The demo data folder ({root}) contains your EMR folder ({emr}), so it was left as it is. "
+            "Set MOVER_DEMO_DATA_DIR to a folder that does not hold your data."
+        )
+
+
 def check_demo_folder(root: Path) -> None:
     """Raise ``DemoDataError`` unless ``root`` is new, empty, or a folder this app made."""
     if root.is_relative_to(app_dir().resolve()):
@@ -50,6 +75,7 @@ def check_demo_folder(root: Path) -> None:
             f"The demo data folder ({root}) is inside the program folder. Set MOVER_DEMO_DATA_DIR to a folder "
             "in your own data directory."
         )
+    _refuse_overlap_with_emr(root)
     if root.exists() and not root.is_dir():
         raise DemoDataError(f"{root} exists and is not a folder, so demo data was not made there.")
     if root.is_dir() and read_demo_marker(root) is None and any(root.iterdir()):

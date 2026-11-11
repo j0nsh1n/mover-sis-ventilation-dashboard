@@ -66,8 +66,11 @@ CHANGE_LABELS = {
     "ollama_embed_model": "embedding model",
     "theme": "theme",
 }
-# Reading the first column of a table to count its rows stays fast below this size; above it the count is left out.
-_COUNT_LIMIT_BYTES = 64 * 1024 * 1024
+# Counting records is a single pass over the file's bytes, so it stays quick below this size; above it the count
+# is left out and the sentence says nothing about it. The check runs on the window's thread.
+_COUNT_LIMIT_BYTES = 32 * 1024 * 1024
+_COUNT_CHUNK_BYTES = 1024 * 1024
+_NEWLINE, _QUOTE = 10, 34
 
 
 def browse_dir(parent: QWidget, start: str = "") -> str:
@@ -285,12 +288,28 @@ def _now() -> str:
 
 
 def _count_surgeries(info: Path) -> int | None:
+    """The records of a CSV table, or None when the file is too large to count at once.
+
+    A record ends at a line break outside quotes, so a quoted field that holds a line break is still one record.
+    """
     try:
         if info.stat().st_size > _COUNT_LIMIT_BYTES:
             return None
-        import pandas as pd
+        import numpy as np
 
-        return int(len(pd.read_csv(info, usecols=[0], dtype=str)))
+        lines, inside, last = 0, 0, _NEWLINE
+        with info.open("rb") as handle:
+            while chunk := handle.read(_COUNT_CHUNK_BYTES):
+                data = np.frombuffer(chunk, dtype=np.uint8)
+                # uint8 wraps at 256, which keeps the parity of the quotes seen so far
+                quotes = np.cumsum(data == _QUOTE, dtype=np.uint8)
+                outside = ((quotes + inside) & 1) == 0
+                lines += int(np.count_nonzero((data == _NEWLINE) & outside))
+                inside = (inside + int(quotes[-1])) & 1
+                last = int(data[-1])
+        if last != _NEWLINE:
+            lines += 1
+        return max(0, lines - 1)
     except Exception:
         return None
 
