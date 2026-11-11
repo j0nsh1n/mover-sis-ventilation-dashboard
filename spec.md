@@ -437,9 +437,11 @@ Handoff grading:
   kind belongs to that episode. A drug given a minute that none of its doses
   show is unsupported, and that drug stays missed.
 - A value belongs to the measurement word just before it (SpO2, saturation,
-  MAP, blood pressure). It is read up to the next measurement (another of
-  those, or heart rate, respiratory rate, ETCO2, temperature), drug, dose,
-  minute or sentence end; of the numbers before that, the last is the value.
+  MAP, blood pressure) and is looked for within 24 characters after it. The
+  reach stops at the next measurement (another of those, or heart rate, pulse,
+  respiratory rate, ETCO2, temperature; "pulse ox" is not one), tracked drug,
+  the word dose, a minute or a sentence end; of the numbers before that, the
+  last is the value.
   So "SpO2 97.5 throughout, MAP 75" states SpO2 97.5, and "SpO2 86 at
   minute 21" states SpO2 86.
 - A sentence ends at a full stop, question mark, exclamation mark, semicolon or

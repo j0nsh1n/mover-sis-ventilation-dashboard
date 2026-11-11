@@ -45,19 +45,21 @@ _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
 _SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
 _SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
 _NEGATION_REACH = 40
-# Where a removed minute claim was; the reach to a value stops there as it would at the word "minute".
-_MINUTE_MARK = " | "
+# Where a removed minute claim was; the reach to a value stops there as it would at the word "minute". A character
+# from Unicode's private use area, so nothing a learner types can be taken for it.
+_MINUTE_MARK = " \ue000 "
 # Words that start another measurement, a drug, a dose or a minute. The reach from a series word to its value stops
 # at any of them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2 and "SpO2 86 at minute 20" reads 86.
 _MEASURE_WORDS = (
     "spo2", "sp02", "oxygen saturation", "saturation", "sats", "sat", "map", "mean arterial pressure",
-    "blood pressure", "bp", "heart rate", "hr", "pulse", "respiratory rate", "resp rate", "rr", "etco2",
+    "blood pressure", "bp", "heart rate", "hr", "respiratory rate", "resp rate", "rr", "etco2",
     "end tidal", "end-tidal", "temperature", "temp",
 )
 _VALUE_STOP = (
-    rf"{_SENTENCE_END_PATTERN}|\||\b(?:"
+    rf"{_SENTENCE_END_PATTERN}|\ue000|\b(?:"
     + "|".join(re.escape(word) for word in (*_MEASURE_WORDS, *(drug.casefold() for drug in TRACKED_DRUGS)))
-    + r"|doses?|minutes?|mins?)\b"
+    # a pulse is a heart rate, but "pulse ox" and "pulse oximeter" are how a saturation is measured
+    + r"|pulse(?!\s*ox)|doses?|minutes?|mins?)\b"
 )
 # One character of the reach from a series word to its value: inside the sentence, before any stop above.
 _TO_VALUE = rf"(?:(?!{_VALUE_STOP}).)"

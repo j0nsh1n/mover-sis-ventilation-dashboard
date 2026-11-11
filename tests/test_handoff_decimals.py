@@ -116,6 +116,23 @@ def test_a_decimal_minute_and_the_end_of_its_range_are_taken_out_of_the_values()
         ("spo2 86 then phenylephrine 100 mcg", ("spo2",), (86.0,)),  # at a drug
         ("spo2 fell from 98 to 86", ("spo2",), (86.0,)),  # of the numbers before a stop, the last
         ("no spo2 - no spo2", ("spo2",), ()),  # the 2 of a later "SpO2" is never a value
+        # every kind of stop
+        ("spo2 86, etco2 40", ("spo2",), (86.0,)),
+        ("spo2 86, end tidal 40", ("spo2",), (86.0,)),
+        ("spo2 86, temp 36.5", ("spo2",), (86.0,)),
+        ("spo2 86, temperature 37", ("spo2",), (86.0,)),
+        ("spo2 86, heart rate 110", ("spo2",), (86.0,)),
+        ("spo2 86, respiratory rate 30", ("spo2",), (86.0,)),
+        ("spo2 86, pulse 110", ("spo2",), (86.0,)),
+        ("spo2 86 bp 60/40", ("spo2",), (86.0,)),
+        ("map 60, sat 98", ("map",), (60.0,)),
+        ("map 60, sats 98", ("map",), (60.0,)),
+        ("map 60 then a dose of 100", ("map",), (60.0,)),
+        # "pulse ox" is how a saturation is measured, not another measurement
+        ("spo2 on pulse ox was 86", ("spo2",), (86.0,)),
+        ("saturation on the pulse oximeter 86", ("saturation",), (86.0,)),
+        # a character a learner types is not taken for the mark of a removed minute claim
+        ("spo2 | 86", ("spo2",), (86.0,)),
     ],
 )
 def test_a_value_is_read_up_to_the_next_measurement_drug_dose_or_minute(text, words, read):
@@ -131,6 +148,7 @@ def test_a_value_is_read_up_to_the_next_measurement_drug_dose_or_minute(text, wo
         # SpO2 86 at minute 21: the reading is the desaturation's own value, not the minute after it
         ("FAKE-DESAT", "SpO2 86 at minute 21.", [("mentioned", "desaturation")]),
         ("FAKE-DESAT", "SpO2 88 with RR 30.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 on pulse ox was 86.", [("mentioned", "desaturation")]),
         # arterial MAP 60 from minute 10 to 16, Phenylephrine 100 mcg at minute 12: a heart rate is not a MAP
         (
             "FAKE-ART-LOW",
