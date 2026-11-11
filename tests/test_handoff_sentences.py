@@ -7,6 +7,7 @@ only for the finding it is written with.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -103,9 +104,29 @@ def test_a_value_for_saturation_in_the_next_sentence_is_not_a_desaturation_claim
     assert _graded("SpO2 86 at the start", quiet) == [("unsupported", "desaturation")]
 
 
-def test_every_look_back_in_the_grader_is_built_from_the_one_sentence_end():
+def test_the_reach_from_a_series_word_to_its_value_stops_at_every_full_stop_and_sentence_end():
     for pattern in (grading._SPO2_NUMBER, grading._MAP_NUMBER, grading._SATURATION_UNDER_NINETY):
-        assert grading._IN_SENTENCE in pattern.pattern
+        assert grading._TO_VALUE in pattern.pattern
+    for mark in ".?!;\n":
+        assert re.fullmatch(grading._TO_VALUE, mark) is None, mark
+    assert re.fullmatch(grading._TO_VALUE, ",") and re.fullmatch(grading._TO_VALUE, " ")
     # A hand-written class such as "[^\\n.]" or a split on "[.\\n;]" would be a second, older definition.
     source = Path(grading.__file__).read_text(encoding="utf-8")
     assert "[^\\n.]" not in source and "[.\\n;]" not in source
+
+
+def test_a_decimal_value_is_read_for_its_own_series_and_not_replaced_by_a_later_number():
+    """The reach to a value cannot pass the value's own decimal point, so a number further on is not taken for it."""
+    spo2 = ("spo2", "sp02", "saturation")
+    assert grading._numbers_after("spo2 97.5 throughout, map 75", spo2) == (97.5,)
+    assert grading._numbers_after("spo2 86.0 at minute 20", spo2) == (86.0,)
+    assert grading._numbers_after("map 60.0 with dose 0.5 mg", ("map",)) == (60.0,)
+    # SpO2 stays at 98 and MAP at 80: a normal saturation with a normal MAP after it claims nothing
+    quiet = PracticeCase("FAKE-Q", "q", tuple(Sample(m, map_art=80, spo2=98) for m in range(13)), ())
+    assert _graded("Stable. SpO2 97.5 throughout, MAP 75.", quiet) == []
+    assert _graded("Stable. SpO2 97.5, MAP 72.5.", quiet) == []
+    # SpO2 is 86 at minutes 20 and 21 only: the reading is the desaturation's own value, the minute its own minute
+    desat = PracticeCase("FAKE-D", "d", tuple(Sample(m, map_art=80, spo2=86 if m in (20, 21) else 98) for m in range(25)), ())
+    assert _graded("SpO2 86.0 at minute 20.", desat) == [("mentioned", "desaturation")]
+    # a dose written with a decimal after a MAP reading is not read as a second MAP value
+    assert ("unsupported", "hypotension") not in _graded("Hypotension, MAP 60.0 from minute 10 to 16, dose 0.5 mg phenylephrine")
