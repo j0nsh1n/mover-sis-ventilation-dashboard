@@ -78,6 +78,30 @@ def test_about_opens_from_the_window_with_the_loaded_preset(qapp, monkeypatch, d
     assert seen["build"].endswith("rules default @abcdef")
 
 
+def test_about_opened_from_the_window_names_the_data_on_screen(qapp, monkeypatch, dispose):
+    from src.desktop.about_dialog import DATA_FACT, DEMO_DATA_FACT, facts
+
+    assert dict(facts(True))["Data"] == DEMO_DATA_FACT and dict(facts(False))["Data"] == DATA_FACT
+    assert "fictional demo data" in DEMO_DATA_FACT.lower() and "MOVER" not in DEMO_DATA_FACT
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    seen = []
+    real_init = AboutDialog.__init__
+
+    def spy(self, *args, **kwargs):
+        seen.append(kwargs.get("demo"))
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(AboutDialog, "__init__", spy)
+    monkeypatch.setattr(AboutDialog, "exec", lambda self: 0)
+    win = dispose(MainWindow())
+    win._shown_data_is_demo = False
+    win._about()
+    win._shown_data_is_demo = True
+    win._about()
+    win.close()
+    assert seen == [False, True]
+
+
 # ----- the error card -----
 def test_the_card_says_what_why_and_next_and_keeps_the_detail_collapsed(qapp, dispose):
     card = dispose(ErrorCard(None, what="The pipeline did not finish.", why="The EMR folder is missing one table.",

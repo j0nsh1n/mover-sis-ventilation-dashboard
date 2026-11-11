@@ -530,11 +530,58 @@ def test_medication_page_without_an_open_case_shows_its_invented_record_under_th
 
 def test_medication_page_names_an_open_demo_case_as_fictional_demo_data(window, qapp, monkeypatch):
     monkeypatch.setattr("src.desktop.app.demo_data_in_use", lambda: True)
+    # a reload drops the loaded data, and from then on the window names what it shows after the folder in use
+    window._clear_loaded_sample()
     panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
     assert "SYN-1 · open case · fictional demo data, not for patient care" in panel.case_line.text()
     assert "research data" not in panel.case_line.text()
     assert window.head.stamp.isVisibleTo(window) and window.head.stamp.accessibleName() == DEMO_STAMP
     assert window._footer.source.accessibleName() == DEMO_SOURCE[1]
+
+
+def test_medication_page_follows_the_open_case_when_it_closes_while_the_page_shows(window, qapp, monkeypatch):
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    assert panel.shows_open_case()
+    # a data reload closes the open case while Medication and vitals is still the page on screen
+    window.research.invalidate_case_data()
+    qapp.processEvents()
+    assert not panel.shows_open_case() and panel.case_line.text().endswith("invented record")
+    assert window.head.fiction.isVisibleTo(window) and not window.head.stamp.isVisibleTo(window)
+    assert window._footer.source.accessibleName() == PRACTICE_SOURCE
+
+
+def test_a_folder_change_does_not_rename_the_data_still_on_screen(window, qapp, monkeypatch):
+    """Between saving another data folder and the end of its reload, the case on screen is still the old data."""
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    monkeypatch.setattr("src.desktop.app.demo_data_in_use", lambda: True)
+    window._go("settings")
+    qapp.processEvents()
+    window._go("medications")
+    qapp.processEvents()
+    assert "de-identified research data" in panel.case_line.text()
+    assert window.head.stamp.accessibleName() == RESEARCH_STAMP
+    assert window._footer.source.accessibleName() != DEMO_SOURCE[1]
+    # another case of the old data opened meanwhile is named as the old data too
+    window.research._case_views["SYN-2"] = window.research._case_views["SYN-1"]
+    window.research._current_pid = "SYN-2"
+    window._sync_frame()
+    assert panel.case_line.text().startswith("SYN-2 · open case · de-identified research data")
+    # the reload drops the old data: the case closes, and what loads next is named as demo data
+    window._clear_loaded_sample()
+    qapp.processEvents()
+    assert not panel.shows_open_case() and panel.case_line.text().endswith("invented record")
+    window.rail.button("research").click()
+    qapp.processEvents()
+    assert window.head.stamp.accessibleName() == DEMO_STAMP and window._footer.source.accessibleName() == DEMO_SOURCE[1]
+
+
+def test_the_medication_page_reads_a_case_from_disk_once_not_on_every_frame_update(window, qapp, monkeypatch):
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    calls = []
+    monkeypatch.setattr("src.llm.case_context.load_case_medications", lambda pid: calls.append(pid) or None)
+    for _ in range(3):
+        window._sync_frame()
+    assert calls == [] and panel.shows_open_case()
 
 
 def test_practice_footer_says_it_reads_no_data_folder(window, qapp):

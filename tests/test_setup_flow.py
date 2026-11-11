@@ -469,7 +469,14 @@ def test_a_demo_that_cannot_be_made_says_why_and_leaves_a_way_back(flow, qapp, e
 def window(qapp, monkeypatch, env, dispose):
     reloads: list[bool] = []
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(True))
+
+    def reload(self):
+        # The real reload drops the loaded data first, which is when the window takes the name of the data
+        # it will show from the folders in use; the load itself is left out.
+        reloads.append(True)
+        self._clear_loaded_sample()
+
+    monkeypatch.setattr(MainWindow, "_autoload_processed", reload)
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kw: None)
     win = dispose(MainWindow())
     win.reloads = reloads

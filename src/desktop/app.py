@@ -252,6 +252,12 @@ class MainWindow(QMainWindow):
         self._corpus_scan_dir: Path | None = None
         # A data reload asked for while a scan ran; it runs when the scan ends
         self._reload_after_scan = False
+        # Whether the data on screen is the fictional demo data. It is taken when loaded data is dropped for a
+        # reload, not read from the folder setting each time: between a folder change and the end of its reload
+        # the old data is still on screen and must keep its own name.
+        self._shown_data_is_demo = demo_data_in_use()
+        # What the Medication page was last given: (case, demo) for an open case, None for its invented record.
+        self._medication_shown: tuple[str, bool] | None | bool = False
         self._worker: QThread | None = None
         self._ollama_worker: OllamaWorker | None = None
         self._ollama_available = False
@@ -648,6 +654,8 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _clear_loaded_sample(self) -> None:
+        # From here on whatever is shown comes from the folders in use now.
+        self._shown_data_is_demo = demo_data_in_use()
         self.cases = self.ts = self.flags = self.episodes = self.events = None
         self._analysis_facts = {}
         self._thresholds_sha256 = None
@@ -798,7 +806,7 @@ class MainWindow(QMainWindow):
 
         sha = self._thresholds_sha256[:6] if self._thresholds_sha256 else ""
         rules = f"{self._active_preset}" + (f" @{sha}" if sha else "")
-        AboutDialog(self._version, rules, self).exec()
+        AboutDialog(self._version, rules, self, demo=self._shown_data_is_demo).exec()
 
     def _setup_bypassed(self) -> bool:
         return os.environ.get("MOVER_SKIP_SETUP", "").strip().lower() in {
@@ -1663,8 +1671,6 @@ class MainWindow(QMainWindow):
         self._current_module = name
         if name in _PRACTICE_TITLES:
             self._last_practice = name
-        if name == "medications":
-            self._offer_open_case_to_medication()
         self._sync_frame()
         return True
 
@@ -1738,6 +1744,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_footer"):
             return
         practice = self._current_module in _PRACTICE_TITLES
+        if self._current_module == "medications":
+            # The page follows the case open in Research, also when that case closes or changes while it shows.
+            self._offer_open_case_to_medication()
         place = self.research.place()
         self.rail.set_current(self._current_module if self._current_module == "settings"
                               else "practice" if practice else place.page)
@@ -1788,7 +1797,7 @@ class MainWindow(QMainWindow):
         footer = getattr(self, "_footer", None)
         if footer is None:
             return
-        self.head.set_demo(demo_data_in_use())
+        self.head.set_demo(self._shown_data_is_demo)
         if self._showing_invented_practice():
             footer.show_practice()
             return
@@ -1814,13 +1823,13 @@ class MainWindow(QMainWindow):
         )
         footer.show_research(
             source_tip=self._source_tooltip(), counts=counts, rules=rules, model=self._model_field(),
-            source=DEMO_SOURCE if demo_data_in_use() else None,
+            source=DEMO_SOURCE if self._shown_data_is_demo else None,
         )
 
     def _source_tooltip(self) -> str:
         wave = wave_dir()
         paths = f"EMR: {emr_dir()}\nProcessed: {processed_dir()}\nWave: {wave if wave else 'not set'}"
-        return f"{DEMO_SOURCE_TIP}\n{paths}" if demo_data_in_use() else paths
+        return f"{DEMO_SOURCE_TIP}\n{paths}" if self._shown_data_is_demo else paths
 
     def _model_field(self) -> tuple[str, str]:
         name = self.research.selected_model()
@@ -1885,6 +1894,10 @@ class MainWindow(QMainWindow):
             return
         pid = self.research._current_pid
         view = self.research._case_views.get(pid) if pid else None
+        wanted = None if pid is None or view is None else (str(pid), self._shown_data_is_demo)
+        if wanted == self._medication_shown:
+            return
+        self._medication_shown = wanted
         if pid is None or view is None:
             panel.show_fictional()
             return
@@ -1892,7 +1905,7 @@ class MainWindow(QMainWindow):
 
         origin = _case_origin(view.cases, pid)
         panel.show_case(str(pid), load_case_medications(pid), view.timeseries, origin=origin,
-                        fictional_source=demo_data_in_use())
+                        fictional_source=self._shown_data_is_demo)
 
 
 def _case_origin(cases: pd.DataFrame, pid: str):
