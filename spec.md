@@ -17,9 +17,10 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 - Load SIS EMR tables from a user-chosen folder; optional wave root; write/read processed
   parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
-- Desktop UI is primary. On first run or with an invalid EMR folder, a modal Setup
-  wizard validates the folder before data loading. Canceling first-run setup leaves
-  the Research workspace in the setup-required state until setup is completed.
+- Desktop UI is primary. On first run or with an invalid EMR folder, first-time setup
+  fills the window and validates the folder before data loading. Leaving first-run
+  setup before it has saved leaves the Research workspace in the setup-required state
+  until setup is completed.
 - The desktop central widget is the **Research** evidence workspace (G) in
   `ResearchWorkspace`, set from `src/desktop/app.py` `_build_ui`. The Ask, Summary,
   Case timeline, and Rule reference tabs are retired. Equivalent functions remain
@@ -56,8 +57,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - The Research workspace opens a retrieved case, or a case chosen in the Cases list,
   in the focused signal view (F). F shows PIP, ETCO₂, and heart rate at a selected
   minute, plus source rows, and the case's flag episodes. Episodes are listed in time
-  order and marked on a flag lane under the traces. Selecting an episode, or a mark on
-  the lane, shows its rule, the loaded preset's current thresholds for that rule, and
+  order and drawn as bands on a flag lane under the traces. Selecting an episode, or
+  its band on the lane, shows its rule, the loaded preset's current thresholds for that rule, and
   each of the rule's signals over the episode (min, max, mean, missing minutes), adds
   the rule's other signals as extra tracks, and can open the rule in the Rules drawer.
   Traces break at missing minutes. A case with no flags says so. Returning to G
@@ -70,7 +71,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   cases with PID, procedure, age, sex, duration, anomaly score, warn and critical
   counts, and top rules by name. The list states its scope: the loaded sample, with
   the indexed-surgery count when a full-EMR scan knows it. When a full-EMR scan
-  exists, a switch lists the scan's scored cases instead. A click or Enter opens the
+  exists, a switch lists the scan's scored cases instead. A click selects a case
+  and shows its preview beside the list; Enter, a double-click or Open case opens the
   case in F; Back or Escape returns to the list. Opening a case from the Cases list
   does not change the question's evidence board.
 - Reloading processed data, or loading data with a different preset, closes any open
@@ -135,9 +137,11 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30`,
   then run the pipeline with `--emr-dir data/synthetic/EMR --output-dir data/synthetic/processed`
 - **Streamlit (optional):** `PYTHONPATH=. streamlit run src/dashboard/app.py`
-- Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
-  rule preset for new runs, theme). Setup opens before the app loads data on first run
-  or for an invalid EMR path.
+- Settings: a page of the window, from the left navigation or `Ctrl+,` (paths, Ollama
+  models dir, chat and embedding model, rule preset for new runs, theme). Nothing is
+  written until Save; leaving with unsaved changes asks to save, discard or stay; a
+  refused save changes nothing. Setup opens before the app loads data on first run or
+  for an invalid EMR path.
 - Run pipeline and Scan full EMR (both in Ctrl+K) use the saved rule preset (`default`
   when unset). The Rules drawer, Research questions, and case fetches use the preset
   recorded with the loaded data, or the saved preset when no data is loaded; run the
@@ -330,9 +334,14 @@ WHO checklist as tabs), Rules and Settings. There is no menu bar: every former
 menu action is in the Ctrl+K command search and keeps its shortcut (Ctrl+1 to
 Ctrl+4, Ctrl+O, Ctrl+Shift+O, Ctrl+R, Ctrl+Q, Ctrl+,). The running head shows a
 breadcrumb for the open place, "Find Ctrl+K", and the research-only line (on
-practice pages, "Fictional practice"). The footer shows the data source (folder
+practice pages, "Fictional practice"). Neither line is ever cut: in a narrow window
+the breadcrumb and Find give up room first, then the research-only line shortens to
+"Not for patient care" and the practice line to "Fictional practice", with the full
+sentence in the tooltip and the accessible name. The footer shows the data source (folder
 paths only in its tooltip and in Settings), analyzed and indexed counts, the rule
-preset and threshold-hash prefix, and the local model state. The window title
+preset and threshold-hash prefix, and the local model state. In a narrow window a
+footer field shows whole words ending in "…" or is left out, never a cut word; the
+data source and the counts give up room last. The window title
 names the open page. The practice pages are working practice tools, not empty
 tabs.
 
@@ -386,9 +395,10 @@ Monitoring tool.
 
 Optional Streamlit in `src/dashboard/` stays during migration.
 
-Carry native QA into the suite record. The original candidate AppImage and
-`/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`
-stay unchanged and UNRUN. Suite results do not mark that candidate passed.
+Carry native QA into the suite record. The original candidate AppImage was deleted
+on 2026-11-10 at the owner's request; its record,
+`/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`,
+stays unchanged and UNRUN. Suite results do not mark that candidate passed.
 
 ### Decided practice contracts (2026-11-01)
 
