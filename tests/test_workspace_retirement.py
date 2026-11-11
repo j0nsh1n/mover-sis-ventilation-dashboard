@@ -283,6 +283,8 @@ def test_changing_the_theme_redraws_the_open_cases_charts(window, qapp, route):
         return chart.grab().toImage().pixelColor(0, 0).name().upper()
 
     try:
+        # An earlier test in the same run may have left the app dark; this one starts from light.
+        apply_theme(qapp, "light")
         window.cases, window.flags = _sample_with_flags()
         window._push_cases_overview()
         window.research.show_cases()
