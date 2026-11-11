@@ -72,7 +72,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   counts, and top rules by name. The list states its scope: the loaded sample, with
   the indexed-surgery count when a full-EMR scan knows it. When a full-EMR scan
   exists, a switch lists the scan's scored cases instead. A click selects a case
-  and shows its preview beside the list; Enter, a double-click or Open case opens the
+  and shows its preview (beside the list, or under it in a narrow window); Enter, a double-click or Open case opens the
   case in F; Back or Escape returns to the list. Opening a case from the Cases list
   does not change the question's evidence board.
 - Reloading processed data, or loading data with a different preset, closes any open

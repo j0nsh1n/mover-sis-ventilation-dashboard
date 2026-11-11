@@ -9,8 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Fictional demo data: first-time setup and Settings offer "Try with fictional
-  demo data", which builds a small invented dataset on this computer so the app
+- Fictional demo data: setup (on first run, or "Run data setup…" in Settings)
+  offers "Try with fictional demo data", which builds a small invented dataset on this computer so the app
   can be tried without the MOVER dataset. While it is in use, the top bar, the
   footer, Settings and About say it is fictional demo data. Choosing a real EMR
   folder in Settings removes the label and leaves the demo folder in place.
@@ -42,7 +42,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   shows each rule's shape and severity word, thresholds, hold time, skipped
   phases and a threshold ruler. A rule with no single limit says why it has no
   ruler. Opened from an episode, it scrolls to that episode's rule and marks it
-  "Current rule". A screen reader reads each rule as one sentence.
+  in words as the rule of the selected episode. A screen reader reads each rule
+  as one sentence.
 
 - New look, Medication and vitals: drugs and vital signs are drawn on one
   minute axis (a mark for a bolus, a bar for an infusion, missing readings
@@ -64,7 +65,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   the page says so.
 
 - Cases page: the preview is narrower and stays beside the list in the default
-  window, with rule names wrapping instead of being cut; filtering a full-EMR
+  window (in a narrower window it sits under the list), with rule names wrapping instead of being cut; filtering a full-EMR
   scan no longer pauses on every key; rules tied for the last place in the
   rules chart are all shown.
 
