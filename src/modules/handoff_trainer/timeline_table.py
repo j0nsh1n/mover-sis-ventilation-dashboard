@@ -8,10 +8,11 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
 from src.desktop.marks import MISSING_ROLE, MissingCellDelegate, mark_missing
-from src.modules.handoff_trainer.grading import PracticeCase, _number
-from src.modules.handoff_trainer.timeline_chart import TRACKS, dose_line
+from src.modules.handoff_trainer.grading import PracticeCase, format_number
+from src.modules.handoff_trainer.timeline_chart import TRACKS, dose_line, is_unusable
 
 MISSING_WORD = "missing"
+UNUSABLE_WORD = "outside usable range, not drawn"
 NO_ROWS = "No readings or doses on this timeline."
 _MINUTE_ROLE = int(MISSING_ROLE) + 1
 
@@ -60,7 +61,6 @@ class TimelineTable(QTableWidget):
         self.setShowGrid(False)
         self.verticalHeader().setVisible(False)
         self.setItemDelegate(MissingCellDelegate(self))
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWordWrap(True)
         header = self.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -83,8 +83,17 @@ class TimelineTable(QTableWidget):
             minute.setData(_MINUTE_ROLE, row.minute)
             self.setItem(index, 0, minute)
             for column, value in enumerate(row.values, start=1):
-                item = QTableWidgetItem(MISSING_WORD if value is None else _number(value))
-                mark_missing(item, value is None)
+                # A reading outside the sensor's range is left out of the chart and the grading, so it is
+                # hatched here like a missing one, with its number and why in words.
+                unusable = is_unusable(TRACKS[column - 1], value)
+                if value is None:
+                    text = MISSING_WORD
+                elif unusable:
+                    text = f"{format_number(value)} ({UNUSABLE_WORD})"
+                else:
+                    text = format_number(value)
+                item = QTableWidgetItem(text)
+                mark_missing(item, value is None or unusable)
                 self.setItem(index, column, item)
             doses = QTableWidgetItem("; ".join(row.doses))
             self.setItem(index, self.columnCount() - 1, doses)

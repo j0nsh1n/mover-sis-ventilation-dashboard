@@ -60,6 +60,30 @@ def panel(qapp, monkeypatch, tmp_path):
     qapp.processEvents()
 
 
+@pytest.fixture
+def make_panel(qapp, monkeypatch, tmp_path):
+    """Builds pages after the test has put a history file in place, and disposes of every one of them."""
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    made: list[HandoffPanel] = []
+
+    def build(width: int = 1300, height: int = 820) -> HandoffPanel:
+        page = HandoffPanel()
+        page.resize(width, height)
+        page.show()
+        qapp.processEvents()
+        page.timeline_chart.redraw()
+        made.append(page)
+        return page
+
+    yield build
+    qapp.processEvents()
+    for page in made:
+        page.close()
+        page.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+
+
 def _pick(panel, case_id: str) -> None:
     panel.case_box.setCurrentIndex(panel.case_box.findData(case_id))
 
@@ -471,7 +495,7 @@ def test_a_track_with_no_usable_reading_is_hatched_and_the_others_are_not():
 def test_a_reading_outside_the_sensors_range_is_not_drawn_and_the_description_says_so():
     case = PracticeCase("FAKE-A", "a", (Sample(0, map_art=80), Sample(1, map_art=300), Sample(2, map_art=82)), ())
     assert readings(case, TRACKS[0]) == {0: 80.0, 2: 82.0}
-    assert "1 readings outside the usable range are not drawn." in chart_description(case)
+    assert "1 reading outside the usable range is not drawn." in chart_description(case)
 
 
 def test_a_trace_breaks_at_a_missing_minute_and_the_gap_is_hatched_and_labelled():
@@ -645,3 +669,404 @@ def test_the_handoff_package_has_no_colour_of_its_own():
                 assert not re.search(r"rgba?\(", node.value), (path.name, node.value)
         assert not re.search(r"QColor\(\s*[\"']#", source), path.name
         assert "Qt.GlobalColor" not in source, path.name
+
+
+# —— review fixes: counts, boxes, links, scrolling, unreadable history ——
+
+
+def _scrolled_feedback_top(panel, qapp) -> tuple[int, int, int]:
+    qapp.processEvents()
+    qapp.processEvents()
+    bar = panel.page_scroll.verticalScrollBar()
+    top = panel.feedback.mapTo(panel.page_scroll.viewport(), QPoint(0, 0)).y()
+    return top, bar.value(), bar.maximum()
+
+
+def test_a_wrong_value_for_a_missing_series_reads_zero_of_one_on_the_page_and_in_history(panel):
+    _pick(panel, "FAKE-NO-SPO2")
+    _write(panel, patient_summary="SpO2 98")
+    panel.check_button.click()
+    assert _lines(panel) == [
+        "Not on the timeline. The handoff states a value. No usable SpO2 reading is on this timeline."]
+    assert panel.feedback.summary.text() == "0 of 1 found"
+    panel.show_history()
+    assert panel.history_dialog.table.item(0, 2).text() == "0 of 1"
+    panel.history_dialog.reject()
+
+
+def _lines_text(count: int) -> str:
+    return "\n".join(f"line {n}" for n in range(count))
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 8])
+def test_a_box_up_to_eight_lines_shows_every_line_with_no_scroll_bar(panel, qapp, count):
+    for key, box in panel.sections.items():
+        box.setPlainText(_lines_text(count))
+        qapp.processEvents()
+        qapp.processEvents()
+        bar = box.verticalScrollBar()
+        assert bar.maximum() == 0, (key, count)
+        assert not bar.isVisible(), (key, count)
+
+
+def test_a_ninth_line_scrolls_and_the_box_stops_growing(panel, qapp):
+    box = panel.sections["patient_summary"]
+    box.setPlainText(_lines_text(8))
+    qapp.processEvents()
+    eight = box.height()
+    box.setPlainText(_lines_text(9))
+    qapp.processEvents()
+    qapp.processEvents()
+    assert box.height() == eight
+    assert box.verticalScrollBar().maximum() > 0
+
+
+@pytest.mark.parametrize("pixels", [13, 14, 16, 18, 22])
+def test_the_box_fits_its_lines_at_other_text_sizes(panel, qapp, pixels):
+    """The document lays a line out at the font's line spacing rounded up; a size that rounds the other way
+    would scroll by a line."""
+    box = panel.sections["action_list"]
+    box.setStyleSheet(f"font-size: {pixels}px;")
+    for count in (2, 3, 8):
+        box.setPlainText(_lines_text(count))
+        qapp.processEvents()
+        qapp.processEvents()
+        assert box.verticalScrollBar().maximum() == 0, (pixels, count)
+
+
+def test_two_show_links_for_the_same_minutes_say_which_line_they_belong_to(panel):
+    _write(panel, patient_summary="Hypotension from minute 10 to 16", action_list="Phenylephrine 100 mcg at minute 30")
+    panel.check_button.click()
+    buttons = panel.feedback.show_buttons
+    assert [b.accessibleName() for b in buttons] == [
+        "Show minutes 10 to 16 on the timeline", "Show minute 12 on the timeline", "Show minute 12 on the timeline"]
+    descriptions = [b.accessibleDescription() for b in buttons]
+    assert descriptions == [_lines(panel)[0], _lines(panel)[1], _lines(panel)[2]]
+    assert len(set(descriptions)) == 3
+    assert descriptions[1].startswith("Not on the timeline.") and descriptions[2].startswith("Left out.")
+
+
+def test_a_check_scrolls_so_the_feedback_block_starts_at_the_top_of_the_view(panel, qapp):
+    panel.resize(1000, 420)
+    qapp.processEvents()
+    _write(panel, patient_summary="Hypotension from minute 10 to 16", action_list="Phenylephrine 100 mcg at minute 30",
+           synthesis="Receiver repeated it back")
+    panel.check_button.click()
+    top, value, maximum = _scrolled_feedback_top(panel, qapp)
+    # The block is the last thing on the page, so the view stops at the page's end when the block cannot
+    # reach the top; either way the heading, the count and the first lines are all in view.
+    assert value > 0
+    assert top == 0 or value == maximum, (top, value, maximum)
+    assert 0 <= top < panel.page_scroll.viewport().height() - 100
+
+
+def test_the_feedback_block_is_scrolled_to_again_when_the_page_is_stacked(panel, qapp):
+    panel.resize(700, 420)
+    qapp.processEvents()
+    _write(panel, patient_summary="Hypotension from minute 10 to 16")
+    panel.check_button.click()
+    top, value, maximum = _scrolled_feedback_top(panel, qapp)
+    assert value > 0 and (top == 0 or value == maximum), (top, value, maximum)
+
+
+def _write_history(*lines: bytes) -> bytes:
+    history_path().parent.mkdir(parents=True, exist_ok=True)
+    content = b"\n".join(lines) + b"\n"
+    history_path().write_bytes(content)
+    return content
+
+
+GOOD_ATTEMPT = json.dumps({"at": "2026-11-05T09:30:00Z", "case_id": "FAKE-ART-LOW", "handoff": "x",
+                           "grades": [{"status": "mentioned", "kind": "hypotension", "evidence": "e"}]}).encode()
+
+
+def test_one_unreadable_history_line_does_not_break_the_page_and_the_page_says_so(qapp, make_panel):
+    from src.modules.handoff_trainer.history import UNREADABLE
+
+    content = _write_history(GOOD_ATTEMPT, b"{not json", b"[1]")
+    page = make_panel()
+    assert page.history_label.text() == "Saved attempts: 1 for this run · 1 in all"
+    assert page.history_note.text() == UNREADABLE == "Some saved attempts could not be read."
+    assert page.history_note.isVisibleTo(page)
+    _write(page, patient_summary="Hypotension from minute 10 to 16")
+    page.check_button.click()
+    assert page.status.text() == SAVED
+    assert page.feedback.isVisibleTo(page)
+    assert page.history_label.text() == "Saved attempts: 2 for this run · 2 in all"
+    assert history_path().read_bytes().startswith(content), "the unreadable lines are left where they were"
+    page.show_history()
+    assert page.history_dialog.problem.text() == UNREADABLE and page.history_dialog.problem.isVisibleTo(
+        page.history_dialog)
+    assert page.history_dialog.table.rowCount() == 2
+    page.history_dialog.reject()
+
+
+def test_a_failed_read_of_the_history_never_stops_the_saved_status_the_announcement_or_the_scroll(
+        qapp, monkeypatch, make_panel):
+    from src.modules.handoff_trainer.history import READ_FAILED
+
+    spoken: list[str] = []
+    monkeypatch.setattr("src.modules.handoff_trainer.panel.announce", lambda _widget, text: spoken.append(text))
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError("no access")
+
+    monkeypatch.setattr("src.modules.handoff_trainer.panel.load_attempts", refuse)
+    page = make_panel(1000, 420)
+    assert page.history_note.text() == READ_FAILED
+    _write(page, patient_summary="Hypotension from minute 10 to 16", action_list="Phenylephrine 100 mcg at minute 30",
+           synthesis="Receiver repeated it back")
+    page.check_button.click()
+    assert page.status.text() == SAVED
+    assert spoken[-1].startswith("Checked and saved. 1 of 2 found")
+    top, value, _ = _scrolled_feedback_top(page, qapp)
+    assert value > 0 and top >= 0
+    page.show_history()
+    assert page.history_dialog.problem.text() == READ_FAILED
+    assert not page.history_dialog.empty.isVisibleTo(page.history_dialog), "no claim that nothing is saved"
+    page.history_dialog.reject()
+
+
+# —— polish: stale feedback, Tab, plurals, the table's unusable readings, names, narrow pages ——
+
+
+def test_checking_every_box_blank_after_a_check_takes_the_old_feedback_down(panel):
+    _write(panel, patient_summary="Hypotension from minute 10 to 16")
+    panel.check_button.click()
+    panel.feedback.show_buttons[0].click()
+    assert panel.feedback.isVisibleTo(panel)
+    panel.sections["patient_summary"].clear()
+    panel.check_button.click()
+    assert panel.status.text() == EMPTY_HANDOFF
+    assert not panel.feedback.isVisibleTo(panel)
+    assert panel.timeline_chart.highlight() is None and panel.timeline_table.selected_minutes() == []
+    assert not panel.try_again_button.isEnabled()
+    assert len(load_attempts()) == 1, "nothing new is saved"
+
+
+def test_after_an_edit_the_feedback_says_it_is_for_the_handoff_as_it_was_when_checked(panel):
+    from src.modules.handoff_trainer.feedback import STALE
+
+    box = panel.sections["patient_summary"]
+    box.setPlainText("Hypotension from minute 10 to 16")
+    assert not panel.feedback.stale.isVisibleTo(panel), "nothing is stale before a check"
+    panel.check_button.click()
+    assert not panel.feedback.stale.isVisibleTo(panel)
+    box.setPlainText("Hypotension from minute 10 to 17")
+    assert panel.feedback.isVisibleTo(panel) and panel.feedback.stale.isVisibleTo(panel)
+    assert panel.feedback.stale.text() == STALE == "This feedback is for the handoff as it was when you checked it."
+    # Typing it back to what was checked makes it current again.
+    box.setPlainText("Hypotension from minute 10 to 16")
+    assert not panel.feedback.stale.isVisibleTo(panel)
+    # An edit in another box counts too, and the next check clears it.
+    panel.sections["synthesis"].setPlainText("Receiver repeated it back")
+    assert panel.feedback.stale.isVisibleTo(panel)
+    panel.check_button.click()
+    assert not panel.feedback.stale.isVisibleTo(panel)
+    assert panel.feedback.summary.text() == "1 of 2 found"
+
+
+def test_next_run_and_try_again_leave_no_stale_line_behind(panel):
+    _write(panel, patient_summary="Hypotension from minute 10 to 16")
+    panel.check_button.click()
+    panel.sections["patient_summary"].setPlainText("changed")
+    assert panel.feedback.stale.isVisibleTo(panel)
+    panel.try_again_button.click()
+    assert not panel.feedback.stale.isVisibleTo(panel)
+    panel.check_button.click()
+    assert not panel.feedback.stale.isVisibleTo(panel) and panel.feedback.isVisibleTo(panel)
+    panel.next_button.click()
+    assert not panel.feedback.stale.isVisibleTo(panel) and not panel.feedback.isVisibleTo(panel)
+
+
+def test_tab_after_history_goes_to_the_first_control_and_not_to_an_unnamed_scroll_area(panel, qapp):
+    panel.history_button.setFocus()
+    QTest.keyClick(panel.history_button, Qt.Key.Key_Tab)
+    assert qapp.focusWidget() is panel.case_box
+    assert panel.page_scroll.focusPolicy() == Qt.FocusPolicy.NoFocus
+    QTest.keyClick(panel.case_box, Qt.Key.Key_Backtab)
+    assert qapp.focusWidget() is panel.history_button
+
+
+def test_the_chart_description_counts_in_the_singular_and_the_plural():
+    one = PracticeCase("FAKE-1", "o", (Sample(0, map_art=80),), ())
+    assert "Arterial MAP (mmHg): 1 reading from minute 0 to minute 0, lowest 80, highest 80." in chart_description(one)
+    gap = PracticeCase("FAKE-2", "g", (Sample(0, map_art=80), Sample(2, map_art=81)), ())
+    assert "2 readings from minute 0 to minute 2, lowest 80, highest 81, 1 minute between them has no reading." in (
+        chart_description(gap))
+    wide = PracticeCase("FAKE-3", "w", (Sample(0, map_art=80), Sample(3, map_art=81)), ())
+    assert "2 minutes between them have no reading." in chart_description(wide)
+    ignored = PracticeCase("FAKE-4", "i", (Sample(0, map_art=80), Sample(1, map_art=300), Sample(2, spo2=101)), ())
+    assert "2 readings outside the usable range are not drawn." in chart_description(ignored)
+    assert not re.search(r"\b1 (readings|minutes)\b", chart_description(one) + chart_description(gap))
+
+
+def test_the_table_marks_a_reading_the_chart_leaves_out_in_words_and_with_the_hatch(qapp):
+    case = PracticeCase(
+        "FAKE-U", "u",
+        (Sample(0, map_art=80, spo2=100), Sample(1, map_art=300, spo2=101), Sample(2, map_art=20, nmap=19, spo2=50),
+         Sample(3, spo2=49)),
+        (),
+    )
+    table = TimelineTable()
+    table.set_case(case)
+    cell = {(row, column): table.item(row, column) for row in range(4) for column in range(1, 4)}
+    unusable = "(outside usable range, not drawn)"
+    drawn = {(0, 1): "80", (0, 3): "100", (2, 1): "20", (2, 3): "50"}  # the edges of the usable range count
+    for key, text in drawn.items():
+        assert cell[key].text() == text and cell[key].data(MISSING_ROLE) is not True, key
+    for key, text in {(1, 1): "300", (1, 3): "101", (2, 2): "19", (3, 3): "49"}.items():
+        assert cell[key].text() == f"{text} {unusable}" and cell[key].data(MISSING_ROLE) is True, key
+    assert cell[(0, 2)].text() == "missing" and cell[(0, 2)].data(MISSING_ROLE) is True
+    # Chart, table and description agree: the cells marked "not drawn" are the readings the chart leaves out.
+    marked = sum(1 for item in cell.values() if "not drawn" in item.text())
+    assert marked == 4
+    assert f"{marked} readings outside the usable range are not drawn." in chart_description(case)
+    assert readings(case, TRACKS[0]) == {0: 80.0, 2: 20.0}
+    assert readings(case, TRACKS[1]) == {}
+    assert readings(case, TRACKS[2]) == {0: 100.0, 2: 50.0}
+
+
+def test_the_table_and_chart_helpers_have_public_names_and_nothing_imports_a_private_one_from_the_grader():
+    from src.modules.handoff_trainer import grading
+
+    assert grading.classify_dose(Dose("Phenylephrine", 3)) == "bolus"
+    assert grading.classify_dose(Dose("Phenylephrine", 3, end_minute=9)) == "infusion"
+    assert grading.classify_dose(Dose("Phenylephrine", 3, end_minute=1)) == "end time is before the start time"
+    assert grading.format_number(60.0) == "60" and grading.format_number(0.5) == "0.5"
+    for path in (ROOT / "src" / "modules" / "handoff_trainer").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "src.modules.handoff_trainer.grading":
+                assert not [alias.name for alias in node.names if alias.name.startswith("_")], path.name
+
+
+@pytest.mark.parametrize("width", [293, 340, 479, 480])
+def test_the_page_fits_the_windows_least_width_with_nothing_cut_off(panel, qapp, width):
+    panel.resize(width, 800)
+    qapp.processEvents()
+    panel.timeline_chart.redraw()
+    scroll = panel.page_scroll
+    body = scroll.widget()
+    assert body.minimumSizeHint().width() <= scroll.viewport().width(), (width, body.minimumSizeHint().width())
+    assert body.width() <= scroll.viewport().width()
+    for widget in (panel.side, panel.timeline_chart, panel.case_box, panel.check_button, panel.next_button):
+        right = widget.mapTo(body, QPoint(widget.width(), 0)).x()
+        assert right <= body.width(), (widget.objectName() or type(widget).__name__, width, right, body.width())
+
+
+def test_the_window_can_shrink_to_its_least_width_with_the_practice_page_whole(qapp, monkeypatch, tmp_path):
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "EMR"))
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    window = MainWindow()
+    try:
+        window.show()
+        window._module_actions["handoff"].trigger()
+        qapp.processEvents()
+        page = window.module_stack.currentWidget()
+        window.resize(window.minimumSizeHint().width(), 800)
+        qapp.processEvents()
+        qapp.processEvents()
+        assert page.objectName() == "handoff-practice" and window.width() == window.minimumSizeHint().width()
+        scroll = page.page_scroll
+        assert scroll.widget().minimumSizeHint().width() <= scroll.viewport().width()
+        assert scroll.widget().width() <= scroll.viewport().width()
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
+
+
+# —— the contingency box is not graded, and says so ——
+
+
+NOT_GRADED_LINE = "Not graded: plans and if-then statements are not checked against the timeline."
+
+
+def test_the_contingency_box_carries_a_visible_not_graded_line_and_describes_itself_with_it(panel):
+    from PySide6.QtWidgets import QLabel
+
+    box = panel.sections["situation_awareness"]
+    assert box.accessibleDescription() == NOT_GRADED_LINE
+    shown = [label for label in panel.side.findChildren(QLabel) if label.text() == NOT_GRADED_LINE]
+    assert len(shown) == 1 and shown[0].isVisibleTo(panel)
+    # It sits between the box's heading and the box, and no other box has such a line.
+    assert shown[0].mapTo(panel, QPoint(0, 0)).y() < box.mapTo(panel, QPoint(0, 0)).y()
+    assert all(other.accessibleDescription() == "" for key, other in panel.sections.items()
+               if key != "situation_awareness")
+    interface = QAccessible.queryAccessibleInterface(box)
+    assert interface.text(QAccessible.Text.Description) == NOT_GRADED_LINE
+
+
+def test_a_plan_in_the_contingency_box_is_saved_and_never_graded(panel):
+    _pick(panel, "FAKE-QUIET")
+    _write(panel, patient_summary="Stable throughout",
+           situation_awareness="If MAP below 65, call senior. Watch for desaturation")
+    panel.check_button.click()
+    assert _lines(panel) == [] and panel.feedback.summary.text() == NOTHING_NEEDED
+    assert panel.feedback.ungraded_note.isVisibleTo(panel)
+    assert panel.feedback.ungraded_note.text() == (
+        "The Situation awareness and contingency plans section was not graded.")
+    (row,) = load_attempts()
+    assert row["sections"]["situation_awareness"] == "If MAP below 65, call senior. Watch for desaturation"
+    assert "call senior" not in row["handoff"] and row["handoff"] == "Patient summary: Stable throughout."
+    assert row["grades"] == []
+    assert panel.status.text() == SAVED
+
+
+def test_the_same_plan_in_a_graded_box_is_read_as_claims(panel):
+    _pick(panel, "FAKE-QUIET")
+    _write(panel, patient_summary="If MAP below 65, call senior. Watch for desaturation")
+    panel.check_button.click()
+    assert [line.startswith("Not on the timeline.") for line in _lines(panel)] == [True, True]
+    assert not panel.feedback.ungraded_note.isVisibleTo(panel)
+
+
+def test_text_only_in_the_contingency_box_counts_as_written_saves_and_says_nothing_was_graded(panel):
+    _write(panel, situation_awareness="If hypotensive, phenylephrine ready")
+    panel.check_button.click()
+    assert panel.status.text() == SAVED
+    assert panel.feedback.isVisibleTo(panel) and panel.feedback.summary.text() == "Nothing was graded."
+    assert _lines(panel) == [] and panel.feedback.show_buttons == []
+    assert panel.feedback.ungraded_note.isVisibleTo(panel)
+    (row,) = load_attempts()
+    assert row["sections"]["situation_awareness"] == "If hypotensive, phenylephrine ready"
+    assert row["handoff"] == "" and row["grades"] == []
+    assert panel.history_label.text() == "Saved attempts: 1 for this run · 1 in all"
+    panel.show_history()
+    assert panel.history_dialog.table.item(0, 2).text() == "0 of 0"
+    panel.history_dialog.reject()
+
+
+def test_the_not_graded_sentence_is_said_once_and_only_when_that_box_has_text(panel):
+    _write(panel, patient_summary="Hypotension from minute 10 to 16")
+    panel.check_button.click()
+    assert not panel.feedback.ungraded_note.isVisibleTo(panel)
+    _write(panel, situation_awareness="Call if worse")
+    panel.check_button.click()
+    from PySide6.QtWidgets import QLabel
+
+    shown = [label.text() for label in panel.feedback.findChildren(QLabel) if "not graded" in label.text().lower()]
+    assert shown == ["The Situation awareness and contingency plans section was not graded."]
+
+
+@pytest.mark.parametrize("width", [700, 1300])
+def test_the_table_needs_no_sideways_scroll_where_the_page_is_wide_enough_for_it(panel, qapp, width):
+    panel.resize(width, 800)
+    panel.table_toggle.click()
+    qapp.processEvents()
+    qapp.processEvents()
+    assert panel.timeline_table.horizontalScrollBar().maximum() == 0, width
+
+
+def test_a_page_too_narrow_for_the_table_scrolls_the_table_and_not_the_page(panel, qapp):
+    panel.resize(480, 800)
+    panel.table_toggle.click()
+    qapp.processEvents()
+    qapp.processEvents()
+    assert panel.timeline_table.horizontalScrollBar().maximum() > 0, "no column is cut off without a way to reach it"
+    assert panel.page_scroll.horizontalScrollBar().maximum() == 0

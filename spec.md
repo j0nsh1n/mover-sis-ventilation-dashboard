@@ -424,6 +424,18 @@ Handoff grading:
   finding when it comes earlier. A minute inside another episode of the same
   kind belongs to that episode. A drug given a minute that none of its doses
   show is unsupported, and that drug stays missed.
+- A sentence ends at a full stop, question mark, exclamation mark, semicolon or
+  line break. A full stop inside a number ("0.5") does not end one. A negation
+  word (no, not, never, without, denies, denied) denies a finding or a drug
+  only inside its own sentence; it never reaches into the next one.
+- The practice page has five I-PASS section boxes: Illness severity, Patient
+  summary, Action list, Situation awareness and contingency plans, and
+  Synthesis by receiver. The grader receives the filled boxes joined in order,
+  each under its heading. The Situation awareness and contingency plans box is
+  not graded: its text is saved with the attempt but not passed to the grader,
+  the page says so beside the box and in the feedback, and a handoff with text
+  only in that box is saved with nothing graded. An attempt saves its
+  `sections` (one entry per box) and the joined text that was graded.
 - The page does not recommend treatment. Cases are fictional only. A
   real-case practice path is not included. Replaying a real MOVER case is a
   future idea that waits for the Phase 6 calibration on real data and needs

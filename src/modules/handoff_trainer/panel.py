@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QFontMetricsF
 from PySide6.QtWidgets import (
     QBoxLayout,
     QComboBox,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -27,9 +29,9 @@ from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.modules.handoff_trainer.cases import practice_cases
 from src.modules.handoff_trainer.feedback import FeedbackView, build_feedback
 from src.modules.handoff_trainer.grading import PracticeCase, grade
-from src.modules.handoff_trainer.history import load_attempts, record_attempt
+from src.modules.handoff_trainer.history import READ_FAILED, UNREADABLE, Attempts, load_attempts, record_attempt
 from src.modules.handoff_trainer.history_view import HistoryDialog
-from src.modules.handoff_trainer.sections import SECTIONS, join_sections
+from src.modules.handoff_trainer.sections import NOT_GRADED, SECTIONS, has_text, heading_of, join_sections
 from src.modules.handoff_trainer.timeline_chart import TimelineChart, minutes_text
 from src.modules.handoff_trainer.timeline_table import TimelineTable
 
@@ -39,6 +41,11 @@ SIDE_WIDTH = 440
 # Width of the timeline column from which the picker sits beside the title.
 HEADER_ROW_WIDTH = 640
 PICKER_WIDTH = 260
+# Page width under which the side gutters shrink and the rows of buttons stack, so the page still fits the
+# window's least width (the practice pages sit beside the 64 px rail there).
+COMPACT_WIDTH = 480
+SIDE_MARGINS = (28, 24, 28, 28)
+COMPACT_SIDE_MARGINS = (16, 20, 16, 24)
 
 EMPTY_HANDOFF = "Write at least one section first."
 SAVED = "Checked and saved."
@@ -47,6 +54,9 @@ TABLE_NOTE = "The same timeline minute by minute, for screen readers and close r
 _BOX_LINES = (2, 8)
 # Padding and border the stylesheet puts around a text box's lines.
 _BOX_CHROME = 16
+# Qt counts the lines a box shows from its viewport less one pixel, so a box exactly as tall as its lines
+# would scroll by one line.
+_BOX_SLACK = 1
 
 
 def _text_button(text: str) -> QPushButton:
@@ -82,7 +92,9 @@ class GrowingText(QPlainTextEdit):
         # A plain-text document's height is its number of lines, wrapped lines included.
         lines = min(max(math.ceil(self.document().size().height()), low), high)
         margin = round(self.document().documentMargin())
-        self.setFixedHeight(lines * self.fontMetrics().lineSpacing() + 2 * margin + _BOX_CHROME)
+        # The document lays lines out at the font's line spacing rounded up, not to the nearest pixel.
+        line = math.ceil(QFontMetricsF(self.document().defaultFont()).lineSpacing())
+        self.setFixedHeight(lines * line + 2 * margin + _BOX_CHROME + _BOX_SLACK)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -97,7 +109,9 @@ class HandoffPanel(QWidget):
         self._case = self._cases[0]
         self._wide: bool | None = None
         self._roomy: bool | None = None
+        self._compact: bool | None = None
         self.history_dialog: QWidget | None = None
+        self._checked_sections: dict[str, str] | None = None
 
         self.case_line = QLabel()
         self.case_line.setObjectName("pathHint")
@@ -109,6 +123,10 @@ class HandoffPanel(QWidget):
         self.history_button = _link_button("History")
         self.history_button.setAccessibleName("History of saved attempts")
         self.history_button.clicked.connect(self.show_history)
+        self.history_note = QLabel()
+        self.history_note.setObjectName("quietText")
+        self.history_note.setWordWrap(True)
+        self.history_note.hide()
         saved = QWidget()
         saved_row = QHBoxLayout(saved)
         saved_row.setContentsMargins(0, 0, 0, 0)
@@ -124,7 +142,12 @@ class HandoffPanel(QWidget):
         self.title_label.setObjectName("caseTitle")
         self.title_label.setWordWrap(True)
         self.case_box: QComboBox = ScrollSafeComboBox()
-        self.case_box.setFixedWidth(PICKER_WIDTH)
+        # The picker is as wide as its longest title only when there is room; the rest of the time its width
+        # follows the page, so it never sets the page's least width.
+        self.case_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.case_box.setMinimumContentsLength(10)
+        self.case_box.setMaximumWidth(PICKER_WIDTH)
+        self.case_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         name_combo(self.case_box, "Fictional scenario")
         for case in self._cases:
             self.case_box.addItem(case.title, case.case_id)
@@ -151,6 +174,7 @@ class HandoffPanel(QWidget):
         self.left_layout = QVBoxLayout()
         self.left_layout.setSpacing(14)
         self.left_layout.addLayout(self.top_row)
+        self.left_layout.addWidget(self.history_note)
         self.left_layout.addLayout(self.title_row)
         self.left_layout.addWidget(self.view_stack)
         self.left_layout.addLayout(toggle_row)
@@ -161,7 +185,8 @@ class HandoffPanel(QWidget):
         self.side = QFrame()
         self.side.setObjectName("handoffSide")
         side = QVBoxLayout(self.side)
-        side.setContentsMargins(28, 24, 28, 28)
+        self.side_layout = side
+        side.setContentsMargins(*SIDE_MARGINS)
         side.setSpacing(12)
         heading = QLabel("Your handoff")
         heading.setObjectName("boardHeading")
@@ -174,6 +199,7 @@ class HandoffPanel(QWidget):
         for key, name in SECTIONS:
             label = QLabel(name)
             label.setObjectName("handoffSectionLabel")
+            label.setWordWrap(True)
             box = GrowingText()
             box.setAccessibleName(name)
             label.setBuddy(box)
@@ -181,7 +207,14 @@ class HandoffPanel(QWidget):
             group = QVBoxLayout()
             group.setSpacing(4)
             group.addWidget(label)
+            if key in NOT_GRADED:
+                note = QLabel(NOT_GRADED[key])
+                note.setObjectName("quietText")
+                note.setWordWrap(True)
+                box.setAccessibleDescription(NOT_GRADED[key])
+                group.addWidget(note)
             group.addWidget(box)
+            box.textChanged.connect(self._boxes_edited)
             side.addLayout(group)
 
         saved_note = QLabel("Saved on this computer only")
@@ -216,26 +249,28 @@ class HandoffPanel(QWidget):
         self.next_button = _text_button("Next fictional run →")
         self.next_button.setAccessibleName("Next fictional run")
         self.next_button.clicked.connect(self._next_run)
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
-        actions.addWidget(self.try_again_button)
-        actions.addWidget(self.next_button)
-        actions.addStretch(1)
-        side.addLayout(actions)
+        self.button_row = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.button_row.setSpacing(8)
+        self.button_row.addWidget(self.try_again_button)
+        self.button_row.addWidget(self.next_button)
+        self.button_row.addStretch(1)
+        side.addLayout(self.button_row)
 
         self.body_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         self.body_layout.setContentsMargins(0, 0, 0, 0)
         self.body_layout.setSpacing(0)
         self.body_layout.addWidget(left, 1)
         self.body_layout.addWidget(self.side, 0)
-        body = QWidget()
-        body.setObjectName("handoffBody")
-        body.setLayout(self.body_layout)
+        self.page_body = QWidget()
+        self.page_body.setObjectName("handoffBody")
+        self.page_body.setLayout(self.body_layout)
         self.page_scroll = QScrollArea()
         self.page_scroll.setWidgetResizable(True)
         self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.page_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.page_scroll.setWidget(body)
+        # Tab goes from control to control; an unnamed scroll area is not a stop.
+        self.page_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.page_scroll.setWidget(self.page_body)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.page_scroll)
@@ -251,7 +286,7 @@ class HandoffPanel(QWidget):
         return {key: box.toPlainText() for key, box in self.sections.items()}
 
     def handoff_text(self) -> str:
-        """The text the grader receives: the sections in order under their headings, blank ones left out."""
+        """The text the grader receives: the graded sections in order under their headings, blank ones left out."""
         return join_sections(self.section_text())
 
     # —— the run ——
@@ -279,24 +314,38 @@ class HandoffPanel(QWidget):
 
     def _check(self) -> None:
         sections = self.section_text()
-        joined = join_sections(sections)
-        if not joined:
+        if not has_text(sections):
+            # Feedback for an earlier handoff must not sit beside "write something first".
+            self._clear_feedback()
             self._say(EMPTY_HANDOFF)
             self.sections[SECTIONS[0][0]].setFocus()
             return
-        grades = grade(self._case, joined)
+        joined = join_sections(sections)
+        # Text only in a section that is not graded is saved, and nothing is graded.
+        grades = grade(self._case, joined) if joined else ()
         try:
             record_attempt(self._case.case_id, joined, grades, sections=sections)
             saved = SAVED
         except OSError:
             saved = NOT_SAVED
-        feedback = build_feedback(self._case, grades)
+        ungraded = tuple(heading_of(key) for key in NOT_GRADED if sections.get(key, "").strip())
+        feedback = build_feedback(self._case, grades, graded=bool(joined), ungraded=ungraded)
+        self._checked_sections = sections
         self.feedback.set_feedback(feedback)
         self.try_again_button.setEnabled(True)
         self._chain_focus()
         self._refresh_history()
-        self._say(saved, feedback.summary)
-        QTimer.singleShot(0, self, lambda: self.page_scroll.ensureWidgetVisible(self.feedback.heading, 0, 40))
+        self._say(saved, f"{feedback.summary} {feedback.ungraded_note}".strip())
+        QTimer.singleShot(0, self, self._scroll_to_feedback)
+
+    def _scroll_to_feedback(self) -> None:
+        """The feedback block starts at the top of the view, so the count and the first lines are all in sight."""
+        self.body_layout.activate()
+        self.page_scroll.verticalScrollBar().setValue(self.feedback.mapTo(self.page_body, QPoint(0, 0)).y())
+
+    def _boxes_edited(self) -> None:
+        if self._checked_sections is not None:
+            self.feedback.set_stale(self.section_text() != self._checked_sections)
 
     def _say(self, text: str, then: str = "") -> None:
         self.status.setText(text)
@@ -306,6 +355,7 @@ class HandoffPanel(QWidget):
         announce(self.status, f"{text} {then}".strip())
 
     def _clear_feedback(self) -> None:
+        self._checked_sections = None
         self.feedback.set_feedback(None)
         self.timeline_chart.set_highlight(None)
         self.timeline_table.clearSelection()
@@ -335,13 +385,27 @@ class HandoffPanel(QWidget):
 
     # —— history ——
 
+    def _read_history(self) -> tuple[Attempts, str]:
+        """The saved attempts and a sentence about any that could not be read. A failed read never raises."""
+        try:
+            attempts = load_attempts()
+        except OSError:
+            return Attempts(), READ_FAILED
+        return attempts, UNREADABLE if attempts.unreadable else ""
+
     def _refresh_history(self) -> None:
-        attempts = load_attempts()
-        here = sum(1 for attempt in attempts if attempt.get("case_id") == self._case.case_id)
-        self.history_label.setText(f"Saved attempts: {here} for this run · {len(attempts)} in all")
+        attempts, problem = self._read_history()
+        if problem == READ_FAILED:
+            self.history_label.setText("Saved attempts: unknown")
+        else:
+            here = sum(1 for attempt in attempts if attempt.get("case_id") == self._case.case_id)
+            self.history_label.setText(f"Saved attempts: {here} for this run · {len(attempts)} in all")
+        self.history_note.setText(problem)
+        self.history_note.setVisible(bool(problem))
 
     def show_history(self) -> None:
-        dialog = HistoryDialog(load_attempts(), {case.case_id: case.title for case in self._cases}, self)
+        attempts, problem = self._read_history()
+        dialog = HistoryDialog(attempts, {case.case_id: case.title for case in self._cases}, self, problem)
         dialog.finished.connect(lambda _result: self._history_closed(dialog))
         self.history_dialog = dialog
         dialog.open()
@@ -374,17 +438,24 @@ class HandoffPanel(QWidget):
         """The handoff beside the timeline when the page is wide, under it when not; never a sideways scroll."""
         width = self.width()
         wide = width >= SIDE_BY_SIDE_WIDTH
-        if wide != self._wide:
-            self._wide = wide
+        compact = width < COMPACT_WIDTH
+        if wide != self._wide or compact != self._compact:
+            self._wide, self._compact = wide, compact
             self.body_layout.setDirection(
                 QBoxLayout.Direction.LeftToRight if wide else QBoxLayout.Direction.TopToBottom)
             if wide:
                 self.left_layout.setContentsMargins(32, 20, 24, 28)
                 self.side.setFixedWidth(SIDE_WIDTH)
             else:
-                self.left_layout.setContentsMargins(32, 20, 32, 20)
+                gutter = 16 if compact else 32
+                self.left_layout.setContentsMargins(gutter, 20, gutter, 20)
                 self.side.setMinimumWidth(0)
                 self.side.setMaximumWidth(16777215)
+            self.side_layout.setContentsMargins(*(COMPACT_SIDE_MARGINS if compact else SIDE_MARGINS))
+            # One line while there is room; wrapped, it no longer sets the page's least width.
+            self.history_label.setWordWrap(compact)
+            self.button_row.setDirection(
+                QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight)
             self.side.setProperty("stacked", not wide)
             self.side.style().unpolish(self.side)
             self.side.style().polish(self.side)
@@ -396,3 +467,4 @@ class HandoffPanel(QWidget):
             self.title_row.setDirection(direction)
             self.title_row.setAlignment(
                 self.case_box, Qt.AlignmentFlag.AlignBottom if roomy else Qt.AlignmentFlag.AlignLeft)
+            self.case_box.setMinimumWidth(PICKER_WIDTH if roomy else 0)

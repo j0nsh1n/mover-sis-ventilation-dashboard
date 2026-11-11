@@ -1,9 +1,7 @@
 """The five I-PASS sections of a handoff, and the one text the grader receives for them.
 
-The grader reads one text and splits it into sentences at "." and ";" only: it
-collapses every line break first. It also looks 40 characters back from a phrase
-for a negation word, across sentence ends. So a section boundary is a full stop
-plus a rule of dashes longer than that look-back, not a line break.
+The grader reads one text. A section's closing full stop and the line break after it end a sentence for
+every look-back in the grader, so what one section says never changes how another is graded.
 """
 
 from __future__ import annotations
@@ -19,23 +17,33 @@ SECTIONS: tuple[tuple[str, str], ...] = (
     ("synthesis", "Synthesis by receiver"),
 )
 
-# Longer than the grader's 40-character look-back for a negation word, so "no concerns" at the end of
-# one section can never turn the first finding of the next section into a denial.
-_SECTION_RULE = "-" * 44
+# Sections whose text is saved and shown but never graded, with the line the page shows for each.
+NOT_GRADED: dict[str, str] = {
+    "situation_awareness": "Not graded: plans and if-then statements are not checked against the timeline.",
+}
+
+
+def heading_of(key: str) -> str:
+    return dict(SECTIONS)[key]
+
+
+def has_text(sections: Mapping[str, str]) -> bool:
+    """Whether any box, graded or not, has something written in it."""
+    return any(text.strip() for text in sections.values())
 
 
 def join_sections(sections: Mapping[str, str]) -> str:
-    """The sections, in order, each under its heading; blank sections are left out.
+    """The graded sections, in order, each under its heading; blank and ungraded sections are left out.
 
-    Each section ends in a full stop, which is a sentence end for the grader, so a minute, a value or a
-    drug written in one section is never read as a detail of a finding named in another.
+    Each section ends in a full stop and the next starts on a new line, so a minute, a value, a drug or a
+    negation written in one section is never read as part of another.
     """
     parts: list[str] = []
     for key, heading in SECTIONS:
         body = sections.get(key, "").strip()
-        if not body:
+        if not body or key in NOT_GRADED:
             continue
         if not body.endswith("."):
             body += "."
         parts.append(f"{heading}: {body}")
-    return f"\n{_SECTION_RULE}\n".join(parts)
+    return "\n".join(parts)

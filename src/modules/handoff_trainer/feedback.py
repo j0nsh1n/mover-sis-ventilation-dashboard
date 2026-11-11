@@ -15,6 +15,8 @@ from src.modules.handoff_trainer.history import found_counts
 from src.modules.handoff_trainer.timeline_chart import MinuteSpan, minutes_text
 
 NOTHING_NEEDED = "Nothing on this timeline needs a handoff line."
+NOTHING_GRADED = "Nothing was graded."
+STALE = "This feedback is for the handoff as it was when you checked it."
 # The grader's three statuses, said the way a learner reads them; the raw words are never shown.
 LEAD_INS = {
     "mentioned": "Matches the timeline.",
@@ -41,13 +43,23 @@ class Feedback:
     lines: tuple[FeedbackLine, ...]
     found: int
     total: int
+    graded: bool = True  # False when no box with graded text was filled in
+    ungraded: tuple[str, ...] = ()  # headings of ungraded sections that have text
 
     @property
     def summary(self) -> str:
+        if not self.graded:
+            return NOTHING_GRADED
         return f"{self.found} of {self.total} found" if self.total else NOTHING_NEEDED
 
+    @property
+    def ungraded_note(self) -> str:
+        return " ".join(f"The {heading} section was not graded." for heading in self.ungraded)
 
-def build_feedback(case: PracticeCase, grades: tuple[Grade, ...]) -> Feedback:
+
+def build_feedback(
+    case: PracticeCase, grades: tuple[Grade, ...], *, graded: bool = True, ungraded: tuple[str, ...] = ()
+) -> Feedback:
     """Lines in the grader's order. An item has minutes when it is about a timeline event that has them.
 
     The grader's evidence sentence ends with the event's own sentence, which is how a grade finds its event.
@@ -59,8 +71,8 @@ def build_feedback(case: PracticeCase, grades: tuple[Grade, ...]) -> Feedback:
                      None)
         minutes = None if match is None else (int(match.start_minute or 0), int(match.end_minute or 0))
         lines.append(FeedbackLine(item.status, LEAD_INS[item.status], item.evidence, minutes))
-    found, total = found_counts(item.status for item in grades)
-    return Feedback(tuple(lines), found, total)
+    found, total = found_counts((item.status, item.kind) for item in grades)
+    return Feedback(tuple(lines), found, total, graded, ungraded)
 
 
 class FeedbackMark(QWidget):
@@ -109,9 +121,16 @@ class FeedbackView(QWidget):
         self.note = QLabel("Compares what you wrote with the invented timeline. It is not a judgment of care.")
         self.note.setObjectName("quietText")
         self.note.setWordWrap(True)
+        self.stale = QLabel(STALE)
+        self.stale.setObjectName("quietText")
+        self.stale.setWordWrap(True)
+        self.stale.hide()
         self.summary = QLabel()
         self.summary.setObjectName("stepHeading")
         self.summary.setWordWrap(True)
+        self.ungraded_note = QLabel()
+        self.ungraded_note.setObjectName("quietText")
+        self.ungraded_note.setWordWrap(True)
         self._rows = QVBoxLayout()
         self._rows.setSpacing(10)
         layout = QVBoxLayout(self)
@@ -119,8 +138,10 @@ class FeedbackView(QWidget):
         layout.setSpacing(6)
         layout.addWidget(self.heading)
         layout.addWidget(self.note)
+        layout.addWidget(self.stale)
         layout.addSpacing(4)
         layout.addWidget(self.summary)
+        layout.addWidget(self.ungraded_note)
         layout.addLayout(self._rows)
         self.text_labels: list[QLabel] = []
         self.marks: list[FeedbackMark] = []
@@ -135,9 +156,16 @@ class FeedbackView(QWidget):
             self.hide()
             return
         self.summary.setText(feedback.summary)
+        self.ungraded_note.setText(feedback.ungraded_note)
+        self.ungraded_note.setVisible(bool(feedback.ungraded))
+        self.stale.hide()
         for line in feedback.lines:
             self._add_row(line)
         self.show()
+
+    def set_stale(self, stale: bool) -> None:
+        """Say the feedback no longer matches the boxes; the next check shows it fresh again."""
+        self.stale.setVisible(stale and self.feedback is not None)
 
     def _add_row(self, line: FeedbackLine) -> None:
         row = QHBoxLayout()
@@ -159,6 +187,8 @@ class FeedbackView(QWidget):
             button.setObjectName("linkBtn")
             button.setAutoDefault(True)
             button.setAccessibleName(f"Show {minutes_text(line.minutes)} on the timeline")
+            # Two lines can be about the same minutes; the description says which line this link belongs to.
+            button.setAccessibleDescription(line.text)
             button.clicked.connect(lambda _checked=False, a=start, b=end: self.show_requested.emit(a, b))
             row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
             self.show_buttons.append(button)

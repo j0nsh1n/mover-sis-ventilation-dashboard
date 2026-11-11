@@ -23,11 +23,13 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from src.desktop.charts import LOGICAL_DPI, chart_family, gap_spans, px_to_pt, token_rgba
 from src.desktop.theme import active_theme, token_color, tokens
-from src.modules.handoff_trainer.grading import MAP_RANGE, SPO2_RANGE, Dose, PracticeCase, _dose_kind, _number
+from src.modules.handoff_trainer.grading import MAP_RANGE, SPO2_RANGE, Dose, PracticeCase, classify_dose, format_number
 
 # Layout in logical pixels, as the case page's chart does it.
 LABEL_WIDTH = 176  # track names, units and the y-axis numbers
 RIGHT_PAD = 16
+MIN_PLOT = 40
+MIN_WIDTH = LABEL_WIDTH + RIGHT_PAD + MIN_PLOT  # the narrowest picture that still has a plot
 TOP_PAD = 26  # room for the highlight's tag
 TRACK_GAP = 14
 BASE_TRACK = 84
@@ -60,29 +62,32 @@ TRACKS: tuple[Track, ...] = (
 )
 
 
+def is_unusable(track: Track, value: float | None) -> bool:
+    """A reading outside the sensor's range, which the grader ignores and the chart does not draw."""
+    return value is not None and not track.usable[0] <= value <= track.usable[1]
+
+
 def readings(case: PracticeCase, track: Track) -> dict[int, float]:
     """The usable readings of one track by minute; a minute with none is absent."""
-    low, high = track.usable
     found: dict[int, float] = {}
     for sample in sorted(case.samples, key=lambda item: item.minute):
         value = getattr(sample, track.key)
-        if value is not None and low <= value <= high:
+        if value is not None and not is_unusable(track, value):
             found[sample.minute] = float(value)
     return found
 
 
 def unusable_count(case: PracticeCase) -> int:
     """Readings the grader ignores for being outside the sensor's range; the chart does not draw them."""
-    count = 0
-    for track in TRACKS:
-        low, high = track.usable
-        count += sum(1 for sample in case.samples if getattr(sample, track.key) is not None
-                     and not low <= getattr(sample, track.key) <= high)
-    return count
+    return sum(1 for track in TRACKS for sample in case.samples if is_unusable(track, getattr(sample, track.key)))
+
+
+def _plural(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
 
 
 def dose_amount(dose: Dose) -> str:
-    return "dose not recorded" if dose.amount is None else f"{_number(dose.amount)} {dose.unit}".strip()
+    return "dose not recorded" if dose.amount is None else f"{format_number(dose.amount)} {dose.unit}".strip()
 
 
 def dose_label(dose: Dose) -> str:
@@ -91,7 +96,7 @@ def dose_label(dose: Dose) -> str:
 
 
 def dose_is_infusion(dose: Dose) -> bool:
-    return _dose_kind(dose) == "infusion"
+    return classify_dose(dose) == "infusion"
 
 
 def dose_span(dose: Dose) -> MinuteSpan:
@@ -101,7 +106,7 @@ def dose_span(dose: Dose) -> MinuteSpan:
 
 def dose_line(dose: Dose) -> str:
     """One dose in words, for the description and the table: name, amount, when, and bolus or infusion."""
-    kind = _dose_kind(dose)
+    kind = classify_dose(dose)
     start, end = dose_span(dose)
     when = f"from minute {start} to minute {end}" if kind == "infusion" else f"at minute {dose.minute}"
     return f"{dose_label(dose)} {when} ({kind})"
@@ -130,12 +135,18 @@ def chart_description(case: PracticeCase) -> str:
             continue
         first, last = min(found), max(found)
         silent = (last - first + 1) - len(found)
-        text = (f"{track.label} ({track.unit}): {len(found)} readings from minute {first} to minute {last}, "
-                f"lowest {_number(min(found.values()))}, highest {_number(max(found.values()))}")
-        parts.append(text + (f", {silent} minutes between them have no reading." if silent else "."))
+        text = (f"{track.label} ({track.unit}): {_plural(len(found), 'reading', 'readings')} from minute {first} "
+                f"to minute {last}, lowest {format_number(min(found.values()))}, "
+                f"highest {format_number(max(found.values()))}")
+        if silent:
+            verb = "has" if silent == 1 else "have"
+            parts.append(f"{text}, {_plural(silent, 'minute', 'minutes')} between them {verb} no reading.")
+        else:
+            parts.append(text + ".")
     ignored = unusable_count(case)
     if ignored:
-        parts.append(f"{ignored} readings outside the usable range are not drawn.")
+        verb = "is" if ignored == 1 else "are"
+        parts.append(f"{_plural(ignored, 'reading', 'readings')} outside the usable range {verb} not drawn.")
     if case.doses:
         parts.append("Drug doses: " + "; ".join(dose_line(dose) for dose in case.doses) + ".")
     else:
@@ -161,7 +172,7 @@ class _Frame:
 def _frame(case: PracticeCase, width_px: float) -> _Frame:
     span = minute_range(case)
     low, high = (span[0] - 0.5, span[1] + 0.5) if span else (-0.5, 9.5)
-    return _Frame(low, high, max(width_px - LABEL_WIDTH - RIGHT_PAD, 40.0))
+    return _Frame(low, high, max(width_px - LABEL_WIDTH - RIGHT_PAD, float(MIN_PLOT)))
 
 
 @dataclass(frozen=True)
@@ -388,7 +399,7 @@ class TimelineChart(QWidget):
         self.setAccessibleName("Invented timeline chart")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(MIN_WIDTH)
         self._case: PracticeCase | None = None
         self._pixmap = QPixmap()
         self._xlim = (0.0, 1.0)

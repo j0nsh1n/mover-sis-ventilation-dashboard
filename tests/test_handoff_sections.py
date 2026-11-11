@@ -12,10 +12,11 @@ from src.modules.handoff_trainer import grading
 from src.modules.handoff_trainer.cases import practice_cases
 from src.modules.handoff_trainer.grading import Dose, PracticeCase, Sample, grade
 from src.modules.handoff_trainer.history import attempt_counts, found_counts, load_attempts, record_attempt
-from src.modules.handoff_trainer.sections import SECTIONS, join_sections
+from src.modules.handoff_trainer.sections import NOT_GRADED, SECTIONS, has_text, join_sections
 
 KEYS = [key for key, _ in SECTIONS]
 HEADINGS = [heading for _, heading in SECTIONS]
+GRADED_HEADINGS = [heading for key, heading in SECTIONS if key not in NOT_GRADED]
 
 
 def _kitchen_sink() -> PracticeCase:
@@ -54,22 +55,19 @@ def test_the_sections_are_these_five_in_this_order():
     ]
 
 
-def test_worked_example_joins_in_order_under_headings_and_leaves_blank_sections_out():
+def test_worked_example_joins_in_order_under_headings_and_leaves_blank_and_ungraded_sections_out():
     joined = join_sections(
         {
             "synthesis": "Receiver repeats the plan",
             "action_list": "  Phenylephrine 100 mcg at minute 12.  ",
             "patient_summary": "Hypotension from minute 10 to 16",
             "illness_severity": "   ",
-            "situation_awareness": "",
+            "situation_awareness": "If MAP below 65, call senior",
         }
     )
-    rule = "-" * 44
     assert joined == (
-        "Patient summary: Hypotension from minute 10 to 16."
-        f"\n{rule}\n"
-        "Action list: Phenylephrine 100 mcg at minute 12."
-        f"\n{rule}\n"
+        "Patient summary: Hypotension from minute 10 to 16.\n"
+        "Action list: Phenylephrine 100 mcg at minute 12.\n"
         "Synthesis by receiver: Receiver repeats the plan."
     )
 
@@ -87,7 +85,7 @@ def test_a_section_that_already_ends_in_a_full_stop_gets_no_second_one():
 def test_the_headings_alone_add_no_finding_and_no_detail(case):
     body = "Nothing to add."
     headed = join_sections({key: body for key in KEYS})
-    assert all(heading in headed for heading in HEADINGS)
+    assert all(heading in headed for heading in GRADED_HEADINGS)
     assert grade(case, headed) == grade(case, body)
 
 
@@ -163,7 +161,7 @@ def test_a_handoff_across_sections_matches_the_same_handoff_in_one_box():
             "illness_severity": "Hypotension from minute 10 to 16",
             "patient_summary": "Phenylephrine 100 mcg at minute 12",
             "action_list": "Desaturation from minute 30 to 31",
-            "situation_awareness": "Norepinephrine infusion from minute 40 to 50",
+            "synthesis": "Norepinephrine infusion from minute 40 to 50",
         }
     )
     assert grade(case, five) == grade(case, one_box)
@@ -202,7 +200,131 @@ def test_an_attempt_saved_before_the_sections_existed_still_loads(tmp_path: Path
     assert attempt_counts(rows[0]) == (1, 2)
 
 
-def test_found_counts_leave_unsupported_claims_out_of_both_numbers():
-    assert found_counts(["mentioned", "unsupported", "missed", "mentioned"]) == (2, 3)
-    assert found_counts(["unsupported"]) == (0, 0)
+def test_found_counts_leave_unsupported_claims_about_a_finding_or_drug_out_of_both_numbers():
+    pairs = [("mentioned", "hypotension"), ("unsupported", "medication"), ("missed", "vasopressor"),
+             ("mentioned", "desaturation"), ("unsupported", "hypotension")]
+    assert found_counts(pairs) == (2, 3)
+    assert found_counts([("unsupported", "vasopressor"), ("unsupported", "desaturation")]) == (0, 0)
     assert found_counts([]) == (0, 0)
+
+
+def test_a_missing_series_is_its_own_item_so_a_wrong_claim_about_it_counts_in_the_total():
+    """The contract: a missing MAP or SpO2 series is one item; stating a value for it is unsupported, not skipped."""
+    assert found_counts([("unsupported", "missing_spo2")]) == (0, 1)
+    assert found_counts([("unsupported", "missing_map")]) == (0, 1)
+    assert found_counts([("mentioned", "missing_spo2"), ("unsupported", "missing_map")]) == (1, 2)
+    assert found_counts([("missed", "missing_spo2")]) == (0, 1)
+    no_spo2 = PracticeCase("FAKE-NO-SPO2", "t", tuple(Sample(m, map_art=82) for m in range(9)), ())
+    graded = grade(no_spo2, join_sections({"patient_summary": "SpO2 98"}))
+    assert [(item.status, item.kind) for item in graded] == [("unsupported", "missing_spo2")]
+    row = {"grades": [{"status": item.status, "kind": item.kind, "evidence": item.evidence} for item in graded]}
+    assert attempt_counts(row) == (0, 1)
+
+
+def test_a_saved_attempt_with_odd_grades_still_counts_without_failing():
+    assert attempt_counts({"grades": "none"}) == (0, 0)
+    assert attempt_counts({"grades": [None, 5, {"status": "mentioned"}]}) == (1, 1)
+    assert attempt_counts({}) == (0, 0)
+
+
+# —— the section that is not graded ——
+
+
+def test_the_situation_awareness_box_is_the_only_one_not_graded_and_says_so_in_plain_words():
+    assert list(NOT_GRADED) == ["situation_awareness"]
+    assert NOT_GRADED["situation_awareness"] == (
+        "Not graded: plans and if-then statements are not checked against the timeline.")
+
+
+def test_text_only_in_the_ungraded_section_joins_to_nothing_for_the_grader():
+    assert join_sections({"situation_awareness": "If MAP below 65, call senior"}) == ""
+    assert has_text({"situation_awareness": "If MAP below 65, call senior"})
+    assert not has_text({key: " \n " for key in KEYS}) and not has_text({})
+
+
+def test_a_plan_in_the_ungraded_box_gives_no_not_on_the_timeline_line():
+    quiet = next(case for case in practice_cases() if case.case_id == "FAKE-QUIET")
+    for plan in ("If MAP below 65, call senior. Watch for desaturation", "If hypotensive, phenylephrine ready"):
+        sections = {"patient_summary": "Stable throughout", "situation_awareness": plan}
+        assert grade(quiet, join_sections(sections)) == ()
+        assert plan not in join_sections(sections)
+        # The same words in a graded box are read as claims, so the check above can tell the two apart.
+        claimed = grade(quiet, join_sections({"patient_summary": plan}))
+        assert any(item.status == "unsupported" for item in claimed), plan
+
+
+# Words that end a section and could, if the grader let them, change how the next one is read.
+LEAKS = ["no", "not", "never", "without", "denied", "minute", "minutes 10 to", "between minutes 99 and", "no 0.5"]
+PROBES = [
+    ("Hypotension from minute 10 to 16", "FAKE-H"),
+    ("Phenylephrine 100 mcg at minute 12", "FAKE-H"),
+    ("Hypotension, MAP 60 mmHg", "FAKE-H"),
+    ("SpO2 missing", "FAKE-N"),
+]
+GRADED_KEYS = [key for key in KEYS if key not in NOT_GRADED]
+
+
+def _probe_case(name: str) -> PracticeCase:
+    if name == "FAKE-H":
+        return _hypotension_case()
+    return PracticeCase("FAKE-N", "n", tuple(Sample(m, map_art=82) for m in range(9)), ())
+
+
+@pytest.mark.parametrize("leak", LEAKS)
+@pytest.mark.parametrize("probe,case_name", PROBES)
+def test_nothing_written_in_one_section_changes_the_grade_of_another(leak, probe, case_name):
+    case = _probe_case(case_name)
+    alone = {"patient_summary": probe}
+    expected = grade(case, join_sections(alone))
+    for leaking in GRADED_KEYS:
+        for reading in GRADED_KEYS:
+            if leaking == reading:
+                continue
+            assert grade(case, join_sections({leaking: leak, reading: probe})) == expected, (leaking, reading, leak)
+
+
+def test_attempts_saved_with_the_old_dash_separator_still_load_list_and_count(tmp_path: Path):
+    from src.modules.handoff_trainer.history_view import history_rows
+
+    old_text = ("Patient summary: Hypotension from minute 10 to 16.\n" + "-" * 44 + "\nAction list: Phenylephrine at minute 12.")
+    old = {
+        "at": "2026-11-05T09:30:00Z",
+        "case_id": "FAKE-ART-LOW",
+        "handoff": old_text,
+        "sections": {key: "" for key in KEYS} | {"patient_summary": "Hypotension from minute 10 to 16"},
+        "grades": [{"status": "mentioned", "kind": "hypotension", "evidence": "e"},
+                   {"status": "mentioned", "kind": "vasopressor", "evidence": "e"},
+                   {"status": "unsupported", "kind": "medication", "evidence": "e"}],
+    }
+    target = tmp_path / "history.jsonl"
+    target.write_text(json.dumps(old) + "\n", encoding="utf-8")
+    (row,) = load_attempts(target)
+    assert row["handoff"] == old_text
+    assert attempt_counts(row) == (2, 2)
+    assert history_rows([row], {"FAKE-ART-LOW": "Run"})[0][1:] == ("Run (FAKE-ART-LOW)", "2 of 2")
+
+
+# —— unreadable history lines ——
+
+
+def test_a_line_that_is_not_an_attempt_is_skipped_counted_and_the_file_is_left_alone(tmp_path: Path):
+    good = {"at": "2026-11-05T09:30:00Z", "case_id": "FAKE-ART-LOW", "handoff": "x", "grades": []}
+    target = tmp_path / "history.jsonl"
+    content = (json.dumps(good).encode() + b"\n{not json\n\n[1, 2]\n\"text\"\n\xff\xfe broken bytes\n"
+               + json.dumps(good | {"case_id": "FAKE-DESAT"}).encode() + b"\n")
+    target.write_bytes(content)
+    rows = load_attempts(target)
+    assert [row["case_id"] for row in rows] == ["FAKE-ART-LOW", "FAKE-DESAT"]
+    assert rows.unreadable == 4
+    assert target.read_bytes() == content, "the history file is never rewritten to repair it"
+    # A new attempt is appended after the unreadable lines, which stay where they were.
+    record_attempt("FAKE-QUIET", "y", (), target)
+    assert target.read_bytes().startswith(content)
+    assert load_attempts(target).unreadable == 4 and len(load_attempts(target)) == 3
+
+
+def test_a_missing_or_clean_history_file_reports_none_unreadable(tmp_path: Path):
+    assert load_attempts(tmp_path / "none.jsonl") == () and load_attempts(tmp_path / "none.jsonl").unreadable == 0
+    target = tmp_path / "history.jsonl"
+    record_attempt("FAKE-QUIET", "y", (), target)
+    assert load_attempts(target).unreadable == 0

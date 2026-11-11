@@ -46,7 +46,9 @@ def history_rows(attempts: Sequence[Mapping], titles: Mapping[str, str]) -> list
 
 
 class HistoryDialog(QDialog):
-    def __init__(self, attempts: Sequence[Mapping], titles: Mapping[str, str], parent: QWidget | None = None) -> None:
+    def __init__(
+        self, attempts: Sequence[Mapping], titles: Mapping[str, str], parent: QWidget | None = None, problem: str = ""
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("handoffHistory")
         self.setWindowTitle("Practice history")
@@ -56,6 +58,10 @@ class HistoryDialog(QDialog):
         self.note = QLabel("Fictional practice attempts saved on this computer, newest first.")
         self.note.setObjectName("quietText")
         self.note.setWordWrap(True)
+        self.problem = QLabel(problem)
+        self.problem.setObjectName("quietText")
+        self.problem.setWordWrap(True)
+        self.problem.setVisible(bool(problem))
         self.table = QTableWidget(len(rows), len(COLUMNS))
         self.table.setAccessibleName("Past attempts, newest first")
         self.table.setHorizontalHeaderLabels(list(COLUMNS))
@@ -73,13 +79,14 @@ class HistoryDialog(QDialog):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.empty = QLabel(EMPTY)
         self.empty.setObjectName("bodyText")
-        self.empty.setVisible(not rows)
+        self.empty.setVisible(not rows and not problem)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
         layout.addWidget(self.note)
+        layout.addWidget(self.problem)
         layout.addWidget(self.empty)
         layout.addWidget(self.table, 1)
         layout.addWidget(buttons)

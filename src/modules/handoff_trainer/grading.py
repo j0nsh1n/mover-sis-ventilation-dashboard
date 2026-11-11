@@ -24,6 +24,8 @@ INOTROPES: tuple[str, ...] = (
 )
 TRACKED_DRUGS: tuple[str, ...] = VASOPRESSORS + INOTROPES
 EXCLUDED_DRUG = "phenylephrine nasal"
+# A missing series is one item of its own, whatever the handoff says about it.
+SERIES_GAP_KINDS: tuple[str, ...] = ("missing_map", "missing_spo2")
 
 MAP_LOW = 65.0
 SPO2_LOW = 90.0
@@ -37,8 +39,18 @@ SPO2_MAX_GAP = 1
 _HYPO_CONCEPT = ("hypotension", "low map", "low blood pressure", "map under 65", "map below 65")
 _DESAT_CONCEPT = ("desatur", "low oxygen")
 _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
-_SPO2_NUMBER = re.compile(r"\b(spo2|sp02|saturation)\b[^\n.]{0,30}\d")
-_MAP_NUMBER = re.compile(r"\b(map|blood pressure)\b[^\n.]{0,30}\d")
+# The one definition of where a sentence ends: a full stop, question mark, exclamation mark, semicolon or
+# line break. A full stop inside a number ("0.5", "v2.1") does not end one. Every look-back in this file
+# (negation, owner, value, minute, drug) stops here and never reaches into the next sentence.
+_SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
+_SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
+_IN_SENTENCE = rf"(?:(?!{_SENTENCE_END_PATTERN}).)"
+_NEGATION_REACH = 40
+_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_IN_SENTENCE}{{0,30}}\d")
+_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_IN_SENTENCE}{{0,30}}\d")
+_SATURATION_UNDER_NINETY = re.compile(
+    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_IN_SENTENCE}{{0,20}}(?:under|below|<)\s*90\b"
+)
 _MINUTE_CLAIM = re.compile(
     r"\b(?:minutes|minute|mins|min)\s+(\d+)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+))?"
 )
@@ -53,7 +65,6 @@ _OWNERS: tuple[tuple[str, str], ...] = (
 _OWNER_PATTERN = re.compile(
     "|".join(rf"(?P<o{index}>(?<![a-z0-9])(?:{pattern})(?![a-z0-9]))" for index, (_, pattern) in enumerate(_OWNERS))
 )
-_SENTENCE_BREAK = re.compile(r"[;\n]|\.(?!\d)")
 _GAP_WORDS = re.compile(
     r"\b(?:missing|unavailable|absent|unrecorded|not recorded|not measured|no reading|none recorded|not available)\b"
 )
@@ -113,7 +124,7 @@ def detect(case: PracticeCase) -> tuple[TimelineEvent, ...]:
 
 def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     """Score one handoff as mentioned, missed, or unsupported."""
-    text = " ".join(handoff.casefold().split())
+    text = _normalise(handoff)
     events = detect(case)
     owned = _details_by_finding(text)
     items: list[Grade] = []
@@ -132,6 +143,11 @@ def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     return tuple(items)
 
 
+def _normalise(handoff: str) -> str:
+    """Lower case, with spaces collapsed inside each line; a line break stays, because it ends a sentence."""
+    return "\n".join(" ".join(line.split()) for line in handoff.casefold().splitlines())
+
+
 def timeline_text(case: PracticeCase) -> str:
     """Show the fictional numbers the learner is grading, without a verdict."""
     lines = [case.title, f"Fictional id {case.case_id}."]
@@ -146,8 +162,8 @@ def timeline_text(case: PracticeCase) -> str:
     if not case.doses:
         lines.append("No medication rows.")
     for dose in case.doses:
-        kind = _dose_kind(dose)
-        amount = "dose not recorded" if dose.amount is None else f"{_number(dose.amount)} {dose.unit}".strip()
+        kind = classify_dose(dose)
+        amount = "dose not recorded" if dose.amount is None else f"{format_number(dose.amount)} {dose.unit}".strip()
         if kind == "infusion" and dose.end_minute is not None:
             span = f"from minute {dose.minute} to minute {dose.end_minute}"
         else:
@@ -195,11 +211,11 @@ def _drug_events(doses: tuple[Dose, ...]) -> tuple[TimelineEvent, ...]:
         if canonical is None:
             continue
         kind = "vasopressor" if canonical in VASOPRESSORS else "inotrope"
-        dose_kind = _dose_kind(dose)
+        dose_kind = classify_dose(dose)
         if dose.amount is None:
             amount = "dose not recorded"
         else:
-            amount = f"{_number(dose.amount)} {dose.unit}".strip()
+            amount = f"{format_number(dose.amount)} {dose.unit}".strip()
         if dose_kind == "infusion" and dose.end_minute is not None:
             when = f"from minute {dose.minute} to minute {dose.end_minute}"
             end = dose.end_minute
@@ -275,7 +291,7 @@ def _canonical_drug(name: str) -> str | None:
     return None
 
 
-def _dose_kind(dose: Dose) -> str:
+def classify_dose(dose: Dose) -> str:
     if dose.end_minute is None or dose.end_minute == dose.minute:
         return "bolus"
     if dose.end_minute > dose.minute:
@@ -375,9 +391,7 @@ def _phrase_at(text: str, phrases: tuple[str, ...], *, negated: bool) -> bool:
             found = text.find(phrase, start)
             if found < 0:
                 break
-            window = text[max(0, found - 40) : found]
-            has_negation = _NEGATION.search(window) is not None
-            if has_negation == negated:
+            if _negation_before(text, found) == negated:
                 return True
             start = found + len(phrase)
     return False
@@ -387,11 +401,17 @@ def _names_drug(text: str, drug: str, *, negated: bool) -> bool:
     cleaned = text.replace(EXCLUDED_DRUG, " ")
     pattern = rf"(?<![a-z0-9]){re.escape(drug.casefold())}(?![a-z0-9])"
     for match in re.finditer(pattern, cleaned):
-        window = cleaned[max(0, match.start() - 40) : match.start()]
-        has_negation = _NEGATION.search(window) is not None
-        if has_negation == negated:
+        if _negation_before(cleaned, match.start()) == negated:
             return True
     return False
+
+
+def _negation_before(text: str, index: int) -> bool:
+    """A negation word in the sentence ``index`` is in, within the reach before it. An earlier sentence never counts."""
+    start = max(0, index - _NEGATION_REACH)
+    for end in _SENTENCE_END.finditer(text, 0, index):
+        start = max(start, end.end())
+    return _NEGATION.search(text[start:index]) is not None
 
 
 def _claims_desat(text: str) -> bool:
@@ -400,7 +420,7 @@ def _claims_desat(text: str) -> bool:
         return False
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+    if _SATURATION_UNDER_NINETY.search(text):
         return True
     return bool(low_values)
 
@@ -412,7 +432,7 @@ def _names_hypotension(text: str) -> bool:
 def _names_desaturation(text: str, event: TimelineEvent) -> bool:
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+    if _SATURATION_UNDER_NINETY.search(text):
         return True
     return any(
         value < SPO2_LOW and any(abs(value - known) < 0.01 for known in event.values)
@@ -489,7 +509,7 @@ def _inside_any(minute: int, events: tuple[TimelineEvent, ...]) -> bool:
 
 def _details_by_finding(text: str) -> dict[str, str]:
     owned: dict[str, list[str]] = {}
-    for sentence in _SENTENCE_BREAK.split(text.replace(EXCLUDED_DRUG, " ")):
+    for sentence in _SENTENCE_END.split(text.replace(EXCLUDED_DRUG, " ")):
         marks = [(match.start(), _OWNERS[int(str(match.lastgroup)[1:])][0]) for match in _OWNER_PATTERN.finditer(sentence)]
         for index, (start, owner) in enumerate(marks):
             begin = 0 if index == 0 else start
@@ -519,13 +539,13 @@ def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
     pattern = (
         r"\b(?:"
         + "|".join(re.escape(word) for word in words)
-        + r")\b[^\n.]{0,24}(?<!\d)(\d+(?:\.\d+)?)(?!\d)"
+        + rf")\b{_IN_SENTENCE}{{0,24}}(?<!\d)(\d+(?:\.\d+)?)(?!\d)"
     )
     return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
 
 
 def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
-    for sentence in re.split(r"[.\n;]", text):
+    for sentence in _SENTENCE_END.split(text):
         if not any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", sentence) for word in series):
             continue
         if _GAP_WORDS.search(sentence):
@@ -550,10 +570,10 @@ def _map_value_claim(text: str) -> bool:
 def _cell(label: str, value: float | None, unit: str) -> str:
     if value is None:
         return f"{label} missing"
-    return f"{label} {_number(value)} {unit}"
+    return f"{label} {format_number(value)} {unit}"
 
 
-def _number(value: float) -> str:
+def format_number(value: float) -> str:
     if value == int(value):
         return str(int(value))
     return str(value)
