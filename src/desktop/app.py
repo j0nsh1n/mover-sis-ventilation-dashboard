@@ -40,6 +40,7 @@ if str(ROOT) not in sys.path:
 
 from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.command_palette import Command, CommandPalette
+from src.desktop.settings_page import SettingsPage
 from src.desktop.shell import FooterFields, NavRail, PracticeTabs, RunningHead
 from src.desktop.suite_chrome import install_suite_chrome, set_page_title
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
@@ -264,6 +265,8 @@ class MainWindow(QMainWindow):
         self._queued_case: tuple[str, bool, bool, bool] | None = None
         self._current_module = "monitoring"
         self._last_practice = PRACTICE_TOOLS[0][0]
+        # Where Escape on the Settings page goes back to
+        self._settings_return = "monitoring"
         # unchecked, busy:<words>, ready, stopped or failed
         self._model_state = "unchecked"
         self._palette: CommandPalette | None = None
@@ -373,8 +376,8 @@ class MainWindow(QMainWindow):
             keywords="file analyze rebuild")
         add("action-scan-emr", "Scan full EMR (all ventilated surgeries)\u2026", self._run_corpus_scan,
             group=data, keywords="file score corpus")
-        add("action-setup", "Setup\u2026", self._open_setup_wizard, group=data,
-            keywords="file wizard first-time data setup")
+        add("action-setup", "Data setup\u2026", self._open_setup_wizard, group=data,
+            keywords="setup file wizard first-time folders demo")
 
         appearance = "Appearance"
         self._theme_group = QActionGroup(self)
@@ -505,6 +508,11 @@ class MainWindow(QMainWindow):
     def _sync_path_fields_from_runtime(self) -> None:
         """Refresh the footer after path changes (the folders live in the source field's tooltip and in Settings)."""
         self._refresh_footer()
+        page = self._settings_page()
+        if page is not None:
+            page.refresh_in_use()
+            if self._current_module == "settings" and not page.is_dirty():
+                page.load()
 
     def _set_status(self, message: str, timeout: int = 0) -> None:
         """Show a temporary message. Folder paths never go here; the source field's tooltip holds them."""
@@ -692,6 +700,9 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if not self._closing and not self._confirm_leave_settings():
+            event.ignore()
+            return
         self._updates.close()
         running = [w for w in (
             self._worker, self._research_worker,
@@ -809,26 +820,69 @@ class MainWindow(QMainWindow):
             self._refresh_ollama_models()
             self.research.question_edit.setFocus()
 
+    def _settings_page(self) -> SettingsPage | None:
+        page = self._suite_pages.get("settings")
+        return page if isinstance(page, SettingsPage) else None
+
     def _open_settings(self) -> None:
-        from src.desktop.settings_ui import SettingsDialog
+        """Settings is a page of the window: the rail, Ctrl+, and Ctrl+K all come here."""
+        if self._current_module == "settings":
+            page = self._settings_page()
+            if page is not None:
+                page.sections.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            return
+        self._suite_page("settings")
+        page = self._settings_page()
+        if page is None:
+            return
+        previous = self._current_module
+        page.load()
+        if self._show_suite_module("settings"):
+            self._settings_return = previous
+            page.sections.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
-        dlg = SettingsDialog(self)
-        dlg.settings_applied.connect(self._on_settings_applied)
-        if dlg.exec():
-            from src.guardrails.validate_io import validate_emr_dir
+    def _confirm_leave_settings(self) -> bool:
+        """True unless the Settings page has edits and the person chose to stay."""
+        page = self._settings_page()
+        return page is None or self._current_module != "settings" or page.confirm_leave()
 
-            self._research_engine = None
-            try:
-                validate_emr_dir(emr_dir())
-                ready = True
-            except Exception:
-                ready = False
-            self.research.set_setup_required(not ready)
-            self._sync_path_fields_from_runtime()
-            self._set_status("Settings saved" if ready else "EMR setup required")
-            if ready:
-                self._autoload_processed()
-                self._refresh_ollama_models()
+    def _close_settings(self) -> None:
+        """Escape on the Settings page: back to where it was opened from."""
+        if self._current_module != "settings":
+            return
+        target = self._settings_return if self._settings_return != "settings" else "monitoring"
+        if not self._show_suite_module(target):
+            return
+        if target == "monitoring":
+            self._focus_research_question()
+        else:
+            self.practice_tabs.bar.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _on_settings_saved(self, vals: dict, changed: list) -> None:
+        """What happens after Settings saves: apply it, then reload the data when the EMR folder is usable."""
+        from src.guardrails.validate_io import validate_emr_dir
+
+        self._on_settings_applied(vals)
+        self._research_engine = None
+        try:
+            validate_emr_dir(emr_dir())
+            ready = True
+        except Exception:
+            ready = False
+        self.research.set_setup_required(not ready)
+        self._sync_path_fields_from_runtime()
+        self._set_status("Settings saved" if ready else "EMR setup required")
+        saved = f"Saved: {', '.join(changed) if changed else 'nothing had changed'}."
+        page = self._settings_page()
+        if ready:
+            self._autoload_processed()
+            self._refresh_ollama_models()
+            sentence = f"{saved} Reloading data from the saved folders."
+        else:
+            sentence = (f"{saved} The EMR folder is not usable yet, so no data was loaded. "
+                        "Choose another folder or run data setup.")
+        if page is not None:
+            page.show_result(sentence, ok=ready)
 
     def _on_settings_applied(self, vals: dict) -> None:
         self._research_engine = None
@@ -1539,18 +1593,23 @@ class MainWindow(QMainWindow):
                                        thresholds_sha256=self._thresholds_sha256)
         self.research.rules_drawer.set_explanations(cfg)
 
-    def _show_suite_module(self, name: str) -> None:
+    def _show_suite_module(self, name: str) -> bool:
+        """Show a page of the window. False when Settings has edits and the person chose to stay on it."""
         stack = getattr(self, "module_stack", None)
         if stack is None:
-            return
+            return False
+        if name != "settings" and not self._confirm_leave_settings():
+            self._sync_frame()
+            return False
         page = self._suite_page(name)
         stack.setCurrentWidget(page)
         self._current_module = name
-        if name != "monitoring":
+        if name in _PRACTICE_TITLES:
             self._last_practice = name
         self._sync_frame()
         if name == "medications":
             self._offer_open_case_to_medication()
+        return True
 
     def _go(self, key: str) -> None:
         """Open a rail place or a practice tool; Rules and Settings act on top of the current page."""
@@ -1560,17 +1619,19 @@ class MainWindow(QMainWindow):
         if key == "practice":
             key = self._last_practice
         if key in _PRACTICE_TITLES:
-            self._show_suite_module(key)
+            if not self._show_suite_module(key):
+                return
             self.practice_tabs.bar.setFocus(Qt.FocusReason.ShortcutFocusReason)
         elif key == "signal" and not self.research.has_open_case():
             self.statusBar().showMessage(SIGNAL_NEEDS_CASE, 6000)
             return
         elif key == "rules":
-            self._show_suite_module("monitoring")
-            self.research.open_rules(self.rail.button("rules"))
+            if self._show_suite_module("monitoring"):
+                self.research.open_rules(self.rail.button("rules"))
             return
         else:
-            self._show_suite_module("monitoring")
+            if not self._show_suite_module("monitoring"):
+                return
             if key == "cases":
                 self.research.show_cases()
             elif key == "signal":
@@ -1588,7 +1649,8 @@ class MainWindow(QMainWindow):
 
         The rail's Research item is different: it opens the question board.
         """
-        self._show_suite_module("monitoring")
+        if not self._show_suite_module("monitoring"):
+            return
         page = self.research.place().page
         if page == "research":
             self._focus_research_question()
@@ -1599,6 +1661,9 @@ class MainWindow(QMainWindow):
         announce(self.head.crumbs, self.head.crumb_text())
 
     def _breadcrumb(self) -> list[str]:
+        if self._current_module == "settings":
+            page = self._settings_page()
+            return ["Settings", page.current_section()] if page is not None else ["Settings"]
         if self._current_module != "monitoring":
             return ["Practice", _PRACTICE_TITLES[self._current_module]]
         place = self.research.place()
@@ -1615,9 +1680,10 @@ class MainWindow(QMainWindow):
         """Bring the rail, running head, window title and footer in line with the page that is showing."""
         if not hasattr(self, "_footer"):
             return
-        practice = self._current_module != "monitoring"
+        practice = self._current_module in _PRACTICE_TITLES
         place = self.research.place()
-        self.rail.set_current("practice" if practice else place.page)
+        self.rail.set_current(self._current_module if self._current_module == "settings"
+                              else "practice" if practice else place.page)
         self.head.set_place(self._breadcrumb(), practice=practice)
         self.practice_tabs.setVisible(practice)
         if practice:
@@ -1627,7 +1693,9 @@ class MainWindow(QMainWindow):
         self._nav_signal.setToolTip(SIGNAL_TIP if has_case else SIGNAL_NEEDS_CASE)
         self.rail.set_item_state("signal", enabled=has_case, tip=SIGNAL_TIP if has_case else SIGNAL_NEEDS_CASE)
         title: str | None = None
-        if practice:
+        if self._current_module == "settings":
+            title = "Settings"
+        elif practice:
             title = _PRACTICE_TITLES[self._current_module]
         elif place.page == "cases":
             title = "Cases"
@@ -1650,7 +1718,7 @@ class MainWindow(QMainWindow):
         footer = getattr(self, "_footer", None)
         if footer is None:
             return
-        if self._current_module != "monitoring":
+        if self._current_module in _PRACTICE_TITLES:
             footer.show_practice()
             return
         analyzed = len(self.cases) if self.cases is not None else None
@@ -1702,10 +1770,13 @@ class MainWindow(QMainWindow):
         pages = self._suite_pages
         if name in pages:
             return pages[name]
-        if name == "handoff":
+        page: QWidget
+        if name == "settings":
+            page = self._make_settings_page()
+        elif name == "handoff":
             from src.modules.handoff_trainer.panel import HandoffPanel
 
-            page: QWidget = HandoffPanel()
+            page = HandoffPanel()
         elif name == "medications":
             from src.modules.medication_vitals.panel import MedicationVitalsPanel
 
@@ -1718,6 +1789,19 @@ class MainWindow(QMainWindow):
             page = self.research
         self.module_stack.addWidget(page)
         pages[name] = page
+        return page
+
+    def _make_settings_page(self) -> QWidget:
+        page = SettingsPage()
+        page.settings_applied.connect(self._on_settings_saved)
+        page.close_requested.connect(self._close_settings)
+        page.setup_requested.connect(self._open_setup_wizard)
+        page.about_requested.connect(self._about)
+        page.section_changed.connect(lambda _name: self._sync_frame())
+        shortcuts = [("Find", "Ctrl+K")]
+        shortcuts += [(command.title, command.shortcut) for command in self._commands if command.shortcut]
+        page.set_shortcuts(shortcuts)
+        page.set_about_summary(f"MOVER Suite version {self._version}. Research and education only; not for patient care.")
         return page
 
     def _offer_open_case_to_medication(self) -> None:

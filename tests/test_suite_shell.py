@@ -89,8 +89,9 @@ def test_main_window_has_the_rail_the_head_and_no_menu_bar(window):
         assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
         assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
         assert not button.icon().isNull()
+    # Settings is a page of the window, so it can be the marked place; Rules only opens the drawer
     assert [key for key, button in rail._buttons.items() if button.isCheckable()] == [
-        "research", "cases", "signal", "practice"
+        "research", "cases", "signal", "practice", "settings"
     ]
     assert _checked(window) == ["research"]
 

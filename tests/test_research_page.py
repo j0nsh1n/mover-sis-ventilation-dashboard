@@ -215,8 +215,10 @@ def test_the_menu_holds_every_former_model_control(view):
     view.set_models(["qwen3:14b", "gemma4:latest"], "qwen3:14b")
     texts = [action.text() for action in view.model_menu.menu_widget.actions() if action.text()]
     for expected in ("qwen3:14b", "gemma4:latest", "Unload model", "Stop AI", "Start AI",
-                     "Refresh model list", "Data setup"):
+                     "Refresh model list"):
         assert expected in texts, expected
+    # Data setup moved to Settings and Ctrl+K
+    assert "Data setup" not in texts
     checked = [action.text() for action in view.model_menu.model_actions() if action.isChecked()]
     assert checked == ["qwen3:14b"]
 

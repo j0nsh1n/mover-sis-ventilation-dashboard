@@ -387,14 +387,15 @@ def _wheel(widget, steps: int) -> QWheelEvent:
 @pytest.fixture
 def settings_combo(qapp, tmp_path, monkeypatch):
     """A ScrollSafeComboBox that still exists in the app: the Settings theme choice."""
-    from src.desktop.settings_ui import SettingsDialog
+    from src.desktop.settings_page import SettingsPage
 
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
-    dialog = SettingsDialog()
-    dialog.show()
+    page = SettingsPage()
+    page.show_section("Appearance")
+    page.show()
     qapp.processEvents()
-    yield dialog.form.combo_theme, dialog.form.combo_preset
-    dialog.close()
+    yield page.combo_theme, page.combo_preset
+    page.close()
 
 
 def test_scrolling_a_form_past_a_combo_leaves_its_choice_alone(settings_combo, qapp):

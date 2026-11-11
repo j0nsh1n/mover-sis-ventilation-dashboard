@@ -20,7 +20,7 @@ CALLS = [
     ("Reload processed data", "Ctrl+R", "_autoload_processed"),
     ("Run pipeline (50 cases)", None, "_run_pipeline_menu"),
     ("Scan full EMR", None, "_run_corpus_scan"),
-    ("Setup", None, "_open_setup_wizard"),
+    ("Data setup", None, "_open_setup_wizard"),
     ("Exit", "Ctrl+Q", "_quit_app"),
     ("Theme: Light", None, ("_set_theme_quick", "light")),
     ("Theme: Dark", None, ("_set_theme_quick", "dark")),

@@ -164,7 +164,10 @@ class RailButton(QToolButton):
 
 
 class NavRail(QFrame):
-    """Left rail: four places at the top, Rules and Settings at the bottom."""
+    """Left rail: four places at the top, Rules and Settings at the bottom.
+
+    Settings is a place too (its page can be open); Rules only opens the drawer.
+    """
 
     item_clicked = Signal(str)
 
@@ -184,7 +187,8 @@ class NavRail(QFrame):
             layout.addWidget(self._add(key, label, icon_name, checkable=True))
         layout.addStretch(1)
         for key, label, icon_name in ACTIONS:
-            layout.addWidget(self._add(key, label, icon_name, checkable=False))
+            # Settings is a page, so it shows as the current place; Rules opens a drawer over the page
+            layout.addWidget(self._add(key, label, icon_name, checkable=key == "settings"))
 
     def _add(self, key: str, label: str, icon_name: str, *, checkable: bool) -> RailButton:
         button = RailButton(key, label, icon_name, checkable=checkable, parent=self)

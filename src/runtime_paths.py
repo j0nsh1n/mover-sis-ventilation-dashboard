@@ -87,6 +87,31 @@ def data_dir() -> Path:
     return app_dir() / "data"
 
 
+# Written inside the demo folder by the app that made it; a folder without it is never touched.
+DEMO_MARKER = ".mover-demo-data"
+
+
+def demo_data_dir() -> Path:
+    """Where the fictional demo data lives: the per-user data folder, never the program folder or the repo."""
+    override = os.environ.get("MOVER_DEMO_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return (base.expanduser() / "mover-suite" / "demo-data").resolve()
+
+
+def demo_data_in_use() -> bool:
+    """True while the EMR folder in use is inside a demo folder this app made."""
+    root = demo_data_dir()
+    try:
+        return (root / DEMO_MARKER).is_file() and emr_dir().resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
 def emr_dir() -> Path:
     override = os.environ.get("MOVER_EMR_DIR")
     if override:

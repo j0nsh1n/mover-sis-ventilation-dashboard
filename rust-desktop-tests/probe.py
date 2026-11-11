@@ -409,14 +409,16 @@ def chart(root):
 
 def layout(root):
     from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QDialogButtonBox, QWizard
-    from src.desktop.settings_ui import SettingsDialog, SetupWizard
+    from PySide6.QtWidgets import QWizard
+    from src.desktop.settings_page import SettingsPage
+    from src.desktop.settings_ui import SetupWizard
 
     app = qt()
     with no_ollama():
-        settings, wizard = SettingsDialog(), SetupWizard()
+        settings, wizard = SettingsPage(), SetupWizard()
     wizard.show()
     wizard.next()
+    settings.resize(900, 640)
     settings.show()
     win = window()
     win.research.set_setup_required(False)
@@ -428,7 +430,7 @@ def layout(root):
         return ",".join(map(str, [parent.width(), parent.height(), position.x(), position.y(), widget.width(), widget.height(), int(widget.isVisible())]))
 
     wizard_buttons = [wizard.button(kind) for kind in [QWizard.WizardButton.BackButton, QWizard.WizardButton.NextButton, QWizard.WizardButton.CancelButton]]
-    settings_buttons = settings.findChild(QDialogButtonBox).buttons()
+    settings_buttons = [settings.discard_button, settings.save_button]
     card = win.research.question_edit.parentWidget()
     result = {"wizard_navigation": "\n".join(geometry(wizard, button) for button in wizard_buttons),
               "settings_navigation": "\n".join(geometry(settings, button) for button in settings_buttons),

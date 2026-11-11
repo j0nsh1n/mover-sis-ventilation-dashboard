@@ -134,7 +134,7 @@ def test_theme_apply_light_dark(config_home, monkeypatch):
     assert "#F3F0E8" in app.styleSheet() and "#1C1B19" in app.styleSheet()  # Paper paper and ink
 
 
-def test_settings_dialog_constructs(config_home, monkeypatch, tmp_path):
+def test_settings_page_constructs(config_home, monkeypatch, tmp_path):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     try:
@@ -142,7 +142,7 @@ def test_settings_dialog_constructs(config_home, monkeypatch, tmp_path):
     except ImportError:
         pytest.skip("PySide6 unavailable")
 
-    from src.desktop.settings_ui import PathsForm, SettingsDialog, SetupWizard
+    from src.desktop.settings_page import SettingsPage
     from src.runtime_paths import clear_session_path_overrides, set_session_paths
 
     app = QApplication.instance()
@@ -154,19 +154,14 @@ def test_settings_dialog_constructs(config_home, monkeypatch, tmp_path):
     empty.mkdir()
     set_session_paths(processed_dir=empty)
 
-    form = PathsForm()
-    assert form.combo_theme.count() == 3
-    form.edit_ollama_models.setText(str(tmp_path / "models"))
+    page = SettingsPage()
+    assert page.combo_theme.count() == 3
     (tmp_path / "models").mkdir()
-    form.edit_emr.setText("")  # no require
-
-    dlg = SettingsDialog()
-    assert dlg.windowTitle() == "Settings"
-    dlg.close()
-
-    wiz = SetupWizard()
-    assert len(wiz.pageIds()) == 3
-    wiz.close()
+    page.row_models.edit.setText(str(tmp_path / "models"))
+    page.row_emr.edit.setText("")  # an empty EMR folder is allowed in Settings
+    assert page.values()["emr_dir"] == ""
+    page.discard()
+    page.close()
     clear_session_path_overrides()
 
 

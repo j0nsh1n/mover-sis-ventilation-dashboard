@@ -202,8 +202,9 @@ NO_MODEL_PLACEHOLDER = "(AI unavailable · search still works)"
 class LocalModelButton(RunsButton):
     """One menu button for the local model: its name and state, with every model action inside.
 
-    The menu holds the answer-model choices and the Start, Unload, Stop, Refresh and Data setup
-    actions. They are real actions, so the command palette lists the same objects.
+    The menu holds the answer-model choices and the Start, Unload, Stop and Refresh actions.
+    They are real actions, so the command palette lists the same objects. Data setup lives in
+    Settings (and Ctrl+K); ``setup_action`` stays only so the research page's ``setup_requested`` keeps its source.
     """
 
     model_chosen = Signal(str)
@@ -255,8 +256,7 @@ class LocalModelButton(RunsButton):
         self.menu_widget.addSeparator()
         self.menu_widget.addAction(self._answer_heading)
         self._model_anchor = self.menu_widget.addSeparator()
-        for action in (self.unload_action, self.stop_action, self.start_action, self.refresh_action,
-                       self.setup_action):
+        for action in (self.unload_action, self.stop_action, self.start_action, self.refresh_action):
             self.menu_widget.addAction(action)
         self.setMenu(self.menu_widget)
         self._set_intro("")
@@ -361,7 +361,7 @@ class LocalModelButton(RunsButton):
     def _refresh(self) -> None:
         self.set_runs(self._label_runs(), room_right=0)
         self.setAccessibleDescription(self.text())
-        self.setToolTip("Local AI: model choice, start, stop, unload and data setup")
+        self.setToolTip("Local AI: model choice, start, stop and unload")
         self._set_hints()
         QAccessible.updateAccessibility(QAccessibleEvent(self, QAccessible.Event.DescriptionChanged))
 

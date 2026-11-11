@@ -62,7 +62,7 @@ from src.desktop.theme import active_theme, token_color
 SCOPE_SAMPLE = "sample"
 SCOPE_SCAN = "scan"
 
-EMPTY_MESSAGE = "No processed cases yet. Run Data setup or a full-EMR scan."
+EMPTY_MESSAGE = "No processed cases yet. Run the pipeline or a full-EMR scan (Ctrl+K), or check the folders in Settings."
 
 # List-column widths below which the header controls and the three charts stack instead of sitting in a row.
 HEADER_ROW_WIDTH = 760
@@ -894,7 +894,7 @@ class CasesOverview(QWidget):
         if scan:
             self.empty_label.setText(
                 "The full-EMR scan scored no cases. Press Ctrl+K and choose Scan full EMR again after "
-                "checking the EMR folder in Data setup."
+                "checking the EMR folder in Settings."
             )
         else:
             self.empty_label.setText(EMPTY_MESSAGE)

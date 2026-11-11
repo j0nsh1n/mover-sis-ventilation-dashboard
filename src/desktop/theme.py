@@ -860,6 +860,65 @@ QTabBar#stageTabs[narrow="true"]::tab:focus {{
     padding: 5px 4px;
 }}
 
+/* —— settings page: section list, setting rows, folder checks, save bar —— */
+QLabel#pageTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#settingName {{
+    font-weight: 600;
+    color: {ink};
+}}
+QListWidget#settingsSections {{
+    background: transparent;
+    border: none;
+    outline: none;
+}}
+QListWidget#settingsSections::item {{
+    padding: 7px 12px;
+    border-left: 3px solid transparent;
+    color: {ink_3};
+    font-size: 14px;
+}}
+QListWidget#settingsSections::item:hover {{
+    color: {ink};
+}}
+QListWidget#settingsSections::item:selected, QListWidget#settingsSections::item:selected:!active {{
+    background: transparent;
+    color: {ink};
+    font-weight: 600;
+    border-left: 3px solid {accent};
+}}
+QListWidget#settingsSections:focus {{
+    border: 2px solid {accent};
+}}
+QLabel#folderCheck {{
+    color: {ink_2};
+    font-size: 12.5px;
+}}
+QLabel#folderCheck[state="problem"] {{
+    color: {ink};
+    font-weight: 600;
+}}
+QWidget#settingsBar {{
+    background: {paper};
+    border-top: 1px solid {rule};
+}}
+QLabel#settingsStatus {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#settingsStatus[state="dirty"], QLabel#settingsStatus[state="problem"] {{
+    color: {ink};
+}}
+QLabel#demoNote {{
+    color: {ink};
+    font-size: 13px;
+    border-left: 3px solid {practice_bar};
+    padding-left: 10px;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;
