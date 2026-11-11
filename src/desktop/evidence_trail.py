@@ -17,6 +17,9 @@ STEP_GAP = 28
 _SPINE_X = PIN / 2
 _SPARK_HEIGHT = 72
 _SPARK_GRID_LINES = 8
+_SPARK_TOP = 8.0
+# Where the trace starts when the signal's name has a band of its own: just under the name's 14 px line.
+_SPARK_TOP_BELOW_LABEL = 18.0
 
 
 class TrailStep(QWidget):
@@ -70,11 +73,13 @@ class Sparkline(QWidget):
     """The observation's trace: one signal over the case, with the observed minute marked.
 
     Painted from tokens, so it follows the theme. Missing samples break the line instead of
-    being joined across. Without samples it shows its placeholder sentence.
+    being joined across. Without samples it shows its placeholder sentence. ``label_room`` keeps the trace below
+    the signal's name instead of letting it run through it; the default draws exactly what the research page shows.
     """
 
-    def __init__(self, placeholder: str = "", parent: QWidget | None = None) -> None:
+    def __init__(self, placeholder: str = "", parent: QWidget | None = None, *, label_room: bool = False) -> None:
         super().__init__(parent)
+        self._top = _SPARK_TOP_BELOW_LABEL if label_room else _SPARK_TOP
         self.setObjectName("sparkline")
         self.setFixedHeight(_SPARK_HEIGHT)
         self.setMinimumWidth(160)
@@ -131,7 +136,7 @@ class Sparkline(QWidget):
         known = [value for value in self._values if value is not None]
         low, high = (min(known), max(known)) if known else (0.0, 1.0)
         span = max(high - low, 1.0)
-        top, bottom = 8.0, height - 8.0
+        top, bottom = self._top, height - 8.0
         last = max(len(self._values) - 1, 1)
 
         def point(index: int, value: float) -> QPointF:

@@ -257,7 +257,7 @@ class CasePreview(QFrame):
         traces.setSpacing(6)
         self.traces: dict[str, Sparkline] = {}
         for column_name in TRACE_SIGNALS:
-            line = Sparkline()
+            line = Sparkline(label_room=True)
             line.setFixedHeight(TRACE_HEIGHT)
             line.setMinimumWidth(0)
             line.setAccessibleName(f"{signal_info(column_name).label} trace")
