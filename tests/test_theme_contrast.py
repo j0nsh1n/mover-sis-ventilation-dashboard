@@ -84,6 +84,12 @@ PAIRS: list[tuple[str, str, float]] = [
     # index card is the sheet with ink, ink_3 and rule_strong on it (above); a line the card leaves out is ink_3 on paper.
     *[(signal, "sel", AA_NON_TEXT) for signal in SIGNALS],
     ("paper", "ink_2", AA_NON_TEXT),
+    # First-time setup's step list: in the light theme it is ink with paper text (rule for the quieter lines); in the
+    # dark theme it is sheet_2 with ink text, ink_3 for the quieter lines, and the current number is sheet_2 on ink.
+    ("paper", "ink", AA_TEXT),
+    ("rule", "ink", AA_TEXT),
+    ("sheet_2", "ink", AA_TEXT),
+    ("ink_3", "sheet_2", AA_NON_TEXT),
 ]
 
 

@@ -103,8 +103,9 @@ def test_sql_shaped_title_round_trips_and_deletes_nothing(tmp_path):
 
 
 def test_oversized_field_is_a_reported_dialog_not_a_crash(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog
     from src.desktop.app import MainWindow
+    from src.desktop.error_card import ErrorCard
     from src.services.articles import CSV_FIELD_LIMIT
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "missing-emr"))
@@ -115,7 +116,7 @@ def test_oversized_field_is_a_reported_dialog_not_a_crash(qapp, tmp_path, monkey
     write_csv(path, [row(id="ok"), row(id="huge", abstract="c" * (CSV_FIELD_LIMIT + 1))])
     shown = []
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
-    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: shown.append((title, text)))
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: shown.append((box.windowTitle(), box.why)) or 0)
     win = MainWindow()
     try:
         win._import_articles()

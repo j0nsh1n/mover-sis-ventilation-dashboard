@@ -40,8 +40,10 @@ if str(ROOT) not in sys.path:
 
 from src.desktop.research_workspace import ResearchWorkspace
 from src.desktop.command_palette import Command, CommandPalette
+from src.desktop.error_card import ErrorCard, show_failure
 from src.desktop.settings_page import SettingsPage
-from src.desktop.shell import FooterFields, NavRail, PracticeTabs, RunningHead
+from src.desktop.setup_flow import SetupFlow
+from src.desktop.shell import DEMO_SOURCE, DEMO_SOURCE_TIP, FooterFields, NavRail, PracticeTabs, RunningHead
 from src.desktop.suite_chrome import install_suite_chrome, set_page_title
 from src.desktop.conversation_panel import NO_MODEL_ANSWER
 from src.desktop.research_workers import CaseFetchWorker, ResearchWorker
@@ -57,6 +59,7 @@ from src.runtime_paths import (
     configure_emr_directory,
     configure_from_user_directory,
     configure_wave_directory,
+    demo_data_in_use,
     emr_dir,
     processed_dir,
     wave_dir,
@@ -267,6 +270,8 @@ class MainWindow(QMainWindow):
         self._last_practice = PRACTICE_TOOLS[0][0]
         # Where Escape on the Settings page goes back to
         self._settings_return = "monitoring"
+        # The first-time setup flow while it fills the window
+        self._setup_flow: SetupFlow | None = None
         # unchecked, busy:<words>, ready, stopped or failed
         self._model_state = "unchecked"
         self._palette: CommandPalette | None = None
@@ -323,7 +328,7 @@ class MainWindow(QMainWindow):
                 action.setShortcut(shortcut)
                 action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             # triggered carries a "checked" flag that none of the handlers take
-            action.triggered.connect(lambda _checked=False, run=handler: run())
+            action.triggered.connect(lambda _checked=False, run=handler, key=name: self._run_command(key, run))
             self.addAction(action)
             self._commands.append(Command(action, group, keywords, shortcut_hint))
             return action
@@ -403,6 +408,13 @@ class MainWindow(QMainWindow):
         self._find_act.triggered.connect(lambda _checked=False: self._open_palette())
         self.addAction(self._find_act)
 
+    def _run_command(self, name: str, run) -> None:
+        """Run a command, except while the setup flow fills the window: it hides the pages these commands act on."""
+        if self._setup_flow is not None and name != "action-exit":
+            self.statusBar().showMessage("Finish setup, or choose Not now, first.", 4000)
+            return
+        run()
+
     def _sync_theme_actions(self) -> None:
         action = self._theme_actions.get(get_theme())
         if action is not None:
@@ -412,7 +424,7 @@ class MainWindow(QMainWindow):
         self.close()
 
     def _open_palette(self) -> None:
-        if self._palette is not None:
+        if self._palette is not None or self._setup_flow is not None:
             return
         # An action hidden from view (an update that is not ready) is not offered either
         commands = [command for command in self._commands if command.action.isVisible()]
@@ -502,7 +514,10 @@ class MainWindow(QMainWindow):
         row.setSpacing(0)
         row.addWidget(self.rail)
         row.addWidget(body, 1)
-        self.setCentralWidget(frame)
+        # The setup flow is a second page of this stack, so it fills the window, rail included
+        self._root = QStackedWidget()
+        self._root.addWidget(frame)
+        self.setCentralWidget(self._root)
 
     # ----- paths -----
     def _sync_path_fields_from_runtime(self) -> None:
@@ -532,7 +547,9 @@ class MainWindow(QMainWindow):
         try:
             configure_emr_directory(chosen, persist=True)
         except Exception as e:
-            QMessageBox.critical(self, "Invalid EMR folder", str(e))
+            show_failure(self, what="That folder cannot be used as the EMR folder.", why=str(e),
+                         next_step="Choose another folder. The EMR folder stays as it was.",
+                         title="Invalid EMR folder")
             return
         self._set_status("EMR folder set")
         self._autoload_processed()
@@ -551,7 +568,9 @@ class MainWindow(QMainWindow):
         try:
             configure_wave_directory(chosen, persist=True)
         except Exception as e:
-            QMessageBox.critical(self, "Invalid wave folder", str(e))
+            show_failure(self, what="That folder cannot be used as the wave folder.", why=str(e),
+                         next_step="Choose another folder. The wave folder stays as it was.",
+                         title="Invalid wave folder")
             return
         # Waveforms are looked up from wave_dir() on demand, so the status bar is
         # the only thing to refresh (the old filters sidebar no longer exists).
@@ -566,7 +585,9 @@ class MainWindow(QMainWindow):
         try:
             configure_from_user_directory(path, persist=True)
         except Exception as e:
-            QMessageBox.critical(self, "Invalid data folder", str(e))
+            show_failure(self, what="That folder cannot be used as the data folder.", why=str(e),
+                         next_step="Choose another folder. The folders in use stay as they were.",
+                         title="Invalid data folder")
             return
         self._set_status("EMR folder set")
         self._autoload_processed()
@@ -647,11 +668,14 @@ class MainWindow(QMainWindow):
         self._clear_loaded_sample()
         self._set_status("Could not load processed data")
         self.research.set_status("Processed data could not load. Indexed surgery search remains available.")
-        self._warn("Load error", f"{msg}\n\nPress Ctrl+K and choose Run pipeline to rebuild the analyzed sample for this EMR.")
+        self._warn(
+            "Load error", msg, what="The analyzed cases could not be loaded.",
+            next_step="Press Ctrl+K and choose Run pipeline to rebuild the analyzed sample for this EMR.",
+        )
 
-    def _warn(self, title: str, text: str) -> None:
+    def _warn(self, title: str, text: str, *, what: str | None = None, next_step: str = "") -> None:
         # open() returns immediately. exec() would hold startup until the box closed.
-        box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
+        box = ErrorCard(self, what=what or title, why=text, next_step=next_step, title=title)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.destroyed.connect(lambda *_args: QTimer.singleShot(0, self._focus_research_question))
         box.open()
@@ -704,6 +728,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._updates.close()
+        if self._setup_flow is not None:
+            self._setup_flow.shutdown()
         running = [w for w in (
             self._worker, self._research_worker,
             self._case_worker, self._ollama_worker, *self._research_workers.values(),
@@ -734,6 +760,11 @@ class MainWindow(QMainWindow):
     def _on_update_failed(self, detail: str) -> None:
         self.statusBar().showMessage(f"Update could not be prepared: {detail}", 15_000)
 
+    def _update_failed_to_start(self, reason: str) -> None:
+        show_failure(self, what="The update could not start.", why=reason,
+                     next_step="MOVER Suite keeps running as it is. Try again later.",
+                     title="Update could not start", level="warning")
+
     def _restart_for_update(self) -> None:
         from src.runtime_paths import app_dir
         from src.update import prepare_restart_apply, spawn_restart_apply
@@ -747,32 +778,27 @@ class MainWindow(QMainWindow):
         try:
             plan = prepare_restart_apply(app_dir(), staged, platform=platform)
         except OSError as exc:
-            QMessageBox.warning(self, "Update could not start", str(exc))
+            self._update_failed_to_start(str(exc))
             return
         if not plan.ready or not plan.supported_here:
-            QMessageBox.warning(self, "Update could not start", plan.detail)
+            self._update_failed_to_start(plan.detail)
             return
         try:
             result = spawn_restart_apply(plan)
         except OSError as exc:
-            QMessageBox.warning(self, "Update could not start", str(exc))
+            self._update_failed_to_start(str(exc))
             return
         if not result.spawned:
-            QMessageBox.warning(self, "Update could not start", result.detail)
+            self._update_failed_to_start(result.detail)
             return
         self.close()
 
     def _about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About",
-            f"MOVER Suite\n"
-            f"Version {self._version}\n\n"
-            "Native desktop client for the UC Irvine MOVER SIS research dataset.\n"
-            "Monitoring (SIS Monitor) plus fictional handoff, medication, and checklist practice.\n"
-            "Change folders, the rules preset and the theme in Settings (Ctrl+,); press Ctrl+K to find any action.\n"
-            "Not for clinical care.",
-        )
+        from src.desktop.about_dialog import AboutDialog
+
+        sha = self._thresholds_sha256[:6] if self._thresholds_sha256 else ""
+        rules = f"{self._active_preset}" + (f" @{sha}" if sha else "")
+        AboutDialog(self._version, rules, self).exec()
 
     def _setup_bypassed(self) -> bool:
         return os.environ.get("MOVER_SKIP_SETUP", "").strip().lower() in {
@@ -802,23 +828,50 @@ class MainWindow(QMainWindow):
         self._refresh_ollama_models(start_if_needed=False)
 
     def _open_setup_wizard(self, first_run: bool = False) -> None:
-        from src.desktop.settings_ui import SetupWizard
+        """Show the setup flow over the whole window (first run, or Data setup from Settings and Ctrl+K)."""
+        if self._setup_flow is not None or not self._confirm_leave_settings():
+            return
+        flow = SetupFlow(self._version, first_run=first_run)
+        flow.completed.connect(self._setup_completed)
+        flow.dismissed.connect(partial(self._setup_dismissed, first_run))
+        flow.step_changed.connect(
+            lambda step: set_page_title(self, f"{'First-time setup' if first_run else 'Data setup'}: {step}")
+        )
+        self._setup_flow = flow
+        self._root.addWidget(flow)
+        self._root.setCurrentWidget(flow)
+        set_page_title(self, "First-time setup" if first_run else "Data setup")
+        flow.focus_first()
 
-        wiz = SetupWizard(self)
-        wiz.setup_finished.connect(self._on_settings_applied)
-        if first_run:
-            wiz.setWindowTitle("MOVER Suite — First-time setup")
-        wiz.exec()
+    def _close_setup_flow(self) -> None:
+        flow = self._setup_flow
+        if flow is None:
+            return
+        self._setup_flow = None
+        flow.shutdown()
+        self._root.setCurrentIndex(0)
+        self._root.removeWidget(flow)
+        flow.deleteLater()
+        self._sync_frame()
+
+    def _setup_completed(self, vals: dict) -> None:
+        self._close_setup_flow()
+        self._on_settings_applied(vals)
+        self.research.set_setup_required(False)
         self._sync_path_fields_from_runtime()
-        if wiz.result():
-            self.research.set_setup_required(False)
-        elif first_run:
+        self._set_status("Setup finished")
+        self._show_suite_module("monitoring")
+        self._autoload_processed()
+        self._refresh_ollama_models()
+        self.research.question_edit.setFocus()
+
+    def _setup_dismissed(self, first_run: bool) -> None:
+        self._close_setup_flow()
+        if first_run:
             self.research.set_setup_required(True)
-        self._set_status("Setup finished" if wiz.result() else ("Setup required" if first_run else "Setup cancelled"))
-        if wiz.result():
-            self._autoload_processed()
-            self._refresh_ollama_models()
-            self.research.question_edit.setFocus()
+        self._set_status("Setup required" if first_run else "Setup cancelled")
+        if self._current_module == "monitoring":
+            self._focus_research_question()
 
     def _settings_page(self) -> SettingsPage | None:
         page = self._suite_pages.get("settings")
@@ -1022,7 +1075,8 @@ class MainWindow(QMainWindow):
 
     def _on_corpus_scan_fail(self, msg: str) -> None:
         self._set_status(msg.splitlines()[0])
-        QMessageBox.critical(self, "Full-EMR scan", msg[:4000])
+        show_failure(self, what="The full-EMR scan did not finish.", why=msg[:4000],
+                     next_step="The loaded sample and any earlier scan were kept.", title="Full-EMR scan")
 
     def _after_corpus_scan(self, worker: QThread) -> None:
         if self._reload_after_scan and self._worker is worker:
@@ -1125,14 +1179,10 @@ class MainWindow(QMainWindow):
         if not self._data_job_is_current():
             return
         self._set_status("Pipeline failed")
-        QMessageBox.critical(
-            self,
-            "Pipeline / guardrail error",
-            msg[:4000]
-            + (
-                "\n\nEnsure the EMR folder has patient_information, "
-                "patient_ventilator, and patient_vitals CSVs."
-            ),
+        show_failure(
+            self, what="The pipeline did not finish.", why=msg[:4000],
+            next_step="Make sure the EMR folder has patient_information, patient_ventilator and patient_vitals CSVs.",
+            title="Pipeline / guardrail error",
         )
 
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
@@ -1250,7 +1300,9 @@ class MainWindow(QMainWindow):
         self.research.set_status(f"Local model failed: {message}")
         self.statusBar().showMessage(f"Local model failed: {message}")
         if action == "start":
-            QMessageBox.warning(self, "Ollama start", message)
+            show_failure(self, what="The local model service did not start.", why=message,
+                         next_step="Search still works without it. Check that Ollama is installed, then try Start AI again.",
+                         title="Ollama start", level="warning")
 
     def _ollama_stop(self) -> None:
         if self.research._searching:
@@ -1266,7 +1318,7 @@ class MainWindow(QMainWindow):
         if ok:
             QMessageBox.information(self, "Model unloaded", msg)
         else:
-            QMessageBox.warning(self, "Unload model", msg)
+            show_failure(self, what="The model could not be unloaded.", why=msg, title="Unload model", level="warning")
 
     def _on_ollama_model_changed(self, text: str) -> None:
         text = (text or "").strip()
@@ -1297,7 +1349,8 @@ class MainWindow(QMainWindow):
 
     def _import_articles(self) -> None:
         if self._article_catalog is None:
-            QMessageBox.warning(self, "Article import unavailable", self.research._article_error)
+            show_failure(self, what="Article import is not available.", why=self.research._article_error,
+                         title="Article import unavailable", level="warning")
             return
         path, _ = QFileDialog.getOpenFileName(self, "Import articles", "", "Article files (*.csv *.jsonl)")
         if not path:
@@ -1305,7 +1358,8 @@ class MainWindow(QMainWindow):
         try:
             report = self._article_catalog.import_file(Path(path))
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Article import failed", str(exc))
+            show_failure(self, what="The articles could not be imported.", why=str(exc),
+                         title="Article import failed", level="warning")
             return
         self.research.set_article_catalog(self._article_catalog.count)
         message = f"Imported {report.imported:,} articles. {len(report.errors):,} rows skipped."
@@ -1743,11 +1797,13 @@ class MainWindow(QMainWindow):
         )
         footer.show_research(
             source_tip=self._source_tooltip(), counts=counts, rules=rules, model=self._model_field(),
+            source=DEMO_SOURCE if demo_data_in_use() else None,
         )
 
     def _source_tooltip(self) -> str:
         wave = wave_dir()
-        return f"EMR: {emr_dir()}\nProcessed: {processed_dir()}\nWave: {wave if wave else 'not set'}"
+        paths = f"EMR: {emr_dir()}\nProcessed: {processed_dir()}\nWave: {wave if wave else 'not set'}"
+        return f"{DEMO_SOURCE_TIP}\n{paths}" if demo_data_in_use() else paths
 
     def _model_field(self) -> tuple[str, str]:
         name = self.research.selected_model()

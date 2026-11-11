@@ -89,15 +89,11 @@ def test_apply_invalid_folder_keeps_status_paths(qapp, tmp_path, monkeypatch):
 
     # Avoid modal dialogs blocking tests
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
-        lambda *a, **k: None,
+        "src.desktop.error_card.ErrorCard.exec",
+        lambda *a, **k: 0,
     )
     monkeypatch.setattr(
         "src.desktop.app.QMessageBox.information",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.warning",
         lambda *a, **k: None,
     )
 
@@ -126,8 +122,8 @@ def test_pipeline_uses_selected_emr(qapp, synthetic_emr, tmp_path, monkeypatch):
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
-        lambda *a, **k: None,
+        "src.desktop.error_card.ErrorCard.exec",
+        lambda *a, **k: 0,
     )
 
     win = MainWindow()
@@ -174,7 +170,7 @@ def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch
         lambda *a, **k: str(wave_root),
     )
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
+        "src.desktop.error_card.ErrorCard.exec",
         lambda *a, **k: pytest.fail("unexpected error dialog"),
     )
 

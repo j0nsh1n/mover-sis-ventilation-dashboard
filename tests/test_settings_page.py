@@ -342,3 +342,16 @@ def test_data_setup_is_one_button_on_the_page_and_a_command_and_no_longer_in_the
     assert setup_calls == [False, False, False]
     menu_texts = [a.text() for a in window.research.model_menu.menu_widget.actions()]
     assert "Data setup" not in menu_texts
+
+
+def test_the_pages_of_this_stage_hold_no_hard_coded_colours():
+    """Every colour of Settings, setup, About and the error card comes from the theme tokens."""
+    import re
+    from pathlib import Path
+
+    from src.desktop import about_dialog, demo_data, error_card, settings_ui, setup_flow
+
+    colour = re.compile(r"#[0-9A-Fa-f]{6}\b|#[0-9A-Fa-f]{3}\b|QColor\(\s*[\"']|rgba?\(")
+    for module in (settings_page, settings_ui, setup_flow, about_dialog, error_card, demo_data):
+        found = colour.findall(Path(module.__file__).read_text(encoding="utf-8"))
+        assert not found, f"{module.__name__} names a colour itself: {found}"

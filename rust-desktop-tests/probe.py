@@ -69,17 +69,18 @@ def output_route(root, route, variant):
     elif variant == "sibling":
         output = root / "sibling"
     if route == "settings":
-        from src.desktop.settings_ui import PathsForm
+        from src.desktop.settings_page import SettingsPage
+        from src.desktop.settings_ui import apply_values
 
         app = qt()
         with no_ollama():
-            form = PathsForm()
-        form.edit_emr.setText(str(source))
-        form.edit_processed.setText(str(output))
-        form.edit_wave.clear()
-        form.edit_ollama_models.clear()
+            form = SettingsPage()
+        form.row_emr.edit.setText(str(source))
+        form.row_processed.edit.setText(str(output))
+        form.row_wave.edit.clear()
+        form.row_models.edit.clear()
         def action():
-            return form.apply_to_runtime(require_emr=True)
+            return apply_values(form.values(), require_emr=True)
     elif route == "pipeline":
         from src.pipeline.run import run_pipeline
 
@@ -150,7 +151,7 @@ def switch_source(root):
         def isRunning(self):
             return False
 
-    with patch.object(desktop, "DataLoadWorker", ScheduledLoad), patch.object(QMessageBox, "open", lambda box: dialogs.append(box.text())):
+    with patch.object(desktop, "DataLoadWorker", ScheduledLoad), patch.object(QMessageBox, "open", lambda box: dialogs.append(getattr(box, "words", box.text)())):
         win = window()
         a, b = root / "source-a", root / "source-b"
         proc_a, proc_b = root / "processed-a", root / "processed-b"
@@ -217,7 +218,7 @@ def errors(root, variant):
         processed.mkdir()
         (processed / "corpus_cases.parquet").write_text(marker)
         (processed / "corpus_meta.json").write_text("{}")
-        with patch.object(QMessageBox, "open", lambda box: messages.append(box.text())):
+        with patch.object(QMessageBox, "open", lambda box: messages.append(getattr(box, "words", box.text)())):
             win = window()
             with patch("src.pipeline.corpus_scan.load_corpus_scan", side_effect=RuntimeError(marker)):
                 win._load_corpus_scan()
@@ -270,16 +271,16 @@ def accessible_name(widget):
 
 def names(root):
     from PySide6.QtWidgets import QPushButton, QTableWidget
-    from src.desktop.settings_ui import PathsForm
+    from src.desktop.settings_page import SettingsPage
     from src.desktop.shell import RailButton
 
     app = qt()
     with no_ollama():
-        form = PathsForm()
+        form = SettingsPage()
     win = window()
     result = {key: accessible_name(widget) for key, widget in [
-        ("emr", form.edit_emr), ("wave", form.edit_wave), ("processed", form.edit_processed),
-        ("models", form.edit_ollama_models), ("question", win.research.question_edit)]}
+        ("emr", form.row_emr.edit), ("wave", form.row_wave.edit), ("processed", form.row_processed.edit),
+        ("models", form.row_models.edit), ("question", win.research.question_edit)]}
     actions = {button.text(): button for button in win.findChildren(QPushButton)}
     actions.update({button.text(): button for button in win.rail.findChildren(RailButton)})
     actions.update({"Local AI": win.research.model_menu, "Trace the evidence": win.research.ask_button})
@@ -409,15 +410,15 @@ def chart(root):
 
 def layout(root):
     from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QWizard
     from src.desktop.settings_page import SettingsPage
-    from src.desktop.settings_ui import SetupWizard
+    from src.desktop.setup_flow import DATA, SetupFlow
 
     app = qt()
     with no_ollama():
-        settings, wizard = SettingsPage(), SetupWizard()
+        settings, wizard = SettingsPage(), SetupFlow("0")
+    wizard.resize(1000, 700)
     wizard.show()
-    wizard.next()
+    wizard._go(DATA)
     settings.resize(900, 640)
     settings.show()
     win = window()
@@ -429,7 +430,7 @@ def layout(root):
         position = widget.mapTo(parent, QPoint(0, 0))
         return ",".join(map(str, [parent.width(), parent.height(), position.x(), position.y(), widget.width(), widget.height(), int(widget.isVisible())]))
 
-    wizard_buttons = [wizard.button(kind) for kind in [QWizard.WizardButton.BackButton, QWizard.WizardButton.NextButton, QWizard.WizardButton.CancelButton]]
+    wizard_buttons = [wizard.back_button, wizard.continue_button, wizard.not_now_data]
     settings_buttons = [settings.discard_button, settings.save_button]
     card = win.research.question_edit.parentWidget()
     result = {"wizard_navigation": "\n".join(geometry(wizard, button) for button in wizard_buttons),

@@ -9,6 +9,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from src.desktop.app import MainWindow
+from src.desktop.error_card import ErrorCard
 from src.llm.service import OllamaStatus
 
 
@@ -19,7 +20,7 @@ def window(monkeypatch, tmp_path):
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     dialogs = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args: dialogs.append(args[1:]))
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: dialogs.append((box.windowTitle(), box.words())) or 0)
     monkeypatch.setattr(QMessageBox, "information", lambda *args: dialogs.append(args[1:]))
     win = MainWindow()
     win.show()

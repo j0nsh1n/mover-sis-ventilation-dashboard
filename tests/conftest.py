@@ -255,3 +255,14 @@ def word_is_whole():
         return QFontMetrics(italic).elidedText(option.text, Qt.TextElideMode.ElideRight, room) == option.text
 
     return check
+
+
+@pytest.fixture
+def error_cards(monkeypatch):
+    """Record every error card instead of showing it. Each entry is the ErrorCard, so a test reads what it needs."""
+    from src.desktop.error_card import ErrorCard
+
+    shown: list = []
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: shown.append(box) or 0)
+    monkeypatch.setattr(ErrorCard, "open", lambda box: shown.append(box))
+    return shown

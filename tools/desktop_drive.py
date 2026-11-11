@@ -1377,11 +1377,20 @@ def record_dialogs(run: Run) -> None:
     kinds = {QMessageBox.Icon.Warning: "warning", QMessageBox.Icon.Critical: "critical"}
 
     def open_box(box: Any) -> None:
-        kind = kinds.get(box.icon(), "information")
-        run.dialogs.append({"kind": kind, "title": box.windowTitle(), "text": box.text()})
+        kind = getattr(box, "level", None) or kinds.get(box.icon(), "information")
+        text = box.words() if hasattr(box, "words") else box.text()
+        run.dialogs.append({"kind": kind, "title": box.windowTitle(), "text": text})
         box.close()
 
     QMessageBox.open = open_box
+
+    from src.desktop.error_card import ErrorCard
+
+    def exec_card(card: Any) -> int:
+        run.dialogs.append({"kind": card.level, "title": card.windowTitle(), "text": card.words()})
+        return 0
+
+    ErrorCard.exec = exec_card
 
 
 def _scrub(value: Any, replacements: Sequence[tuple[str, str]]) -> Any:
@@ -1429,10 +1438,12 @@ def _app() -> Any:
 
 def reject_emr(out: Path, reason: str) -> None:
     """Show the setup wizard the app would open, so the failure has a screenshot."""
-    from src.desktop.settings_ui import SetupWizard
+    from src.__version__ import get_version
+    from src.desktop.setup_flow import SetupFlow
 
     app = _app()
-    wizard = SetupWizard()
+    wizard = SetupFlow(get_version())
+    wizard.resize(1100, 760)
     wizard.show()
     app.processEvents()
     wizard.grab().save(str(out / "setup.png"))

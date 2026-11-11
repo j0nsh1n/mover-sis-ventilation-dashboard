@@ -657,7 +657,10 @@ def test_desktop_scan_failure_shows_only_the_code(emr, tmp_path, monkeypatch, al
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     dialogs: list[str] = []
-    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: dialogs.append(a[2]))
+    from src.desktop.error_card import ErrorCard
+
+    # the card must show the message it was given, word for word
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: dialogs.append(box.why) or 0)
     from src.desktop import app as desktop_app
 
     monkeypatch.setattr(

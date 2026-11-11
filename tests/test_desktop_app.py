@@ -247,11 +247,10 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
 
 @requires_qt
 def test_ollama_failure_names_reason(qapp, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", lambda box: 0)
     monkeypatch.setattr("src.llm.service.start_ollama", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("port busy")))
     win = MainWindow()
     try:
@@ -367,7 +366,7 @@ def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     cases.write_bytes(b"not parquet")
     (tmp_path / "corpus_meta.json").write_text("{}")
     dialogs = []
-    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(getattr(box, "words", box.text)()))
     win = MainWindow()
     try:
         win._load_corpus_scan()
@@ -386,7 +385,7 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "missing"))
     dialogs = []
-    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(getattr(box, "words", box.text)()))
     win = MainWindow()
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
@@ -408,7 +407,7 @@ def test_scan_cancel_requests_interruption_and_keeps_previous(qapp, monkeypatch,
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
     dialogs = []
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(QMessageBox, "critical", lambda *args: dialogs.append(args[2]))
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", lambda box: dialogs.append(box.words()) or 0)
 
     def scan(*args, should_stop, **kwargs):
         while not should_stop():
@@ -467,7 +466,6 @@ def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
 
 @requires_qt
 def test_pipeline_error_dialog_never_shows_folder_paths_in_the_status_bar(qapp, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
     emr = tmp_path / "emr-a-bad"
@@ -478,10 +476,11 @@ def test_pipeline_error_dialog_never_shows_folder_paths_in_the_status_bar(qapp, 
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     shown = []
 
-    def critical(parent, title, text):
-        shown.append((title, text, parent.statusBar().currentMessage()))
+    def critical(box):
+        shown.append((box.windowTitle(), box.words(), box.parent().statusBar().currentMessage()))
+        return 0
 
-    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", critical)
     win = MainWindow()
     try:
         assert str(emr) not in win.statusBar().currentMessage()
@@ -594,18 +593,18 @@ def test_pipeline_dialog_keeps_paths_out_of_a_nested_reload_and_keeps_the_latest
 
 @requires_qt
 def test_pipeline_dialog_preserves_a_newer_direct_status(qapp, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     latest = "Version 9.9.9 is ready. Restart when convenient."
 
-    def critical(parent, _title, _text):
-        parent.statusBar().showMessage(latest)
-        assert str(tmp_path) not in parent.statusBar().currentMessage()
+    def critical(box):
+        box.parent().statusBar().showMessage(latest)
+        assert str(tmp_path) not in box.parent().statusBar().currentMessage()
+        return 0
 
-    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", critical)
     win = MainWindow()
     try:
         win._on_pipeline_fail("pipeline:DataValidationError")

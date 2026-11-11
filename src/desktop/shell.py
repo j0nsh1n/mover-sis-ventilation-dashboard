@@ -40,6 +40,10 @@ _LINE_SLACK = 4
 _FOOTER_EDGES = 10
 # The gap the status bar's layout puts between its items when it cannot be asked.
 _FOOTER_GAP = 6
+# The footer's source field while the folders in use are the demo data this app made
+SOURCE_NAME = ("MOVER SIS local copy", "Data source: MOVER SIS local copy")
+DEMO_SOURCE = ("<b>Fictional demo data</b>", "Data source: fictional demo data, not patient records")
+DEMO_SOURCE_TIP = "Fictional demo data made by MOVER Suite. These are not patient records."
 PRACTICE_SOURCE = "Practice reads no data folder"
 PRACTICE_NOTE = "nothing here comes from MOVER cases"
 
@@ -579,9 +583,9 @@ class FooterFields:
         label.set_content(rich, plain, tip)
 
     def show_research(self, *, source_tip: str, counts: tuple[str, str], rules: tuple[str, str],
-                      model: tuple[str, str]) -> None:
-        """Each field is (rich text, plain text for screen readers)."""
-        self._set(self.source, "MOVER SIS local copy", "Data source: MOVER SIS local copy", source_tip)
+                      model: tuple[str, str], source: tuple[str, str] | None = None) -> None:
+        """Each field is (rich text, plain text for screen readers). ``source`` names the data when it is not the MOVER copy."""
+        self._set(self.source, *(source or SOURCE_NAME), source_tip)
         self._set(self.counts, *counts)
         self._set(self.rules, *rules)
         self._set(self.model, *model)

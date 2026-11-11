@@ -919,6 +919,136 @@ QLabel#demoNote {{
     padding-left: 10px;
 }}
 
+/* —— first-time setup: step list, headline, promises —— */
+QFrame#setupSide[mode="light"] {{
+    background: {ink};
+    border: none;
+}}
+QFrame#setupSide[mode="light"] QLabel {{
+    color: {paper};
+    background: transparent;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupSub, QFrame#setupSide[mode="light"] QLabel#setupStepName[state="todo"] {{
+    color: {rule};
+}}
+QFrame#setupSide[mode="light"] QLabel#setupMark, QFrame#setupSide[mode="light"] QLabel#setupStepNumber {{
+    border: 1px solid {rule};
+    border-radius: 15px;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupMark {{
+    border: 2px solid {paper};
+    border-radius: 27px;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupStepNumber[state="current"] {{
+    background: {paper};
+    color: {ink};
+    border-color: {paper};
+}}
+QFrame#setupSide[mode="dark"] {{
+    background: {sheet_2};
+    border: none;
+    border-right: 1px solid {rule};
+}}
+QFrame#setupSide[mode="dark"] QLabel {{
+    color: {ink};
+    background: transparent;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupSub, QFrame#setupSide[mode="dark"] QLabel#setupStepName[state="todo"] {{
+    color: {ink_3};
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupMark, QFrame#setupSide[mode="dark"] QLabel#setupStepNumber {{
+    border: 1px solid {ink_3};
+    border-radius: 15px;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupMark {{
+    border: 2px solid {ink};
+    border-radius: 27px;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupStepNumber[state="current"] {{
+    background: {ink};
+    color: {sheet_2};
+    border-color: {ink};
+}}
+QLabel#setupMark, QLabel#aboutMark {{
+    font-family: {serif};
+    font-size: 24px;
+}}
+QLabel#aboutMark {{
+    border: 2px solid {ink};
+    border-radius: 27px;
+    color: {ink};
+}}
+QLabel#setupName {{
+    font-family: {serif};
+    font-size: 24px;
+}}
+QLabel#setupSub {{
+    font-size: 12.5px;
+}}
+QLabel#setupStepName {{
+    font-size: 14px;
+}}
+QLabel#setupStepName[state="current"] {{
+    font-weight: 600;
+}}
+QLabel#setupStepNumber {{
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QLabel#setupTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#setupKicker {{
+    color: {ink_3};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QFrame#setupPromises {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
+}}
+QFrame#setupPromises QLabel {{
+    background: transparent;
+}}
+QToolButton#setupAdvanced {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: {ink};
+    font-weight: 600;
+    font-size: 13px;
+    padding: 4px 6px;
+}}
+QToolButton#setupAdvanced:hover {{
+    background: {rule_faint};
+}}
+QToolButton#setupAdvanced:focus {{
+    border: 2px solid {accent};
+    padding: 3px 5px;
+}}
+
+/* —— error card: a headline, the reason, the next step, details collapsed —— */
+QMessageBox#errorCard {{
+    background: {paper};
+}}
+QMessageBox#errorCard QLabel#qt_msgbox_label {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+    min-width: 360px;
+}}
+QMessageBox#errorCard QLabel#qt_msgbox_informativelabel {{
+    font-size: 13px;
+    color: {ink_2};
+}}
+QMessageBox#errorCard QTextEdit {{
+    background: {sheet};
+    font-size: 12.5px;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;
