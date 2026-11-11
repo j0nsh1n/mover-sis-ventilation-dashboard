@@ -489,6 +489,10 @@ def test_a_theme_chosen_from_find_while_settings_is_open_is_the_saved_theme_and_
     (b"PID,Age\rA,1\rB,2\rC,3\r", 3),  # old line endings, a carriage return alone
     (b"PID,Age\nA,1\n   \nB,2\n", 2),  # a line of nothing but spaces is not a record
     (b"\xef\xbb\xbfPID,Age\nA,1\n", 1),  # a byte-order mark
+    (b"PID,Age\nA,1\n\t \t\nB,2\n \n", 2),  # tabs and spaces
+    (b" \n\t\n", 0),  # nothing but such lines
+    ("PID,Age\nA,1\nB,2\n".encode("utf-16"), None),  # saved as UTF-16: no count, not a wrong one
+    (b"\xfe\xff" + "PID,Age\nA,1\n".encode("utf-16-be"), None),
 ])
 def test_the_surgeries_count_is_the_records_of_the_table(tmp_path, content, records):
     from src.desktop.settings_ui import _count_surgeries
@@ -498,12 +502,11 @@ def test_the_surgeries_count_is_the_records_of_the_table(tmp_path, content, reco
     assert _count_surgeries(table) == records
 
 
-def test_the_count_reads_in_bounded_chunks_and_is_left_out_above_the_size_limit(tmp_path, monkeypatch):
+def test_the_count_keeps_quoted_line_breaks_in_their_record_and_is_left_out_above_the_size_limit(tmp_path, monkeypatch):
     from src.desktop import settings_ui
 
     table = tmp_path / "patient_information.csv"
-    table.write_bytes(b"PID\n" + b"".join(b'"x\ny"\n' for _ in range(5000)))  # quoted breaks across many chunks
-    monkeypatch.setattr(settings_ui, "_COUNT_CHUNK_BYTES", 64)
+    table.write_bytes(b"PID\n" + b"".join(b'"x\ny"\n' for _ in range(5000)))  # 5,000 records on 10,000 lines
     assert settings_ui._count_surgeries(table) == 5000
     monkeypatch.setattr(settings_ui, "_COUNT_LIMIT_BYTES", table.stat().st_size - 1)
     assert settings_ui._count_surgeries(table) is None
@@ -513,27 +516,6 @@ def test_the_count_reads_in_bounded_chunks_and_is_left_out_above_the_size_limit(
         (folder / name).write_bytes(table.read_bytes())
     result = settings_ui.check_emr_folder(str(folder))
     assert result.state == "ok" and "surgeries indexed" not in result.text and "3 of 3 required tables found" in result.text
-
-
-@pytest.mark.parametrize("content,records", [
-    (b"PID,Age\nA,1\nB,2\nC,3\n", 3),
-    (b"PID,Age\r\nA,1\r\n\r\nB,2\r\nC,3", 3),  # CR LF, a blank line, no line break at the end
-    (b"\n\nPID,Age\nA,1\n\n\n", 1),
-    (b"PID,Age\n", 0),
-    (b"PID,Note\nA,\"quoted\"\nB,2\n", None),  # a quote: lines are not surely records
-    (b"PID,Age\rA,1\rB,2\r", None),  # bare carriage returns: not counted by lines
-    (b"PID,Age\nA,1\r", None),
-    (b"PID,Age\rA,1\rB,2\n", None),  # a bare carriage return in the middle, a line feed at the end
-])
-def test_a_table_too_large_for_the_csv_reader_is_counted_by_its_lines_only_when_that_is_sure(
-        tmp_path, monkeypatch, content, records):
-    from src.desktop import settings_ui
-
-    monkeypatch.setattr(settings_ui, "_CSV_COUNT_LIMIT_BYTES", 0)
-    monkeypatch.setattr(settings_ui, "_COUNT_CHUNK_BYTES", 3)  # line ends and blank lines fall on chunk borders
-    table = tmp_path / "patient_information.csv"
-    table.write_bytes(content)
-    assert settings_ui._count_surgeries(table) == records
 
 
 def _check_no_cut_text_and_no_sideways_reach(window, page, qapp):
