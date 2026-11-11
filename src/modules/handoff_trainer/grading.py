@@ -49,8 +49,7 @@ _NEGATION_REACH = 40
 # the other sentence ends. So "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2: the reach cannot pass the point
 # of 97.5 to pick up the 75 that belongs to MAP.
 _TO_VALUE = r"[^.?!;\n]"
-# A number is read whole. It never starts right after a full stop, so a window that passes the point of "86.0"
-# cannot stop on its "0".
+# A number is read whole: it never starts in the middle of another number or right after a full stop.
 _NUMBER = r"(?<![\d.])(\d+(?:\.\d+)?)(?!\d)"
 _SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_TO_VALUE}{{0,30}}\d")
 _MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_TO_VALUE}{{0,30}}\d")

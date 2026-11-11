@@ -71,9 +71,9 @@ CHANGE_LABELS = {
 # is left out and the sentence says nothing about it. The check runs on the window's thread.
 _COUNT_LIMIT_BYTES = 32 * 1024 * 1024
 _COUNT_CHUNK_BYTES = 1024 * 1024
-# A table that uses quotes needs a real CSV reader to count its records, which is slower; above this size the
-# count is left out.
-_QUOTED_COUNT_LIMIT_BYTES = 8 * 1024 * 1024
+# Up to this size the table is read with a real CSV reader, which is sure but slower; above it only a table with
+# no quotes is counted, by its lines.
+_CSV_COUNT_LIMIT_BYTES = 8 * 1024 * 1024
 _NEWLINE, _RETURN, _QUOTE = 10, 13, 34
 
 
@@ -320,11 +320,15 @@ def _now() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-def _count_plain_lines(info: Path) -> tuple[int, bool]:
-    """The lines of a file that are not blank, and whether it holds a quote anywhere."""
+def _count_plain_lines(info: Path) -> int | None:
+    """The lines of a large table that are not blank, or None when its lines cannot be told apart this simply.
+
+    That is when the file holds a quote (a quoted field may hold a line break) or a carriage return that is not
+    part of a CR LF pair (old line endings).
+    """
     import numpy as np
 
-    lines, quoted = 0, False
+    lines = 0
     # as if the file followed a blank line, so a blank first line is not counted either
     tail = np.array([_NEWLINE, _NEWLINE], dtype=np.uint8)
     with info.open("rb") as handle:
@@ -332,33 +336,36 @@ def _count_plain_lines(info: Path) -> tuple[int, bool]:
             data = np.frombuffer(chunk, dtype=np.uint8)
             seen = np.concatenate((tail, data))
             one_back, two_back = seen[1:-1], seen[:-2]
+            if np.any(data == _QUOTE) or np.any((one_back == _RETURN) & (data != _NEWLINE)):
+                return None
             blank = (one_back == _NEWLINE) | ((one_back == _RETURN) & (two_back == _NEWLINE))
             lines += int(np.count_nonzero((data == _NEWLINE) & ~blank))
-            quoted = quoted or bool(np.any(data == _QUOTE))
             tail = seen[-2:].copy()
+    if tail[-1] == _RETURN:
+        return None
     if tail[-1] != _NEWLINE:
         lines += 1
-    return lines, quoted
+    return lines
 
 
 def _count_surgeries(info: Path) -> int | None:
     """The records of a CSV table, or None when they cannot be counted cheaply and surely.
 
-    A table with no quotes has one record on each line that is not blank. One that uses quotes is read as CSV, so
-    a quoted line break stays inside its record and a stray quote in a plain field is only a character; a quote
-    still open at the end of the file gives no count instead of a wrong one.
+    Up to ``_CSV_COUNT_LIMIT_BYTES`` the table is read as CSV: a quoted line break stays inside its record, a stray
+    quote in a plain field is only a character, any line ending counts, and a line with nothing but spaces is not a
+    record. A quote still open at the end of the file gives no count instead of a wrong one. A larger table is
+    counted by its non-blank lines, and only when it holds no quote and no bare carriage return.
     """
     try:
         size = info.stat().st_size
         if size > _COUNT_LIMIT_BYTES:
             return None
-        lines, quoted = _count_plain_lines(info)
-        if not quoted:
-            return max(0, lines - 1)
-        if size > _QUOTED_COUNT_LIMIT_BYTES:
-            return None
+        if size > _CSV_COUNT_LIMIT_BYTES:
+            lines = _count_plain_lines(info)
+            return None if lines is None else max(0, lines - 1)
         with info.open(newline="", encoding="utf-8", errors="replace") as handle:
-            return max(0, sum(1 for row in csv.reader(handle, strict=True) if row) - 1)
+            rows = sum(1 for row in csv.reader(handle, strict=True) if any(field.strip() for field in row))
+        return max(0, rows - 1)
     except Exception:
         return None
 

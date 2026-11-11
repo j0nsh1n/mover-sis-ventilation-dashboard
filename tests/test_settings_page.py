@@ -486,6 +486,9 @@ def test_a_theme_chosen_from_find_while_settings_is_open_is_the_saved_theme_and_
     (b"PID,Height\nA,5'10\"\nB,6\nC,7\n", 3),  # a stray quote in a plain field is only a character
     (b"PID,Height\nA,5'10\"\nB,6\nC,5'11\"\nD,6\n", 4),
     (b"PID,Note\nA,\"never closed\nB,2\nC,3\n", None),  # a quote still open at the end: no count, not a wrong one
+    (b"PID,Age\rA,1\rB,2\rC,3\r", 3),  # old line endings, a carriage return alone
+    (b"PID,Age\nA,1\n   \nB,2\n", 2),  # a line of nothing but spaces is not a record
+    (b"\xef\xbb\xbfPID,Age\nA,1\n", 1),  # a byte-order mark
 ])
 def test_the_surgeries_count_is_the_records_of_the_table(tmp_path, content, records):
     from src.desktop.settings_ui import _count_surgeries
@@ -510,6 +513,27 @@ def test_the_count_reads_in_bounded_chunks_and_is_left_out_above_the_size_limit(
         (folder / name).write_bytes(table.read_bytes())
     result = settings_ui.check_emr_folder(str(folder))
     assert result.state == "ok" and "surgeries indexed" not in result.text and "3 of 3 required tables found" in result.text
+
+
+@pytest.mark.parametrize("content,records", [
+    (b"PID,Age\nA,1\nB,2\nC,3\n", 3),
+    (b"PID,Age\r\nA,1\r\n\r\nB,2\r\nC,3", 3),  # CR LF, a blank line, no line break at the end
+    (b"\n\nPID,Age\nA,1\n\n\n", 1),
+    (b"PID,Age\n", 0),
+    (b"PID,Note\nA,\"quoted\"\nB,2\n", None),  # a quote: lines are not surely records
+    (b"PID,Age\rA,1\rB,2\r", None),  # bare carriage returns: not counted by lines
+    (b"PID,Age\nA,1\r", None),
+    (b"PID,Age\rA,1\rB,2\n", None),  # a bare carriage return in the middle, a line feed at the end
+])
+def test_a_table_too_large_for_the_csv_reader_is_counted_by_its_lines_only_when_that_is_sure(
+        tmp_path, monkeypatch, content, records):
+    from src.desktop import settings_ui
+
+    monkeypatch.setattr(settings_ui, "_CSV_COUNT_LIMIT_BYTES", 0)
+    monkeypatch.setattr(settings_ui, "_COUNT_CHUNK_BYTES", 3)  # line ends and blank lines fall on chunk borders
+    table = tmp_path / "patient_information.csv"
+    table.write_bytes(content)
+    assert settings_ui._count_surgeries(table) == records
 
 
 def _check_no_cut_text_and_no_sideways_reach(window, page, qapp):
