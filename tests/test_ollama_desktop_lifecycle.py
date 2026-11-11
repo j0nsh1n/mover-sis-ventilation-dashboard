@@ -252,3 +252,66 @@ def test_a_thread_started_after_the_close_keeps_the_window_until_it_ends(window)
     assert shiboken6.isValid(win) and late.isRunning()
     release.set()
     pump(app, lambda: not shiboken6.isValid(win))
+
+
+def test_a_window_shown_again_before_it_is_freed_stays_whole(window):
+    win, app, _ = window
+    win.close()
+    win.show()
+    for _ in range(20):
+        app.processEvents()
+        time.sleep(0.01)
+    assert shiboken6.isValid(win) and win.isVisible()
+
+
+def test_closing_with_an_error_box_open_raises_nothing_afterwards(window, monkeypatch):
+    """The box's clean-up asks for focus on the question field; on a freed window that call must not run."""
+    import sys
+
+    win, app, _ = window
+    raised = []
+    monkeypatch.setattr(sys, "excepthook", lambda *info: raised.append(info))
+    monkeypatch.setattr(sys, "unraisablehook", lambda info: raised.append(info))
+    monkeypatch.setattr(ErrorCard, "open", lambda box: box.show())
+    win._warn("Load error", "synthetic failure", what="The analyzed cases could not be loaded.")
+    app.processEvents()
+    win.close()
+    pump(app, lambda: not shiboken6.isValid(win))
+    for _ in range(10):
+        app.processEvents()
+        time.sleep(0.01)
+    assert raised == []
+
+
+def test_the_app_quits_when_its_window_closes_during_a_running_job(tmp_path):
+    """The window hides while its jobs stop and closes later; Qt does not quit for a hidden window, so the app must."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = tmp_path / "quit_probe.py"
+    script.write_text(
+        "import threading\n"
+        "from PySide6.QtCore import QThread, QTimer\n"
+        "from PySide6.QtWidgets import QApplication\n"
+        "app = QApplication([])\n"
+        "from src.desktop.app import MainWindow\n"
+        "MainWindow._startup = lambda self: None\n"
+        "class Job(QThread):\n"
+        "    def run(self):\n"
+        "        while not self.isInterruptionRequested():\n"
+        "            self.msleep(20)\n"
+        "win = MainWindow()\n"
+        "win._worker = Job(win)\n"
+        "win.show()\n"
+        "win._worker.start()\n"
+        "QTimer.singleShot(300, win.close)\n"
+        "raise SystemExit(app.exec())\n"
+    )
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "MOVER_SILENT": "1", "PYTHONPATH": str(root),
+           "MOVER_CONFIG_DIR": str(tmp_path / "config"), "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+           "XDG_DATA_HOME": str(tmp_path / "xdg-data"), "MOVER_PROCESSED_DIR": str(tmp_path / "processed")}
+    done = subprocess.run([sys.executable, str(script)], cwd=root, env=env, timeout=30, capture_output=True)
+    assert done.returncode == 0, done.stderr.decode()[-2000:]

@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
         self._settings_note.setVisible(bool(note))
         self.statusBar().addPermanentWidget(self._settings_note)
 
-        QTimer.singleShot(0, self._startup)
+        QTimer.singleShot(0, self, self._startup)
 
     # ----- actions -----
     def _build_actions(self) -> None:
@@ -688,8 +688,13 @@ class MainWindow(QMainWindow):
         # open() returns immediately. exec() would hold startup until the box closed.
         box = ErrorCard(self, what=what or title, why=text, next_step=next_step, title=title)
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        box.destroyed.connect(lambda *_args: QTimer.singleShot(0, self._focus_research_question))
+        box.destroyed.connect(self._after_warning_closed)
         box.open()
+
+    def _after_warning_closed(self, *_args) -> None:
+        # Connected as the window's own method, not a lambda: when a closed window is freed (taking the box with
+        # it) Qt drops the connection, so nothing asks a deleted window for focus.
+        QTimer.singleShot(0, self, self._focus_research_question)
 
     def _focus_research_question(self) -> None:
         edit = self.research.question_edit
@@ -752,23 +757,29 @@ class MainWindow(QMainWindow):
             for worker in running:
                 worker.requestInterruption()
             event.ignore()
-            QTimer.singleShot(50, self.close)
+            QTimer.singleShot(50, self, self.close)
             return
+        retried = self._closing
         self._closing = False
         super().closeEvent(event)
         if not event.isAccepted():
-            self._closing = False
             return
+        app = QApplication.instance()
+        if retried and isinstance(app, QApplication) and app.quitOnLastWindowClosed() and not any(
+                widget.isVisible() for widget in app.topLevelWidgets() if widget is not self):
+            # Qt quits when the last visible window closes; this window was hidden while its jobs stopped, so that
+            # never happens and the process would stay running with no window. It quits here instead.
+            app.quit()
         # The window's children hold its own methods as signal receivers, which keeps a closed window alive from
         # Python's side for good; deleting the Qt object drops those connections, so the window is freed.
-        QTimer.singleShot(0, self._free_when_idle)
+        QTimer.singleShot(0, self, self._free_when_idle)
 
     def _free_when_idle(self) -> None:
         """Delete the closed window's Qt object, but never while one of its threads runs: Qt aborts on that."""
         if self.isVisible():
             return
         if any(thread.isRunning() for thread in self.findChildren(QThread)):
-            QTimer.singleShot(100, self._free_when_idle)
+            QTimer.singleShot(100, self, self._free_when_idle)
             return
         shiboken6.delete(self)
 
