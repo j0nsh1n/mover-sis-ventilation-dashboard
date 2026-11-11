@@ -308,7 +308,8 @@ def second_emr(synthetic_emr, tmp_path):
     return other
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write into a read-only folder")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="needs a folder nothing can be made in: not on Windows, and not as root")
 def test_a_save_that_cannot_make_the_processed_folder_writes_nothing_and_marks_that_field(
         flow, qapp, env, second_emr):
     update_settings(theme="light")

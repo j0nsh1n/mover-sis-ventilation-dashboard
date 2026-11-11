@@ -142,7 +142,8 @@ def read_only_folder(tmp_path):
     locked.chmod(0o700)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write into a read-only folder")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="needs a folder nothing can be made in: not on Windows, and not as root")
 def test_a_save_that_cannot_make_the_processed_folder_writes_nothing_and_says_which_folder(
         page, env, read_only_folder, tmp_path):
     other_emr = tmp_path / "emr-two"
