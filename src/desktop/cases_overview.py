@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QRectF,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QFont, QFontMetrics, QIcon, QKeyEvent, QKeySequence, QPainter, QShortcut
@@ -66,6 +67,10 @@ EMPTY_MESSAGE = "No processed cases yet. Run Data setup or a full-EMR scan."
 # List-column widths below which the header controls and the three charts stack instead of sitting in a row.
 HEADER_ROW_WIDTH = 760
 CHARTS_ROW_WIDTH = 600
+# A list with more rows than this waits for a pause in typing before it filters: each pass over a full scan takes
+# a noticeable part of a second, and a short list filters on every key
+FILTER_PAUSE_ROWS = 2000
+FILTER_PAUSE_MS = 250
 ROW_HEIGHT = 33
 HEADER_HEIGHT = 34
 HEADER_HEIGHT_WRAPPED = 48
@@ -82,6 +87,8 @@ SCORE_BAR_WIDTH = 40
 SCORE_BAR_HEIGHT = 5
 SELECTED_BAR = 3
 SORT_ROLE = Qt.ItemDataRole.UserRole
+# What the table sorts on: the place of a row's value among its column's, with the case ID breaking ties
+RANK_ROLE = Qt.ItemDataRole.UserRole + 1
 _NO_PARENT = QModelIndex()
 
 
@@ -158,6 +165,8 @@ class _CasesModel(QAbstractTableModel):
         self._rule_text: dict[str, str] = {}
         self._search: dict[int, tuple[str, ...]] = {}
         self._present: set[str] = set()
+        self._value_ranks: dict[int, list[int]] = {}
+        self._descending = False
 
     def has_field(self, key: str) -> bool:
         """True when the loaded frame has this field at all; a value missing inside it is "missing" in the preview."""
@@ -177,6 +186,7 @@ class _CasesModel(QAbstractTableModel):
     def set_frame(self, frame: pd.DataFrame | None) -> None:
         self.beginResetModel()
         self._search = {}
+        self._value_ranks = {}
         self._present = set()
         if frame is None or frame.empty or "PID" not in frame:
             self._cells = [[] for _ in COLUMNS]
@@ -184,7 +194,9 @@ class _CasesModel(QAbstractTableModel):
             self._flagged = []
         else:
             self._present = {column.key for column in COLUMNS if column.key in frame.columns}
-            ordered = frame.assign(_pid=frame["PID"].astype(str)).sort_values("_pid", kind="stable")
+            # Equal values in a sorted column stay in source order, so the source is in case-ID order for the tie-break
+            ordered = frame.assign(_pid=frame["PID"].astype(str)).sort_values(
+                "_pid", kind="stable", key=lambda ids: ids.str.casefold())
             cells: list[list[Any]] = []
             for column in COLUMNS:
                 if column.key not in ordered.columns:
@@ -204,6 +216,24 @@ class _CasesModel(QAbstractTableModel):
                     flagged = flagged + pd.to_numeric(ordered[name], errors="coerce").fillna(0)
             self._flagged = [bool(v) for v in (flagged > 0)]
         self.endResetModel()
+
+    def set_descending(self, descending: bool) -> None:
+        """Which way the table is about to sort: equal values keep case-ID order ascending either way."""
+        self._descending = descending
+
+    def rank_of(self, column: int, row: int) -> int:
+        """The number the table sorts a cell on: its value's place in the column, then its row's place in case-ID order.
+
+        Qt's sort is not stable, so the tie-break has to be part of the number. The places in a column are worked out
+        the first time it is sorted, so a sort compares whole numbers and never calls back into Python to compare cells.
+        """
+        places = self._value_ranks.get(column)
+        if places is None:
+            keys = [(0, "") if v is None else (1, v.casefold() if isinstance(v, str) else v) for v in self._cells[column]]
+            order = {key: i for i, key in enumerate(sorted(set(keys)))}
+            places = self._value_ranks[column] = [order[key] for key in keys]
+        # the rows are in case-ID order, so a row's own number is its place in it
+        return places[row] * self._count + (self._count - 1 - row if self._descending else row)
 
     def shown_texts(self, column: int) -> set[str]:
         """The distinct texts a column shows, for sizing it to the widest."""
@@ -270,6 +300,8 @@ class _CasesModel(QAbstractTableModel):
         if not index.isValid():
             return None
         column = COLUMNS[index.column()]
+        if role == RANK_ROLE:
+            return self.rank_of(index.column(), index.row())
         value = self._cells[index.column()][index.row()]
         if role == SORT_ROLE:
             return value.casefold() if isinstance(value, str) else value
@@ -301,7 +333,8 @@ class _CasesModel(QAbstractTableModel):
 
 
 class _CasesProxy(QSortFilterProxyModel):
-    """Equal values break by PID ascending in both directions, so repeated sorts do not reshuffle.
+    """Sorts on the model's ranks, which Qt compares without calling Python. A rank already carries the tie-break
+    (equal values by case ID ascending in both directions, so repeated sorts do not reshuffle).
 
     Rows are kept when the typed text is part of their case ID, procedure or a rule name.
     """
@@ -317,24 +350,18 @@ class _CasesProxy(QSortFilterProxyModel):
     def filter_text(self) -> str:
         return self._needle
 
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        source = self.sourceModel()
+        if isinstance(source, _CasesModel):
+            source.set_descending(order == Qt.SortOrder.DescendingOrder)
+        super().sort(column, order)
+
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:  # noqa: N802
         if not self._needle:
             return True
         source = self.sourceModel()
         assert isinstance(source, _CasesModel)
         return any(self._needle in field for field in source.search_fields(source_row))
-
-    def lessThan(self, left: QModelIndex | QPersistentModelIndex, right: QModelIndex | QPersistentModelIndex) -> bool:  # noqa: N802
-        a, b = left.data(SORT_ROLE), right.data(SORT_ROLE)
-        if a is not None and b is not None and a != b:
-            return bool(a < b)
-        if (a is None) != (b is None):
-            return a is None
-        source = self.sourceModel()
-        first, second = source.index(left.row(), 0).data(SORT_ROLE), source.index(right.row(), 0).data(SORT_ROLE)
-        # Qt flips the comparison for a descending sort, so flip the tie-break back
-        ascending = self.sortOrder() == Qt.SortOrder.AscendingOrder
-        return bool(first < second) if ascending else bool(first > second)
 
 
 class _CasesTable(QTableView):
@@ -504,10 +531,15 @@ class CasesOverview(QWidget):
         self._preview_source = PreviewSource()
         self._wide: bool | None = None
         # the nine columns' width tiers (see plan_column_widths) and the width each whole heading needs
-        self._tiers: list[list[int]] = [[]]
+        self._tiers: list[list[int]] = [[], [], [], []]
         self._full: list[int] = []
         self._header_row: bool | None = None
         self._charts_row: bool | None = None
+        self._applied_filter = ""
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(FILTER_PAUSE_MS)
+        self._filter_timer.timeout.connect(self._apply_filter)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -609,7 +641,7 @@ class CasesOverview(QWidget):
         self._model = _CasesModel(self)
         self._proxy = _CasesProxy(self)
         self._proxy.setSourceModel(self._model)
-        self._proxy.setSortRole(SORT_ROLE)
+        self._proxy.setSortRole(RANK_ROLE)
         self.table = _CasesTable()
         self.table.setObjectName("casesTable")
         self.table.setAccessibleName("Cases")
@@ -700,8 +732,9 @@ class CasesOverview(QWidget):
         return sum(self._tiers[0]) + TABLE_CHROME + PAGE_SCROLLBAR + sum(LIST_MARGINS_STACKED[::2])
 
     def side_by_side_width(self) -> int:
-        """Page width from which the preview sits beside the list: the list keeps its nine columns beside it."""
-        return sum(self._tiers[0]) + TABLE_CHROME + PAGE_SCROLLBAR + sum(LIST_MARGINS_WIDE[::2]) + PREVIEW_WIDTH
+        """Page width from which the preview sits beside the list: the list keeps readable Procedure and Top rules
+        columns beside it, so the table is never at its tightest right after the preview moves over."""
+        return sum(self._tiers[1]) + TABLE_CHROME + PAGE_SCROLLBAR + sum(LIST_MARGINS_WIDE[::2]) + PREVIEW_WIDTH
 
     def _reflow(self) -> None:
         wide = self.width() >= self.side_by_side_width()
@@ -830,7 +863,10 @@ class CasesOverview(QWidget):
         scored = len(self._scan.cases) if self._scan is not None else 0
         scan_text = f"Indexed {indexed:,}" if indexed is not None else f"Scanned {scored:,}"
         self.scan_tab.setText(scan_text)
-        self.scan_tab.setAccessibleName(scan_text)
+        # the label gives the indexed count; what the tab lists is the cases the scan scored, so a screen reader hears that
+        self.scan_tab.setAccessibleName(
+            f"Full-EMR scan, {scored:,} scored of {indexed:,} indexed" if indexed is not None
+            else f"Full-EMR scan, {scored:,} scored")
         self.scan_tab.setToolTip("The cases the full-EMR scan scored")
         self.scan_tab.setVisible(has_scan)
         # A lone tab is a label for the sample's size, not a choice, so it is not a stop on the Tab path
@@ -902,8 +938,17 @@ class CasesOverview(QWidget):
 
     # -- filter, summary and rows in view ---------------------------------------------------------------
 
-    def _filter_changed(self, text: str) -> None:
-        self._proxy.set_filter_text(text)
+    def _filter_changed(self, _text: str) -> None:
+        if self._model.rowCount() > FILTER_PAUSE_ROWS:
+            self._filter_timer.start()
+        else:
+            self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        """Filter by the text now in the field; the words on screen always describe the rows of the last pass."""
+        self._filter_timer.stop()
+        self._applied_filter = self.filter_edit.text().strip()
+        self._proxy.set_filter_text(self._applied_filter)
         self._refresh_view()
 
     def _refresh_view(self) -> None:
@@ -912,7 +957,7 @@ class CasesOverview(QWidget):
         self.table.setVisible(shown > 0)
         self.no_match_label.setVisible(total > 0 and shown == 0)
         if total and not shown:
-            needle = self.filter_edit.text().strip()
+            needle = self._applied_filter
             self.no_match_label.setText(
                 f"No case matches “{needle}”. Clear the filter to see all {total:,} cases."
             )
@@ -955,7 +1000,7 @@ class CasesOverview(QWidget):
         if not total:
             self.summary_label.setText("No cases in the full-EMR scan." if scan else "No analyzed cases yet.")
             return
-        needle = self.filter_edit.text().strip()
+        needle = self._applied_filter
         if not shown:
             self.summary_label.setText(f"0 of {_plural(total, noun)} match “{needle}”.")
             return

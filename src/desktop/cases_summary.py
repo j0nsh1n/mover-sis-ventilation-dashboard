@@ -28,6 +28,8 @@ from src.desktop.charts import (
 from src.desktop.theme import active_theme, token_color
 
 TOP_RULES = 5
+# Rules tied with the last one shown are shown too, up to this many bars; the chart's height has room for no more
+MOST_RULES_SHOWN = 8
 
 SCORE_CAPTION = (
     "Anomaly score counts each flagged minute once at its worst severity and composites per episode. "
@@ -74,7 +76,8 @@ def score_spec(cases: pd.DataFrame | None) -> ChartSpec:
     edges = histogram_edges(values)
     counts = np.histogram(values, bins=edges)[0]
     ranges = "; ".join(
-        f"{edges[i]:g} to {edges[i + 1]:g}, {int(count):,}" for i, count in enumerate(counts)
+        # a score on an edge belongs to the range that starts there, so a range ends "under" its upper edge
+        f"{edges[i]:g} to under {edges[i + 1]:g}, {int(count):,}" for i, count in enumerate(counts)
     )
     description = (
         f"Histogram of the anomaly score of {_plural(len(values), 'case')}, from {_number(min(values))} to "
@@ -99,13 +102,23 @@ def rules_spec(flags: pd.DataFrame | None, labels: Mapping[str, str], *, minutes
     totals = totals[totals > 0].sort_values(ascending=False, kind="stable")
     if totals.empty:
         return ChartSpec("Minutes a rule flagged, summed over these cases.", NO_FLAGGED_RULES, empty=NO_FLAGGED_RULES)
-    top = [(labels.get(str(rule), str(rule)), float(total)) for rule, total in totals.head(TOP_RULES).items()]
-    caption = (
-        f"Minutes each rule flagged, summed over these cases. The {len(top)} most frequent of "
-        f"{_plural(len(totals), 'rule')}."
-        if len(totals) > len(top) else
-        f"Minutes each rule flagged, summed over these cases. All {_plural(len(totals), 'rule')} that flagged."
-    )
+    shown = len(totals)
+    tied_out = 0
+    if len(totals) > TOP_RULES:
+        # the totals fall, so the rules tied with the fifth run from it to the last one at its total
+        through_ties = int((totals >= totals.iloc[TOP_RULES - 1]).sum())
+        shown = through_ties if through_ties <= MOST_RULES_SHOWN else TOP_RULES
+        tied_out = through_ties - shown
+    top = [(labels.get(str(rule), str(rule)), float(total)) for rule, total in totals.head(shown).items()]
+    if len(totals) > shown:
+        caption = (
+            f"Minutes each rule flagged, summed over these cases. The {shown} most frequent of "
+            f"{_plural(len(totals), 'rule')}."
+        )
+        if tied_out:
+            caption += f" {tied_out:,} more tie with the last one shown."
+    else:
+        caption = f"Minutes each rule flagged, summed over these cases. All {_plural(len(totals), 'rule')} that flagged."
     description = "Most frequent rules by flagged minutes: " + ", ".join(
         f"{name}, {_number(value)}" for name, value in top) + "."
     return ChartSpec(

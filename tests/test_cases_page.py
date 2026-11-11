@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import os
 import re
 from pathlib import Path
@@ -20,6 +21,8 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 import src.desktop.cases_overview as cases_module  # noqa: E402
+import src.desktop.research_workers as research_workers  # noqa: E402
+import src.services.case_fetch as case_fetch  # noqa: E402
 from src.desktop.cases_overview import (  # noqa: E402
     COLUMNS,
     EMPTY_MESSAGE,
@@ -171,6 +174,9 @@ def test_the_scope_tabs_appear_for_a_scan_and_switch_the_list(qapp):
                                                    "preset": "default", "failed_shards": []})
     view, overview = _workspace(scan=scan)
     assert (overview.sample_tab.text(), overview.scan_tab.text()) == ("Analyzed 3", "Indexed 19,114")
+    # the label gives the indexed count, but the tab lists the 2 cases the scan scored, so its spoken name says that
+    assert overview.scan_tab.accessibleName() == "Full-EMR scan, 2 scored of 19,114 indexed"
+    assert overview.sample_tab.accessibleName() == "Analyzed 3"
     assert overview.scan_tab.isVisibleTo(overview)
     assert _pids(overview)[0].startswith("SYN")
     QTest.mouseClick(overview.scan_tab, Qt.MouseButton.LeftButton)
@@ -193,6 +199,7 @@ def test_a_scan_that_does_not_know_the_indexed_count_labels_its_tab_with_the_sco
     scan = ScanResult(_cases().iloc[:2].assign(PID=["SCAN1", "SCAN2"]), pd.DataFrame(), {"preset": "default"})
     view, overview = _workspace(scan=scan)
     assert overview.scan_tab.text() == "Scanned 2"
+    assert overview.scan_tab.accessibleName() == "Full-EMR scan, 2 scored"
     assert overview.scope_label.text() == "Loaded sample: 3 analyzed cases."
     overview.set_scope("scan")
     assert overview.scope_label.text() == "Full-EMR scan: 2 scored."
@@ -274,6 +281,86 @@ def test_sorting_works_on_the_filtered_rows(qapp):
     assert _pids(overview) == ["SYN0000000001", "SYN0000000002"]
     overview.table.sortByColumn(SCORE_COLUMN, Qt.SortOrder.AscendingOrder)
     assert _pids(overview) == ["SYN0000000002", "SYN0000000001"]
+    view.close()
+
+
+def _tied_cases() -> pd.DataFrame:
+    """Rows built to expose a sort that goes wrong: ties in every column, blanks, mixed-size numbers, mixed-case IDs."""
+    return pd.DataFrame({
+        "PID": ["SYN0b", "syn0A", "SYN0c", "syn07", "SYN09", "SYN10", "syn0D", "SYN08", "SYN0e", "syn0F"],
+        "Procedure_short": ["Hip", "hip", "Craniotomy", "", "Thyroid", "craniotomy", "Hip", "", "Zeta", "alpha"],
+        "Age": [9, 10, 9.5, None, 100, 10, None, 9, 100, 1.25],
+        "Gender": ["F", "M", "", "F", "m", "f", "M", "", "F", "M"],
+        "case_duration_min": [90.0, 90.0, 120.0, None, 9.0, 100.0, 90.0, 10.0, None, 1000.0],
+        "anomaly_score": [5, 12, 5, 0, 9, 12, 5, 100, 0, 9],
+        "n_warn": [0, 10, 9, 0, 12, 12, 9, 0, 100, 1], "n_critical": [0, 0, 1, 0, 0, 10, 2, 0, 0, 2],
+        "top_rules": ["pip_high(9)", "pip_high(12)", "", "Pip_high(9)", "peep_high(1), pip_high(2)", "pip_high(12)",
+                      "pip_high(9)", "", "zzz(1)", "aaa(3)"],
+    })
+
+
+def _expected_order(frame: pd.DataFrame, key: str, ascending: bool) -> list[str]:
+    """The order the page promised before the sort key was prepared: a blank first, text without regard to case,
+    equal values by case ID ascending (case-insensitively) in both directions. Worked out from the frame itself."""
+    def value(row: int):
+        raw = frame[key].iloc[row]
+        if COLUMNS[_column(key)].kind == "number":
+            return None if pd.isna(raw) else float(raw)
+        return "" if pd.isna(raw) else str(raw).casefold()
+
+    def blank_first(row: int):
+        v = value(row)
+        return (0, 0) if v is None else (1, v)
+
+    by_id = sorted(range(len(frame)), key=lambda r: str(frame["PID"].iloc[r]).casefold())
+    # Python's sort is stable even when reversed, so equal values keep their case-ID order in both directions
+    ordered = sorted(by_id, key=blank_first, reverse=not ascending)
+    return [str(frame["PID"].iloc[r]) for r in ordered]
+
+
+@pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+@pytest.mark.parametrize("column", TABLE_COLUMNS, ids=lambda c: c.key)
+def test_every_column_sorts_in_the_order_it_always_did_with_ties_blanks_and_mixed_numbers(qapp, column, order):
+    frame = _tied_cases()
+    view, overview = _workspace(cases=frame)
+    overview.table.sortByColumn(_column(column.key), order)
+    ascending = order == Qt.SortOrder.AscendingOrder
+    assert _pids(overview) == _expected_order(frame, column.key, ascending)
+    # sorting again from the other direction and back gives the same rows: nothing reshuffles
+    overview.table.sortByColumn(_column(column.key), Qt.SortOrder.DescendingOrder if ascending else Qt.SortOrder.AscendingOrder)
+    overview.table.sortByColumn(_column(column.key), order)
+    assert _pids(overview) == _expected_order(frame, column.key, ascending)
+    view.close()
+
+
+def test_a_long_list_filters_once_typing_pauses_and_the_words_describe_the_rows_shown(qapp):
+    from src.desktop.cases_overview import FILTER_PAUSE_MS, FILTER_PAUSE_ROWS
+
+    frame = _wide_cases(FILTER_PAUSE_ROWS + 100)
+    view, overview = _workspace(cases=frame)
+    passes = []
+    original = overview._proxy.set_filter_text
+    overview._proxy.set_filter_text = lambda text: (passes.append(text), original(text))[1]
+    before = overview.summary_label.text()
+    overview.filter_edit.setFocus()
+    QTest.keyClicks(overview.filter_edit, "SYN000")
+    assert passes == [] and overview.summary_label.text() == before
+    assert overview.filter_count_label.isHidden() or overview.filter_count_label.text() == ""
+    # a sort during the pause rewrites the sentence, and it still describes the rows on screen, not the typed text
+    overview.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+    assert "SYN000" not in overview.summary_label.text() and overview._proxy.rowCount() == len(frame)
+    QTest.qWait(FILTER_PAUSE_MS + 150)
+    assert passes == ["SYN000"]
+    assert "matching “SYN000”" in overview.summary_label.text()
+    assert overview._proxy.rowCount() == 16
+    view.close()
+
+
+def test_a_short_list_filters_on_every_key(qapp):
+    view, overview = _workspace()
+    overview.filter_edit.setFocus()
+    QTest.keyClicks(overview.filter_edit, "thy")
+    assert _pids(overview) == ["SYN0000000003"]
     view.close()
 
 
@@ -363,14 +450,21 @@ def test_the_score_bar_is_scaled_to_the_largest_score_in_view(value, peak, room,
 
 
 def _bar_pixels(overview: CasesOverview, proxy_row: int) -> int:
-    """Width of the ink bar drawn in a row's score cell, counted along the cell's middle line."""
+    """Length of the ink bar at the left of a row's score cell: the unbroken run of ink along the cell's middle line.
+
+    The run stops at the bar's end, so the strokes of the number at the right of a wide cell are never counted.
+    """
     image = overview.table.viewport().grab().toImage()
     cell = overview.table.visualRect(overview.table.model().index(proxy_row, SCORE_COLUMN))
     ink = token_color("ink_2")
     middle = cell.center().y()
-    return sum(1 for x in range(cell.left(), cell.right())
-               if abs(image.pixelColor(x, middle).red() - ink.red()) < 24
-               and abs(image.pixelColor(x, middle).green() - ink.green()) < 24)
+    length = 0
+    for x in range(cell.left() + cases_module.CELL_PADDING, cell.right()):
+        pixel = image.pixelColor(x, middle)
+        if abs(pixel.red() - ink.red()) >= 24 or abs(pixel.green() - ink.green()) >= 24:
+            break
+        length += 1
+    return length
 
 
 def test_score_bars_are_drawn_against_the_largest_score_that_is_in_view(qapp):
@@ -562,26 +656,58 @@ def test_with_no_current_row_the_panel_says_what_to_do(qapp):
     view.close()
 
 
-def test_open_case_opens_the_previewed_case_and_a_new_current_row_starts_nothing(qapp, monkeypatch):
-    view, overview = _workspace(**_preview_data())
+def _forbid_reads(monkeypatch) -> list[str]:
+    """Make every way the page could fetch or read a case record a hit, including the by-name import the workers use.
+
+    A slot's exception is printed and swallowed by Qt, so raising alone would not fail a test; the hits are asserted.
+    """
+    import pyarrow.parquet as parquet
+    from PySide6.QtCore import QThread, QThreadPool
+
+    hits: list[str] = []
+
+    def trap(name: str):
+        def forbidden(*args, **kwargs):
+            hits.append(name)
+            raise AssertionError(f"moving through the rows called {name}")
+        return forbidden
+
+    for owner, name in ((pd, "read_parquet"), (pd, "read_csv"), (pd, "read_feather"),
+                        (parquet, "read_table"), (QThread, "start"), (QThreadPool, "start"),
+                        (research_workers, "fetch_cases"), (case_fetch, "fetch_cases"),
+                        (builtins, "open")):
+        monkeypatch.setattr(owner, name, trap(f"{getattr(owner, '__name__', owner)}.{name}"))
+    return hits
+
+
+@pytest.mark.parametrize("scope", ["sample", "scan"])
+def test_open_case_opens_the_previewed_case_and_a_new_current_row_starts_nothing(qapp, monkeypatch, scope):
+    data = _preview_data()
+    scan_cases = _cases().assign(PID=["SCAN1", "SCAN2", "SCAN3"])
+    scan = ScanResult(scan_cases, _episodes("SCAN1", [("pip_high", "warn", 15.0)]), {"preset": "default"})
+    view, overview = _workspace(scan=scan, **data)
+    overview.set_scope(scope)
     opened = []
     overview.case_requested.connect(opened.append)
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("moving through the rows read data")
-
-    for owner, name in ((pd, "read_parquet"), (pd, "read_csv"), (pd, "read_feather")):
-        monkeypatch.setattr(owner, name, forbidden)
-    monkeypatch.setattr("src.services.case_fetch.fetch_cases", forbidden)
-    monkeypatch.setattr("builtins.open", forbidden)
+    hits = _forbid_reads(monkeypatch)
     overview.table.setFocus()
-    for key in (Qt.Key.Key_Down, Qt.Key.Key_Down, Qt.Key.Key_Up):
+    walked = []
+    for key in (Qt.Key.Key_Down, Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Home, Qt.Key.Key_End,
+                Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Up):
         QTest.keyClick(overview.table, key)
-    assert opened == []
+        walked.append(overview.table.currentIndex().row())
+    # the walk really moved through the rows, and a sort and a filter also leave the data alone
+    assert len(set(walked)) > 1
+    overview.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+    overview.filter_edit.setText("a")
+    overview.filter_edit.clear()
+    assert hits == [] and opened == []
     monkeypatch.undo()
+    overview.table.selectRow(1)
     assert overview.preview.open_button.isEnabled()
     overview.preview.open_button.click()
     assert opened == [overview.cell_text(1, 0)]
+    assert overview.cell_text(1, 0).startswith("SCAN" if scope == "scan" else "SYN")
     view.close()
 
 
@@ -628,7 +754,7 @@ def test_preview_source_episodes_are_worst_first_and_unknown_differs_from_none()
 
 
 def test_the_preview_sits_at_the_right_full_height_on_the_side_panel_ground(qapp):
-    view, overview = _workspace(1316)
+    view, overview = _workspace(1500)
     preview = overview.preview
     assert overview._wide and preview.property("stacked") is False
     assert preview.width() == 336 and preview.x() + preview.width() == overview.width()
@@ -636,6 +762,29 @@ def test_the_preview_sits_at_the_right_full_height_on_the_side_panel_ground(qapp
     assert preview.x() > overview.table.mapTo(overview, QPoint(0, 0)).x() + overview.table.width() - 1
     image = overview.grab().toImage()
     assert image.pixelColor(preview.x() + 100, preview.height() // 2) == QColor(tokens("light")["sheet"])
+    view.close()
+
+
+def test_the_preview_moves_beside_the_list_only_once_the_readable_column_widths_fit(qapp):
+    view, overview = _workspace(1500)
+    readable, least = overview._tiers[1], overview._tiers[0]
+    # the readable widths give Procedure 150 px and Top rules 260 px; the least widths give them 95 and 64 or so
+    procedure, rules = _column("Procedure_short"), _column("top_rules")
+    assert (readable[procedure], readable[rules]) == (150, 260) and readable[rules] > least[rules] + 100
+    chrome = (cases_module.TABLE_CHROME + cases_module.PAGE_SCROLLBAR
+              + sum(cases_module.LIST_MARGINS_WIDE[::2]) + cases_module.PREVIEW_WIDTH)
+    edge = sum(readable) + chrome
+    assert overview.side_by_side_width() == edge
+    # beside the least-width threshold the old rule would have used, the list is still below the preview
+    assert edge > sum(least) + chrome + 200
+    for width, wide in ((edge - 1, False), (edge, True), (edge - 100, False), (edge + 100, True)):
+        view.resize(width, 800)
+        QApplication.processEvents()
+        assert overview.width() == width and overview._wide is wide, width
+        widths = [overview.table.columnWidth(c) for c in range(9)]
+        if wide:
+            # beside the preview the flexible columns are at least at their readable widths, never tighter
+            assert widths[procedure] >= readable[procedure] and widths[rules] >= readable[rules], (width, widths)
     view.close()
 
 
@@ -657,11 +806,11 @@ def test_a_narrow_page_puts_the_preview_under_the_list_and_never_scrolls_sideway
 
 
 def test_beside_the_open_rules_drawer_the_page_stacks_instead_of_scrolling_sideways(qapp):
-    view, overview = _workspace(1300)
+    view, overview = _workspace(1500)
     assert overview._wide
     view.open_rules()
     QTest.qWait(50)
-    assert overview.width() < 1300 - 200 and not overview._wide
+    assert overview.width() < 1500 - 200 and not overview._wide
     assert overview._scroll.horizontalScrollBar().maximum() == 0
     view.close()
 
@@ -678,7 +827,7 @@ def test_narrow_pages_stack_the_header_controls_and_the_three_charts(qapp):
 def test_the_page_paints_on_the_themes_own_grounds(qapp, theme):
     apply_theme(qapp, theme)
     try:
-        view, overview = _workspace(1316)
+        view, overview = _workspace(1500)
         palette = tokens(theme)
         image = overview.grab().toImage()
         assert image.pixelColor(overview.width() // 2, 4) == QColor(palette["paper"])
@@ -733,7 +882,16 @@ def test_the_score_chart_counts_cases_per_range_and_says_it_is_not_a_risk_score(
     # 6 cases, bins of 2 from 0: 0-2 holds two, 6-8 holds three, 12-14 holds one
     assert spec.description == (
         "Histogram of the anomaly score of 6 cases, from 0 to 12. Cases in each score range: "
-        "0 to 2, 2; 2 to 4, 0; 4 to 6, 0; 6 to 8, 3; 8 to 10, 0; 10 to 12, 0; 12 to 14, 1.")
+        "0 to under 2, 2; 2 to under 4, 0; 4 to under 6, 0; 6 to under 8, 3; 8 to under 10, 0; 10 to under 12, 0; "
+        "12 to under 14, 1.")
+
+
+def test_a_score_on_a_range_edge_is_counted_in_the_range_that_starts_there_and_the_words_say_so():
+    # bins of 10 from 0: 40 and 49 are in "40 to under 50", and 50 starts the next range together with 59
+    spec = score_spec(pd.DataFrame({"anomaly_score": [0, 40, 49, 50, 59]}))
+    assert spec.description == (
+        "Histogram of the anomaly score of 5 cases, from 0 to 59. Cases in each score range: 0 to under 10, 1; "
+        "10 to under 20, 0; 20 to under 30, 0; 30 to under 40, 0; 40 to under 50, 2; 50 to under 60, 2.")
 
 
 def test_the_rule_chart_counts_flagged_minutes_per_rule_and_names_how():
@@ -747,6 +905,30 @@ def test_the_rule_chart_counts_flagged_minutes_per_rule_and_names_how():
     many = pd.DataFrame({"rule_id": [f"r{i}" for i in range(8) for _ in range(8 - i)]})
     assert rules_spec(many, {}, minutes_column=None).caption == (
         "Minutes each rule flagged, summed over these cases. The 5 most frequent of 8 rules.")
+
+
+def _rule_flags(counts: dict[str, int]) -> pd.DataFrame:
+    return pd.DataFrame({"rule_id": [rule for rule, count in counts.items() for _ in range(count)]})
+
+
+def test_the_rule_chart_shows_every_rule_tied_with_the_last_one_and_the_caption_counts_what_it_shows():
+    # r5 and r6 tie for fifth place: both are shown, and the caption says 6, not 5
+    spec = rules_spec(_rule_flags({"r1": 9, "r2": 8, "r3": 7, "r4": 6, "r5": 5, "r6": 5, "r7": 4}), {}, minutes_column=None)
+    assert spec.description == "Most frequent rules by flagged minutes: r1, 9, r2, 8, r3, 7, r4, 6, r5, 5, r6, 5."
+    assert spec.caption == "Minutes each rule flagged, summed over these cases. The 6 most frequent of 7 rules."
+    # a tie that runs to the end of the list shows every rule, so the caption says all of them flagged
+    everything = rules_spec(_rule_flags({f"r{i}": 5 for i in range(1, 8)}), {}, minutes_column=None)
+    assert everything.caption == "Minutes each rule flagged, summed over these cases. All 7 rules that flagged."
+    assert everything.description.count(", 5") == 7
+
+
+def test_a_tie_too_wide_for_the_chart_shows_five_and_the_caption_says_how_many_more_tie():
+    counts = {"r1": 9, "r2": 8, "r3": 7, "r4": 6} | {f"t{i}": 5 for i in range(1, 7)}
+    spec = rules_spec(_rule_flags(counts), {}, minutes_column=None)
+    assert spec.description == "Most frequent rules by flagged minutes: r1, 9, r2, 8, r3, 7, r4, 6, t1, 5."
+    assert spec.caption == (
+        "Minutes each rule flagged, summed over these cases. The 5 most frequent of 10 rules. "
+        "5 more tie with the last one shown.")
 
 
 def test_the_duration_chart_marks_the_median_and_says_what_a_tick_is():
