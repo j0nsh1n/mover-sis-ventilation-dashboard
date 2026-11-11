@@ -323,6 +323,22 @@ def test_a_line_that_is_not_an_attempt_is_skipped_counted_and_the_file_is_left_a
     assert load_attempts(target).unreadable == 4 and len(load_attempts(target)) == 3
 
 
+def test_an_attempt_saved_after_a_cut_off_last_line_starts_on_its_own_line(tmp_path: Path):
+    target = tmp_path / "attempts.jsonl"
+    record_attempt("FAKE-QUIET", "first", (), target)
+    whole = target.read_bytes()
+    cut_off = b'{"at": "2026-01-01T00:00:00Z", "case_id": "FAKE-QUIET", "hando'
+    target.write_bytes(whole + cut_off)
+    record_attempt("FAKE-DESAT", "second", (), target)
+    # what was in the file is untouched; the cut-off line is the only one that cannot be read
+    assert target.read_bytes().startswith(whole + cut_off + b"\n")
+    rows = load_attempts(target)
+    assert [row["handoff"] for row in rows] == ["first", "second"] and rows.unreadable == 1
+    # a file that already ends in a line break gets no blank line added
+    record_attempt("FAKE-DESAT", "third", (), target)
+    assert b"\n\n" not in target.read_bytes() and load_attempts(target).unreadable == 1
+
+
 def test_a_missing_or_clean_history_file_reports_none_unreadable(tmp_path: Path):
     assert load_attempts(tmp_path / "none.jsonl") == () and load_attempts(tmp_path / "none.jsonl").unreadable == 0
     target = tmp_path / "history.jsonl"

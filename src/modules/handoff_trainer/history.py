@@ -38,8 +38,18 @@ def record_attempt(
         payload["sections"] = {key: text[:_TEXT_LIMIT] for key, text in sections.items()}
     payload["grades"] = [{"status": item.status, "kind": item.kind, "evidence": item.evidence} for item in grades]
     with target.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload) + "\n")
+        # A last line cut off before its line break would swallow this attempt too; it starts on a line of its own.
+        handle.write(("" if _ends_with_line_break(target) else "\n") + json.dumps(payload) + "\n")
     return target
+
+
+def _ends_with_line_break(path: Path) -> bool:
+    """Whether a new line can be appended as it is: the file is empty or its last byte is a line break."""
+    with path.open("rb") as handle:
+        if handle.seek(0, 2) == 0:
+            return True
+        handle.seek(-1, 2)
+        return handle.read(1) == b"\n"
 
 
 class Attempts(tuple[dict, ...]):
