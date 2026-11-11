@@ -46,13 +46,18 @@ _SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
 _SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
 _IN_SENTENCE = rf"(?:(?!{_SENTENCE_END_PATTERN}).)"
 _NEGATION_REACH = 40
+# A number is read whole. It never starts right after a full stop, so a window that passes the point of "86.0"
+# cannot stop on its "0".
+_NUMBER = r"(?<![\d.])(\d+(?:\.\d+)?)(?!\d)"
 _SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_IN_SENTENCE}{{0,30}}\d")
 _MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_IN_SENTENCE}{{0,30}}\d")
 _SATURATION_UNDER_NINETY = re.compile(
     rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_IN_SENTENCE}{{0,20}}(?:under|below|<)\s*90\b"
 )
+# A minute may carry a fraction ("minute 10.5"); it counts as the whole minute it falls in, and the claim, fraction
+# and range end included, is taken out of the text so that none of it is read as a value.
 _MINUTE_CLAIM = re.compile(
-    r"\b(?:minutes|minute|mins|min)\s+(\d+)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+))?"
+    r"\b(?:minutes|minute|mins|min)\s+(\d+(?:\.\d+)?)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+(?:\.\d+)?))?"
 )
 _SPO2_SERIES = ("spo2", "sp02", "oxygen saturation", "saturation")
 _MAP_SERIES = ("blood pressure", "map")
@@ -521,9 +526,9 @@ def _details_by_finding(text: str) -> dict[str, str]:
 def _minute_numbers(text: str) -> tuple[int, ...]:
     found: list[int] = []
     for match in _MINUTE_CLAIM.finditer(text):
-        found.append(int(match.group(1)))
+        found.append(int(float(match.group(1))))
         if match.group(2):
-            found.append(int(match.group(2)))
+            found.append(int(float(match.group(2))))
     return tuple(found)
 
 
@@ -539,7 +544,7 @@ def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
     pattern = (
         r"\b(?:"
         + "|".join(re.escape(word) for word in words)
-        + rf")\b{_IN_SENTENCE}{{0,24}}(?<!\d)(\d+(?:\.\d+)?)(?!\d)"
+        + rf")\b{_IN_SENTENCE}{{0,24}}{_NUMBER}"
     )
     return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
 
