@@ -40,21 +40,19 @@ _HYPO_CONCEPT = ("hypotension", "low map", "low blood pressure", "map under 65",
 _DESAT_CONCEPT = ("desatur", "low oxygen")
 _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
 # The one definition of where a sentence ends: a full stop, question mark, exclamation mark, semicolon or
-# line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. The negation and owner
-# look-backs stop here and never reach into the next sentence.
+# line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. Every look-back in this file
+# (negation, owner, value, minute, drug) stops here and never reaches into the next sentence.
 _SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
 _SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
+_IN_SENTENCE = rf"(?:(?!{_SENTENCE_END_PATTERN}).)"
 _NEGATION_REACH = 40
-# The stretch between a series word and its value stops at any full stop, a decimal point included, as well as at
-# the other sentence ends. So "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2: the reach cannot pass the point
-# of 97.5 to pick up the 75 that belongs to MAP.
-_TO_VALUE = r"[^.?!;\n]"
-# A number is read whole: it never starts in the middle of another number or right after a full stop.
+# A number is read whole. It never starts right after a full stop, so a window that passes the point of "86.0"
+# cannot stop on its "0".
 _NUMBER = r"(?<![\d.])(\d+(?:\.\d+)?)(?!\d)"
-_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_TO_VALUE}{{0,30}}\d")
-_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_TO_VALUE}{{0,30}}\d")
+_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_IN_SENTENCE}{{0,30}}\d")
+_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_IN_SENTENCE}{{0,30}}\d")
 _SATURATION_UNDER_NINETY = re.compile(
-    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_TO_VALUE}{{0,20}}(?:under|below|<)\s*90\b"
+    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_IN_SENTENCE}{{0,20}}(?:under|below|<)\s*90\b"
 )
 # A minute may carry a fraction ("minute 10.5"); it counts as the whole minute it falls in, and the claim, fraction
 # and range end included, is taken out of the text so that none of it is read as a value.
@@ -546,7 +544,7 @@ def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
     pattern = (
         r"\b(?:"
         + "|".join(re.escape(word) for word in words)
-        + rf")\b{_TO_VALUE}{{0,24}}{_NUMBER}"
+        + rf")\b{_IN_SENTENCE}{{0,24}}{_NUMBER}"
     )
     return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
 
