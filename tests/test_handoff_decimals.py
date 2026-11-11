@@ -161,6 +161,28 @@ def test_a_reading_after_its_value_is_not_taken_for_that_value(case_id, text, ex
 
 
 @pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        *[(f"map 60, {word} 98", ("map",)) for word in ("spo2", "sp02", "saturation", "sats", "sat")],
+        *[(f"spo2 86, {word} 60", ("spo2",)) for word in ("map", "blood pressure", "bp")],
+        *[(f"spo2 86, {word} 30", ("spo2",)) for word in (
+            "heart rate", "hr", "pulse", "respiratory rate", "resp rate", "rr", "etco2", "end tidal", "end-tidal",
+            "temperature", "temp", "dose", "doses")],
+        *[(f"spo2 86 then {drug.casefold()} 100", ("spo2",)) for drug in grading.TRACKED_DRUGS],
+    ],
+)
+def test_every_stop_word_ends_the_reach_to_the_value(text, words):
+    first = float(text.split()[1].rstrip(","))
+    assert grading._numbers_after(text, words) == (first,)
+
+
+@pytest.mark.parametrize("text", ["spo2 on pulse ox 86", "spo2 by pulse-ox 86", "saturation by pulse oximetry 86"])
+def test_pulse_ox_is_how_a_saturation_is_measured_not_another_measurement(text):
+    words = ("saturation",) if text.startswith("saturation") else ("spo2",)
+    assert grading._numbers_after(text, words) == (86.0,)
+
+
+@pytest.mark.parametrize(
     ("text", "words", "read"),
     [
         ("spo2 at minute 21 was 86", ("spo2",), (86.0,)),  # a value after a written minute still counts

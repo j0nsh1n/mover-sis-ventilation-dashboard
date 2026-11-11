@@ -48,15 +48,14 @@ _NEGATION_REACH = 40
 # Words that start another measurement, a drug or a dose. The reach from a series word to its value stops at any of
 # them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2.
 _MEASURE_WORDS = (
-    "spo2", "sp02", "oxygen saturation", "saturation", "sats", "sat", "map", "mean arterial pressure",
-    "blood pressure", "bp", "heart rate", "hr", "respiratory rate", "resp rate", "rr", "etco2",
-    "end tidal", "end-tidal", "temperature", "temp",
+    "spo2", "sp02", "saturation", "sats", "sat", "map", "blood pressure", "bp", "heart rate", "hr",
+    "respiratory rate", "resp rate", "rr", "etco2", "end tidal", "end-tidal", "temperature", "temp",
 )
 _VALUE_STOP = (
     rf"{_SENTENCE_END_PATTERN}|\b(?:"
     + "|".join(re.escape(word) for word in (*_MEASURE_WORDS, *(drug.casefold() for drug in TRACKED_DRUGS)))
     # a pulse is a heart rate, but "pulse ox" and "pulse oximeter" are how a saturation is measured
-    + r"|pulse(?!\s*ox)|doses?)\b"
+    + r"|pulse(?![\s-]*ox)|doses?)\b"
 )
 # One character of the reach from a series word to its value: inside the sentence, before any stop above.
 _TO_VALUE = rf"(?:(?!{_VALUE_STOP}).)"
