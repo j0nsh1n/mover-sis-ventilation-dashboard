@@ -181,6 +181,48 @@ def test_a_failure_that_only_shows_during_the_writes_puts_the_old_file_back_byte
     assert page.changes() == ["EMR folder", "rule preset"] and page.save_button.isEnabled()
 
 
+def test_a_save_refused_during_the_writes_leaves_no_new_folder_and_the_models_folder_as_it_was(
+        page, env, tmp_path, monkeypatch):
+    """The processed folder is made during the writes; a later write failing must not leave it behind."""
+    import src.desktop.settings_ui as settings_ui
+
+    new_processed, new_models = tmp_path / "fresh" / "processed", tmp_path / "models-two"
+    new_models.mkdir()
+
+    from src.user_settings import update_settings
+
+    def fail(**values):
+        if "ollama_model" in values:
+            raise OSError(28, "No space left on device")
+        return update_settings(**values)
+
+    monkeypatch.setattr(settings_ui, "update_settings", fail)
+    settings_path().unlink()  # with no settings file, the models folder falls back to the environment
+    before_env = os.environ["OLLAMA_MODELS"]
+    vals = {**page.values(), "processed_dir": str(new_processed), "ollama_models_dir": str(new_models)}
+    with pytest.raises(settings_ui.SaveRefused):
+        settings_ui.apply_values(vals)
+    assert not settings_path().exists()
+    assert not new_processed.exists() and not new_processed.parent.exists()
+    assert os.environ["OLLAMA_MODELS"] == before_env
+
+
+def test_a_failure_that_is_not_a_file_error_still_puts_the_old_settings_back(page, env, monkeypatch):
+    import src.desktop.settings_ui as settings_ui
+
+    before = settings_path().read_bytes()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("not a file error")
+
+    monkeypatch.setattr(settings_ui, "configure_processed_directory", fail)
+    vals = {**page.values(), "preset": "lenient", "wave_dir": ""}
+    with pytest.raises(RuntimeError):
+        settings_ui.apply_values(vals)
+    assert settings_path().read_bytes() == before
+    assert emr_dir() == env.emr.resolve() and processed_dir() == env.processed.resolve()
+
+
 def test_an_os_error_that_reaches_the_handler_is_still_a_refusal_not_a_crash(page, env, monkeypatch):
     def fail(*args, **kwargs):
         raise OSError(28, "No space left on device")
@@ -439,6 +481,11 @@ def test_a_theme_chosen_from_find_while_settings_is_open_is_the_saved_theme_and_
     (b"PID,Procedure\nA,\"Knee, total\"\nB,\"two\nlines\"\nC,\"say \"\"hi\"\"\nthere\"\n", 3),  # a quoted line break
     (b"PID,Age\n", 0),
     (b"", 0),
+    (b"PID,Age\nA,1\nB,2\nC,3\n\n", 3),  # a blank last line is not a record
+    (b"\nPID,Age\nA,1\n\nB,2\r\n\r\nC,3\r\n", 3),  # nor a blank line anywhere else
+    (b"PID,Height\nA,5'10\"\nB,6\nC,7\n", 3),  # a stray quote in a plain field is only a character
+    (b"PID,Height\nA,5'10\"\nB,6\nC,5'11\"\nD,6\n", 4),
+    (b"PID,Note\nA,\"never closed\nB,2\nC,3\n", None),  # a quote still open at the end: no count, not a wrong one
 ])
 def test_the_surgeries_count_is_the_records_of_the_table(tmp_path, content, records):
     from src.desktop.settings_ui import _count_surgeries

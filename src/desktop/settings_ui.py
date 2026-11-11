@@ -7,6 +7,7 @@ function, so a folder that passes in one passes in the other. The screens themse
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from dataclasses import dataclass
@@ -70,7 +71,10 @@ CHANGE_LABELS = {
 # is left out and the sentence says nothing about it. The check runs on the window's thread.
 _COUNT_LIMIT_BYTES = 32 * 1024 * 1024
 _COUNT_CHUNK_BYTES = 1024 * 1024
-_NEWLINE, _QUOTE = 10, 34
+# A table that uses quotes needs a real CSV reader to count its records, which is slower; above this size the
+# count is left out.
+_QUOTED_COUNT_LIMIT_BYTES = 8 * 1024 * 1024
+_NEWLINE, _RETURN, _QUOTE = 10, 13, 34
 
 
 def browse_dir(parent: QWidget, start: str = "") -> str:
@@ -206,16 +210,43 @@ def _write_values(vals: dict[str, str]) -> None:
     update_settings(preset=vals["preset"])
 
 
-def _put_back(path: Path, before: bytes | None, session: dict[str, Path]) -> None:
-    """Return the settings file to the exact bytes it had, and the session to the folders it was using."""
+def _missing_folders(path_text: str) -> list[Path]:
+    """The folders a save would have to make for ``path_text``, innermost first; empty when it already exists."""
+    if not path_text:
+        return []
+    wanted = Path(path_text).expanduser().resolve()
+    missing: list[Path] = []
+    while not wanted.exists() and wanted.parent != wanted:
+        missing.append(wanted)
+        wanted = wanted.parent
+    return missing
+
+
+def _put_back(path: Path, before: bytes | None, session: dict[str, Path], models_env: str | None,
+              made: list[Path]) -> None:
+    """Return the settings file to the exact bytes it had, and the session to the folders it was using.
+
+    ``made`` are folders that did not exist before the save; any of them the save made is removed again while it is
+    still empty. ``models_env`` is the models folder the session's environment named before the save.
+    """
     if before is None:
         path.unlink(missing_ok=True)
     else:
         staging = path.with_suffix(".json.restore")
         staging.write_bytes(before)
         staging.replace(path)
+    for folder in made:
+        try:
+            folder.rmdir()
+        except OSError:
+            # Not made, not empty, or not removable: it stays, and nothing in it is touched.
+            break
     clear_session_path_overrides()
     set_session_paths(**session)
+    if models_env is None:
+        os.environ.pop("OLLAMA_MODELS", None)
+    else:
+        os.environ["OLLAMA_MODELS"] = models_env
     apply_ollama_env_from_settings()
 
 
@@ -234,6 +265,8 @@ def apply_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str
     wave = wave_dir()
     session = {"data_dir": data_dir(), "emr_dir": emr_dir(), "processed_dir": processed_dir(),
                **({"wave_dir": wave} if wave is not None else {})}
+    models_env = os.environ.get("OLLAMA_MODELS")
+    made = _missing_folders(vals["processed_dir"])
     try:
         _write_values(vals)
     except (OSError, GuardrailError) as exc:
@@ -241,12 +274,12 @@ def apply_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str
         where = f" ({exc.filename})" if isinstance(exc, OSError) and exc.filename else ""
         sentence = f"The settings could not be written: {reason}{where}."
         try:
-            _put_back(path, before, session)
+            _put_back(path, before, session, models_env, made)
         except OSError:
             sentence += " The previous settings file could not be put back, so check it before using the app."
         raise SaveRefused({"": sentence}) from exc
     except BaseException:
-        _put_back(path, before, session)
+        _put_back(path, before, session, models_env, made)
         raise
     return []
 
@@ -287,29 +320,45 @@ def _now() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-def _count_surgeries(info: Path) -> int | None:
-    """The records of a CSV table, or None when the file is too large to count at once.
+def _count_plain_lines(info: Path) -> tuple[int, bool]:
+    """The lines of a file that are not blank, and whether it holds a quote anywhere."""
+    import numpy as np
 
-    A record ends at a line break outside quotes, so a quoted field that holds a line break is still one record.
+    lines, quoted = 0, False
+    # as if the file followed a blank line, so a blank first line is not counted either
+    tail = np.array([_NEWLINE, _NEWLINE], dtype=np.uint8)
+    with info.open("rb") as handle:
+        while chunk := handle.read(_COUNT_CHUNK_BYTES):
+            data = np.frombuffer(chunk, dtype=np.uint8)
+            seen = np.concatenate((tail, data))
+            one_back, two_back = seen[1:-1], seen[:-2]
+            blank = (one_back == _NEWLINE) | ((one_back == _RETURN) & (two_back == _NEWLINE))
+            lines += int(np.count_nonzero((data == _NEWLINE) & ~blank))
+            quoted = quoted or bool(np.any(data == _QUOTE))
+            tail = seen[-2:].copy()
+    if tail[-1] != _NEWLINE:
+        lines += 1
+    return lines, quoted
+
+
+def _count_surgeries(info: Path) -> int | None:
+    """The records of a CSV table, or None when they cannot be counted cheaply and surely.
+
+    A table with no quotes has one record on each line that is not blank. One that uses quotes is read as CSV, so
+    a quoted line break stays inside its record and a stray quote in a plain field is only a character; a quote
+    still open at the end of the file gives no count instead of a wrong one.
     """
     try:
-        if info.stat().st_size > _COUNT_LIMIT_BYTES:
+        size = info.stat().st_size
+        if size > _COUNT_LIMIT_BYTES:
             return None
-        import numpy as np
-
-        lines, inside, last = 0, 0, _NEWLINE
-        with info.open("rb") as handle:
-            while chunk := handle.read(_COUNT_CHUNK_BYTES):
-                data = np.frombuffer(chunk, dtype=np.uint8)
-                # uint8 wraps at 256, which keeps the parity of the quotes seen so far
-                quotes = np.cumsum(data == _QUOTE, dtype=np.uint8)
-                outside = ((quotes + inside) & 1) == 0
-                lines += int(np.count_nonzero((data == _NEWLINE) & outside))
-                inside = (inside + int(quotes[-1])) & 1
-                last = int(data[-1])
-        if last != _NEWLINE:
-            lines += 1
-        return max(0, lines - 1)
+        lines, quoted = _count_plain_lines(info)
+        if not quoted:
+            return max(0, lines - 1)
+        if size > _QUOTED_COUNT_LIMIT_BYTES:
+            return None
+        with info.open(newline="", encoding="utf-8", errors="replace") as handle:
+            return max(0, sum(1 for row in csv.reader(handle, strict=True) if row) - 1)
     except Exception:
         return None
 
