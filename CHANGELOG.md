@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Fictional demo data: first-time setup and Settings offer "Try with fictional
+  demo data", which builds a small invented dataset on this computer so the app
+  can be tried without the MOVER dataset. While it is in use, the top bar, the
+  footer, Settings and About say it is fictional demo data. Choosing a real EMR
+  folder in Settings removes the label and leaves the demo folder in place.
+
 - View can open Handoff practice, Medication and vitals, or a fictional WHO
   checklist. Monitoring still opens first. Handoff practice grades fictional
   timelines as mentioned, missed, or unsupported. The medication page shows
@@ -20,6 +26,47 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   workspace, menus, and Settings gear stay in place.
 
 ### Changed
+
+- New look, Settings and setup: Settings is a page of the window (left
+  navigation, Ctrl+, or Ctrl+K) instead of a dialog. Nothing is written until
+  Save; leaving with unsaved changes asks whether to save, discard or stay; a
+  save that is refused changes nothing and says why. Data setup moved from the
+  Local AI menu to Settings and Ctrl+K. First-time setup fills the window in
+  three steps (welcome, data, done) and can be left with "Not now". About shows
+  the version, license, font credits and the data in use. Failures show in one
+  restyled error box that says what failed, why, what to do next, and keeps the
+  code and log location folded away.
+
+- New look, rule reference: the Rules drawer uses the same colors as the other
+  pages (it was light in dark mode), groups the rules by signal with counts, and
+  shows each rule's shape and severity word, thresholds, hold time, skipped
+  phases and a threshold ruler. A rule with no single limit says why it has no
+  ruler. Opened from an episode, it scrolls to that episode's rule and marks it
+  "Current rule". A screen reader reads each rule as one sentence.
+
+- New look, Medication and vitals: drugs and vital signs are drawn on one
+  minute axis (a mark for a bolus, a bar for an infusion, missing readings
+  hatched and labelled, never joined across or drawn as zero) with a cursor, and
+  "Rows only" shows the same data as a table with a unit column and record
+  notes. A dose whose end is before its start is marked as such. With a case
+  open in Research the page shows that case, and the top bar and footer then
+  name the data in use instead of saying the page is invented.
+
+- New look, WHO checklist: the checklist is an index card with one tab per stage
+  that counts its marked lines ("Sign in 4 of 6"), real check boxes that work
+  from the keyboard, and Reset card.
+
+- Handoff grading: a negation word (no, not, never, without, denies, denied) now
+  denies a finding only inside its own sentence, so "Stable, no distress.
+  Hypotension from minute 10 to 16" counts the hypotension. A sentence ends at a
+  full stop, question mark, exclamation mark, semicolon or line break. The
+  "Situation awareness and contingency plans" box is saved but not graded, and
+  the page says so.
+
+- Cases page: the preview is narrower and stays beside the list in the default
+  window, with rule names wrapping instead of being cut; filtering a full-EMR
+  scan no longer pauses on every key; rules tied for the last place in the
+  rules chart are all shown.
 
 - New look, Handoff practice: the page shows the invented timeline on the left
   as a chart (arterial MAP, noninvasive MAP and SpO2, a track with no readings
@@ -34,7 +81,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   item's minutes on the chart and in the table. Try again keeps your text; Next
   fictional run moves to the next run and clears the boxes. History lists past
   attempts, newest first. Attempts now keep the five sections apart as well as
-  the joined text; earlier attempts still load. Grading is unchanged.
+  the joined text; earlier attempts still load. Two grading rules changed; see
+  the Handoff grading entry below.
 
 - New look, Cases page: the list of cases uses the same paper and night ledger
   colors as the other pages, in light and dark. The header is the title, one
@@ -110,6 +158,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - `install_local.sh` adds a `mover-suite` command next to `mover-sis-monitor`.
 
 ### Fixed
+
+- Handoff practice: a wrong value for a missing MAP or SpO2 series now counts
+  ("0 of 1 found"); boxes up to eight lines no longer scroll; a check scrolls its
+  feedback into view; saved attempts that cannot be read are skipped and
+  reported, and a new attempt is never merged into a cut-off last line; History
+  says "not graded" for an attempt with text only in the ungraded box; the page
+  fits the narrowest window.
 
 - Opening the Cases/Articles dropdown by keyboard shows both choices. A scroll
   arrow no longer covers half of "Articles". The same fix applies to the other

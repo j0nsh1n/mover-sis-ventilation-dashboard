@@ -334,7 +334,9 @@ WHO checklist as tabs), Rules and Settings. There is no menu bar: every former
 menu action is in the Ctrl+K command search and keeps its shortcut (Ctrl+1 to
 Ctrl+4, Ctrl+O, Ctrl+Shift+O, Ctrl+R, Ctrl+Q, Ctrl+,). The running head shows a
 breadcrumb for the open place, "Find Ctrl+K", and the research-only line (on
-practice pages, "Fictional practice"). Neither line is ever cut: in a narrow window
+practice pages that show only invented material, "Fictional practice";
+Medication and vitals with an open case keeps the research-only line and the
+data footer). Neither line is ever cut: in a narrow window
 the breadcrumb and Find give up room first, then the research-only line shortens to
 "Not for patient care" and the practice line to "Fictional practice", with the full
 sentence in the tooltip and the accessible name. The footer shows the data source (folder
@@ -435,7 +437,7 @@ Handoff grading:
   kind belongs to that episode. A drug given a minute that none of its doses
   show is unsupported, and that drug stays missed.
 - A sentence ends at a full stop, question mark, exclamation mark, semicolon or
-  line break. A full stop inside a number ("0.5") does not end one. A negation
+  line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. A negation
   word (no, not, never, without, denies, denied) denies a finding or a drug
   only inside its own sentence; it never reaches into the next one.
 - The practice page has five I-PASS section boxes: Illness severity, Patient

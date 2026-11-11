@@ -289,19 +289,32 @@ Wave root (optional) ──► wave_decode                   │
   cell; stage 2 the app frame (left rail, running head, footer, Ctrl+K, no
   menu bar); stage 3 the research page; stage 4 the case page
   (`src/desktop/case_page.py`, `threshold_ruler.py`, the focused chart in
-  `charts.py`). Stages 1 to 3 are pushed at `bed3906`; stage 4 and its review
-  fixes are local only. Plan and owner decisions:
-  `_work/mover-suite/VISUAL-OVERHAUL-PLAN.md`. Next: stage 5, Cases and Rules
-  (the Rules drawer is still light in dark mode). The cases overview, Rules
-  drawer, Settings and practice panels keep their own colors until their
-  stages.
+  `charts.py`). Plan and owner decisions:
+  `_work/mover-suite/VISUAL-OVERHAUL-PLAN.md`.
 - **Desktop contract checks:** `rust-desktop-tests/` is run by neither CI nor
   the pytest suite. Run it by hand after any change under `src/desktop/`; it
   was red on this branch from stage 2 until `7f158a6` and found two real
   layout faults.
-- **Open spec wording (needs the owner's approval):** F still says "a mark
-  on the lane" (now a band per episode), and the frame text does not say how
-  narrow windows shorten Find, the research-only line and the footer.
+- **Visual overhaul, stages 5 to 7 (2026-11-11, same branch):** the Cases page
+  (`cases_overview.py`, `cases_preview.py`, `cases_summary.py`), the rule
+  reference drawer (`rules_drawer.py`), Settings as a page
+  (`settings_page.py`, shared parts in `settings_ui.py`), full-window setup
+  (`setup_flow.py`), fictional demo data (`demo_data.py`, marker checked by
+  `runtime_paths.demo_data_in_use`), About (`about_dialog.py`), the shared
+  error box (`error_card.py`), and the three practice pages under
+  `src/modules/` are rebuilt. Each was built by a Sonnet 5.5 worker and
+  reviewed by Opus 5.5; the review findings are fixed on the branch. Not done:
+  stage 8 (AppImage build and native checks on it) and stage 9 (polish run).
+- **Handoff grading changed (owner-approved, in spec.md):** a negation word
+  denies only inside its own sentence, and the Situation awareness and
+  contingency plans box is saved but not graded.
+- **Known and open:** a closed `MainWindow` is never freed (it connects its
+  own bound methods to its children's signals), so tests delete their windows
+  with the `dispose` fixture in `tests/conftest.py`; the wiring in `app.py`
+  is unchanged. The answer gate's age check (`_claimed_ages` in
+  `src/llm/agent.py`) reads a case ID ending in a digit plus "f" or "m" as an
+  age and sex; not fixed. The small-model plan is
+  `_work/mover-suite/SMALL-MODEL-PLAN.md`; nothing of it is built.
 - **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
 - **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
   Phase 2 commit's parent is `1bca1cebd8b6b24c2dbf53bf3a167fddd051bd1c`.
