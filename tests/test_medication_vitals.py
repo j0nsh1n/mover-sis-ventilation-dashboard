@@ -61,6 +61,8 @@ def test_an_end_before_the_start_is_labeled_instead_of_called_an_infusion():
     )
     rows = align_rows(medications, pd.DataFrame())
     assert rows[0].kind == "end time is before the start time"
+    assert rows[0].end is None, "the page does not pick which of the two times is right"
+    assert rows[0].note == "end time is before the start time (start minute 12, end minute 9)"
 
 
 def test_medication_package_does_not_open_the_emr_loader():

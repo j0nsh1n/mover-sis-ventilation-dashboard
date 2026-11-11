@@ -17,7 +17,14 @@ from src.desktop.theme import apply_theme, token_color
 from src.modules.medication_vitals.align import DISCLAIMER, align_rows, fictional_demo
 from src.modules.medication_vitals.panel import DEMO_ID, NO_ROWS, UNREADABLE, MedicationVitalsPanel
 from src.modules.medication_vitals.timeline import build_timeline, cursor_text, describe
-from src.modules.medication_vitals.timeline_chart import build_timeline_figure, render_timeline
+from src.modules.medication_vitals.timeline_chart import (
+    LEFT_OUT,
+    MAX_LANE_ROWS,
+    REVERSED_KEY,
+    build_timeline_figure,
+    left_out_text,
+    render_timeline,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -147,7 +154,7 @@ def test_the_chart_the_table_and_the_description_state_the_same_numbers(qapp):
     assert doses["Drug C"][:5] == ["minute 5", "Drug C", "not recorded", "", "bolus"]
     assert doses["Drug C"][6] == "dose field empty; no end time recorded"
     texts = {t.get_text() for t in fig.findobj(matplotlib.text.Text) if t.get_text()}
-    assert {"Heart rate", "SpO₂", "Noninvasive MAP", "bpm", "mmHg", "%", "minute", "Drugs", "no samples"} <= texts
+    assert {"Heart rate", "SpO₂", "Noninvasive MAP", "bpm", "mmHg", "%", "minute", "Drugs", "missing"} <= texts
 
 
 def test_a_value_the_record_leaves_out_is_never_drawn_as_zero_or_filled_in(qapp):
@@ -176,7 +183,7 @@ def test_a_missing_boxs_hatch_grows_to_hold_its_label_only_where_no_reading_is_u
 
     # Narrow, a label's width would span minutes 2 and 4, which have readings: the hatch keeps its one minute.
     assert hatch(276) == [(2.5, 3.5)]
-    # Wide, it grows to hold "no samples" and still covers no reading.
+    # Wide, it grows to hold "missing" and still covers no reading.
     (low, high), = hatch(1100)
     assert high - low > 1 and low < 3 < high and 2 < low and high < 4
 
@@ -298,6 +305,19 @@ def test_tab_goes_from_the_view_tabs_to_the_chart_to_the_table_and_the_table_kee
         seen.append(qapp.focusWidget())
     assert seen == [panel.chart, panel.table]
     assert not panel.table.tabKeyNavigation()
+
+
+def test_tab_never_stops_on_an_unnamed_scroll_area(panel, qapp):
+    from PySide6.QtWidgets import QAbstractScrollArea
+
+    panel.view_tabs.setFocus()
+    stops = []
+    for _ in range(12):
+        QTest.keyClick(qapp.focusWidget(), Qt.Key.Key_Tab)
+        stops.append(qapp.focusWidget())
+    assert panel.chart in stops and panel.table in stops
+    assert panel.page_scroll not in stops
+    assert not [w for w in stops if isinstance(w, QAbstractScrollArea) and not w.accessibleName()]
 
 
 def test_rows_only_hides_the_chart_and_keeps_the_table(panel, qapp):
@@ -440,3 +460,160 @@ def test_the_medication_package_has_no_colour_of_its_own():
         assert not re.search(r"QColor\(\s*[\"']#", source), path.name
         assert not re.search(r"QColor\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)", source), path.name
         assert "Qt.GlobalColor" not in source, path.name
+
+
+# —— one word for a reading the record has a row for and no value ——
+
+
+def test_the_chart_the_table_and_the_description_use_the_same_word_for_a_missing_reading(qapp):
+    page = MedicationVitalsPanel()
+    medications, timeseries = _record()
+    page.show_case("TEST-REC", medications, timeseries)
+    timeline = page.chart.timeline()
+    fig, _, _ = build_timeline_figure(timeline, 900, "light")
+    drawn = {t.get_text() for ax in fig.axes for t in ax.texts}
+    assert "missing" in drawn and "no samples" not in drawn
+    assert any(row[2] == "missing" for row in _table_rows(page))
+    assert "missing at minute 2." in describe(timeline)
+    assert "Heart rate missing; SpO₂ missing" in cursor_text(timeline, 2)
+
+
+# —— a dose whose end time is before its start time ——
+
+
+def _reversed_record() -> tuple[pd.DataFrame, pd.DataFrame]:
+    medications = pd.DataFrame(
+        [
+            {"Drug_name": "Drug A", "Dose": 2, "Drug_units": "mg", "t_min": 1, "end_min": None},
+            {"Drug_name": "Drug W", "Dose": 0.5, "Drug_units": "mg", "t_min": 3, "end_min": 2},
+        ]
+    )
+    return medications, pd.DataFrame([{"t_min": 0, "HR": 60}, {"t_min": 4, "HR": 64}])
+
+
+def test_a_dose_that_ends_before_it_starts_is_not_drawn_as_a_bolus_and_says_so_everywhere(qapp):
+    page = MedicationVitalsPanel()
+    medications, timeseries = _reversed_record()
+    page.show_case("TEST-REV", medications, timeseries)
+    timeline = page.chart.timeline()
+    fig, _, _ = build_timeline_figure(timeline, 1100, "light")
+    lane = _by_subject(fig)["doses"]
+    marks = {line.get_marker(): list(line.get_xdata()) for line in lane.lines}
+    assert marks == {"s": [1.0], "D": [3.0]}, "the filled square is the bolus of Drug A only"
+    (reversed_mark,) = [line for line in lane.lines if line.get_marker() == "D"]
+    assert reversed_mark.get_markerfacecolor() != reversed_mark.get_markeredgecolor(), "an open mark"
+    assert not [patch for patch in lane.patches if patch.get_hatch()], "and not an infusion bar"
+    # The chart's key names the mark.
+    key_words = " ".join(t.get_text() for t in fig.texts)
+    assert "end time is before the start time" in key_words and "open diamond" in key_words
+    assert "end time is before the start time" in REVERSED_KEY
+    # The table: the Kind column and the Record note both say it, with both times as the record gives them.
+    row = next(r for r in _table_rows(page) if r[1] == "Drug W")
+    assert row[4] == "end time is before the start time"
+    assert row[6] == "end time is before the start time (start minute 3, end minute 2)"
+    # The description agrees, and does not call the dose a bolus.
+    assert "Drug W 0.5 mg at minute 3 (end time is before the start time)" in describe(timeline)
+    assert "Drug W 0.5 mg at minute 3 (bolus)" not in describe(timeline)
+
+
+def test_a_chart_without_such_a_dose_has_no_key_line_for_it(qapp):
+    medications, timeseries = _record()
+    timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+    fig, _, _ = build_timeline_figure(timeline, 1100, "light")
+    assert "open diamond" not in " ".join(t.get_text() for t in fig.texts)
+    assert {line.get_marker() for line in _by_subject(fig)["doses"].lines} == {"s"}
+
+
+def test_the_key_line_for_it_fits_in_the_chart_at_a_narrow_and_a_wide_width(qapp):
+    medications, timeseries = _reversed_record()
+    timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+    for width in (276, 420, 1100):
+        fig, _, _ = build_timeline_figure(timeline, width, "light")
+        renderer = fig.canvas.get_renderer()
+        right = fig.bbox.width
+        for text in fig.texts:
+            if text.get_text():
+                box = text.get_window_extent(renderer)
+                assert 0 <= box.x0 and box.x1 <= right + 1 and 0 <= box.y0 and box.y1 <= fig.bbox.height + 1, (
+                    width, text.get_text())
+
+
+# —— more drug rows than the lane has rows ——
+
+
+def _many_doses(count: int, minute_of) -> tuple[pd.DataFrame, pd.DataFrame]:
+    medications = pd.DataFrame(
+        [{"Drug_name": f"Drug {chr(65 + index)}", "Dose": 10 + index, "Drug_units": "mg", "t_min": minute_of(index),
+          "end_min": None} for index in range(count)]
+    )
+    return medications, pd.DataFrame([{"t_min": 0, "HR": 60}, {"t_min": 20, "HR": 64}])
+
+
+def _drawn_label_boxes(fig):
+    renderer = fig.canvas.get_renderer()
+    lane = _by_subject(fig)["doses"]
+    return [(t.get_text(), t.get_window_extent(renderer)) for t in lane.texts if t.get_text().startswith("Drug ")]
+
+
+def test_seven_doses_at_one_minute_draw_six_labels_and_say_the_seventh_is_in_the_table_only(qapp):
+    page = MedicationVitalsPanel()
+    page.resize(1100, 900)
+    medications, timeseries = _many_doses(7, lambda index: 5)
+    page.show_case("TEST-7", medications, timeseries)
+    page.show()
+    for _ in range(3):
+        qapp.processEvents()
+    page.chart.redraw()
+    timeline = page.chart.timeline()
+    fig, _, _ = build_timeline_figure(timeline, 1100, "light")
+    labels = _drawn_label_boxes(fig)
+    assert [text for text, _box in labels] == [f"Drug {chr(65 + i)} {10 + i} mg" for i in range(MAX_LANE_ROWS)]
+    for index, (_, first) in enumerate(labels):
+        for _, second in labels[index + 1:]:
+            assert not first.overlaps(second)
+    said = [t.get_text() for t in fig.texts]
+    assert left_out_text(1) == "1 more dose is in the table only." and left_out_text(1) in said
+    # The table lists all seven, and the chart's spoken description says what the picture leaves out.
+    assert sum(row[1].startswith("Drug ") for row in _table_rows(page)) == 7
+    assert left_out_text(1) in page.chart.accessibleDescription()
+    assert "Drug G 16 mg at minute 5 (bolus)" in page.chart.accessibleDescription()
+    page.close()
+
+
+def test_the_count_changes_with_the_doses_and_a_chart_with_room_for_all_says_nothing(qapp):
+    for count, expected in ((6, 0), (8, 2), (12, 6)):
+        medications, timeseries = _many_doses(count, lambda index: 5)
+        timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+        rendered = render_timeline(timeline, 900, "light")
+        assert rendered.left_out == expected, count
+    # Spread over the axis, the same seven labels share rows and none is left out.
+    medications, timeseries = _many_doses(7, lambda index: index * 3)
+    timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+    assert render_timeline(timeline, 900, "light").left_out == 0
+    fig, _, _ = build_timeline_figure(timeline, 900, "light")
+    assert len(_drawn_label_boxes(fig)) == 7
+    assert not [t for t in fig.texts if "more dose" in t.get_text()]
+
+
+@pytest.mark.parametrize("width", [276, 420, 900, 1300])
+def test_no_two_drawn_dose_labels_overlap_however_many_doses_there_are(qapp, width):
+    medications, timeseries = _many_doses(14, lambda index: (index * 5) % 9 + 2)
+    timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+    fig, _, _ = build_timeline_figure(timeline, width, "light")
+    labels = _drawn_label_boxes(fig)
+    assert labels
+    for index, (_, first) in enumerate(labels):
+        for _, second in labels[index + 1:]:
+            assert not first.overlaps(second)
+    assert LEFT_OUT < 0 and len(labels) + render_timeline(timeline, width, "light").left_out == 14
+
+
+def test_the_note_about_left_out_doses_sits_inside_the_picture_at_a_narrow_width(qapp):
+    medications, timeseries = _many_doses(9, lambda index: 5)
+    timeline = build_timeline("t", "minute", align_rows(medications, timeseries))
+    rendered = render_timeline(timeline, 276, "light")
+    assert rendered.left_out == 3
+    fig, _, _ = build_timeline_figure(timeline, 276, "light")
+    note = next(t for t in fig.texts if "more doses" in t.get_text())
+    box = note.get_window_extent(fig.canvas.get_renderer())
+    assert 0 <= box.x0 and box.x1 <= fig.bbox.width and 0 <= box.y0 and box.y1 <= fig.bbox.height

@@ -8,6 +8,7 @@ cursor and its tag are painted over the picture, so stepping the cursor does not
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass
 
 import matplotlib
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from src.desktop.charts import LOGICAL_DPI, chart_family, px_to_pt, token_rgba
 from src.desktop.fonts import tabular
 from src.desktop.theme import active_theme, token_color, tokens
-from src.modules.medication_vitals.align import _number
+from src.modules.medication_vitals.align import END_BEFORE_START, _number
 from src.modules.medication_vitals.timeline import Dose, Timeline, Track, cursor_text, describe, value_at
 
 # Layout in logical pixels. Below COMPACT_BELOW the names sit above their tracks instead of beside them, so the
@@ -48,8 +49,14 @@ MAX_LANE_ROWS = 6
 _MARK_HALF = 6
 _LABEL_GAP = 6
 _ROW_GAP = 8
-_MISSING_WORD = "no samples"
+LEFT_OUT = -1  # the row of a dose the lane has no room to label
+# The record's own word for a reading it has a row for but no value, as the table and the description write it.
+_MISSING_WORD = "missing"
 LANE_KEY = "bolus mark · infusion bar"
+REVERSED_KEY = f"open diamond: {END_BEFORE_START}"
+KEY_FIRST = 19  # the key's first line sits this far under the lane's top when the names are beside the tracks
+KEY_LINE = 13
+NOTE_HEIGHT = 18  # the line under the chart that says how many doses it leaves out
 
 
 def is_compact(width: int) -> bool:
@@ -112,9 +119,12 @@ def _place_doses(
                     if all(extent[0] >= end + _ROW_GAP or extent[1] <= start - _ROW_GAP for start, end in spans)),
                    None)
         if row is None:
-            row = len(taken) if len(taken) < MAX_LANE_ROWS else MAX_LANE_ROWS - 1
-            if row == len(taken):
-                taken.append([])
+            if len(taken) == MAX_LANE_ROWS:
+                # No row is free of the labels already there: this dose is left to the table, never drawn over another.
+                placed.append(_Placed(dose, LEFT_OUT, label_left, label_x, fits))
+                continue
+            row = len(taken)
+            taken.append([])
         taken[row].append(extent)
         placed.append(_Placed(dose, row, label_left, label_x, fits))
     return placed
@@ -141,14 +151,15 @@ def _plot_width(width: int) -> float:
     return max(width - left - right, 40.0)
 
 
-def chart_height(timeline: Timeline, width: int, lane_rows: int = 1, stacked: bool | None = None) -> int:
-    """The height the chart needs at ``width``; the drug lane's rows decide the last part."""
+def chart_height(timeline: Timeline, width: int, lane_rows: int = 1, stacked: bool | None = None,
+                 extra: int = 0) -> int:
+    """The height the chart needs at ``width``; the drug lane's rows decide the last part, ``extra`` px more."""
     compact = is_compact(width)
     stacked = compact if stacked is None else stacked
     track = (COMPACT_TRACK_HEIGHT + COMPACT_HEAD) if compact else TRACK_HEIGHT
     tracks = len(timeline.tracks) * (track + TRACK_GAP)
     lane = max(lane_rows, 1) * (STACKED_LANE_ROW if stacked else LANE_ROW) + (LANE_HEAD if compact else 0)
-    return TOP_PAD + tracks + LANE_PAD + lane + (COMPACT_AXIS_HEIGHT if compact else AXIS_HEIGHT)
+    return TOP_PAD + tracks + LANE_PAD + lane + (COMPACT_AXIS_HEIGHT if compact else AXIS_HEIGHT) + extra
 
 
 @dataclass(frozen=True)
@@ -158,6 +169,7 @@ class RenderedTimeline:
     height: int
     xlim: tuple[float, float]
     axes: tuple[QRectF, ...]  # the tracks, then the drug lane, in widget pixels
+    left_out: int = 0  # doses the lane had no room to label, so none is drawn; the table lists them
 
 
 def build_timeline_figure(
@@ -165,15 +177,16 @@ def build_timeline_figure(
 ) -> tuple[Figure, tuple[QRectF, ...], tuple[float, float]]:
     """The figure for ``timeline`` at ``width`` logical pixels, the axes' boxes in widget pixels and the x limits."""
     with matplotlib.rc_context({"font.family": chart_family(), "hatch.linewidth": 0.8}):
-        return _build(timeline, width, theme, dpr)
+        fig, boxes, xlim, _left_out = _build(timeline, width, theme, dpr)
+        return fig, boxes, xlim
 
 
 def render_timeline(timeline: Timeline, width: int, theme: str | None, dpr: float = 1.0) -> RenderedTimeline:
     with matplotlib.rc_context({"font.family": chart_family(), "hatch.linewidth": 0.8}):
-        fig, boxes, xlim = _build(timeline, width, theme, dpr)
+        fig, boxes, xlim, left_out = _build(timeline, width, theme, dpr)
         buffer = io.BytesIO()
         FigureCanvasAgg(fig).print_png(buffer)
-    return RenderedTimeline(buffer.getvalue(), width, round(fig.get_figheight() * LOGICAL_DPI), xlim, boxes)
+    return RenderedTimeline(buffer.getvalue(), width, round(fig.get_figheight() * LOGICAL_DPI), xlim, boxes, left_out)
 
 
 def _runs(minutes: list[int]) -> list[tuple[int, int]]:
@@ -187,9 +200,35 @@ def _runs(minutes: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
+def _wrap(text: str, widths: list[float], measure: _Measure, first: int = 0) -> list[str]:
+    """``text`` broken at spaces into lines no wider than the matching entry of ``widths`` (the last one repeats).
+
+    ``first`` is the index of the line the text starts on, so the entry it starts with is the right one.
+    """
+    lines: list[str] = []
+    for word in text.split(" "):
+        limit = widths[min(first + max(len(lines) - 1, 0), len(widths) - 1)]
+        if lines and measure.width(f"{lines[-1]} {word}", 11, 400) <= limit:
+            lines[-1] += f" {word}"
+        else:
+            lines.append(word)
+    return lines
+
+
+def lane_key(timeline: Timeline) -> tuple[str, ...]:
+    """What the drug lane's marks mean; a dose whose end is before its start has a mark of its own, named here."""
+    if any(dose.reversed_times for dose in timeline.doses):
+        return (LANE_KEY, REVERSED_KEY)
+    return (LANE_KEY,)
+
+
+def left_out_text(count: int) -> str:
+    return f"{count} more {'dose is' if count == 1 else 'doses are'} in the table only."
+
+
 def _build(
     timeline: Timeline, width: int, theme: str | None, dpr: float
-) -> tuple[Figure, tuple[QRectF, ...], tuple[float, float]]:
+) -> tuple[Figure, tuple[QRectF, ...], tuple[float, float], int]:
     colors = tokens(theme)
     family = chart_family()
     dpi = LOGICAL_DPI * dpr
@@ -207,7 +246,21 @@ def _build(
         stacked = True
         placed = _place_doses(timeline, plot_px, low, per_minute, measure, stacked, room)
     lane_rows = max((item.row for item in placed), default=0) + 1
-    height = chart_height(timeline, width, lane_rows, stacked)
+    left_out = sum(1 for item in placed if item.row == LEFT_OUT)
+    # The key may need more than one line: beside the track names it sits in their column, under the lane's title
+    # when the names are above the tracks. Either way the room for it is made, never taken from a dose's row.
+    title_width = measure.width("Drugs", 12, 600)
+    key_widths: list[float] = [width - title_width - 16, width - 8] if compact else [LABEL_WIDTH - 12.0]
+    key_lines: list[str] = []
+    for meaning in lane_key(timeline):
+        key_lines += _wrap(meaning, key_widths, measure, len(key_lines))
+    extra = NOTE_HEIGHT if left_out else 0
+    if compact:
+        extra += KEY_LINE * (len(key_lines) - 1)
+    else:
+        row_px = STACKED_LANE_ROW if stacked else LANE_ROW
+        lane_rows = max(lane_rows, math.ceil((KEY_FIRST + KEY_LINE * len(key_lines) - 8) / row_px))
+    height = chart_height(timeline, width, lane_rows, stacked, extra)
     fig = Figure(figsize=(width / LOGICAL_DPI, height / LOGICAL_DPI), dpi=dpi)
     FigureCanvasAgg(fig)
     fig.patch.set_facecolor(colors["paper"])
@@ -281,8 +334,10 @@ def _build(
     lane_top = top - (TRACK_GAP if timeline.tracks else 0) + LANE_PAD
     if compact:
         put(4, lane_top + 2, "Drugs", 12, colors["ink"], 600)
-        put(4 + measure.width("Drugs", 12, 600) + 8, lane_top + 3, LANE_KEY, 11, colors["ink_3"])
-        lane_top += LANE_HEAD
+        put(4 + title_width + 8, lane_top + 3, key_lines[0], 11, colors["ink_3"])
+        for index, line in enumerate(key_lines[1:]):
+            put(4, lane_top + 17 + KEY_LINE * index, line, 11, colors["ink_3"])
+        lane_top += LANE_HEAD + KEY_LINE * (len(key_lines) - 1)
     row_px = STACKED_LANE_ROW if stacked else LANE_ROW
     lane = axes_at(lane_top, lane_rows * row_px)
     lane.set_label("doses")
@@ -293,8 +348,12 @@ def _build(
     lane.tick_params(axis="x", labelsize=px_to_pt(11), pad=8)
     if not compact:
         put(4, lane_top + 2, "Drugs", 12, colors["ink"], 600)
-        put(4, lane_top + 19, LANE_KEY, 11, colors["ink_3"])
-    caption_y = height - (AXIS_HEIGHT - 16 if not compact else 8)
+        for index, line in enumerate(key_lines):
+            put(4, lane_top + KEY_FIRST + KEY_LINE * index, line, 11, colors["ink_3"])
+    # The axis caption keeps its place under the lane; the note about doses left out takes the last line.
+    caption_y = height - (NOTE_HEIGHT if left_out else 0) - (AXIS_HEIGHT - 16 if not compact else 8)
+    if left_out:
+        put(left_px if not compact else 4, height - 4, left_out_text(left_out), 11, colors["ink_2"], va="bottom")
     if compact:
         put(width - right_px, caption_y, timeline.axis_label, 11, colors["ink_3"], ha="right", va="bottom")
     else:
@@ -305,6 +364,8 @@ def _build(
         lane.text(0.5, 0.5, said, transform=lane.transAxes, color=colors["ink_2"], ha="center", va="center",
                   fontsize=px_to_pt(12), fontfamily=family)
     for item in placed:
+        if item.row == LEFT_OUT:
+            continue
         dose = item.dose
         # Stacked, the label is the row's upper line and the mark its lower; beside, both share the row's middle.
         mark_y = item.row + (0.74 if stacked else 0.5)
@@ -319,6 +380,11 @@ def _build(
             lane.add_patch(Rectangle(corner, length, 2 * half, fill=False, edgecolor=colors["ink_2"], lw=0.9,
                                      zorder=2))
             near, far = dose.start, dose.start + length
+        elif dose.reversed_times:
+            # Neither a bolus nor an infusion: the record's end is before its start, and the page does not pick one.
+            lane.plot([dose.start], [mark_y], linestyle="none", marker="D", markersize=7, markerfacecolor=colors["paper"],
+                      markeredgecolor=colors["ink"], markeredgewidth=1.6, zorder=4)
+            near, far = dose.start - _MARK_HALF / per_minute, dose.start + _MARK_HALF / per_minute
         else:
             lane.plot([dose.start], [mark_y], linestyle="none", marker="s", markersize=7, color=colors["ink"],
                       zorder=4)
@@ -339,7 +405,7 @@ def _build(
         QRectF(box.x0 * width, (1 - box.y1) * height, box.width * width, box.height * height)
         for ax in [*axes, lane] for box in [ax.get_position()]
     )
-    return fig, boxes, (low, high)
+    return fig, boxes, (low, high), left_out
 
 
 class MedicationChart(QWidget):
@@ -368,6 +434,7 @@ class MedicationChart(QWidget):
         self._cache: dict[tuple[int, int, float, str], RenderedTimeline] = {}
         self._serial = 0
         self._base_description = ""
+        self._left_out = 0
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(120)
@@ -378,6 +445,7 @@ class MedicationChart(QWidget):
         self._timeline = timeline
         self._serial += 1
         self._cache.clear()
+        self._left_out = 0
         self._base_description = describe(timeline) if timeline is not None else ""
         minutes = timeline.cursor_minutes() if timeline is not None else ()
         self._cursor = cursor if cursor in minutes else (minutes[0] if minutes else None)
@@ -409,6 +477,8 @@ class MedicationChart(QWidget):
 
     def _describe(self) -> None:
         text = self._base_description
+        if self._left_out:
+            text = f"{text} {left_out_text(self._left_out)}"
         if self._timeline is not None and self._cursor is not None:
             text = f"{text} {cursor_text(self._timeline, self._cursor)}"
         self.setAccessibleDescription(text)
@@ -449,6 +519,9 @@ class MedicationChart(QWidget):
         pixmap.loadFromData(rendered.png)
         pixmap.setDevicePixelRatio(dpr)
         self._pixmap, self._xlim, self._axes = pixmap, rendered.xlim, rendered.axes
+        if rendered.left_out != self._left_out:
+            self._left_out = rendered.left_out
+            self._describe()
         self._compact = is_compact(self.width())
         if self.height() != rendered.height:
             self.setFixedHeight(rendered.height)

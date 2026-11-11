@@ -296,6 +296,19 @@ def test_tab_follows_the_screen_from_the_picker_through_the_lines_to_reset_and_s
     assert seen[7] is who.reset_button and seen[8] is who.save_button
 
 
+def test_tab_never_stops_on_an_unnamed_scroll_area_all_the_way_round(who, qapp):
+    from PySide6.QtWidgets import QAbstractScrollArea
+
+    who.scenario_box.setFocus()
+    stops = []
+    for _ in range(30):
+        QTest.keyClick(qapp.focusWidget(), Qt.Key.Key_Tab)
+        stops.append(qapp.focusWidget())
+    assert who.save_button in stops and who.scenario_box in stops, "the walk went all the way round"
+    assert who.page_scroll not in stops
+    assert not [w for w in stops if isinstance(w, QAbstractScrollArea) and not w.accessibleName()]
+
+
 def test_reset_card_clears_every_mark_and_returns_to_the_first_stage(who, qapp):
     _tick(who, "Sign in")
     _tick(who, "Time out", 2)

@@ -340,6 +340,8 @@ class WhoPanel(QWidget):
         self.page_scroll.setWidgetResizable(True)
         self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # Tab goes from control to control; an unnamed scroll area is not a stop.
+        self.page_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.page_scroll.setWidget(body)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

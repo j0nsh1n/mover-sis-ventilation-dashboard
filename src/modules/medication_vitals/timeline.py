@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from src.modules.medication_vitals.align import DisplayRow, _number
+from src.modules.medication_vitals.align import END_BEFORE_START, DisplayRow, _number
 
 MEASUREMENT = "measurement"
 BOLUS = "bolus"
@@ -67,6 +67,11 @@ class Dose:
     @property
     def infusion(self) -> bool:
         return self.kind == INFUSION
+
+    @property
+    def reversed_times(self) -> bool:
+        """The record gives an end time before the start time; the dose is neither a bolus nor an infusion."""
+        return self.kind == END_BEFORE_START
 
     @property
     def label(self) -> str:

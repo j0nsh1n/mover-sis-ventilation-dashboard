@@ -17,6 +17,7 @@ DISCLAIMER = (
 )
 PROVENANCE_MEDICATION = "patient_medication.csv"
 PROVENANCE_VITALS = "case timeseries"
+END_BEFORE_START = "end time is before the start time"
 _FORMATS = ("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M", "%m/%d/%y %H:%M:%S")
 _VITALS = (
     ("HR", "Heart rate", "bpm"),
@@ -113,6 +114,9 @@ def _medication_rows(frame: pd.DataFrame | None, origin: datetime | None) -> lis
             notes.append("drug name not recorded")
         if start_minute is not None and end_minute is None:
             notes.append("no end time recorded")
+        if kind == END_BEFORE_START:
+            # Which of the two times is right is not for the page to say; it names both as recorded.
+            notes.append(f"{END_BEFORE_START} (start minute {start_minute}, end minute {end_minute})")
         rows.append(
             DisplayRow(
                 time_text,
@@ -183,7 +187,7 @@ def _kind(start: int | None, end: int | None) -> str:
         return "bolus"
     if end > start:
         return "infusion"
-    return "end time is before the start time"
+    return END_BEFORE_START
 
 
 def _amount(dose, unit) -> str:
