@@ -1003,7 +1003,7 @@ class MainWindow(QMainWindow):
             "Scan full EMR",
             "Score every surgery with ventilator data in the EMR folder?\n\n"
             "This reads the whole export in batches, using several CPU cores at once, "
-            "and can take many minutes on the full MOVER SIS data. The loaded sample and its charts are not changed; the "
+            "and can take many minutes on a full-size export. The loaded sample and its charts are not changed; the "
             "co-pilot uses the scan for whole-dataset questions.",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1772,6 +1772,7 @@ class MainWindow(QMainWindow):
         footer = getattr(self, "_footer", None)
         if footer is None:
             return
+        self.head.set_demo(demo_data_in_use())
         if self._current_module in _PRACTICE_TITLES:
             footer.show_practice()
             return

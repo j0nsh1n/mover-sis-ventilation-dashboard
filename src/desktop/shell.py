@@ -29,10 +29,13 @@ from src.desktop.theme import active_theme, token_color
 
 RAIL_WIDTH = 64
 RESEARCH_STAMP = "De-identified research data · not for patient care"
+# The same line while the data in use is the fictional demo data this app made
+DEMO_STAMP = "Fictional demo data · not for patient care"
 FICTION_LABEL = "Fictional practice"
 FICTION_NOTE = "invented data, not patient records"
 # Each line from its full form to its short form; the short one still says what the full one says first.
 STAMP_FORMS = (f"○ {RESEARCH_STAMP}", "○ Not for patient care")
+DEMO_STAMP_FORMS = (f"○ {DEMO_STAMP}", "○ Not for patient care")
 FICTION_FORMS = (f"{FICTION_LABEL} · {FICTION_NOTE}", FICTION_LABEL)
 # Pixels added to a line's measured text so a rounding step can never clip its last letter.
 _LINE_SLACK = 4
@@ -298,6 +301,7 @@ class RunningHead(QFrame):
         self.setProperty("practice", False)
         self._icons_theme = active_theme()
         self._practice = False
+        self._demo = False
         self._widths: dict[tuple[str, str], int] = {}
         layout = self._row = QHBoxLayout(self)
         layout.setContentsMargins(32, 0, 32, 0)
@@ -340,6 +344,17 @@ class RunningHead(QFrame):
         self.updateGeometry()
         self._fit()
 
+    def set_demo(self, demo: bool) -> None:
+        """Name the data in use: the demo data's stamp never calls it research data."""
+        if demo == self._demo:
+            return
+        self._demo = demo
+        sentence = DEMO_STAMP if demo else RESEARCH_STAMP
+        self.stamp.setAccessibleName(sentence)
+        self.stamp.setToolTip(sentence)
+        self.updateGeometry()
+        self._fit()
+
     def crumb_text(self) -> str:
         return " / ".join(self.crumbs.parts())
 
@@ -349,7 +364,9 @@ class RunningHead(QFrame):
 
     # ----- fitting -----
     def _forms(self) -> tuple[str, ...]:
-        return FICTION_FORMS if self._practice else STAMP_FORMS
+        if self._practice:
+            return FICTION_FORMS
+        return DEMO_STAMP_FORMS if self._demo else STAMP_FORMS
 
     def _width(self, widget: QLabel | QPushButton, text: str) -> int:
         """The width ``widget`` needs to show ``text`` whole."""

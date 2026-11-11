@@ -158,16 +158,19 @@ def test_rail_head_and_footer_stay_inside_a_900_pixel_window(window, qapp):
 
 
 HEAD_LINES = {
-    # practice page?, full form, short form, the sentence the accessible name and tooltip keep
-    False: ("○ De-identified research data · not for patient care", "○ Not for patient care",
-            "De-identified research data · not for patient care", "stamp"),
-    True: ("Fictional practice · invented data, not patient records", "Fictional practice",
-           "Fictional practice: invented data, not patient records", "fictionLabel"),
+    # the page: full form, short form, the sentence the accessible name and tooltip keep, the label's object name
+    "research": ("○ De-identified research data · not for patient care", "○ Not for patient care",
+                 "De-identified research data · not for patient care", "stamp"),
+    "practice": ("Fictional practice · invented data, not patient records", "Fictional practice",
+                 "Fictional practice: invented data, not patient records", "fictionLabel"),
+    # research pages while the demo data is in use: never "research data", short form unchanged
+    "demo": ("○ Fictional demo data · not for patient care", "○ Not for patient care",
+             "Fictional demo data · not for patient care", "stamp"),
 }
 
 
-@pytest.mark.parametrize("practice", [False, True])
-def test_the_head_line_is_never_cut_and_keeps_its_full_form_while_that_fits(qapp, practice):
+@pytest.mark.parametrize("mode", ["research", "practice", "demo"])
+def test_the_head_line_is_never_cut_and_keeps_its_full_form_while_that_fits(qapp, mode):
     from PySide6.QtGui import QFontMetrics
     from PySide6.QtWidgets import QLabel, QWidget
 
@@ -175,10 +178,12 @@ def test_the_head_line_is_never_cut_and_keeps_its_full_form_while_that_fits(qapp
     from src.desktop.theme import apply_theme
 
     apply_theme(qapp, "light")
-    full, short, sentence, name = HEAD_LINES[practice]
+    practice = mode == "practice"
+    full, short, sentence, name = HEAD_LINES[mode]
     holder = QWidget()  # a child is not held to its layout's least width the way a window is
     holder.resize(2000, 60)
     head = RunningHead(holder)
+    head.set_demo(mode == "demo")
     head.set_place(["Research", "A long page path that has to shorten"], practice=practice)
     holder.show()
     # What the full form needs, measured on stand-ins so the test does not lean on the head's own arithmetic:

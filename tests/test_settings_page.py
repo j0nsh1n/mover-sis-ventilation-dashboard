@@ -4,6 +4,8 @@ and leaving with edits asks first."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +17,8 @@ from PySide6.QtWidgets import QApplication
 from src.desktop import settings_page
 from src.desktop.app import MainWindow
 from src.desktop.settings_page import LEAVE_DISCARD, LEAVE_SAVE, LEAVE_STAY, SettingsPage
-from src.runtime_paths import apply_persisted_settings, clear_session_path_overrides
+from src.guardrails.exceptions import PathSafetyError
+from src.runtime_paths import apply_persisted_settings, clear_session_path_overrides, emr_dir, processed_dir
 from src.user_settings import load_settings, settings_path
 
 
@@ -128,6 +131,65 @@ def test_processed_folder_inside_the_emr_is_refused_before_anything_is_written(p
     assert page.save() is False
     assert "Processed output cannot be the EMR folder or inside it" in page.status.text()
     assert settings_path().read_bytes() == before
+
+
+@pytest.fixture
+def read_only_folder(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    yield locked
+    locked.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write into a read-only folder")
+def test_a_save_that_cannot_make_the_processed_folder_writes_nothing_and_says_which_folder(
+        page, env, read_only_folder, tmp_path):
+    other_emr = tmp_path / "emr-two"
+    shutil.copytree(env.emr, other_emr)
+    before = settings_path().read_bytes()
+    page.row_emr.edit.setText(str(other_emr))
+    page.row_processed.edit.setText(str(read_only_folder / "sub" / "processed"))
+    assert page.save() is False
+    assert settings_path().read_bytes() == before, "the changed EMR folder must not be written either"
+    assert emr_dir() == env.emr.resolve()
+    assert page.status.text().startswith("Not saved. Processed:") and "cannot be written to" in page.status.text()
+    assert page.status.property("state") == "problem"
+    assert page.changes() == ["EMR folder", "processed folder"] and page.save_button.isEnabled()
+    assert not (read_only_folder / "sub").exists()
+
+
+@pytest.mark.parametrize("failure", [PermissionError(13, "Permission denied", "/somewhere/processed"),
+                                     PathSafetyError("that place is not allowed")], ids=["OSError", "PathSafetyError"])
+def test_a_failure_that_only_shows_during_the_writes_puts_the_old_file_back_byte_for_byte(
+        page, env, tmp_path, monkeypatch, failure):
+    other_emr = tmp_path / "emr-two"
+    shutil.copytree(env.emr, other_emr)
+    before = settings_path().read_bytes()
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr("src.desktop.settings_ui.configure_processed_directory", fail)
+    page.row_emr.edit.setText(str(other_emr))
+    page.combo_preset.setCurrentIndex(page.combo_preset.findData("lenient"))
+    assert page.save() is False, "the error must become a refusal, not leave the handler"
+    assert settings_path().read_bytes() == before
+    assert emr_dir() == env.emr.resolve() and processed_dir() == env.processed.resolve()
+    text = page.status.text()
+    assert text.startswith("Not saved. The settings could not be written:") and "Your edits are still here." in text
+    assert page.changes() == ["EMR folder", "rule preset"] and page.save_button.isEnabled()
+
+
+def test_an_os_error_that_reaches_the_handler_is_still_a_refusal_not_a_crash(page, env, monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(settings_page, "apply_values", fail)
+    page.combo_preset.setCurrentIndex(page.combo_preset.findData("lenient"))
+    assert page.save() is False
+    assert page.status.text().startswith("Not saved.") and "Your edits are still here." in page.status.text()
+    assert page.is_dirty() and page.save_button.isEnabled()
 
 
 def test_each_folder_row_checks_what_it_holds_in_a_sentence(page, env):

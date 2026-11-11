@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import threading
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +28,7 @@ from src.runtime_paths import (
     emr_dir,
     processed_dir,
 )
-from src.user_settings import load_settings, needs_first_run_setup
+from src.user_settings import load_settings, needs_first_run_setup, settings_path, update_settings
 
 
 _ORIGINAL_STARTUP = MainWindow._startup
@@ -161,6 +164,33 @@ def test_demo_data_in_use_is_true_only_while_the_emr_is_inside_a_demo_folder_the
     assert not demo_data_in_use()
 
 
+def test_the_label_follows_the_data_not_the_configured_demo_folder(tmp_path, monkeypatch):
+    root = tmp_path / "demo-data"
+    build_demo_data(root)
+    demo_data.use_demo_data(root)
+    assert demo_data_in_use()
+    monkeypatch.setenv("MOVER_DEMO_DATA_DIR", str(tmp_path / "somewhere-else"))
+    assert demo_data_in_use(), "a changed demo location must not turn demo data into a real copy"
+    monkeypatch.delenv("MOVER_DEMO_DATA_DIR")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert demo_data_in_use()
+
+
+def test_a_real_folder_never_gets_the_label_even_where_the_demo_would_live(tmp_path, monkeypatch, synthetic_emr):
+    configure_emr_directory(synthetic_emr, persist=False)
+    monkeypatch.setenv("MOVER_DEMO_DATA_DIR", str(synthetic_emr.parent))
+    assert not demo_data_in_use()
+    # a marker some other program wrote is not this app's
+    (synthetic_emr.parent / DEMO_MARKER).write_text(json.dumps({"made_by": "someone else"}), encoding="utf-8")
+    assert not demo_data_in_use()
+    # a marker beside a folder that is not the EMR folder inside it does not label it either
+    (synthetic_emr.parent / DEMO_MARKER).write_text(json.dumps({"made_by": "MOVER Suite"}), encoding="utf-8")
+    other = synthetic_emr.parent / "tables"
+    shutil.copytree(synthetic_emr, other)
+    configure_emr_directory(other, persist=False)
+    assert not demo_data_in_use()
+
+
 # ----- the flow -----
 @pytest.fixture
 def flow(qapp):
@@ -230,6 +260,113 @@ def test_not_now_and_escape_leave_without_saving_anything(flow, env):
     QTest.keyClick(flow, Qt.Key.Key_Escape)
     assert left == [True, True, True]
     assert not (env / "config" / "settings.json").exists() or "emr_dir" not in load_settings()
+
+
+@pytest.fixture
+def second_emr(synthetic_emr, tmp_path):
+    other = tmp_path / "emr-two"
+    shutil.copytree(synthetic_emr, other)
+    return other
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write into a read-only folder")
+def test_a_save_that_cannot_make_the_processed_folder_writes_nothing_and_marks_that_field(
+        flow, qapp, env, second_emr):
+    update_settings(theme="light")
+    before = settings_path().read_bytes()
+    locked = env / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        flow.start_button.click()
+        flow.row_emr.set_text(str(second_emr))
+        flow.row_processed.edit.setText(str(locked / "sub" / "processed"))
+        flow.row_processed.touched = True  # typed by the person, so it stops following the EMR folder
+        flow.continue_button.click()
+    finally:
+        locked.chmod(0o700)
+    assert flow.current_page() == DATA
+    assert settings_path().read_bytes() == before and needs_first_run_setup() is True
+    note = flow.row_processed.note
+    assert note.text().startswith("✕ Not saved. Processed:") and "cannot be written to" in note.text()
+    assert "problem" in note.accessibleName() and note.accessibleDescription().startswith("Not saved.")
+    assert flow.data_status.text().startswith("Not saved.")
+    assert flow.row_emr.note.text().startswith("✓"), "the EMR folder was fine, so it is not marked"
+    assert qapp.focusWidget() is flow.row_processed.edit
+
+
+def test_a_failure_during_the_writes_leaves_no_settings_file_where_there_was_none(flow, env, second_emr, monkeypatch):
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "/somewhere")
+
+    monkeypatch.setattr("src.desktop.settings_ui.configure_processed_directory", fail)
+    flow.start_button.click()
+    flow.row_emr.set_text(str(second_emr))
+    flow.continue_button.click()
+    assert flow.current_page() == DATA and not settings_path().exists()
+    assert "The settings could not be written" in flow.data_status.text()
+    assert needs_first_run_setup() is True
+
+
+def test_a_refusal_about_the_wave_folder_opens_advanced_and_is_marked_there(flow, qapp, synthetic_emr, env):
+    flow.start_button.click()
+    flow.row_emr.set_text(str(synthetic_emr))
+    flow.advanced_toggle.setChecked(True)
+    flow.row_wave.edit.setText(str(env / "no-such-wave-folder"))
+    flow.advanced_toggle.setChecked(False)
+    flow.continue_button.click()
+    assert flow.advanced_toggle.isChecked() and flow.row_wave.note.text().startswith("✕ Not saved. Wave:")
+    assert qapp.focusWidget() is flow.row_wave.edit
+
+
+def test_leaving_after_continue_has_saved_counts_as_finishing(flow, synthetic_emr):
+    for leave in ("escape_on_done", "back_then_not_now", "back_to_welcome_then_not_now"):
+        widget = SetupFlow("9.9.9")
+        widget.resize(1100, 760)
+        widget.show()
+        done, dismissed = [], []
+        widget.completed.connect(done.append)
+        widget.dismissed.connect(partial(dismissed.append, True))
+        widget.start_button.click()
+        widget.row_emr.set_text(str(synthetic_emr))
+        widget.continue_button.click()
+        assert widget.current_page() == DONE
+        if leave == "escape_on_done":
+            QTest.keyClick(widget, Qt.Key.Key_Escape)
+        elif leave == "back_then_not_now":
+            widget.back_from_done.click()
+            widget.not_now_data.click()
+        else:
+            widget.back_from_done.click()
+            widget.back_button.click()
+            widget.not_now_welcome.click()
+        assert len(done) == 1 and done[0]["emr_dir"] == str(synthetic_emr.resolve()), leave
+        assert not dismissed, leave
+        widget.close()
+        widget.deleteLater()
+
+
+def test_escape_during_a_demo_build_does_nothing_and_the_build_finishes(flow, qapp, env, monkeypatch):
+    release = threading.Event()
+    real_build = demo_data.build_demo_data
+
+    def slow_build(root, progress=lambda _s: None):
+        progress(0)
+        release.wait(30)
+        return real_build(root, progress)
+
+    monkeypatch.setattr("src.desktop.demo_data.build_demo_data", slow_build)
+    done, dismissed = [], []
+    flow.completed.connect(done.append)
+    flow.dismissed.connect(lambda: dismissed.append(True))
+    flow.start_demo()
+    assert _pump(qapp, lambda: flow.demo_steps[0].text().endswith("…"))
+    QTest.keyClick(flow, Qt.Key.Key_Escape)
+    QTest.keyClick(flow.demo_back, Qt.Key.Key_Escape)
+    assert not dismissed and not done and flow.current_page() == DEMO
+    release.set()
+    assert _pump(qapp, lambda: bool(done), seconds=120)
+    assert not dismissed and demo_data_in_use()
 
 
 def test_tab_order_on_the_data_step_follows_the_screen(flow, qapp):
@@ -371,3 +508,87 @@ def test_demo_data_is_named_as_fictional_everywhere_the_source_is_named_and_real
     assert footer.source.text() == "MOVER SIS local copy"
     assert (env / "demo-data" / DEMO_MARKER).is_file()
 
+
+
+def test_leaving_first_run_setup_after_continue_ends_exactly_as_finish_does(window, qapp, monkeypatch, synthetic_emr):
+    monkeypatch.setattr(MainWindow, "_setup_bypassed", lambda self: False)
+    _ORIGINAL_STARTUP(window)
+    flow = window._setup_flow
+    flow.start_button.click()
+    flow.row_emr.set_text(str(synthetic_emr))
+    flow.continue_button.click()
+    assert flow.current_page() == DONE
+    QTest.keyClick(flow, Qt.Key.Key_Escape)
+    assert window._setup_flow is None and window.reloads == [True], "the data loads, as after Finish"
+    assert window.research.question_edit.isEnabled(), "the question box works"
+    assert window.statusBar().currentMessage() == "Setup finished"
+    assert window.module_stack.currentWidget() is window.research
+
+
+def test_leaving_data_setup_from_settings_after_continue_is_not_a_cancel(window, qapp, synthetic_emr):
+    window._open_settings()
+    window._suite_pages["settings"].setup_button.click()
+    flow = window._setup_flow
+    flow.start_button.click()
+    flow.row_emr.set_text(str(synthetic_emr))
+    flow.continue_button.click()
+    flow.back_from_done.click()
+    flow.not_now_data.click()
+    assert window._setup_flow is None and window.reloads == [True]
+    assert window.statusBar().currentMessage() == "Setup finished"
+    assert window.research.question_edit.isEnabled()
+
+
+def test_leaving_before_continue_still_dismisses_and_first_run_keeps_research_off(window, qapp, monkeypatch):
+    monkeypatch.setattr(MainWindow, "_setup_bypassed", lambda self: False)
+    _ORIGINAL_STARTUP(window)
+    window._setup_flow.start_button.click()
+    QTest.keyClick(window._setup_flow, Qt.Key.Key_Escape)
+    assert window._setup_flow is None and window.reloads == []
+    assert window.statusBar().currentMessage() == "Setup required"
+    assert not window.research.question_edit.isEnabled()
+
+
+def _every_name_on_screen(*roots):
+    """Each visible word a person or a screen reader gets: text, accessible name and description, tooltip."""
+    from PySide6.QtWidgets import QWidget
+
+    found = []
+    for root in roots:
+        for widget in [root, *root.findChildren(QWidget)]:
+            for getter in ("text", "accessibleName", "accessibleDescription", "toolTip", "windowTitle"):
+                value = getattr(widget, getter, lambda: "")()
+                if isinstance(value, str) and value:
+                    found.append(value)
+    return found
+
+
+def test_while_demo_data_is_in_use_nothing_calls_it_research_or_mover_data_and_real_data_reads_as_before(
+        window, qapp, env, synthetic_emr):
+    from src.desktop.about_dialog import AboutDialog
+    from src.desktop.shell import DEMO_STAMP, RESEARCH_STAMP
+
+    head = window.head
+    assert head.stamp.text() == f"○ {RESEARCH_STAMP}" and head.stamp.accessibleName() == RESEARCH_STAMP
+    real_about = " ".join(_every_name_on_screen(AboutDialog("9.9.9", None)))
+    assert "MOVER SIS export, read from your own folders" in real_about
+    window._open_setup_wizard()
+    window._setup_flow.start_demo()
+    assert _pump(qapp, lambda: window._setup_flow is None, seconds=120)
+    assert demo_data_in_use()
+    assert head.stamp.text() == f"○ {DEMO_STAMP}" == "○ Fictional demo data · not for patient care"
+    assert head.stamp.accessibleName() == DEMO_STAMP and head.stamp.toolTip() == DEMO_STAMP
+    window._open_settings()
+    about = AboutDialog("9.9.9", None)
+    about_words = " ".join(_every_name_on_screen(about))
+    assert "Fictional demo data generated on this computer" in about_words
+    assert "MOVER SIS export" not in about_words
+    names = " ".join(_every_name_on_screen(window, window._suite_pages["settings"]))
+    for forbidden in ("research data", "De-identified research", "MOVER SIS local", "MOVER SIS export"):
+        assert forbidden not in names, forbidden
+    # real data again: every line reads as it did
+    page = window._suite_pages["settings"]
+    page.row_emr.set_text(str(synthetic_emr))
+    assert page.save() is True
+    assert head.stamp.text() == f"○ {RESEARCH_STAMP}" and head.stamp.accessibleName() == RESEARCH_STAMP
+    assert "MOVER SIS export, read from your own folders" in " ".join(_every_name_on_screen(AboutDialog("9.9.9", None)))

@@ -21,6 +21,7 @@ from src.runtime_paths import (
     demo_data_dir,
     emr_dir,
     processed_dir,
+    read_demo_marker,
     set_session_paths,
 )
 from src.user_settings import load_settings, mark_setup_complete
@@ -42,14 +43,6 @@ def _marker(root: Path) -> Path:
     return root / DEMO_MARKER
 
 
-def _read_marker(root: Path) -> dict | None:
-    try:
-        data = json.loads(_marker(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) and data.get("made_by") == "MOVER Suite" else None
-
-
 def check_demo_folder(root: Path) -> None:
     """Raise ``DemoDataError`` unless ``root`` is new, empty, or a folder this app made."""
     if root.is_relative_to(app_dir().resolve()):
@@ -59,7 +52,7 @@ def check_demo_folder(root: Path) -> None:
         )
     if root.exists() and not root.is_dir():
         raise DemoDataError(f"{root} exists and is not a folder, so demo data was not made there.")
-    if root.is_dir() and _read_marker(root) is None and any(root.iterdir()):
+    if root.is_dir() and read_demo_marker(root) is None and any(root.iterdir()):
         raise DemoDataError(
             f"A folder named {root} already exists and was not made by MOVER Suite, so it was left as it is. "
             "Move it away, or set MOVER_DEMO_DATA_DIR to another folder."
@@ -67,7 +60,7 @@ def check_demo_folder(root: Path) -> None:
 
 
 def demo_is_complete(root: Path) -> bool:
-    marker = _read_marker(root)
+    marker = read_demo_marker(root)
     return bool(marker and marker.get("complete") and (root / "processed" / "cases.parquet").is_file()
                 and (root / "EMR" / "patient_information.csv").is_file())
 

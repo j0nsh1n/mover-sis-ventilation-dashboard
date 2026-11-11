@@ -41,8 +41,7 @@ from src.desktop.settings_ui import (
 )
 from src.runtime_paths import (
     default_processed_for_emr,
-    demo_data_dir,
-    demo_data_in_use,
+    demo_root_in_use,
     emr_dir,
     processed_dir,
     resolve_emr_directory,
@@ -56,7 +55,7 @@ from src.user_settings import (
 )
 
 SECTIONS = (
-    ("Data sources", "Where MOVER Suite reads the de-identified tables. Files are read in place and never uploaded."),
+    ("Data sources", "Where MOVER Suite reads its tables. Files are read in place and never uploaded."),
     ("Local AI", "Optional. Models run on this computer through Ollama; case text does not leave it."),
     ("Appearance", "How the window looks. Charts follow the same choice."),
     ("Keyboard", "Every command is also in the Find box (Ctrl+K)."),
@@ -321,10 +320,11 @@ class SettingsPage(QWidget):
         self.demo_note.setVisible(bool(text))
 
     def _refresh_demo_note(self) -> None:
-        if demo_data_in_use():
+        root = demo_root_in_use()
+        if root is not None:
             self.set_demo_note(
                 "You are using fictional demo data made by MOVER Suite, not patient records. "
-                f"It is stored in {demo_data_dir()}. Choose another EMR folder above and save to switch to "
+                f"It is stored in {root}. Choose another EMR folder above and save to switch to "
                 "real data; the demo folder stays where it is."
             )
         else:
@@ -332,13 +332,14 @@ class SettingsPage(QWidget):
 
     def _emr_checked(self) -> None:
         """Leaving the demo data: its processed folder would not match another EMR, so the field follows the new one."""
-        if self._loading or self.row_processed.text() != str(demo_data_dir() / "processed"):
+        root = demo_root_in_use()
+        if self._loading or root is None or self.row_processed.text() != str(root / "processed"):
             return
         try:
             emr = resolve_emr_directory(self.row_emr.text())
         except FileNotFoundError:
             return
-        if not emr.is_relative_to(demo_data_dir()):
+        if not emr.is_relative_to(root):
             self.row_processed.set_text(str(default_processed_for_emr(emr)))
 
     def refresh_in_use(self) -> None:
@@ -469,7 +470,7 @@ class SettingsPage(QWidget):
         changed = changed_labels(self._baseline, values)
         try:
             apply_values(values)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             reason = " ".join(str(exc).split("\n"))
             self.show_result(f"Not saved. {reason} Your edits are still here.", ok=False)
             return False

@@ -32,6 +32,7 @@ from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.theme import active_theme
 from src.desktop.settings_ui import (
     FolderRow,
+    SaveRefused,
     SettingRow,
     apply_values,
     check_emr_folder,
@@ -256,7 +257,7 @@ class SetupFlow(QWidget):
             layout.addLayout(line)
         layout.addStretch(1)
         self.not_now_welcome = self._button("Not now", name="Not now, leave setup", text_button=True)
-        self.not_now_welcome.clicked.connect(self.dismissed)
+        self.not_now_welcome.clicked.connect(self._leave)
         self.start_button = self._button("Start setup", primary=True)
         self.start_button.clicked.connect(lambda: self._go(DATA))
         self.demo_button_welcome = self._demo_button()
@@ -353,7 +354,7 @@ class SetupFlow(QWidget):
         self.back_button.setShortcut("Alt+Left")
         self.back_button.clicked.connect(lambda: self._go(WELCOME))
         self.not_now_data = self._button("Not now", name="Not now, leave setup", text_button=True)
-        self.not_now_data.clicked.connect(self.dismissed)
+        self.not_now_data.clicked.connect(self._leave)
         self.demo_button_data = self._demo_button()
         self.continue_button = self._button("Continue", primary=True)
         self.continue_button.setShortcut("Alt+Right")
@@ -474,6 +475,13 @@ class SetupFlow(QWidget):
         self.row_processed.set_text(str(default_processed_for_emr(emr)))
         self.row_processed.touched = False
 
+    def _leave(self) -> None:
+        """Leave the flow. Once Continue has saved the values, leaving counts as finishing, not as cancelling."""
+        if self._applied:
+            self.completed.emit(dict(self._applied))
+        else:
+            self.dismissed.emit()
+
     def _toggle_advanced(self, shown: bool) -> None:
         self.advanced.setVisible(shown)
         self.advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
@@ -512,10 +520,11 @@ class SetupFlow(QWidget):
         try:
             validate_emr_dir(vals["emr_dir"])
             apply_values(vals, require_emr=True)
+        except SaveRefused as exc:
+            self._refuse(exc.problems)
+            return
         except Exception as exc:
-            text = f"Not saved. {' '.join(str(exc).split(chr(10)))} Fix the folder above or choose another."
-            self.data_status.setText(text)
-            announce(self.data_status, text)
+            self._refuse({"emr_dir": " ".join(str(exc).split("\n"))})
             return
         mark_setup_complete()
         self._applied = vals
@@ -523,6 +532,31 @@ class SetupFlow(QWidget):
             f"MOVER Suite will read tables from {vals['emr_dir']} and keep analyzed cases in {vals['processed_dir']}."
         )
         self._go(DONE)
+
+    def _refuse(self, problems: dict[str, str]) -> None:
+        """Say what was refused beside the field it is about, announce it, and put the cursor there."""
+        rows = {"emr_dir": self.row_emr, "processed_dir": self.row_processed, "wave_dir": self.row_wave,
+                "ollama_models_dir": self.row_models}
+        first: FolderRow | None = None
+        for key, reason in problems.items():
+            row = rows.get(key)
+            if row is None:
+                continue
+            sentence = f"Not saved. {' '.join(reason.split(chr(10)))}"
+            row.set_note(f"✕ {sentence}", "problem")
+            row.note.setAccessibleName(f"{row.edit.accessibleName()} problem")
+            row.note.setAccessibleDescription(sentence)
+            announce(row.note, sentence)
+            first = first or row
+        general = problems.get("", "")
+        text = f"Not saved. {general + ' ' if general else ''}Fix the folder marked above or choose another."
+        self.data_status.setText(text)
+        if first is None:
+            announce(self.data_status, text)
+            return
+        if first in (self.row_wave, self.row_models):
+            self.advanced_toggle.setChecked(True)
+        first.edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # ----- demo data -----
     def start_demo(self) -> None:
@@ -581,6 +615,6 @@ class SetupFlow(QWidget):
         if event.key() == Qt.Key.Key_Escape and event.modifiers() == Qt.KeyboardModifier.NoModifier:
             event.accept()
             if self._demo_worker is None or not self._demo_worker.isRunning():
-                self.dismissed.emit()
+                self._leave()
             return
         super().keyPressEvent(event)

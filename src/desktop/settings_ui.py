@@ -8,6 +8,7 @@ function, so a folder that passes in one passes in the other. The screens themse
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,15 +28,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, REQUIRED_EMR_FILES
 from src.runtime_paths import (
+    clear_session_path_overrides,
     configure_emr_directory,
     configure_processed_directory,
     configure_wave_directory,
+    data_dir,
     emr_dir,
     processed_dir,
     resolve_emr_directory,
     resolve_wave_directory,
+    set_session_paths,
     validate_output_location,
     wave_dir,
 )
@@ -46,6 +51,7 @@ from src.user_settings import (
     detect_default_ollama_models_dir,
     get_theme,
     load_settings,
+    settings_path,
     update_settings,
 )
 
@@ -115,43 +121,68 @@ def changed_labels(before: dict[str, str], after: dict[str, str]) -> list[str]:
     return [label for key, label in CHANGE_LABELS.items() if before.get(key, "") != after.get(key, "")]
 
 
-def validate_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str]:
-    """Everything that would make ``apply_values`` refuse, found before anything is written."""
-    errors: list[str] = []
+class SaveRefused(ValueError):
+    """A save that was refused as a whole: nothing was written. ``problems`` maps a setting key to its reason.
+
+    The key is one of the keys of ``CHANGE_LABELS``, or ``""`` for a reason that belongs to no single field.
+    """
+
+    def __init__(self, problems: dict[str, str]):
+        self.problems = problems
+        super().__init__("\n".join(problems.values()))
+
+
+def _cannot_be_made(path_text: str) -> str | None:
+    """Why a folder that does not exist yet could not be made, found without making it."""
+    wanted = Path(path_text).expanduser().resolve()
+    nearest = wanted
+    while not nearest.exists() and nearest.parent != nearest:
+        nearest = nearest.parent
+    if nearest == wanted:
+        return None if wanted.is_dir() else f"{wanted} exists and is not a folder."
+    if not nearest.is_dir():
+        return f"{wanted} cannot be made because {nearest} is not a folder."
+    if not os.access(nearest, os.W_OK | os.X_OK):
+        return f"{wanted} cannot be made because {nearest} cannot be written to."
+    return None
+
+
+def find_problems(vals: dict[str, str], *, require_emr: bool = False) -> dict[str, str]:
+    """Everything that would make ``apply_values`` refuse, found before anything is written, by setting."""
+    problems: dict[str, str] = {}
     emr_for_output: Path | None = None
     if vals["emr_dir"]:
         try:
             emr_for_output = resolve_emr_directory(vals["emr_dir"])
         except Exception as e:
-            errors.append(f"EMR: {e}")
+            problems["emr_dir"] = f"EMR: {e}"
     elif require_emr:
-        errors.append("EMR folder is required for setup.")
+        problems["emr_dir"] = "EMR folder is required for setup."
     if vals["wave_dir"]:
         try:
             resolve_wave_directory(vals["wave_dir"])
         except Exception as e:
-            errors.append(f"Wave: {e}")
+            problems["wave_dir"] = f"Wave: {e}"
     if vals["processed_dir"]:
         try:
             validate_output_location(vals["processed_dir"], source_emr=emr_for_output)
+            blocked = _cannot_be_made(vals["processed_dir"])
+            if blocked:
+                problems["processed_dir"] = f"Processed: {blocked}"
         except Exception as e:
-            errors.append(f"Processed: {e}")
+            problems["processed_dir"] = f"Processed: {e}"
     models = vals["ollama_models_dir"]
     if models and not Path(models).expanduser().is_dir():
-        errors.append(f"Ollama models directory does not exist: {Path(models).expanduser()}")
-    return errors
+        problems["ollama_models_dir"] = f"Ollama models directory does not exist: {Path(models).expanduser()}"
+    return problems
 
 
-def apply_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str]:
-    """Persist the values and apply paths and the models folder to this session.
+def validate_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str]:
+    """The reasons ``apply_values`` would refuse, one sentence each."""
+    return list(find_problems(vals, require_emr=require_emr).values())
 
-    Returns non-fatal warnings. Raises ``ValueError`` naming every value that was refused,
-    before anything is written, so a refused save changes nothing.
-    """
-    errors = validate_values(vals, require_emr=require_emr)
-    if errors:
-        raise ValueError("\n".join(errors))
-    warnings: list[str] = []
+
+def _write_values(vals: dict[str, str]) -> None:
     if vals["emr_dir"]:
         configure_emr_directory(vals["emr_dir"], persist=True)
     if vals["wave_dir"]:
@@ -170,7 +201,51 @@ def apply_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str
     update_settings(ollama_embed_model=vals["ollama_embed_model"] or "nomic-embed-text")
     update_settings(theme=vals["theme"])
     update_settings(preset=vals["preset"])
-    return warnings
+
+
+def _put_back(path: Path, before: bytes | None, session: dict[str, Path]) -> None:
+    """Return the settings file to the exact bytes it had, and the session to the folders it was using."""
+    if before is None:
+        path.unlink(missing_ok=True)
+    else:
+        staging = path.with_suffix(".json.restore")
+        staging.write_bytes(before)
+        staging.replace(path)
+    clear_session_path_overrides()
+    set_session_paths(**session)
+    apply_ollama_env_from_settings()
+
+
+def apply_values(vals: dict[str, str], *, require_emr: bool = False) -> list[str]:
+    """Persist the values and apply paths and the models folder to this session.
+
+    Returns non-fatal warnings. Raises ``SaveRefused`` (a ``ValueError``) when anything is refused, and a refused
+    save changes nothing: what can be known beforehand is checked before the first write, and a failure that
+    only shows during the writes puts the previous settings file back byte for byte.
+    """
+    problems = find_problems(vals, require_emr=require_emr)
+    if problems:
+        raise SaveRefused(problems)
+    path = settings_path()
+    before = path.read_bytes() if path.is_file() else None
+    wave = wave_dir()
+    session = {"data_dir": data_dir(), "emr_dir": emr_dir(), "processed_dir": processed_dir(),
+               **({"wave_dir": wave} if wave is not None else {})}
+    try:
+        _write_values(vals)
+    except (OSError, GuardrailError) as exc:
+        reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc) or type(exc).__name__
+        where = f" ({exc.filename})" if isinstance(exc, OSError) and exc.filename else ""
+        sentence = f"The settings could not be written: {reason}{where}."
+        try:
+            _put_back(path, before, session)
+        except OSError:
+            sentence += " The previous settings file could not be put back, so check it before using the app."
+        raise SaveRefused({"": sentence}) from exc
+    except BaseException:
+        _put_back(path, before, session)
+        raise
+    return []
 
 
 def check_models_folder(text: str) -> FolderCheck:

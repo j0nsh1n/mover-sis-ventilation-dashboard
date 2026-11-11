@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.accessibility import announce
 from src.desktop.fonts import FONT_DIR
+from src.runtime_paths import demo_data_in_use
 
 PRODUCT = "MOVER Suite"
 SUMMARY = (
@@ -31,11 +32,19 @@ FONT_CREDITS = (
     "Inter, © 2016 The Inter Project Authors, SIL Open Font License 1.1",
     "Charter, © 1989–1992 Bitstream Inc., free licence kept with the font files",
 )
-FACTS = (
-    ("Use", "Research and education only. Not a medical device. Not for patient care or decisions."),
-    ("Data", "MOVER SIS export, read from your own folders. Nothing is uploaded."),
-    ("AI", "Optional local models through Ollama, on this computer. Answers cite the source rows they read."),
-)
+DATA_FACT = "MOVER SIS export, read from your own folders. Nothing is uploaded."
+DEMO_DATA_FACT = "Fictional demo data generated on this computer. These are not patient records."
+
+
+def facts(demo: bool) -> tuple[tuple[str, str], ...]:
+    """The first rows of About. The Data row says what the app is reading now, so it follows the data in use."""
+    return (
+        ("Use", "Research and education only. Not a medical device. Not for patient care or decisions."),
+        ("Data", DEMO_DATA_FACT if demo else DATA_FACT),
+        ("AI", "Optional local models through Ollama, on this computer. Answers cite the source rows they read."),
+    )
+
+
 LICENSE_FILES = ("Inter-LICENSE.txt", "Charter-NOTICE.txt")
 
 
@@ -67,7 +76,8 @@ def licence_text() -> str:
 
 
 class AboutDialog(QDialog):
-    def __init__(self, version: str, rules: str | None = None, parent: QWidget | None = None):
+    def __init__(self, version: str, rules: str | None = None, parent: QWidget | None = None,
+                 *, demo: bool | None = None):
         super().__init__(parent)
         self._version = version
         self._rules = rules
@@ -112,7 +122,8 @@ class AboutDialog(QDialog):
         grid = QGridLayout()
         grid.setHorizontalSpacing(28)
         grid.setVerticalSpacing(12)
-        rows = [*FACTS, ("Build", build_line(rules)), ("Licence", LICENSE_LINE), ("Fonts", "\n".join(FONT_CREDITS))]
+        rows = [*facts(demo_data_in_use() if demo is None else demo), ("Build", build_line(rules)),
+                ("Licence", LICENSE_LINE), ("Fonts", "\n".join(FONT_CREDITS))]
         for row, (key, value) in enumerate(rows):
             label = QLabel(key)
             label.setObjectName("quietText")

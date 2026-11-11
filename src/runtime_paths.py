@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -103,13 +104,34 @@ def demo_data_dir() -> Path:
     return (base.expanduser() / "mover-suite" / "demo-data").resolve()
 
 
-def demo_data_in_use() -> bool:
-    """True while the EMR folder in use is inside a demo folder this app made."""
-    root = demo_data_dir()
+def read_demo_marker(root: Path) -> dict | None:
+    """The marker of a demo folder this app made, or None for any other folder."""
     try:
-        return (root / DEMO_MARKER).is_file() and emr_dir().resolve().is_relative_to(root)
+        data = json.loads((root / DEMO_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("made_by") == "MOVER Suite" else None
+
+
+def demo_root_in_use() -> Path | None:
+    """The demo folder the EMR in use belongs to, or None.
+
+    The answer follows the data, not the configured demo location: the EMR folder in use must be the ``EMR``
+    folder beside a marker this app wrote, so changing ``MOVER_DEMO_DATA_DIR`` later cannot change what the
+    data is called, and a real folder never gets the label.
+    """
+    try:
+        emr = emr_dir().resolve()
     except OSError:
-        return False
+        return None
+    if emr.name == "EMR" and read_demo_marker(emr.parent) is not None:
+        return emr.parent
+    return None
+
+
+def demo_data_in_use() -> bool:
+    """True while the EMR folder in use is the one inside a demo folder this app made."""
+    return demo_root_in_use() is not None
 
 
 def emr_dir() -> Path:
