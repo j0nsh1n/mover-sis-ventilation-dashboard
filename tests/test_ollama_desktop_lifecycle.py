@@ -5,6 +5,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -26,6 +27,8 @@ def window(monkeypatch, tmp_path):
     win.show()
     app.processEvents()
     yield win, app, dialogs
+    if not shiboken6.isValid(win):
+        return  # a closed window is freed once its threads have stopped
     for worker in (win._ollama_worker,):
         if worker is not None:
             worker.requestInterruption()
@@ -67,7 +70,10 @@ def test_close_during_start_is_prompt_and_responsive(window, monkeypatch):
     before = time.monotonic()
     win.close()
     close_call = time.monotonic() - before
-    pump(app, lambda: not win._ollama_worker.isRunning() and not win.isVisible() and not win._closing)
+    # The window is freed only once no thread of it runs, so a freed window also says the start was stopped.
+    pump(app, lambda: not shiboken6.isValid(win)
+         or (not win._ollama_worker.isRunning() and not win.isVisible() and not win._closing))
+    pump(app, lambda: not shiboken6.isValid(win))
     assert close_call < 0.1
     assert time.monotonic() - before < 5
     pump(app, lambda: bool(ticks))
@@ -199,3 +205,50 @@ def test_research_primary_button_renders_focus_outline(window, theme):
     focused = button.grab().toImage()
     assert button.hasFocus()
     assert focused.pixelColor(1, focused.height() // 2) != unfocused.pixelColor(1, unfocused.height() // 2)
+
+
+def test_a_closed_window_is_freed_but_not_while_a_thread_of_it_runs(window, monkeypatch):
+    """A window's children hold its own methods as signal receivers, so a closed window used to stay alive."""
+    win, app, _ = window
+    entered, release = threading.Event(), threading.Event()
+
+    def start(**kwargs):
+        entered.set()
+        release.wait(3)
+        return ready()
+
+    monkeypatch.setattr("src.llm.service.start_ollama", start)
+    win._ollama_start()
+    assert entered.wait(1)
+    worker = win._ollama_worker
+    win.close()
+    # The close waits for the start to finish; until it does the window, its worker included, must stay whole.
+    for _ in range(20):
+        app.processEvents()
+        time.sleep(0.01)
+    assert shiboken6.isValid(win) and shiboken6.isValid(worker) and worker.isRunning()
+    release.set()
+    # Freed: the Qt object and its children are deleted, which drops the connections that kept it alive.
+    pump(app, lambda: not shiboken6.isValid(win) and not shiboken6.isValid(worker))
+
+
+def test_a_thread_started_after_the_close_keeps_the_window_until_it_ends(window):
+    """A load that starts after the close is accepted (a pending timer) must not be destroyed while it runs."""
+    from PySide6.QtCore import QThread
+
+    win, app, _ = window
+    release = threading.Event()
+
+    class Late(QThread):
+        def run(self):
+            release.wait(3)
+
+    win.close()
+    late = Late(win)
+    late.start()
+    for _ in range(30):
+        app.processEvents()
+        time.sleep(0.01)
+    assert shiboken6.isValid(win) and late.isRunning()
+    release.set()
+    pump(app, lambda: not shiboken6.isValid(win))

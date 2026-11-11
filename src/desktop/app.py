@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import shiboken6
 from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
@@ -757,6 +758,19 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
         if not event.isAccepted():
             self._closing = False
+            return
+        # The window's children hold its own methods as signal receivers, which keeps a closed window alive from
+        # Python's side for good; deleting the Qt object drops those connections, so the window is freed.
+        QTimer.singleShot(0, self._free_when_idle)
+
+    def _free_when_idle(self) -> None:
+        """Delete the closed window's Qt object, but never while one of its threads runs: Qt aborts on that."""
+        if self.isVisible():
+            return
+        if any(thread.isRunning() for thread in self.findChildren(QThread)):
+            QTimer.singleShot(100, self._free_when_idle)
+            return
+        shiboken6.delete(self)
 
     def _on_update_found(self, version: str) -> None:
         self.statusBar().showMessage(f"Downloading MOVER Suite v{version} update…")
