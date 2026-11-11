@@ -44,15 +44,30 @@ _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
 # (negation, owner, value, minute, drug) stops here and never reaches into the next sentence.
 _SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
 _SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
-_IN_SENTENCE = rf"(?:(?!{_SENTENCE_END_PATTERN}).)"
 _NEGATION_REACH = 40
-# A number is read whole. It never starts right after a full stop, so a window that passes the point of "86.0"
+# Where a removed minute claim was; the reach to a value stops there as it would at the word "minute".
+_MINUTE_MARK = " | "
+# Words that start another measurement, a drug, a dose or a minute. The reach from a series word to its value stops
+# at any of them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2 and "SpO2 86 at minute 20" reads 86.
+_MEASURE_WORDS = (
+    "spo2", "sp02", "oxygen saturation", "saturation", "sats", "sat", "map", "mean arterial pressure",
+    "blood pressure", "bp", "heart rate", "hr", "pulse", "respiratory rate", "resp rate", "rr", "etco2",
+    "end tidal", "end-tidal", "temperature", "temp",
+)
+_VALUE_STOP = (
+    rf"{_SENTENCE_END_PATTERN}|\||\b(?:"
+    + "|".join(re.escape(word) for word in (*_MEASURE_WORDS, *(drug.casefold() for drug in TRACKED_DRUGS)))
+    + r"|doses?|minutes?|mins?)\b"
+)
+# One character of the reach from a series word to its value: inside the sentence, before any stop above.
+_TO_VALUE = rf"(?:(?!{_VALUE_STOP}).)"
+# A number is read whole. It never starts right after a full stop, so a reach that passes the point of "86.0"
 # cannot stop on its "0".
 _NUMBER = r"(?<![\d.])(\d+(?:\.\d+)?)(?!\d)"
-_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_IN_SENTENCE}{{0,30}}\d")
-_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_IN_SENTENCE}{{0,30}}\d")
+_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_TO_VALUE}{{0,30}}\d")
+_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_TO_VALUE}{{0,30}}\d")
 _SATURATION_UNDER_NINETY = re.compile(
-    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_IN_SENTENCE}{{0,20}}(?:under|below|<)\s*90\b"
+    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_TO_VALUE}{{0,20}}(?:under|below|<)\s*90\b"
 )
 # A minute may carry a fraction ("minute 10.5"); it counts as the whole minute it falls in, and the claim, fraction
 # and range end included, is taken out of the text so that none of it is read as a value.
@@ -533,7 +548,7 @@ def _minute_numbers(text: str) -> tuple[int, ...]:
 
 
 def _without_minute_claims(text: str) -> str:
-    return _MINUTE_CLAIM.sub(" ", text)
+    return _MINUTE_CLAIM.sub(_MINUTE_MARK, text)
 
 
 def _has_standalone(text: str, number: int) -> bool:
@@ -541,10 +556,15 @@ def _has_standalone(text: str, number: int) -> bool:
 
 
 def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
+    """The value written after each of ``words``: of the numbers inside the reach to the next stop, the last.
+
+    "SpO2 fell from 98 to 86" reads 86. The reach is at most 24 characters and ends at a sentence end, another
+    measurement, a drug, a dose or a minute.
+    """
     pattern = (
         r"\b(?:"
         + "|".join(re.escape(word) for word in words)
-        + rf")\b{_IN_SENTENCE}{{0,24}}{_NUMBER}"
+        + rf")\b{_TO_VALUE}{{0,24}}{_NUMBER}"
     )
     return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
 

@@ -101,3 +101,50 @@ def test_a_decimal_minute_and_the_end_of_its_range_are_taken_out_of_the_values()
         ("missed", "hypotension"),
         ("missed", "vasopressor"),
     ]
+
+
+# —— a value belongs to the series word before it (the owner's option A, 2026-11-11) ——
+
+
+@pytest.mark.parametrize(
+    ("text", "words", "read"),
+    [
+        ("spo2 97.5 throughout, map 75", ("spo2",), (97.5,)),  # stops at the next series word
+        ("spo2 86 at minute 20", ("spo2",), (86.0,)),  # at a minute
+        ("map 60, hr 110", ("map",), (60.0,)),  # at another measurement
+        ("spo2 88 with rr 30", ("spo2",), (88.0,)),
+        ("spo2 86 then phenylephrine 100 mcg", ("spo2",), (86.0,)),  # at a drug
+        ("spo2 fell from 98 to 86", ("spo2",), (86.0,)),  # of the numbers before a stop, the last
+        ("no spo2 - no spo2", ("spo2",), ()),  # the 2 of a later "SpO2" is never a value
+    ],
+)
+def test_a_value_is_read_up_to_the_next_measurement_drug_dose_or_minute(text, words, read):
+    assert grading._numbers_after(text, words) == read
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # SpO2 stays at 98 and MAP at 80: a normal SpO2 followed by any MAP claims no desaturation
+        ("FAKE-QUIET", "Stable. SpO2 97.5 throughout, MAP 75.", []),
+        ("FAKE-QUIET", "Stable. SpO2 98, MAP 76.", []),
+        # SpO2 86 at minute 21: the reading is the desaturation's own value, not the minute after it
+        ("FAKE-DESAT", "SpO2 86 at minute 21.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 88 with RR 30.", [("mentioned", "desaturation")]),
+        # arterial MAP 60 from minute 10 to 16, Phenylephrine 100 mcg at minute 12: a heart rate is not a MAP
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP 60, HR 110. Phenylephrine 100 mcg at minute 12.",
+            [("mentioned", "hypotension"), ("mentioned", "vasopressor")],
+        ),
+    ],
+)
+def test_a_reading_after_its_value_is_not_taken_for_that_value(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+def test_where_a_minute_claim_was_taken_out_the_reach_to_a_value_still_stops():
+    """A detail is graded with its minute claims taken out; the value must read the same as with them in."""
+    text = "spo2 86 at minute 21, 2 readings"
+    assert grading._numbers_after(text, ("spo2",)) == (86.0,)
+    assert grading._numbers_after(grading._without_minute_claims(text), ("spo2",)) == (86.0,)

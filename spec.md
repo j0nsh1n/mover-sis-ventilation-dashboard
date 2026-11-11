@@ -436,6 +436,12 @@ Handoff grading:
   finding when it comes earlier. A minute inside another episode of the same
   kind belongs to that episode. A drug given a minute that none of its doses
   show is unsupported, and that drug stays missed.
+- A value belongs to the measurement word just before it (SpO2, saturation,
+  MAP, blood pressure). It is read up to the next measurement (another of
+  those, or heart rate, respiratory rate, ETCO2, temperature), drug, dose,
+  minute or sentence end; of the numbers before that, the last is the value.
+  So "SpO2 97.5 throughout, MAP 75" states SpO2 97.5, and "SpO2 86 at
+  minute 21" states SpO2 86.
 - A sentence ends at a full stop, question mark, exclamation mark, semicolon or
   line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. A negation
   word (no, not, never, without, denies, denied) denies a finding or a drug

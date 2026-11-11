@@ -62,7 +62,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   Hypotension from minute 10 to 16" counts the hypotension. A sentence ends at a
   full stop, question mark, exclamation mark, semicolon or line break. The
   "Situation awareness and contingency plans" box is saved but not graded, and
-  the page says so.
+  the page says so. A value is read for the measurement it follows, up to the
+  next measurement, drug, dose or minute, so "SpO2 98, MAP 60" no longer reads 60
+  as the SpO2 and "SpO2 86 at minute 21" reads 86.
 
 - Cases page: the preview is narrower and stays beside the list in the default
   window (in a narrower window it sits under the list), with rule names wrapping instead of being cut; filtering a full-EMR

@@ -104,8 +104,9 @@ def test_a_value_for_saturation_in_the_next_sentence_is_not_a_desaturation_claim
 
 
 def test_every_look_back_in_the_grader_is_built_from_the_one_sentence_end():
+    assert grading._SENTENCE_END_PATTERN in grading._TO_VALUE
     for pattern in (grading._SPO2_NUMBER, grading._MAP_NUMBER, grading._SATURATION_UNDER_NINETY):
-        assert grading._IN_SENTENCE in pattern.pattern
+        assert grading._TO_VALUE in pattern.pattern
     # A hand-written class such as "[^\\n.]" or a split on "[.\\n;]" would be a second, older definition.
     source = Path(grading.__file__).read_text(encoding="utf-8")
     assert "[^\\n.]" not in source and "[.\\n;]" not in source
