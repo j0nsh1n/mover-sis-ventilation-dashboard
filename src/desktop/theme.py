@@ -825,6 +825,41 @@ QLabel#ruleDetail {{
     font-size: 13px;
 }}
 
+/* —— WHO checklist practice: the card is an object with edges, a framed sheet with dotted rules between its lines —— */
+QFrame#indexCard {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 2px;
+}}
+QLabel#cardTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#cardKey, QLabel#cardValue {{
+    font-size: 13.5px;
+    padding: 4px 0;
+    border-bottom: 1px dotted {grid};
+}}
+QLabel#cardKey {{
+    color: {ink_3};
+    min-width: 100px;
+}}
+QLabel#cardValue {{
+    color: {ink};
+}}
+QLabel#cardKey[last="true"], QLabel#cardValue[last="true"] {{
+    border-bottom: none;
+}}
+/* three stages with their counts on a window's least width: the count sits under the name and the tabs are tighter */
+QTabBar#stageTabs[narrow="true"]::tab {{
+    padding: 6px 6px;
+    margin-right: 0;
+}}
+QTabBar#stageTabs[narrow="true"]::tab:focus {{
+    padding: 5px 4px;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;

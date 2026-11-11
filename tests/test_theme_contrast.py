@@ -79,6 +79,11 @@ PAIRS: list[tuple[str, str, float]] = [
     ("ink_2", "sheet", AA_NON_TEXT),
     ("accent", "sheet", AA_NON_TEXT),
     ("accent", "sel", AA_NON_TEXT),
+    # Medication and vitals: the colour swatch beside a vital's name in the table also sits on the selected row, and
+    # the cursor's tag is on_accent on accent (above). WHO checklist: the tick on a done line is paper on ink_2; the
+    # index card is the sheet with ink, ink_3 and rule_strong on it (above); a line the card leaves out is ink_3 on paper.
+    *[(signal, "sel", AA_NON_TEXT) for signal in SIGNALS],
+    ("paper", "ink_2", AA_NON_TEXT),
 ]
 
 
@@ -188,4 +193,23 @@ def test_the_rules_drawer_ground_is_the_sheet_and_the_current_rule_sits_on_the_s
     for ink in TEXT_INKS:
         assert (ink, "sheet", AA_TEXT) in PAIRS and (ink, "sel", AA_TEXT) in PAIRS
     for pair in (("accent", "sheet", AA_TEXT), ("accent", "sel", AA_NON_TEXT), ("ink", "sheet", AA_NON_TEXT)):
+        assert pair in PAIRS, pair
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_who_index_card_is_the_sheet_with_a_strong_edge_and_its_lines_are_ink(theme):
+    """The WHO page's colours are tokens already checked: the card on the sheet, its edge, its lines and its tick."""
+    from src.desktop.theme import _build_stylesheet
+
+    palette = tokens(theme)
+    sheet = _build_stylesheet(palette)
+    card = re.search(r"QFrame#indexCard \{\s*background:\s*(#[0-9A-Fa-f]{6});\s*border:\s*1px solid\s*(#[0-9A-Fa-f]{6});", sheet)
+    assert card, "the index card no longer has one plain background and edge in the stylesheet"
+    assert card.group(1).lower() == palette["sheet"].lower() and card.group(2).lower() == palette["rule_strong"].lower()
+    key = re.search(r"QLabel#cardKey \{\s*color:\s*(#[0-9A-Fa-f]{6});", sheet)
+    value = re.search(r"QLabel#cardValue \{\s*color:\s*(#[0-9A-Fa-f]{6});", sheet)
+    assert key and key.group(1).lower() == palette["ink_3"].lower()
+    assert value and value.group(1).lower() == palette["ink"].lower()
+    for pair in (("ink_3", "sheet", AA_TEXT), ("ink", "sheet", AA_TEXT), ("rule_strong", "sheet", AA_NON_TEXT),
+                 ("paper", "ink_2", AA_NON_TEXT), ("ink_3", "paper", AA_TEXT)):
         assert pair in PAIRS, pair
