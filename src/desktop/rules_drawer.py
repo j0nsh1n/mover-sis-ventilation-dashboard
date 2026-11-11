@@ -9,6 +9,7 @@ same one the case page uses. The drawer paints and styles from the design tokens
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QAccessible, QKeyEvent, QKeySequence, QShortcut
@@ -29,7 +30,7 @@ from shiboken6 import isValid
 
 from src.desktop.fonts import make_tabular
 from src.desktop.marks import severity_label
-from src.desktop.threshold_ruler import ThresholdRuler, ruler_for
+from src.desktop.threshold_ruler import RulerSpec, ThresholdRuler, ruler_for
 from src.rules import PARAMETER_METADATA, RuleCatalog, RuleSpec
 
 HOLD_KEY = "min_duration_min"
@@ -47,13 +48,7 @@ PATTERN_GROUP = "Patterns"
 OTHER_GROUP = "Other rules"
 GROUP_ORDER = (*(name for name, _signals in _GROUPS), PATTERN_GROUP, OTHER_GROUP)
 
-# Why a rule has no ruler, by the kind the catalog gives it.
-_NO_RULER = {
-    "duration": "No ruler: this rule fires on how long a condition lasts, not at one limit.",
-    "band": "No ruler: this rule flags values outside a band, not beyond one limit.",
-    "composite": "No ruler: this rule is made of other rules.",
-}
-_NO_RULER_DEFAULT = "No ruler: this rule has no single numeric limit."
+CURRENT_RULE_TEXT = "This is the rule of the selected episode."
 
 _ROLES = {
     "dialog": QAccessible.Role.Dialog,
@@ -94,9 +89,8 @@ def _number(value: float) -> str:
 
 
 def _with_unit(text: str, unit: str) -> str:
-    if not unit:
-        return text
-    return f"{text}{unit}" if unit.startswith("/") else f"{text} {unit}"
+    """The number, a space, then the unit: the spacing the threshold ruler's own sentence uses."""
+    return f"{text} {unit}" if unit else text
 
 
 def threshold_parts(spec: RuleSpec, *, skip: tuple[str, ...] = ()) -> list[str]:
@@ -108,6 +102,9 @@ def threshold_parts(spec: RuleSpec, *, skip: tuple[str, ...] = ()) -> list[str]:
         metadata = PARAMETER_METADATA[key]
         label = metadata.phrase(spec.direction)
         unit = metadata.unit if metadata.unit is not None else spec.unit
+        if label.endswith("minute"):
+            # "from minute 15" already says what the number counts.
+            unit = ""
         if isinstance(value, Mapping):
             shown = ", ".join(f"{name} {_with_unit(_number(item), unit)}" for name, item in value.items()
                               if not isinstance(item, Mapping))
@@ -136,16 +133,70 @@ def group_of(spec: RuleSpec) -> str:
     return next((name for name, signals in _GROUPS if first in signals), OTHER_GROUP)
 
 
-def rule_sentence(spec: RuleSpec, *, current: bool = False) -> str:
-    """The whole rule as one sentence a screen reader reads: name, severity, limits, hold time."""
-    parts = threshold_parts(spec, skip=(HOLD_KEY,))
-    text = f"{spec.label}. Severity: {', '.join(spec.severities)}."
-    if parts:
-        text += f" Thresholds: {'; '.join(parts)}."
+def shown_description(spec: RuleSpec) -> str:
+    """The rule's own description, or nothing when it only repeats the name (some rules describe themselves by it)."""
+    text = spec.description.strip() if spec.description else ""
+    return "" if not text or text.casefold() == spec.label.strip().casefold() else spec.description
+
+
+def detail_lines(spec: RuleSpec) -> list[tuple[str, str]]:
+    """The caption and text of each line under the name, in the order the row shows them."""
+    lines = [("Signals", ", ".join(spec.signals))]
     if spec.composition:
-        text += f" Combines: {spec.composition}."
-    text += f" Hold time: {hold_text(spec)}."
-    return f"Current rule. {text}" if current else text
+        lines.append(("Combines", spec.composition))
+    parts = threshold_parts(spec, skip=(HOLD_KEY,))
+    if parts or not spec.composition:
+        lines.append(("Thresholds", " · ".join(parts) if parts else "none"))
+    lines.append(("Hold time", hold_text(spec)))
+    if spec.skip_phases:
+        lines.append(("Skipped in", ", ".join(spec.skip_phases)))
+    return lines
+
+
+def no_ruler_reason(spec: RuleSpec) -> str:
+    """Why this rule has no ruler, said from what the rule itself defines and never from a list of rule ids."""
+    hold = spec.params.get(HOLD_KEY)
+    others = threshold_parts(spec, skip=(HOLD_KEY,))
+    if spec.kind == "composite":
+        return "No ruler: this pattern has no limit of its own; it fires when the rules it combines do."
+    if spec.kind == "band" and "low" in spec.params and "high" in spec.params:
+        edges = " or ".join(threshold_parts(replace(spec, params={k: spec.params[k] for k in ("low", "high")})))
+        return f"No ruler: it flags a value {edges}, a band and not one limit."
+    if isinstance(hold, (int, float)) and not isinstance(hold, bool) and others and spec.kind == "duration":
+        what = "the conditions above" if len(others) > 1 else "the limit above"
+        return f"No ruler: one value alone does not fire it. It needs {what} to hold {hold_text(spec)}."
+    if spec.kind in ("threshold", "slope"):
+        return "No ruler: the rule file gives this rule no numeric limit to draw."
+    return "No ruler: this rule has no single numeric limit."
+
+
+def ruler_or_reason(spec: RuleSpec) -> RulerSpec | str:
+    """The ruler of ``spec``, or the reason it has none. The one place that decides who gets a ruler.
+
+    ``ruler_for`` draws one for the rules defined by their limits (a threshold rule's warn and critical, a slope
+    rule's slope). A duration rule is defined by how long its conditions last, so it gets none even when one of
+    its conditions is a single limit; a band and a composite have no single limit at all.
+    """
+    return ruler_for(spec, None, episode=False) or no_ruler_reason(spec)
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "?", "!")) else f"{text}."
+
+
+def rule_sentence(spec: RuleSpec, *, current: bool = False) -> str:
+    """Everything the row shows, in the order it shows it, as one sentence a screen reader reads."""
+    pieces = [CURRENT_RULE_TEXT] if current else []
+    pieces += [f"Id: {spec.id}.", _sentence(spec.label), f"Severity: {', '.join(spec.severities)}."]
+    description = shown_description(spec)
+    if description:
+        pieces.append(_sentence(description))
+    for caption, text in detail_lines(spec):
+        pieces.append(_sentence(f"{caption}: {text.replace(' · ', '; ')}"))
+    ruler = ruler_or_reason(spec)
+    pieces.append(_sentence(ruler if isinstance(ruler, str) else ruler.description()))
+    return " ".join(pieces)
 
 
 def _caption_row(layout: QGridLayout, row: int, caption: str, text: str, *, tabular: bool = False) -> QLabel:
@@ -182,7 +233,7 @@ class RuleRow(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        self.current_label = QLabel("▸ Current rule: the selected episode's")
+        self.current_label = QLabel(f"▸ {CURRENT_RULE_TEXT}")
         self.current_label.setObjectName("ruleCurrent")
         self.current_label.setWordWrap(True)
         self.current_label.hide()
@@ -199,8 +250,7 @@ class RuleRow(QFrame):
         severities = QLabel("   ".join(severity_label(word) for word in spec.severities))
         severities.setObjectName("ruleSeverity")
         layout.addWidget(severities)
-        # Some rules describe themselves in their own name; the second copy would only repeat it.
-        if spec.description and spec.description.strip().casefold() != spec.label.strip().casefold():
+        if shown_description(spec):
             summary = QLabel(spec.description)
             summary.setObjectName("ruleSummary")
             summary.setWordWrap(True)
@@ -212,23 +262,11 @@ class RuleRow(QFrame):
         details.setVerticalSpacing(3)
         details.setColumnMinimumWidth(0, 78)
         details.setColumnStretch(1, 1)
-        line = 0
-        _caption_row(details, line, "Signals", ", ".join(spec.signals))
-        line += 1
-        if spec.composition:
-            _caption_row(details, line, "Combines", spec.composition)
-            line += 1
-        parts = threshold_parts(spec, skip=(HOLD_KEY,))
-        if parts or not spec.composition:
-            _caption_row(details, line, "Thresholds", " · ".join(parts) if parts else "none", tabular=True)
-            line += 1
-        _caption_row(details, line, "Hold time", hold_text(spec), tabular=True)
-        line += 1
-        if spec.skip_phases:
-            _caption_row(details, line, "Skipped in", ", ".join(spec.skip_phases))
+        for line, (caption, text) in enumerate(detail_lines(spec)):
+            _caption_row(details, line, caption, text, tabular=caption in ("Thresholds", "Hold time"))
         layout.addLayout(details)
-        ruler_spec = ruler_for(spec, None, episode=False)
-        if ruler_spec is not None:
+        ruler_spec = ruler_or_reason(spec)
+        if isinstance(ruler_spec, RulerSpec):
             self.ruler: ThresholdRuler | None = ThresholdRuler()
             set_accessible_role(self.ruler, "graphic")
             layout.addWidget(self.ruler)
@@ -237,7 +275,7 @@ class RuleRow(QFrame):
             self.ruler.setAccessibleName(f"Threshold ruler, {spec.label}")
         else:
             self.ruler = None
-            note = QLabel(_NO_RULER.get(spec.kind, _NO_RULER_DEFAULT))
+            note = QLabel(ruler_spec)
             note.setObjectName("ruleNoRuler")
             note.setWordWrap(True)
             layout.addWidget(note)

@@ -843,7 +843,7 @@ def test_closed_drawer_leaves_escape_to_the_workspace(workspace):
     ("agent_fi_et_gap", "gap at least by agent S 1 vol %"),
     ("pip_high", "warn at least 30 cmH2O"),
     ("etco2_low", "warn at most 28 mmHg"),
-    ("fio2_high_long", "from minute 15 min"),
+    ("fio2_high_long", "from minute 15"),
 ])
 def test_parameter_phrases_match_engine_comparisons(rule_id, phrase):
     assert any(phrase in part for part in threshold_parts(load_rule_catalog().get(rule_id)))

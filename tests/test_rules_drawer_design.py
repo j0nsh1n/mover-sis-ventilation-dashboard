@@ -27,11 +27,13 @@ from src.desktop.rules_drawer import (  # noqa: E402
     RulesDrawer,
     group_of,
     hold_text,
+    no_ruler_reason,
     rule_sentence,
+    ruler_or_reason,
     threshold_parts,
 )
 from src.desktop.theme import apply_theme, token_color  # noqa: E402
-from src.desktop.threshold_ruler import ruler_for  # noqa: E402
+from src.desktop.threshold_ruler import RulerSpec, ruler_for  # noqa: E402
 from src.rules import load_rule_catalog  # noqa: E402
 from src.services.case_fetch import FetchResult  # noqa: E402
 from src.services.retrieval import RetrievalResult, SearchCandidate  # noqa: E402
@@ -197,14 +199,75 @@ def test_the_rule_reference_ruler_describes_limits_in_words_and_says_nothing_of_
     assert ruler_for(spec, 31.0, episode=False).observed == 31.0
 
 
-def test_the_no_ruler_sentences_follow_the_rule_kind(drawer):
-    said = {kind: next(label.text() for label in drawer._rows[rule].findChildren(QLabel)
-                       if label.objectName() == "ruleNoRuler")
-            for kind, rule in (("duration", "peep_zero_long"), ("band", "tv_abs_extreme"),
-                               ("composite", "compliance_concern"))}
-    assert said["duration"] == "No ruler: this rule fires on how long a condition lasts, not at one limit."
-    assert said["band"] == "No ruler: this rule flags values outside a band, not beyond one limit."
-    assert said["composite"] == "No ruler: this rule is made of other rules."
+def _no_ruler_note(drawer, rule_id):
+    return next(label.text() for label in drawer._rows[rule_id].findChildren(QLabel)
+                if label.objectName() == "ruleNoRuler")
+
+
+def test_a_rule_with_one_limit_a_hold_time_and_other_conditions_says_one_value_alone_does_not_fire_it(drawer):
+    # peep_zero_long: PEEP at most 0 for 15 min while TV is at least 200 and RR at least 6.
+    assert _no_ruler_note(drawer, "peep_zero_long") == (
+        "No ruler: one value alone does not fire it. It needs the conditions above to hold at least 15 min in a row.")
+    # fio2_high_long: FIO2 at least 90 for 30 min, counted from minute 15.
+    assert _no_ruler_note(drawer, "fio2_high_long") == (
+        "No ruler: one value alone does not fire it. It needs the conditions above to hold at least 30 min in a row.")
+    assert _no_ruler_note(drawer, "fio2_room_air_vent").endswith("to hold at least 5 min in a row.")
+
+
+def test_a_band_and_a_composite_say_what_they_are_from_their_own_definition(drawer):
+    assert _no_ruler_note(drawer, "tv_abs_extreme") == (
+        "No ruler: it flags a value below 100 mL or above 1000 mL, a band and not one limit.")
+    assert _no_ruler_note(drawer, "compliance_concern") == (
+        "No ruler: this pattern has no limit of its own; it fires when the rules it combines do.")
+
+
+def test_the_reason_follows_the_rule_it_is_given_and_not_a_list_of_ids():
+    spec = load_rule_catalog("default").get("fio2_high_long")
+    seven = replace(spec, params={**spec.params, "min_duration_min": 7})
+    assert "to hold at least 7 min in a row." in no_ruler_reason(seven)
+    one_limit = replace(spec, params={"fio2_min": 90, "min_duration_min": 7})
+    assert "It needs the limit above to hold at least 7 min in a row." in no_ruler_reason(one_limit)
+    band = replace(load_rule_catalog("default").get("tv_abs_extreme"), params={"low": 150, "high": 900})
+    assert "below 150 mL or above 900 mL" in no_ruler_reason(band)
+    # The same rule defined as a threshold rule is drawn, whatever its id.
+    drawn = replace(spec, kind="threshold", params={"warn": 90, "critical": 95})
+    assert isinstance(ruler_or_reason(drawn), RulerSpec)
+
+
+_LIMIT_KEYS = ("warn", "critical", "warn_mac", "critical_mac", "max_mac", "min_slope_cmh2o_per_min")
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_every_rule_has_a_ruler_with_its_own_limits_or_a_reason_that_is_true_of_it(preset):
+    for spec in load_rule_catalog(preset).specs:
+        result = ruler_or_reason(spec)
+        limits = {float(spec.params[key]) for key in _LIMIT_KEYS if key in spec.params}
+        hold = spec.params.get("min_duration_min")
+        if isinstance(result, RulerSpec):
+            assert spec.kind in ("threshold", "slope"), spec.id
+            assert limits and {mark.value for mark in result.marks} == limits, spec.id
+            continue
+        # Without a ruler, the rule really has no limit a ruler could show, and the reason says what it does have.
+        assert spec.kind not in ("threshold", "slope") and not limits, spec.id
+        assert result.startswith("No ruler:") and result.endswith("."), spec.id
+        numbers = set(re.findall(r"\d+(?:\.\d+)?", result))
+        if spec.kind == "composite":
+            assert spec.composition and "combines" in result and not numbers, spec.id
+        elif spec.kind == "band":
+            assert {f"{spec.params['low']:g}", f"{spec.params['high']:g}"} <= numbers, spec.id
+        else:
+            assert spec.kind == "duration" and hold, spec.id
+            assert numbers == {f"{hold:g}"} and "one value alone does not fire it" in result, spec.id
+            assert len(spec.params) > 1, spec.id
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_pip_rising_gets_a_ruler_because_it_is_defined_by_its_slope_and_the_duration_rules_are_not(preset):
+    catalog = load_rule_catalog(preset)
+    assert isinstance(ruler_or_reason(catalog.get("pip_rising")), RulerSpec)
+    for rule_id in ("fio2_high_long", "fio2_room_air_vent", "peep_zero_long"):
+        assert catalog.get(rule_id).kind == "duration"
+        assert isinstance(ruler_or_reason(catalog.get(rule_id)), str)
 
 
 # —— grouping ——
@@ -261,12 +324,13 @@ def test_the_current_rule_is_marked_in_words_and_shape_as_well_as_tint(drawer):
     drawer.show_rule("map_low")
     row = drawer._rows["map_low"]
     assert row.property("highlight") is True
-    assert row.current_label.isVisibleTo(row) and row.current_label.text().startswith("▸ Current rule")
-    assert row.accessibleName().startswith("Current rule. Low mean arterial pressure.")
+    assert row.current_label.isVisibleTo(row)
+    assert row.current_label.text() == "▸ This is the rule of the selected episode."
+    assert row.accessibleName().startswith("This is the rule of the selected episode. Id: map_low. Low mean arterial pressure.")
     other = drawer._rows["pip_high"]
-    assert not other.current_label.isVisibleTo(other) and not other.accessibleName().startswith("Current rule")
+    assert not other.current_label.isVisibleTo(other) and not other.accessibleName().startswith("This is the rule")
     drawer.show_rule("pip_high")
-    assert not row.current_label.isVisibleTo(row) and not row.accessibleName().startswith("Current rule")
+    assert not row.current_label.isVisibleTo(row) and not row.accessibleName().startswith("This is the rule")
     assert drawer._rows["pip_high"].current_label.isVisibleTo(drawer._rows["pip_high"])
 
 
@@ -294,21 +358,75 @@ def test_the_drawer_and_its_list_have_names_and_roles_a_screen_reader_announces(
     assert shown.text(QAccessible.Text.Name) == "Rules" and shown.role() == QAccessible.Role.List
 
 
-def test_each_rule_is_one_sentence_with_name_severity_threshold_and_hold(drawer):
+def test_each_rule_is_one_sentence_with_everything_the_row_shows(drawer):
     assert drawer._rows["pip_high"].accessibleName() == (
-        "High PIP. Severity: warn, critical. Thresholds: warn at least 30 cmH2O; critical at least 35 cmH2O. "
-        "Hold time: none, each minute is checked on its own.")
-    assert drawer._rows["pip_rising"].accessibleName() == (
-        "Rising PIP. Severity: warn. Thresholds: window 10 min; slope at least 0.5 cmH2O/min; PIP at least 20 cmH2O. "
-        "Hold time: at least 5 min in a row.")
+        "Id: pip_high. High PIP. Severity: warn, critical. Elevated peak inspiratory pressure. Signals: PIP. "
+        "Thresholds: warn at least 30 cmH2O; critical at least 35 cmH2O. "
+        "Hold time: none, each minute is checked on its own. "
+        "Threshold ruler for High PIP. Limits: warn at 30 cmH₂O or more; critical at 35 cmH₂O or more.")
     pattern = drawer._rows["compliance_concern"].accessibleName()
-    assert pattern.startswith("Compliance pattern. Severity: warn. Combines: rising PIP (pip_rising)")
-    assert pattern.endswith("Hold time: set by the rules it combines.")
+    assert pattern.startswith("Id: compliance_concern. Compliance pattern. Severity: warn. ")
+    assert "Combines: rising PIP (pip_rising)" in pattern
+    assert pattern.endswith("Hold time: set by the rules it combines. No ruler: this pattern has no limit of its own; "
+                            "it fires when the rules it combines do.")
     assert "Thresholds" not in pattern
     for rule_id, row in drawer._rows.items():
         iface = QAccessible.queryAccessibleInterface(row)
         assert iface.role() == QAccessible.Role.ListItem, rule_id
         assert iface.text(QAccessible.Text.Name) == rule_sentence(load_rule_catalog("default").get(rule_id))
+
+
+def _row_in_reading_order(row, spec):
+    """What the row's labels say, top to bottom, as the sentence should repeat it."""
+    labels = [label for label in row.findChildren(QLabel) if not label.isHidden()]
+    said = []
+    for label in labels:
+        name, text = label.objectName(), label.text()
+        if name == "ruleSeverity":
+            said.append(", ".join(spec.severities))
+        elif name == "ruleDetail":
+            said.append(text.replace(" · ", "; "))
+        else:
+            said.append(text)
+    return said
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_the_sentence_repeats_every_line_of_the_row_in_the_order_the_row_shows_them(qapp, preset):
+    catalog = load_rule_catalog(preset)
+    widget = RulesDrawer()
+    widget.set_catalog(catalog)
+    widget.open()
+    try:
+        for spec in catalog.specs:
+            row = widget._rows[spec.id]
+            sentence = rule_sentence(spec)
+            cursor = 0
+            for text in _row_in_reading_order(row, spec):
+                found = sentence.find(text.rstrip("."), cursor)
+                assert found >= cursor, (spec.id, text, sentence)
+                cursor = found + len(text.rstrip("."))
+            if row.ruler is not None:
+                assert sentence.find(row.ruler.spec().description().rstrip("."), cursor) >= cursor, spec.id
+        skipped = rule_sentence(catalog.get("peep_zero_long"))
+        assert "Skipped in: pre_induction" in skipped
+        assert catalog.get("peep_zero_long").description.rstrip(".") in skipped
+    finally:
+        _dispose(widget, qapp)
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_a_number_and_its_unit_are_spaced_one_way_in_the_text_and_on_the_ruler(preset):
+    for spec in load_rule_catalog(preset).specs:
+        for part in threshold_parts(spec):
+            assert not re.search(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?[/%A-Za-z]", part), part
+            assert not re.search(r"minute \d+(?:\.\d+)? min\b", part), part
+        ruler = ruler_for(spec, None, episode=False)
+        if ruler is not None:
+            assert not re.search(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?[/%A-Za-z]", ruler.description()), ruler.description()
+    rr = load_rule_catalog("default").get("rr_high")
+    assert "warn at least 20 /min" in threshold_parts(rr)
+    assert "warn at 20 /min or more" in ruler_for(rr, None, episode=False).description()
 
 
 def test_each_ruler_has_a_name_a_role_and_its_numbers_in_words(drawer):

@@ -11,6 +11,8 @@ checks this list against the catalog):
 - the slope rule pip_rising, which has one limit, written "fires ≥ 0.5";
 - agent_low_maint, which has one limit, written "fires < 0.3": the pipeline flags a MAC strictly below it.
 
+A rule is drawn when its kind is defined by its limits (threshold, slope). A duration rule is defined by how long
+its conditions last, so it gets none even when one condition is a single limit, as FIO2 at least 90 % is.
 Rules without a single numeric limit get no ruler: the duration rules (peep_zero_long, etco2_zero_vent,
 fio2_high_long, fio2_room_air_vent, agent_drift, agent_fi_et_gap), the band rule tv_abs_extreme and the
 composite rules (compliance_concern, hypoventilation_pattern, desat_with_vent_issue).
