@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 from PySide6.QtCore import Qt
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QDockWidget, QLabel, QPushButton, QT
 
 from src.__version__ import get_version
 from src.desktop.app import MainWindow
+from src.desktop.shell import DEMO_SOURCE, DEMO_STAMP, PRACTICE_SOURCE, RESEARCH_STAMP
 from src.desktop.suite_chrome import install_suite_chrome
 from src.llm.service import OllamaStatus
 from src.services.case_fetch import FetchResult
@@ -481,6 +484,57 @@ def test_footer_shows_source_counts_rules_and_model_and_keeps_status_messages(wi
     assert window.statusBar().currentMessage() == "A temporary message"
     buttons = window.statusBar().findChildren(QPushButton)
     assert window._update_button in buttons and window._scan_cancel_button in buttons
+
+
+def _open_medication_page(window, qapp, monkeypatch, *, pid=None):
+    """Open Practice / Medication and vitals, with ``pid`` as the case open in Research (or none)."""
+    import pandas as pd
+
+    medications = pd.DataFrame(
+        [{"Drug_name": "Drug A", "Dose": 5, "Drug_units": "mg", "Start_time": "2000-01-01 08:10:00", "End_time": r"\N"}]
+    )
+    monkeypatch.setattr("src.llm.case_context.load_case_medications", lambda _pid: medications)
+    window.research._current_pid = pid
+    if pid is not None:
+        window.research._case_views[pid] = SimpleNamespace(
+            timeseries=pd.DataFrame([{"t_min": 0, "HR": 70}]), cases=pd.DataFrame())
+    window.rail.button("practice").click()
+    qapp.processEvents()
+    window.practice_tabs.bar.setCurrentIndex(1)
+    qapp.processEvents()
+    return window.module_stack.currentWidget()
+
+
+def test_medication_page_with_an_open_case_is_not_called_invented_data(window, qapp, monkeypatch):
+    """The page then shows the open case's drugs and vitals, so the head and footer name the data in use."""
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    head, footer = window.head, window._footer
+    assert panel.shows_open_case() and "SYN-1 · open case · de-identified research data" in panel.case_line.text()
+    assert head.stamp.isVisibleTo(window) and not head.fiction.isVisibleTo(window)
+    assert head.property("practice") is False and head.stamp.accessibleName() == RESEARCH_STAMP
+    assert footer.source.accessibleName() != PRACTICE_SOURCE and not footer.practice_note.isVisibleTo(window)
+    assert footer.counts.isVisibleTo(window)
+    # the other practice tools still hold only invented material
+    window.practice_tabs.bar.setCurrentIndex(0)
+    qapp.processEvents()
+    assert head.fiction.isVisibleTo(window) and not head.stamp.isVisibleTo(window)
+    assert footer.source.accessibleName() == PRACTICE_SOURCE and footer.practice_note.isVisibleTo(window)
+
+
+def test_medication_page_without_an_open_case_shows_its_invented_record_under_the_fiction_line(window, qapp, monkeypatch):
+    panel = _open_medication_page(window, qapp, monkeypatch, pid=None)
+    assert not panel.shows_open_case() and panel.case_line.text().endswith("invented record")
+    assert window.head.fiction.isVisibleTo(window) and not window.head.stamp.isVisibleTo(window)
+    assert window._footer.source.accessibleName() == PRACTICE_SOURCE
+
+
+def test_medication_page_names_an_open_demo_case_as_fictional_demo_data(window, qapp, monkeypatch):
+    monkeypatch.setattr("src.desktop.app.demo_data_in_use", lambda: True)
+    panel = _open_medication_page(window, qapp, monkeypatch, pid="SYN-1")
+    assert "SYN-1 · open case · fictional demo data, not for patient care" in panel.case_line.text()
+    assert "research data" not in panel.case_line.text()
+    assert window.head.stamp.isVisibleTo(window) and window.head.stamp.accessibleName() == DEMO_STAMP
+    assert window._footer.source.accessibleName() == DEMO_SOURCE[1]
 
 
 def test_practice_footer_says_it_reads_no_data_folder(window, qapp):

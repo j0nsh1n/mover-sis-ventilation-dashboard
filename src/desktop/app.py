@@ -1663,9 +1663,9 @@ class MainWindow(QMainWindow):
         self._current_module = name
         if name in _PRACTICE_TITLES:
             self._last_practice = name
-        self._sync_frame()
         if name == "medications":
             self._offer_open_case_to_medication()
+        self._sync_frame()
         return True
 
     def _go(self, key: str) -> None:
@@ -1741,7 +1741,7 @@ class MainWindow(QMainWindow):
         place = self.research.place()
         self.rail.set_current(self._current_module if self._current_module == "settings"
                               else "practice" if practice else place.page)
-        self.head.set_place(self._breadcrumb(), practice=practice)
+        self.head.set_place(self._breadcrumb(), practice=self._showing_invented_practice())
         self.practice_tabs.setVisible(practice)
         if practice:
             self.practice_tabs.select(self._current_module)
@@ -1761,6 +1761,19 @@ class MainWindow(QMainWindow):
         set_page_title(self, title)
         self._refresh_footer()
 
+    def _showing_invented_practice(self) -> bool:
+        """Whether the page showing holds only invented practice material.
+
+        Medication and vitals with a case opened in Research shows that case's data, so the running head and the
+        footer must name the data in use there, not say that nothing on the page comes from a data folder.
+        """
+        if self._current_module not in _PRACTICE_TITLES:
+            return False
+        if self._current_module != "medications":
+            return True
+        shows_open_case = getattr(self._suite_pages.get("medications"), "shows_open_case", None)
+        return not (callable(shows_open_case) and shows_open_case())
+
     def _indexed_count(self) -> int | None:
         result = self.research.result
         indexed = getattr(result, "indexed_count", 0)
@@ -1776,7 +1789,7 @@ class MainWindow(QMainWindow):
         if footer is None:
             return
         self.head.set_demo(demo_data_in_use())
-        if self._current_module in _PRACTICE_TITLES:
+        if self._showing_invented_practice():
             footer.show_practice()
             return
         analyzed = len(self.cases) if self.cases is not None else None
@@ -1878,7 +1891,8 @@ class MainWindow(QMainWindow):
         from src.llm.case_context import load_case_medications
 
         origin = _case_origin(view.cases, pid)
-        panel.show_case(str(pid), load_case_medications(pid), view.timeseries, origin=origin)
+        panel.show_case(str(pid), load_case_medications(pid), view.timeseries, origin=origin,
+                        fictional_source=demo_data_in_use())
 
 
 def _case_origin(cases: pd.DataFrame, pid: str):

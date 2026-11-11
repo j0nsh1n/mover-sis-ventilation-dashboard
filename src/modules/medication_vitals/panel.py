@@ -29,6 +29,8 @@ from src.modules.medication_vitals.timeline import MEASUREMENT, TRACK_SPECS, bui
 from src.modules.medication_vitals.timeline_chart import MedicationChart
 
 DEMO_ID = "FAKE-MED-DEMO"
+OPEN_CASE_NOTE = "de-identified research data, not for patient care"
+OPEN_CASE_DEMO_NOTE = "fictional demo data, not for patient care"
 UNREADABLE = "The rows for this record could not be read, so none are shown."
 NO_ROWS = "This record has no medication or vital rows."
 _COLUMNS = ("Time", "Item", "Value", "Unit", "Kind", "Source", "Record note")
@@ -55,6 +57,8 @@ def _swatch(token: str) -> QIcon:
 
 
 class MedicationVitalsPanel(QWidget):
+    _open_case = False
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("medication-vitals")
@@ -153,6 +157,10 @@ class MedicationVitalsPanel(QWidget):
 
     # —— what the page shows ——
 
+    def shows_open_case(self) -> bool:
+        """Whether the page shows a case opened in Research, not its own invented record."""
+        return self._open_case
+
     def show_fictional(self) -> None:
         medications, timeseries = fictional_demo()
         self.show_case(DEMO_ID, medications, timeseries, origin=None)
@@ -163,12 +171,18 @@ class MedicationVitalsPanel(QWidget):
         medications: pd.DataFrame | None,
         timeseries: pd.DataFrame | None,
         origin: datetime | None = None,
+        *,
+        fictional_source: bool = False,
     ) -> None:
+        """Show one record. ``fictional_source`` says an open case comes from the app's fictional demo data."""
         demo = case_id == DEMO_ID
-        self.case_line.setText(
-            f"{case_id} · invented record" if demo
-            else f"{case_id} · open case · de-identified research data, not for patient care"
-        )
+        self._open_case = not demo
+        if demo:
+            self.case_line.setText(f"{case_id} · invented record")
+        elif fictional_source:
+            self.case_line.setText(f"{case_id} · open case · {OPEN_CASE_DEMO_NOTE}")
+        else:
+            self.case_line.setText(f"{case_id} · open case · {OPEN_CASE_NOTE}")
         try:
             rows = align_rows(medications, timeseries, origin=origin)
         except (ValueError, TypeError, KeyError):
