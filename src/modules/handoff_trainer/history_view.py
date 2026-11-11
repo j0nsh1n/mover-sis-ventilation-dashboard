@@ -17,10 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.modules.handoff_trainer.history import attempt_counts
+from src.modules.handoff_trainer.history import attempt_counts, was_graded
 
 COLUMNS = ("When", "Run", "Found")
 EMPTY = "No attempts are saved yet."
+NOT_GRADED = "not graded"
 _STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -41,7 +42,7 @@ def history_rows(attempts: Sequence[Mapping], titles: Mapping[str, str]) -> list
         title = titles.get(case_id)
         found, total = attempt_counts(attempt)
         rows.append((when_text(attempt.get("at", "")), f"{title} ({case_id})" if title else case_id,
-                     f"{found} of {total}"))
+                     f"{found} of {total}" if was_graded(attempt) else NOT_GRADED))
     return rows
 
 

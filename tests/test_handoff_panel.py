@@ -1038,8 +1038,31 @@ def test_text_only_in_the_contingency_box_counts_as_written_saves_and_says_nothi
     assert row["handoff"] == "" and row["grades"] == []
     assert panel.history_label.text() == "Saved attempts: 1 for this run · 1 in all"
     panel.show_history()
+    assert panel.history_dialog.table.item(0, 2).text() == "not graded"
+    panel.history_dialog.reject()
+
+
+def test_a_graded_attempt_on_a_run_with_nothing_to_find_is_still_0_of_0(panel):
+    _pick(panel, "FAKE-QUIET")
+    _write(panel, patient_summary="Stable throughout")
+    panel.check_button.click()
+    (row,) = load_attempts()
+    assert row["handoff"] != "" and row["grades"] == []
+    panel.show_history()
     assert panel.history_dialog.table.item(0, 2).text() == "0 of 0"
     panel.history_dialog.reject()
+
+
+def test_history_says_not_graded_only_for_text_that_sat_in_the_ungraded_box():
+    boxes = {"patient_summary": "", "situation_awareness": "Call if worse"}
+    only_ungraded = {"at": "2026-11-05T09:30:00Z", "case_id": "FAKE-QUIET", "handoff": "", "sections": boxes, "grades": []}
+    assert history_rows([only_ungraded], {})[0][2] == "not graded"
+    both = {**only_ungraded, "handoff": "Patient summary: Stable.", "sections": {**boxes, "patient_summary": "Stable"}}
+    assert history_rows([both], {})[0][2] == "0 of 0"
+    # An attempt saved before the boxes existed has no sections and reads as it always did.
+    older = {"at": "2026-11-05T09:30:00Z", "case_id": "FAKE-QUIET", "handoff": "", "grades": []}
+    assert history_rows([older], {})[0][2] == "0 of 0"
+    assert history_rows([{**only_ungraded, "sections": "broken"}], {})[0][2] == "0 of 0"
 
 
 def test_the_not_graded_sentence_is_said_once_and_only_when_that_box_has_text(panel):

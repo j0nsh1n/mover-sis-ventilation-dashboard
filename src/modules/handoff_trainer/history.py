@@ -99,6 +99,18 @@ def found_counts(items: Iterable[tuple[str, str]]) -> tuple[int, int]:
     return found, total
 
 
+def was_graded(row: Mapping) -> bool:
+    """False for an attempt whose only text sat in a box that is not graded: it was saved, and nothing was graded.
+
+    An attempt saved without its boxes (the older format) was always graded, so it reads as it did.
+    """
+    sections = row.get("sections")
+    handoff = row.get("handoff")
+    if not isinstance(sections, Mapping) or not isinstance(handoff, str) or handoff.strip():
+        return True
+    return not any(isinstance(text, str) and text.strip() for text in sections.values())
+
+
 def attempt_counts(row: Mapping) -> tuple[int, int]:
     """``found_counts`` of a saved attempt, from either format."""
     grades = row.get("grades", [])
