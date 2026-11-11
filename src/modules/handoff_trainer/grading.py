@@ -45,21 +45,18 @@ _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
 _SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
 _SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
 _NEGATION_REACH = 40
-# Where a removed minute claim was; the reach to a value stops there as it would at the word "minute". A character
-# from Unicode's private use area, so nothing a learner types can be taken for it.
-_MINUTE_MARK = " \ue000 "
-# Words that start another measurement, a drug, a dose or a minute. The reach from a series word to its value stops
-# at any of them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2 and "SpO2 86 at minute 20" reads 86.
+# Words that start another measurement, a drug or a dose. The reach from a series word to its value stops at any of
+# them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2.
 _MEASURE_WORDS = (
     "spo2", "sp02", "oxygen saturation", "saturation", "sats", "sat", "map", "mean arterial pressure",
     "blood pressure", "bp", "heart rate", "hr", "respiratory rate", "resp rate", "rr", "etco2",
     "end tidal", "end-tidal", "temperature", "temp",
 )
 _VALUE_STOP = (
-    rf"{_SENTENCE_END_PATTERN}|\ue000|\b(?:"
+    rf"{_SENTENCE_END_PATTERN}|\b(?:"
     + "|".join(re.escape(word) for word in (*_MEASURE_WORDS, *(drug.casefold() for drug in TRACKED_DRUGS)))
     # a pulse is a heart rate, but "pulse ox" and "pulse oximeter" are how a saturation is measured
-    + r"|pulse(?!\s*ox)|doses?|minutes?|mins?)\b"
+    + r"|pulse(?!\s*ox)|doses?)\b"
 )
 # One character of the reach from a series word to its value: inside the sentence, before any stop above.
 _TO_VALUE = rf"(?:(?!{_VALUE_STOP}).)"
@@ -442,7 +439,7 @@ def _claims_desat(text: str) -> bool:
         return False
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if _SATURATION_UNDER_NINETY.search(text):
+    if _SATURATION_UNDER_NINETY.search(_value_text(text)):
         return True
     return bool(low_values)
 
@@ -454,7 +451,7 @@ def _names_hypotension(text: str) -> bool:
 def _names_desaturation(text: str, event: TimelineEvent) -> bool:
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if _SATURATION_UNDER_NINETY.search(text):
+    if _SATURATION_UNDER_NINETY.search(_value_text(text)):
         return True
     return any(
         value < SPO2_LOW and any(abs(value - known) < 0.01 for known in event.values)
@@ -467,7 +464,7 @@ def _hypotension_detail(
 ) -> tuple[bool, bool]:
     minutes_ok, minutes_bad = _minute_fit(text, event, peers)
     body = _without_minute_claims(text)
-    matched, contradicted = _stated_values(body, ("map", "blood pressure"), event, peers, MAP_LOW)
+    matched, contradicted = _stated_values(text, ("map", "blood pressure"), event, peers, MAP_LOW)
     threshold = _has_standalone(body, 65)
     return minutes_ok or threshold or matched, minutes_bad or contradicted
 
@@ -480,7 +477,7 @@ def _desaturation_detail(
     under_ninety = re.search(r"(?:under|below|<)\s*90\b", body) is not None
     stated = [
         value
-        for value in _numbers_after(body, ("spo2", "sp02", "saturation"))
+        for value in _numbers_after(text, ("spo2", "sp02", "saturation"))
         if not (under_ninety and abs(value - 90.0) < 0.01)
     ]
     matched = any(_shows_value(value, (event,)) for value in stated)
@@ -550,7 +547,18 @@ def _minute_numbers(text: str) -> tuple[int, ...]:
 
 
 def _without_minute_claims(text: str) -> str:
-    return _MINUTE_CLAIM.sub(_MINUTE_MARK, text)
+    return _MINUTE_CLAIM.sub(" ", text)
+
+
+# Stands for a written minute in the text values are read from. A character from Unicode's private use area, so
+# nothing a learner types can be taken for it.
+_MINUTE_HERE = "\ue000"
+_VALUE_REACH = 24
+
+
+def _value_text(text: str) -> str:
+    """The text values are read from: a written minute ("minute 21", "minutes 10 to 16") is a time, never a value."""
+    return _MINUTE_CLAIM.sub(f" {_MINUTE_HERE} ", text)
 
 
 def _has_standalone(text: str, number: int) -> bool:
@@ -558,17 +566,25 @@ def _has_standalone(text: str, number: int) -> bool:
 
 
 def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
-    """The value written after each of ``words``: of the numbers inside the reach to the next stop, the last.
+    """The value written after each of ``words``.
 
-    "SpO2 fell from 98 to 86" reads 86. The reach is at most 24 characters and ends at a sentence end, another
-    measurement, a drug, a dose or a minute.
+    The reach runs to the next sentence end, measurement, drug or dose, and a value starts within 24 characters of
+    the word. A written minute is never a value and splits the reach: the value is the last number before the first
+    minute ("SpO2 86 at minute 21, 2 drops" reads 86), or after it when none comes before ("SpO2 at minute 21 was
+    86" reads 86). "SpO2 fell from 98 to 86" reads 86.
     """
-    pattern = (
-        r"\b(?:"
-        + "|".join(re.escape(word) for word in words)
-        + rf")\b{_TO_VALUE}{{0,24}}{_NUMBER}"
-    )
-    return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
+    text = _value_text(text)
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in words) + rf")\b({_TO_VALUE}*)")
+    found: list[float] = []
+    for match in pattern.finditer(text):
+        reach = match.group(1)
+        groups: dict[int, list[float]] = {}
+        for number in re.finditer(_NUMBER, reach):
+            if number.start() <= _VALUE_REACH:
+                groups.setdefault(reach.count(_MINUTE_HERE, 0, number.start()), []).append(float(number.group(1)))
+        if groups:
+            found.append(groups[min(groups)][-1])
+    return tuple(found)
 
 
 def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
@@ -583,13 +599,13 @@ def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
 
 
 def _spo2_value_claim(text: str) -> bool:
-    if _SPO2_NUMBER.search(text):
+    if _SPO2_NUMBER.search(_value_text(text)):
         return True
     return _positive(text, ("normal saturation", "saturation was normal", "oxygenation was normal", "saturation was fine", "spo2 was normal"))
 
 
 def _map_value_claim(text: str) -> bool:
-    if _MAP_NUMBER.search(text):
+    if _MAP_NUMBER.search(_value_text(text)):
         return True
     return _positive(text, ("blood pressure was normal", "map was normal", "pressure was stable"))
 

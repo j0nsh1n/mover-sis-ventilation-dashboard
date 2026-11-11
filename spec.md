@@ -440,10 +440,11 @@ Handoff grading:
   MAP, blood pressure) and is looked for within 24 characters after it. The
   reach stops at the next measurement (another of those, or heart rate, pulse,
   respiratory rate, ETCO2, temperature; "pulse ox" is not one), tracked drug,
-  the word dose, a minute or a sentence end; of the numbers before that, the
-  last is the value.
-  So "SpO2 97.5 throughout, MAP 75" states SpO2 97.5, and "SpO2 86 at
-  minute 21" states SpO2 86.
+  the word dose or a sentence end; of the numbers before that, the last is the
+  value. A written minute ("minute 21", "minutes 10 to 16") is a time, never a
+  value: the value is the one written before the first minute, or after it
+  when none comes before. So "SpO2 97.5 throughout, MAP 75" states SpO2 97.5,
+  and "SpO2 86 at minute 21" and "SpO2 at minute 21 was 86" both state SpO2 86.
 - A sentence ends at a full stop, question mark, exclamation mark, semicolon or
   line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. A negation
   word (no, not, never, without, denies, denied) denies a finding or a drug

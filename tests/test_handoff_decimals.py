@@ -131,11 +131,10 @@ def test_a_decimal_minute_and_the_end_of_its_range_are_taken_out_of_the_values()
         # "pulse ox" is how a saturation is measured, not another measurement
         ("spo2 on pulse ox was 86", ("spo2",), (86.0,)),
         ("saturation on the pulse oximeter 86", ("saturation",), (86.0,)),
-        # a character a learner types is not taken for the mark of a removed minute claim
         ("spo2 | 86", ("spo2",), (86.0,)),
     ],
 )
-def test_a_value_is_read_up_to_the_next_measurement_drug_dose_or_minute(text, words, read):
+def test_a_value_is_read_up_to_the_next_measurement_drug_or_dose(text, words, read):
     assert grading._numbers_after(text, words) == read
 
 
@@ -161,8 +160,44 @@ def test_a_reading_after_its_value_is_not_taken_for_that_value(case_id, text, ex
     assert _graded(case_id, text) == expected
 
 
-def test_where_a_minute_claim_was_taken_out_the_reach_to_a_value_still_stops():
-    """A detail is graded with its minute claims taken out; the value must read the same as with them in."""
-    text = "spo2 86 at minute 21, 2 readings"
-    assert grading._numbers_after(text, ("spo2",)) == (86.0,)
-    assert grading._numbers_after(grading._without_minute_claims(text), ("spo2",)) == (86.0,)
+@pytest.mark.parametrize(
+    ("text", "words", "read"),
+    [
+        ("spo2 at minute 21 was 86", ("spo2",), (86.0,)),  # a value after a written minute still counts
+        ("spo2 86 at minute 21", ("spo2",), (86.0,)),  # and one before it
+        ("map at minute 12 was 90", ("map",), (90.0,)),
+        ("map 60 from minutes 10 to 16", ("map",), (60.0,)),  # a range of minutes is a time too
+        ("spo2 86 at minute 21, nasal 2 drops", ("spo2",), (86.0,)),  # the value before the minute, not after it
+        ("map 58.0 at minute 3 2. phenylephrine", ("map",), (58.0,)),
+        ("spo2 at minute 21", ("spo2",), ()),  # a minute alone is no value
+    ],
+)
+def test_a_written_minute_is_a_time_and_never_a_value(text, words, read):
+    assert grading._numbers_after(text, words) == read
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # SpO2 86 at minute 21 is part of the desaturation, whichever side of the minute the value is written
+        ("FAKE-DESAT", "SpO2 at minute 21 was 86.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 86 at minute 21.", [("mentioned", "desaturation")]),
+        # arterial MAP was 60 at minute 12, not 90: the value is unsupported, so the episode stays missed
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP at minute 12 was 90.",
+            [("unsupported", "hypotension"), ("missed", "hypotension"), ("missed", "vasopressor")],
+        ),
+        # a number after the minute (the nasal drops) is not the reading written before it
+        ("FAKE-DESAT", "SpO2 86 at minute 20, phenylephrine nasal 2 drops.", [("mentioned", "desaturation")]),
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP 60 at minute 12, phenylephrine nasal 2 drops.",
+            [("mentioned", "hypotension"), ("missed", "vasopressor")],
+        ),
+        # no SpO2 series: naming the gap at a minute is not stating a value for it
+        ("FAKE-NO-SPO2", "SpO2 missing from minute 0.", [("mentioned", "missing_spo2")]),
+    ],
+)
+def test_a_value_on_either_side_of_a_written_minute_is_graded(case_id, text, expected):
+    assert _graded(case_id, text) == expected
