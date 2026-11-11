@@ -7,15 +7,32 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics, QPainter
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QFrame,
+    QLabel,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QStyle,
+    QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.desktop.case_page import EPISODE_ROW_HEIGHT, GLYPH_ROLE, NAME_ROLE, RANGE_ROLE, SEVERITY_ROLE, EpisodeDelegate
 from src.desktop.charts import signal_info
 from src.desktop.evidence_trail import Sparkline
+from src.desktop.fonts import tabular
 from src.desktop.marks import severity_glyph
+from src.desktop.theme import token_color
 
-PREVIEW_WIDTH = 336
+# Narrow enough that the list beside it keeps readable Procedure and Top rules columns in the default window.
+PREVIEW_WIDTH = 270
 TRACE_HEIGHT = 56
 EPISODES_SHOWN = 5
 TRACE_SIGNALS = ("PIP", "ETCO2", "HR")
@@ -26,6 +43,85 @@ EPISODES_ON_OPEN = "Rule episodes show when the case is opened."
 NO_EPISODES = "No rule episodes in this case."
 KEYS_LINE = "Click selects · Enter or double-click opens · ↑ ↓ moves · / filters · Esc goes back to the question"
 _SEVERITY_RANK = {"critical": 0, "warn": 1, "info": 2}
+
+
+_ROW_PAD_X = 8
+_ROW_PAD_Y = 6
+_GLYPH_COLUMN = 30
+_NAME_GAP = 2
+_QUIET_PIXELS = 12
+_WRAP = int(Qt.TextFlag.TextWordWrap) | int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignTop)
+
+
+class PreviewEpisodeDelegate(EpisodeDelegate):
+    """A rule episode in the narrow preview: the rule's name wraps onto as many lines as it needs and is never cut,
+    with its severity word and minutes on a quiet line under it."""
+
+    def _quiet_font(self, font: QFont) -> QFont:
+        quiet = QFont(font)
+        quiet.setPixelSize(_QUIET_PIXELS)
+        return tabular(quiet)
+
+    def _name_width(self, row_width: int) -> int:
+        return max(row_width - 2 * _ROW_PAD_X - _GLYPH_COLUMN, 24)
+
+    def name_height(self, name: str, row_width: int, font: QFont) -> int:
+        return QFontMetrics(font).boundingRect(QRect(0, 0, self._name_width(row_width), 10_000), _WRAP, name).height()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
+        name = index.data(NAME_ROLE)
+        view = self.parent()
+        width = view.viewport().width() if isinstance(view, QListView) else option.rect.width()
+        if name is None:
+            return QSize(width, EPISODE_ROW_HEIGHT)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        quiet = QFontMetrics(self._quiet_font(opt.font)).height()
+        return QSize(width, 2 * _ROW_PAD_Y + self.name_height(str(name), width, opt.font) + _NAME_GAP + quiet)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        name = index.data(NAME_ROLE)
+        if name is None:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        rect = opt.rect
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(token_color("ink"))
+        top = rect.top() + _ROW_PAD_Y
+        line = painter.fontMetrics().height()
+        painter.drawText(QRect(rect.left() + _ROW_PAD_X + 2, top, _GLYPH_COLUMN, line),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), str(index.data(GLYPH_ROLE) or ""))
+        name_left = rect.left() + _ROW_PAD_X + _GLYPH_COLUMN
+        name_height = self.name_height(str(name), rect.width(), opt.font)
+        painter.drawText(QRect(name_left, top, self._name_width(rect.width()), name_height), _WRAP, str(name))
+        painter.setFont(self._quiet_font(opt.font))
+        painter.setPen(token_color("ink_3"))
+        quiet = " · ".join(part for part in (str(index.data(SEVERITY_ROLE) or ""), str(index.data(RANGE_ROLE) or "")) if part)
+        painter.drawText(QRect(name_left, top + name_height + _NAME_GAP, self._name_width(rect.width()),
+                               painter.fontMetrics().height()),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), quiet)
+        painter.restore()
+
+
+class _EpisodeRows(QListWidget):
+    """The preview's episodes, always shown whole: its height follows its rows, which grow when a name wraps."""
+
+    def fit_height(self) -> None:
+        self.doItemsLayout()
+        rows = sum(self.sizeHintForRow(row) for row in range(self.count()))
+        # The app style keeps a 2 px frame so a focus ring never moves the rows; the list is never focused here.
+        self.setFixedHeight(rows + 4)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self.fit_height()
 
 
 @dataclass(frozen=True)
@@ -172,10 +268,11 @@ class CasePreview(QFrame):
         self.trace_note.setObjectName("quietText")
         self.trace_note.setWordWrap(True)
         column.addWidget(self.trace_note)
-        self.episode_list = QListWidget()
+        self.episode_list = _EpisodeRows()
         self.episode_list.setObjectName("previewEpisodes")
         self.episode_list.setAccessibleName("Rule episodes")
-        self.episode_list.setItemDelegate(EpisodeDelegate(self.episode_list))
+        self.episode_list.setItemDelegate(PreviewEpisodeDelegate(self.episode_list))
+        self.episode_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.episode_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.episode_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.episode_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -254,12 +351,10 @@ class CasePreview(QFrame):
 
     def _show_episodes(self, episodes: tuple[PreviewEpisode, ...] | None) -> None:
         self.episode_list.clear()
-        rows = 0
         if episodes is None or not episodes:
             item = QListWidgetItem(EPISODES_ON_OPEN if episodes is None else NO_EPISODES)
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.episode_list.addItem(item)
-            rows = 1
         else:
             for episode in episodes[:EPISODES_SHOWN]:
                 glyph, minutes = severity_glyph(episode.severity), _minutes_text(episode.minutes)
@@ -270,12 +365,9 @@ class CasePreview(QFrame):
                 item.setData(SEVERITY_ROLE, episode.severity)
                 item.setData(RANGE_ROLE, minutes)
                 self.episode_list.addItem(item)
-            rows = min(len(episodes), EPISODES_SHOWN)
             if len(episodes) > EPISODES_SHOWN:
                 more = QListWidgetItem(f"and {len(episodes) - EPISODES_SHOWN} more")
                 more.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.episode_list.addItem(more)
-                rows += 1
-        # The app style keeps a 2 px frame so a focus ring never moves the rows; the list is never focused here.
-        self.episode_list.setFixedHeight(rows * EPISODE_ROW_HEIGHT + 4)
         self.episode_list.show()
+        self.episode_list.fit_height()

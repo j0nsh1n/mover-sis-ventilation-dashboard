@@ -16,10 +16,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, Qt  # noqa: E402
-from PySide6.QtGui import QColor  # noqa: E402
+from PySide6.QtGui import QColor, QFontMetrics  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
+from src.desktop.case_page import NAME_ROLE  # noqa: E402
 import src.desktop.cases_overview as cases_module  # noqa: E402
 import src.desktop.research_workers as research_workers  # noqa: E402
 import src.services.case_fetch as case_fetch  # noqa: E402
@@ -613,6 +614,40 @@ def test_the_preview_lists_episodes_worst_first_with_shape_word_and_minutes_and_
     view.close()
 
 
+def test_the_preview_stays_beside_the_list_in_the_default_window_with_readable_columns(qapp):
+    """The owner's layout: the default 1,380 px window gives a 1,316 px page, and the list keeps its preview at its
+    side there with Procedure and Top rules at their readable widths (150 and 260 px)."""
+    view, overview = _workspace(1316, **_preview_data())
+    assert overview._wide and overview.preview.property("stacked") is False
+    assert overview.table.columnWidth(_column("Procedure_short")) >= 150
+    assert overview.table.columnWidth(_column("top_rules")) >= 260
+    assert overview.table.horizontalScrollBar().maximum() == 0
+    view.close()
+
+
+def test_a_long_rule_name_in_the_preview_wraps_instead_of_being_cut(qapp):
+    view, overview = _workspace(1316, **_preview_data())
+    rows = overview.preview.episode_list
+    delegate = rows.itemDelegate()
+    width, font = rows.viewport().width(), rows.font()
+    one_line = QFontMetrics(font).height()
+    short, long_name = "High PEEP", "Agent concentration drift over a long stretch of the maintenance phase"
+    # the short name is one line; the long one cannot fit one line of a 270 px panel, so it takes more
+    assert delegate.name_height(short, width, font) == one_line
+    assert QFontMetrics(font).horizontalAdvance(long_name) > width
+    assert delegate.name_height(long_name, width, font) >= 2 * one_line
+    item = rows.item(0)
+    before = rows.sizeHintForRow(0)
+    item.setData(NAME_ROLE, long_name)
+    rows.fit_height()
+    QApplication.processEvents()
+    assert rows.sizeHintForRow(0) >= before + one_line
+    # every row shows whole: the list is as tall as its rows and never scrolls
+    assert rows.height() == sum(rows.sizeHintForRow(i) for i in range(rows.count())) + 4
+    assert rows.verticalScrollBar().maximum() == 0
+    view.close()
+
+
 def test_the_preview_says_signals_show_when_opened_if_the_minutes_are_not_in_memory(qapp):
     scan_cases = _cases().assign(PID=["SCAN1", "SCAN2", "SCAN3"])
     scan = ScanResult(scan_cases, _episodes("SCAN1", [("pip_high", "warn", 12.0)]),
@@ -757,7 +792,7 @@ def test_the_preview_sits_at_the_right_full_height_on_the_side_panel_ground(qapp
     view, overview = _workspace(1500)
     preview = overview.preview
     assert overview._wide and preview.property("stacked") is False
-    assert preview.width() == 336 and preview.x() + preview.width() == overview.width()
+    assert preview.width() == 270 and preview.x() + preview.width() == overview.width()
     assert preview.height() == overview.height() and preview.y() == 0
     assert preview.x() > overview.table.mapTo(overview, QPoint(0, 0)).x() + overview.table.width() - 1
     image = overview.grab().toImage()
