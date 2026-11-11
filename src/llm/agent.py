@@ -286,10 +286,11 @@ def _claimed_ages(text: str) -> set[int]:
     # Asserted ages, not the digits anywhere in the text. Mere presence is useless:
     # "60" turns up in flag times, counts, even the note this check appends — while
     # the answer still calls a 60-year-old case "55-year-old".
+    # An age starts a word: the end of a case ID such as "SYN000891eb5f" is not "age 5, female".
     return {
         int(g)
         for m in re.finditer(
-            r"(?<!\d)(\d{1,3})\s*(?:-|\s)?\s*(?:years?[- ]?old|years?\s+of\s+age|y/?o\b|yr[s]?\b|[FM]\b)"
+            r"(?<!\w)(\d{1,3})\s*(?:-|\s)?\s*(?:years?[- ]?old|years?\s+of\s+age|y/?o\b|yr[s]?\b|[FM]\b)"
             r"|(?:\bage[d]?\s*[:=]?\s*)(\d{1,3})(?!\d)",
             text or "",
             re.IGNORECASE,
