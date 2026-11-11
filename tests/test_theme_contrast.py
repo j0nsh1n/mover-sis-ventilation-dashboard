@@ -72,6 +72,13 @@ PAIRS: list[tuple[str, str, float]] = [
     ("ink_2", "sel", AA_NON_TEXT),
     ("ink", "paper", AA_NON_TEXT),
     ("ink_3", "paper", AA_NON_TEXT),
+    # The rules drawer: its text sits on the sheet, or on the selected tint for the current rule (all three inks are
+    # text pairs above). The rulers' limit marks are ink, their axis ink_3, the focus ring and the current-rule bar accent.
+    ("ink", "sheet", AA_NON_TEXT),
+    ("ink_3", "sheet", AA_NON_TEXT),
+    ("ink_2", "sheet", AA_NON_TEXT),
+    ("accent", "sheet", AA_NON_TEXT),
+    ("accent", "sel", AA_NON_TEXT),
 ]
 
 
@@ -162,4 +169,23 @@ def test_the_handoff_side_panel_ground_is_the_sheet_and_its_boxes_are_paper(them
         assert (ink, "sheet", AA_TEXT) in PAIRS and (ink, "paper", AA_TEXT) in PAIRS
     for pair in (("accent", "sheet", AA_TEXT), ("on_accent", "accent", AA_TEXT), ("accent", "paper", AA_TEXT),
                  ("rule_strong", "paper", AA_NON_TEXT), ("ink", "sel", AA_TEXT)):
+        assert pair in PAIRS, pair
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_rules_drawer_ground_is_the_sheet_and_the_current_rule_sits_on_the_selected_tint(theme):
+    """The drawer's colours are the tokens already checked: text on the sheet, the current rule's text on sel."""
+    from src.desktop.theme import _build_stylesheet
+
+    palette = tokens(theme)
+    sheet = _build_stylesheet(palette)
+    ground = re.search(r"QFrame#rulesDrawer \{\s*background:\s*(#[0-9A-Fa-f]{6});", sheet)
+    assert ground and ground.group(1).lower() == palette["sheet"].lower(), "the drawer ground changed: update these pairs"
+    tint = re.search(r'QFrame#ruleRow\[highlight="true"\] \{\s*background:\s*(#[0-9A-Fa-f]{6});', sheet)
+    assert tint and tint.group(1).lower() == palette["sel"].lower(), "the current rule's tint changed: update these pairs"
+    bar = re.search(r'QFrame#ruleRow\[highlight="true"\] \{[^}]*border-left:\s*3px solid (#[0-9A-Fa-f]{6})', sheet)
+    assert bar and bar.group(1).lower() == palette["accent"].lower()
+    for ink in TEXT_INKS:
+        assert (ink, "sheet", AA_TEXT) in PAIRS and (ink, "sel", AA_TEXT) in PAIRS
+    for pair in (("accent", "sheet", AA_TEXT), ("accent", "sel", AA_NON_TEXT), ("ink", "sheet", AA_NON_TEXT)):
         assert pair in PAIRS, pair

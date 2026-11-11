@@ -728,6 +728,103 @@ QTableView#handoffTable {{
     border: 2px solid transparent;
 }}
 
+/* —— rules drawer: one side surface, rules in rows with faint lines, no boxes —— */
+QFrame#rulesDrawer {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QLabel#drawerTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#drawerMeta {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#drawerCount {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QLabel#drawerNotice {{
+    color: {ink};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#drawerToggle {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 6px 4px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+}}
+QPushButton#drawerToggle:hover, QPushButton#drawerToggle:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#drawerToggle:focus {{
+    border: 2px solid {accent};
+    padding: 5px 3px;
+}}
+QLabel#ruleGroup {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 18px;
+    padding-bottom: 6px;
+}}
+/* the focus ring and the current-rule bar swap borders for padding, so the text never moves */
+QFrame#ruleRow {{
+    background: transparent;
+    border: none;
+    border-top: 1px solid {rule_faint};
+    padding: 10px 12px 10px 12px;
+}}
+QFrame#ruleRow[highlight="true"] {{
+    background: {sel};
+    border-left: 3px solid {accent};
+    padding-left: 9px;
+}}
+QFrame#ruleRow:focus, QFrame#ruleRow[highlight="true"]:focus {{
+    border: 2px solid {accent};
+    padding: 9px 10px 8px 10px;
+}}
+QLabel#ruleCurrent {{
+    color: {ink};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QLabel#ruleName {{
+    color: {ink};
+    font-size: 14px;
+    font-weight: 600;
+}}
+QLabel#ruleId, QLabel#ruleCaption, QLabel#ruleNoRuler {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+/* quiet text steps up one ink on the current rule's tint, where ink_3 is too close to the limit once antialiased */
+QFrame#ruleRow[highlight="true"] QLabel#ruleId, QFrame#ruleRow[highlight="true"] QLabel#ruleCaption,
+QFrame#ruleRow[highlight="true"] QLabel#ruleNoRuler {{
+    color: {ink_2};
+}}
+QLabel#ruleSeverity {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#ruleSummary {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#ruleDetail {{
+    color: {ink};
+    font-size: 13px;
+}}
+
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;

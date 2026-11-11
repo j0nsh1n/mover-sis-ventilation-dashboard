@@ -1,6 +1,6 @@
 """A threshold ruler: where a rule's limits sit on a scale and where the episode's extreme fell.
 
-The research page's selected-rule panel uses it, and the rule reference can reuse it. It is painted from the
+The research page's selected-rule panel and the rule reference drawer use it. It is painted from the
 design tokens, so it follows the theme, and it carries the same numbers as words for a screen reader.
 
 Exactly these rules get a ruler, in every preset (``test_the_modules_docstring_names_the_rules_that_get_a_ruler``
@@ -73,6 +73,7 @@ class RulerSpec:
     marks: tuple[RulerMark, ...]
     observed: float | None
     observed_label: str
+    episode: bool = True  # False for the rule reference, where no episode was measured
 
     def description(self) -> str:
         """The ruler's numbers in words, for a screen reader and for tests."""
@@ -88,6 +89,8 @@ class RulerSpec:
             else f"{mark.word} at {_number(mark.value)}{unit} {side(mark)}"
             for mark in self.marks
         )
+        if not self.episode:
+            return f"Threshold ruler for {self.rule}. Limits: {limits}."
         if self.observed is None:
             seen = "No value was recorded for this signal during the episode."
         else:
@@ -96,10 +99,11 @@ class RulerSpec:
         return f"Threshold ruler for {self.rule}. Limits: {limits}. {seen}"
 
 
-def ruler_for(spec: RuleSpec, observed: float | None) -> RulerSpec | None:
+def ruler_for(spec: RuleSpec, observed: float | None, *, episode: bool = True) -> RulerSpec | None:
     """The ruler for ``spec`` in the loaded preset, or None when the rule has no single numeric limit.
 
     ``observed`` is the episode's maximum for a rule that fires high and its minimum for one that fires low.
+    ``episode=False`` is the rule reference, which has no episode: its description then says nothing of one.
     """
     if spec.direction not in ("high", "low"):
         return None
@@ -123,7 +127,7 @@ def ruler_for(spec: RuleSpec, observed: float | None) -> RulerSpec | None:
         return None
     word = "max" if spec.direction == "high" else "min"
     label = "" if observed is None else f"{word} {_number(observed)}"
-    return RulerSpec(spec.label, pretty_unit(spec.unit), spec.direction, tuple(marks), observed, label)
+    return RulerSpec(spec.label, pretty_unit(spec.unit), spec.direction, tuple(marks), observed, label, episode)
 
 
 def _nice_step(raw: float) -> float:

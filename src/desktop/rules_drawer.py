@@ -1,15 +1,22 @@
-"""Searchable side drawer that lists the loaded preset's rules inside the research workspace."""
+"""Searchable side drawer that lists the loaded preset's rules inside the research workspace.
+
+Every rule is one row: flag shapes with the rule file's severity words, the name, what it reads, its limits in
+words, how long it must hold, and a threshold ruler where the rule has a single numeric limit. Nothing is
+copied from the rule file by hand; the words come from ``src.rules`` and the ruler from ``ruler_for``, the
+same one the case page uses. The drawer paints and styles from the design tokens only (see ``theme.py``).
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from html import escape
 
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAccessible, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAccessibleWidget,
     QApplication,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,35 +28,65 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from src.desktop.fonts import make_tabular
+from src.desktop.marks import severity_label
+from src.desktop.threshold_ruler import ThresholdRuler, ruler_for
 from src.rules import PARAMETER_METADATA, RuleCatalog, RuleSpec
 
-STYLE = """
-QFrame#rulesDrawer { background: #fbfaf6; border: 0; border-left: 1px solid #b4afba; }
-QFrame#rulesDrawer QLabel { color: #302b35; background: transparent; }
-QFrame#rulesDrawer QLabel#drawerKicker { color: #5d4378; font-size: 11px; font-weight: bold; }
-QFrame#rulesDrawer QLabel#drawerTitle { font-family: Georgia; font-size: 22px; color: #302637; }
-QFrame#rulesDrawer QLabel#drawerMeta { color: #4b4352; }
-QFrame#rulesDrawer QLabel#drawerCount { color: #4b4352; font-weight: bold; }
-QFrame#rulesDrawer QLabel#drawerNotice { color: #5a3a14; background: #f2e3d3;
-    border: 1px solid #ddc6af; border-radius: 5px; padding: 6px 8px; }
-QFrame#rulesDrawer QLabel#ruleSummary { color: #4b4352; }
-QFrame#rulesDrawer QLabel#ruleDetail { color: #302b35; }
-QFrame#rulesDrawer QLineEdit#ruleSearch { background: #fffefa; color: #302b35;
-    border: 1px solid #7d7287; border-radius: 5px; padding: 8px;
-    placeholder-text-color: #5f566a; }
-QFrame#rulesDrawer QLineEdit#ruleSearch:focus { border: 2px solid #5d4378; padding: 7px; }
-QFrame#rulesDrawer QPushButton { background: #f8f7f3; color: #4b3d5d;
-    border: 1px solid #7d7287; border-radius: 5px; padding: 8px 12px; }
-QFrame#rulesDrawer QPushButton:focus { border: 2px solid #5d4378; padding: 7px 11px; }
-QFrame#rulesDrawer QPushButton:disabled { color: #5f566a; }
-QFrame#rulesDrawer QScrollArea#rulesScroll { background: #fbfaf6; border: 1px solid #fbfaf6; }
-QFrame#rulesDrawer QScrollArea#rulesScroll:focus { border: 2px solid #5d4378; }
-QFrame#rulesDrawer QWidget#rulesList { background: #fbfaf6; }
-QFrame#rulesDrawer QFrame#ruleRow { background: #fffefa; border: 1px solid #d2cbd3; border-radius: 7px; }
-QFrame#rulesDrawer QFrame#ruleRow[highlight="true"] { background: #f2e3d3;
-    border: 2px solid #5d4378; }
-QFrame#rulesDrawer QWidget#emptyState { background: #fbfaf6; }
-"""
+HOLD_KEY = "min_duration_min"
+
+# The rule file does not group its rules, so the drawer sorts them by the first signal a rule reads. This is
+# navigation only; a rule whose signal is not listed here lands in the last group instead of going missing.
+_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Airway pressure", ("PIP", "PIP_slope", "PEEP")),
+    ("Volume and rate", ("TV", "TV_mlkg", "RR")),
+    ("Gas", ("ETCO2", "FIO2")),
+    ("Anesthetic agent", ("MAC_total_Et", "MAC_Et", "Agent_Et_drift", "Agent_Fi_Et_gap")),
+    ("Circulation", ("SPO2", "HR", "nMAP")),
+)
+PATTERN_GROUP = "Patterns"
+OTHER_GROUP = "Other rules"
+GROUP_ORDER = (*(name for name, _signals in _GROUPS), PATTERN_GROUP, OTHER_GROUP)
+
+# Why a rule has no ruler, by the kind the catalog gives it.
+_NO_RULER = {
+    "duration": "No ruler: this rule fires on how long a condition lasts, not at one limit.",
+    "band": "No ruler: this rule flags values outside a band, not beyond one limit.",
+    "composite": "No ruler: this rule is made of other rules.",
+}
+_NO_RULER_DEFAULT = "No ruler: this rule has no single numeric limit."
+
+_ROLES = {
+    "dialog": QAccessible.Role.Dialog,
+    "list": QAccessible.Role.List,
+    "listitem": QAccessible.Role.ListItem,
+    "graphic": QAccessible.Role.Graphic,
+}
+_INTERFACES: dict[int, QAccessibleWidget] = {}
+_FACTORY_INSTALLED = False
+
+
+def _role_factory(_classname: str, obj):
+    name = obj.property("accessibleRoleName") if isinstance(obj, QWidget) else None
+    role = _ROLES.get(name) if isinstance(name, str) else None
+    if role is None:
+        return None
+    interface = QAccessibleWidget(obj, role)
+    key = id(obj)
+    _INTERFACES[key] = interface
+    obj.destroyed.connect(lambda _o=None, k=key: _INTERFACES.pop(k, None))
+    return interface
+
+
+def set_accessible_role(widget: QWidget, role: str) -> None:
+    """Publish ``widget`` with a role Qt's plain frame does not have (dialog, list, list item, graphic).
+
+    Call it before anything asks for the widget's accessible interface: Qt keeps the first one it builds.
+    """
+    global _FACTORY_INSTALLED
+    if not _FACTORY_INSTALLED:
+        QAccessible.installFactory(_role_factory)
+        _FACTORY_INSTALLED = True
+    widget.setProperty("accessibleRoleName", role)
 
 
 def _number(value: float) -> str:
@@ -62,10 +99,12 @@ def _with_unit(text: str, unit: str) -> str:
     return f"{text}{unit}" if unit.startswith("/") else f"{text} {unit}"
 
 
-def threshold_parts(spec: RuleSpec) -> list[str]:
-    """Readable `label value unit` phrases for a rule's numeric parameters."""
+def threshold_parts(spec: RuleSpec, *, skip: tuple[str, ...] = ()) -> list[str]:
+    """Readable `label value unit` phrases for a rule's numeric parameters, leaving out the keys in ``skip``."""
     parts = []
     for key, value in spec.params.items():
+        if key in skip:
+            continue
         metadata = PARAMETER_METADATA[key]
         label = metadata.phrase(spec.direction)
         unit = metadata.unit if metadata.unit is not None else spec.unit
@@ -78,46 +117,151 @@ def threshold_parts(spec: RuleSpec) -> list[str]:
     return parts
 
 
-def _detail(caption: str, text: str) -> QLabel:
-    label = QLabel(f"<span style='color:#4b4352'>{escape(caption)}</span>&nbsp; {escape(text)}")
-    label.setObjectName("ruleDetail")
-    label.setTextFormat(Qt.TextFormat.RichText)
-    label.setWordWrap(True)
-    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return label
+def hold_text(spec: RuleSpec) -> str:
+    """How long the condition must hold, as the rule defines it; never a number the rule does not carry."""
+    minutes = spec.params.get(HOLD_KEY)
+    if isinstance(minutes, (int, float)) and not isinstance(minutes, bool):
+        return f"at least {_number(minutes)} min in a row"
+    if spec.kind in ("threshold", "band"):
+        return "none, each minute is checked on its own"
+    if spec.kind == "composite":
+        return "set by the rules it combines"
+    return "not set in the rule file"
 
 
-def _rule_row(spec: RuleSpec) -> QFrame:
-    row = QFrame()
-    row.setObjectName("ruleRow")
-    row.setProperty("highlight", False)
-    row.setProperty("ruleId", spec.id)
-    layout = QVBoxLayout(row)
-    layout.setContentsMargins(12, 10, 12, 10)
-    layout.setSpacing(4)
-    title = QLabel(
-        f"<b style='font-size:14px'>{escape(spec.label)}</b>"
-        f"&nbsp; <span style='color:#4b4352;font-size:11px'>{escape(spec.id)}</span>"
-    )
-    title.setTextFormat(Qt.TextFormat.RichText)
-    title.setWordWrap(True)
-    title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    layout.addWidget(title)
-    if spec.description:
-        summary = QLabel(spec.description)
-        summary.setObjectName("ruleSummary")
-        summary.setWordWrap(True)
-        summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(summary)
-    layout.addWidget(_detail("Signals", ", ".join(spec.signals)))
-    parts = threshold_parts(spec)
+def group_of(spec: RuleSpec) -> str:
+    if spec.kind == "composite":
+        return PATTERN_GROUP
+    first = spec.signals[0] if spec.signals else ""
+    return next((name for name, signals in _GROUPS if first in signals), OTHER_GROUP)
+
+
+def rule_sentence(spec: RuleSpec, *, current: bool = False) -> str:
+    """The whole rule as one sentence a screen reader reads: name, severity, limits, hold time."""
+    parts = threshold_parts(spec, skip=(HOLD_KEY,))
+    text = f"{spec.label}. Severity: {', '.join(spec.severities)}."
+    if parts:
+        text += f" Thresholds: {'; '.join(parts)}."
     if spec.composition:
-        layout.addWidget(_detail("Combines", spec.composition))
-    if parts or not spec.composition:
-        layout.addWidget(_detail("Thresholds", " · ".join(parts) if parts else "none"))
-    if spec.skip_phases:
-        layout.addWidget(_detail("Skipped in", ", ".join(spec.skip_phases)))
-    return row
+        text += f" Combines: {spec.composition}."
+    text += f" Hold time: {hold_text(spec)}."
+    return f"Current rule. {text}" if current else text
+
+
+def _caption_row(layout: QGridLayout, row: int, caption: str, text: str, *, tabular: bool = False) -> QLabel:
+    head = QLabel(caption)
+    head.setObjectName("ruleCaption")
+    head.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+    body = QLabel(text)
+    body.setObjectName("ruleDetail")
+    body.setWordWrap(True)
+    body.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+    body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    if tabular:
+        make_tabular(body)
+    layout.addWidget(head, row, 0)
+    layout.addWidget(body, row, 1)
+    return body
+
+
+class RuleRow(QFrame):
+    """One rule. It takes focus, so a keyboard or screen-reader user can reach each rule, and reads as one sentence."""
+
+    focused = Signal()
+    moved = Signal(int)
+
+    def __init__(self, spec: RuleSpec) -> None:
+        super().__init__()
+        self.setObjectName("ruleRow")
+        self.setProperty("highlight", False)
+        self.setProperty("ruleId", spec.id)
+        self._spec = spec
+        set_accessible_role(self, "listitem")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(rule_sentence(spec))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.current_label = QLabel("▸ Current rule: the selected episode's")
+        self.current_label.setObjectName("ruleCurrent")
+        self.current_label.setWordWrap(True)
+        self.current_label.hide()
+        layout.addWidget(self.current_label)
+        # The id sits above the name, as in the design, so a long id never widens the row beside the name.
+        rule_id = QLabel(spec.id)
+        rule_id.setObjectName("ruleId")
+        layout.addWidget(rule_id)
+        name = QLabel(spec.label)
+        name.setObjectName("ruleName")
+        name.setWordWrap(True)
+        name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(name)
+        severities = QLabel("   ".join(severity_label(word) for word in spec.severities))
+        severities.setObjectName("ruleSeverity")
+        layout.addWidget(severities)
+        # Some rules describe themselves in their own name; the second copy would only repeat it.
+        if spec.description and spec.description.strip().casefold() != spec.label.strip().casefold():
+            summary = QLabel(spec.description)
+            summary.setObjectName("ruleSummary")
+            summary.setWordWrap(True)
+            summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(summary)
+        details = QGridLayout()
+        details.setContentsMargins(0, 4, 0, 0)
+        details.setHorizontalSpacing(12)
+        details.setVerticalSpacing(3)
+        details.setColumnMinimumWidth(0, 78)
+        details.setColumnStretch(1, 1)
+        line = 0
+        _caption_row(details, line, "Signals", ", ".join(spec.signals))
+        line += 1
+        if spec.composition:
+            _caption_row(details, line, "Combines", spec.composition)
+            line += 1
+        parts = threshold_parts(spec, skip=(HOLD_KEY,))
+        if parts or not spec.composition:
+            _caption_row(details, line, "Thresholds", " · ".join(parts) if parts else "none", tabular=True)
+            line += 1
+        _caption_row(details, line, "Hold time", hold_text(spec), tabular=True)
+        line += 1
+        if spec.skip_phases:
+            _caption_row(details, line, "Skipped in", ", ".join(spec.skip_phases))
+        layout.addLayout(details)
+        ruler_spec = ruler_for(spec, None, episode=False)
+        if ruler_spec is not None:
+            self.ruler: ThresholdRuler | None = ThresholdRuler()
+            set_accessible_role(self.ruler, "graphic")
+            layout.addWidget(self.ruler)
+            # The ruler hides itself until it has a spec, so it is given one only once it has a parent.
+            self.ruler.set_ruler(ruler_spec)
+            self.ruler.setAccessibleName(f"Threshold ruler, {spec.label}")
+        else:
+            self.ruler = None
+            note = QLabel(_NO_RULER.get(spec.kind, _NO_RULER_DEFAULT))
+            note.setObjectName("ruleNoRuler")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+    def set_current(self, current: bool) -> None:
+        """Mark this as the rule of the selected episode: tint and bar from the style, words and a shape here."""
+        self.setProperty("highlight", current)
+        self.current_label.setVisible(current)
+        self.setAccessibleName(rule_sentence(self._spec, current=current))
+        # The labels' colours depend on this property through their ancestor, so they are polished again too.
+        for widget in (self, *self.findChildren(QLabel)):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.focused.emit()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            event.accept()
+            self.moved.emit(-1 if event.key() == Qt.Key.Key_Up else 1)
+            return
+        super().keyPressEvent(event)
 
 
 class RulesDrawer(QFrame):
@@ -130,16 +274,18 @@ class RulesDrawer(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("rulesDrawer")
-        self.setStyleSheet(STYLE)
-        self.setAccessibleName("Rules")
+        set_accessible_role(self, "dialog")
+        self.setAccessibleName("Rule reference")
         self._fallback_focus = fallback_focus
         self._catalog: RuleCatalog | None = None
         self._recorded = True
         self._thresholds_sha256: str | None = None
         self._error = ""
-        self._rows: dict[str, QFrame] = {}
+        self._rows: dict[str, RuleRow] = {}
+        self._group_labels: dict[str, QLabel] = {}
+        self._group_members: dict[str, list[str]] = {}
         self._built_for: RuleCatalog | None = None
-        self._highlighted: QFrame | None = None
+        self._highlighted: RuleRow | None = None
         self._opener: QWidget | None = None
         self._escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), parent or self)
         self._escape_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -147,18 +293,14 @@ class RulesDrawer(QFrame):
         self._escape_shortcut.activated.connect(self.close_drawer)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setContentsMargins(20, 16, 12, 12)
         layout.setSpacing(8)
         top = QHBoxLayout()
-        heading = QVBoxLayout()
-        kicker = QLabel("RULES")
-        kicker.setObjectName("drawerKicker")
-        heading.addWidget(kicker)
         title = QLabel("Rule reference")
         title.setObjectName("drawerTitle")
-        heading.addWidget(title)
-        top.addLayout(heading, 1)
+        top.addWidget(title, 1)
         self.close_button = QPushButton("Close")
+        self.close_button.setObjectName("linkBtn")
         self.close_button.setAutoDefault(True)
         self.close_button.setAccessibleName("Close rules drawer")
         self.close_button.clicked.connect(self.close_drawer)
@@ -185,6 +327,10 @@ class RulesDrawer(QFrame):
         self.count_label.setAccessibleName("Rule count")
         make_tabular(self.count_label)
         layout.addWidget(self.count_label)
+        self.keys_label = QLabel("Tab or ↑ ↓ move between rules · Esc closes")
+        self.keys_label.setObjectName("quietText")
+        self.keys_label.setWordWrap(True)
+        layout.addWidget(self.keys_label)
         self.notice_label = QLabel()
         self.notice_label.setObjectName("drawerNotice")
         self.notice_label.setWordWrap(True)
@@ -210,12 +356,15 @@ class RulesDrawer(QFrame):
         self.rule_scroll.setAccessibleName("Rule list")
         self.rule_scroll.setWidgetResizable(True)
         self.rule_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.rule_scroll.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Each rule is its own tab stop, so the scroll area is not another one.
+        self.rule_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._list = QWidget()
         self._list.setObjectName("rulesList")
+        set_accessible_role(self._list, "list")
+        self._list.setAccessibleName("Rules")
         self._list_layout = QVBoxLayout(self._list)
-        self._list_layout.setContentsMargins(0, 0, 4, 0)
-        self._list_layout.setSpacing(8)
+        self._list_layout.setContentsMargins(0, 0, 8, 0)
+        self._list_layout.setSpacing(0)
         self.scoring_button, self.scoring_text = self._explanation("Scoring")
         self.mac_button, self.mac_text = self._explanation("Age-40 MAC (vol %)")
         self._list_layout.addStretch(1)
@@ -226,13 +375,14 @@ class RulesDrawer(QFrame):
 
         self.setTabOrder(self.close_button, self.search_edit)
         self.setTabOrder(self.search_edit, self.clear_button)
-        self.setTabOrder(self.clear_button, self.rule_scroll)
+        self._order_tab_stops()
         self.hide()
         self._refresh_header()
         self._apply_search()
 
     def _explanation(self, title: str) -> tuple[QPushButton, QLabel]:
         button = QPushButton(title + " ▸")
+        button.setObjectName("drawerToggle")
         button.setAutoDefault(True)
         button.setCheckable(True)
         button.setAccessibleName(title)
@@ -355,17 +505,52 @@ class RulesDrawer(QFrame):
     def _build_rows(self) -> None:
         if self._built_for is not None and self._built_for == self._catalog and self._rows:
             return
-        for row in self._rows.values():
-            self._list_layout.removeWidget(row)
-            row.deleteLater()
+        for widget in (*self._rows.values(), *self._group_labels.values()):
+            self._list_layout.removeWidget(widget)
+            widget.deleteLater()
         self._rows = {}
+        self._group_labels = {}
+        self._group_members = {}
         self._highlighted = None
         if self._catalog is not None:
-            for index, spec in enumerate(self._catalog.specs):
-                row = _rule_row(spec)
+            # A stable sort: inside a group the rules keep the rule file's order.
+            ordered = sorted(self._catalog.specs, key=lambda spec: GROUP_ORDER.index(group_of(spec)))
+            index = 0
+            for spec in ordered:
+                group = group_of(spec)
+                if group not in self._group_labels:
+                    heading = QLabel()
+                    heading.setObjectName("ruleGroup")
+                    make_tabular(heading)
+                    self._group_labels[group] = heading
+                    self._group_members[group] = []
+                    self._list_layout.insertWidget(index, heading)
+                    index += 1
+                row = RuleRow(spec)
+                row.focused.connect(lambda row=row: self._reveal(row))
+                row.moved.connect(lambda step, row=row: self._move_focus(row, step))
                 self._rows[spec.id] = row
+                self._group_members[group].append(spec.id)
                 self._list_layout.insertWidget(index, row)
+                index += 1
         self._built_for = self._catalog
+        self._order_tab_stops()
+
+    def _order_tab_stops(self) -> None:
+        """Tab runs down the screen: Close, search, the rules in order, then the two reference toggles."""
+        chain = [self.clear_button, *self._rows.values(), self.scoring_button, self.mac_button]
+        for before, after in zip(chain, chain[1:], strict=False):
+            self.setTabOrder(before, after)
+
+    def _reveal(self, row: RuleRow) -> None:
+        if isValid(row):
+            self.rule_scroll.ensureWidgetVisible(row, 0, 24)
+
+    def _move_focus(self, row: RuleRow, step: int) -> None:
+        shown = [other for other in self._rows.values() if not other.isHidden()]
+        if row in shown:
+            target = shown[min(max(shown.index(row) + step, 0), len(shown) - 1)]
+            target.setFocus(Qt.FocusReason.TabFocusReason)
 
     def _apply_search(self) -> None:
         self.notice_label.hide()
@@ -393,6 +578,11 @@ class RulesDrawer(QFrame):
             self.count_label.setText(f"{total} rules")
         for rule_id, row in self._rows.items():
             row.setVisible(rule_id in matches)
+        for group, heading in self._group_labels.items():
+            members = self._group_members[group]
+            shown = sum(rule_id in matches for rule_id in members)
+            heading.setText(f"{group} · {shown}" if shown == len(members) else f"{group} · {shown} of {len(members)}")
+            heading.setVisible(shown > 0)
         empty = not matches
         self.empty_state.setVisible(empty)
         self.clear_button.show()
@@ -402,16 +592,14 @@ class RulesDrawer(QFrame):
         else:
             self.rule_scroll.verticalScrollBar().setValue(0)
 
-    def _set_highlight(self, row: QFrame | None) -> None:
+    def _set_highlight(self, row: RuleRow | None) -> None:
         previous = self._highlighted
         self._highlighted = row
         for frame, state in ((previous, False), (row, True)):
             if frame is not None and isValid(frame):
-                frame.setProperty("highlight", state)
-                frame.style().unpolish(frame)
-                frame.style().polish(frame)
+                frame.set_current(state)
 
-    def _scroll_to(self, row: QFrame) -> None:
+    def _scroll_to(self, row: RuleRow) -> None:
         self._list_layout.activate()
         self._list.adjustSize()
         self.rule_scroll.verticalScrollBar().setValue(row.y() - 8)

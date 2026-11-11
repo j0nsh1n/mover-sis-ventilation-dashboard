@@ -592,11 +592,11 @@ def test_desktop_reference_switches_preset(monkeypatch, tmp_path):
     try:
         window._refresh_rule_reference()
         window.research.open_rules()
-        assert "warn at least 30 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
+        assert any("warn at least 30 cmH2O" in label.text() for label in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel))
         window._on_settings_applied({"preset": "strict"})
         text = window.research.rules_drawer.header_label.text()
         assert "(strict, " in text
-        assert "warn at least 28 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
+        assert any("warn at least 28 cmH2O" in label.text() for label in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel))
         assert window._make_session_snapshot().preset == "strict"
         for spec in load_rule_catalog("strict").specs:
             assert spec.id in window.research.rules_drawer.visible_rule_ids()
@@ -625,14 +625,14 @@ def test_desktop_loaded_cache_preset(monkeypatch, tmp_path, metadata, expected):
     try:
         assert "(default, " in window.research.rules_drawer.header_label.text()
         window.research.open_rules()
-        assert "warn at least 30 cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
+        assert any("warn at least 30 cmH2O" in label.text() for label in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel))
         window._research_engine = object()
         window._worker = DataLoadWorker(processed=tmp_path, parent=window)
         window._on_pipeline_ok(tuple(pd.DataFrame() for _ in range(5)))
         assert window._make_session_snapshot().preset == expected
         text = window.research.rules_drawer.header_label.text()
         assert f"({expected}, " in text
-        assert f"warn at least {load_rule_catalog(expected).get('pip_high').params['warn']:g} cmH2O" in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel)[-1].text()
+        assert any(f"warn at least {load_rule_catalog(expected).get('pip_high').params['warn']:g} cmH2O" in label.text() for label in window.research.rules_drawer._rows["pip_high"].findChildren(QLabel))
         assert window._research_engine is None
     finally:
         window.close()
