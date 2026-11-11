@@ -608,6 +608,25 @@ def test_no_two_drawn_dose_labels_overlap_however_many_doses_there_are(qapp, wid
     assert LEFT_OUT < 0 and len(labels) + render_timeline(timeline, width, "light").left_out == 14
 
 
+@pytest.mark.parametrize("reversed_index", [0, 6])
+def test_the_key_names_the_open_diamond_only_when_one_is_drawn(qapp, reversed_index):
+    """Seven doses at one minute: six are drawn and one is left to the table. The key explains the marks on the
+    lane, so it names the open diamond exactly when the dose that ends before it starts is one of the drawn ones."""
+    page = MedicationVitalsPanel()
+    medications, timeseries = _many_doses(7, lambda index: 5)
+    medications["end_min"] = medications["end_min"].astype(object)
+    medications.loc[reversed_index, "end_min"] = 4
+    page.show_case("TEST-KEY", medications, timeseries)
+    fig, _, _ = build_timeline_figure(page.chart.timeline(), 1100, "light")
+    lane = _by_subject(fig)["doses"]
+    diamond_drawn = any(line.get_marker() == "D" for line in lane.lines)
+    key_words = " ".join(t.get_text() for t in fig.texts)
+    assert ("open diamond" in key_words) == diamond_drawn
+    # the first dose is drawn and the seventh is the one left to the table
+    assert diamond_drawn == (reversed_index == 0)
+    assert left_out_text(1) in [t.get_text() for t in fig.texts]
+
+
 def test_the_note_about_left_out_doses_sits_inside_the_picture_at_a_narrow_width(qapp):
     medications, timeseries = _many_doses(9, lambda index: 5)
     timeline = build_timeline("t", "minute", align_rows(medications, timeseries))

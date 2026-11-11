@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import matplotlib
@@ -215,9 +216,13 @@ def _wrap(text: str, widths: list[float], measure: _Measure, first: int = 0) -> 
     return lines
 
 
-def lane_key(timeline: Timeline) -> tuple[str, ...]:
-    """What the drug lane's marks mean; a dose whose end is before its start has a mark of its own, named here."""
-    if any(dose.reversed_times for dose in timeline.doses):
+def lane_key(drawn: Iterable[Dose]) -> tuple[str, ...]:
+    """What the drug lane's marks mean, for the doses drawn on it.
+
+    A dose whose end is before its start has a mark of its own, named here only when such a mark is on the lane:
+    a dose left to the table has no mark for the key to explain.
+    """
+    if any(dose.reversed_times for dose in drawn):
         return (LANE_KEY, REVERSED_KEY)
     return (LANE_KEY,)
 
@@ -252,7 +257,7 @@ def _build(
     title_width = measure.width("Drugs", 12, 600)
     key_widths: list[float] = [width - title_width - 16, width - 8] if compact else [LABEL_WIDTH - 12.0]
     key_lines: list[str] = []
-    for meaning in lane_key(timeline):
+    for meaning in lane_key(item.dose for item in placed if item.row != LEFT_OUT):
         key_lines += _wrap(meaning, key_widths, measure, len(key_lines))
     extra = NOTE_HEIGHT if left_out else 0
     if compact:

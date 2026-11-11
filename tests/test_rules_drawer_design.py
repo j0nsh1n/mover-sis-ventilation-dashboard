@@ -218,7 +218,7 @@ def test_a_band_and_a_composite_say_what_they_are_from_their_own_definition(draw
     assert _no_ruler_note(drawer, "tv_abs_extreme") == (
         "No ruler: it flags a value below 100 mL or above 1000 mL, a band and not one limit.")
     assert _no_ruler_note(drawer, "compliance_concern") == (
-        "No ruler: this pattern has no limit of its own; it fires when the rules it combines do.")
+        "No ruler: this pattern combines other rules and conditions, so no single limit fires it.")
 
 
 def test_the_reason_follows_the_rule_it_is_given_and_not_a_list_of_ids():
@@ -367,8 +367,8 @@ def test_each_rule_is_one_sentence_with_everything_the_row_shows(drawer):
     pattern = drawer._rows["compliance_concern"].accessibleName()
     assert pattern.startswith("Id: compliance_concern. Compliance pattern. Severity: warn. ")
     assert "Combines: rising PIP (pip_rising)" in pattern
-    assert pattern.endswith("Hold time: set by the rules it combines. No ruler: this pattern has no limit of its own; "
-                            "it fires when the rules it combines do.")
+    assert pattern.endswith("Hold time: set by the rules it combines. No ruler: this pattern combines other rules and "
+                            "conditions, so no single limit fires it.")
     assert "Thresholds" not in pattern
     for rule_id, row in drawer._rows.items():
         iface = QAccessible.queryAccessibleInterface(row)

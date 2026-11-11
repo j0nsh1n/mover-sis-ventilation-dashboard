@@ -158,7 +158,7 @@ def no_ruler_reason(spec: RuleSpec) -> str:
     hold = spec.params.get(HOLD_KEY)
     others = threshold_parts(spec, skip=(HOLD_KEY,))
     if spec.kind == "composite":
-        return "No ruler: this pattern has no limit of its own; it fires when the rules it combines do."
+        return "No ruler: this pattern combines other rules and conditions, so no single limit fires it."
     if spec.kind == "band" and "low" in spec.params and "high" in spec.params:
         edges = " or ".join(threshold_parts(replace(spec, params={k: spec.params[k] for k in ("low", "high")})))
         return f"No ruler: it flags a value {edges}, a band and not one limit."
