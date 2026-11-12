@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QTextEdit
@@ -129,13 +130,19 @@ def test_the_card_shows_the_message_it_was_given_word_for_word(dispose):
     card = dispose(ErrorCard(None, what="The analyzed cases could not be loaded.", why=message))
     assert card.why == message and message in card.words()
     assert "PRIVATE" not in card.words() and "PRIVATE" not in card.detailedText()
-    assert card.detailedText() == f"Code: load:ValueError\nLog: {log_path()}"
+    # the log is shown in full, except that a home folder is written as "~" so the account name stays out
+    try:
+        shown = "~/" + log_path().relative_to(Path.home()).as_posix()
+    except ValueError:
+        shown = str(log_path())
+    assert card.detailedText() == f"Code: load:ValueError\nLog: {shown}"
 
 
 def test_the_log_place_is_written_with_the_home_folder_as_a_tilde_and_never_with_the_account_name(
         qapp, monkeypatch, tmp_path, dispose):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # where Windows looks for the home folder
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(home / ".config" / "mover-suite"))
     message = error_message("load", ValueError("x"))
     assert "~" not in message and str(home) not in message, "the message itself never carried the path"

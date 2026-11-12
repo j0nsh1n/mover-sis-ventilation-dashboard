@@ -330,13 +330,14 @@ def test_an_attempt_saved_after_a_cut_off_last_line_starts_on_its_own_line(tmp_p
     cut_off = b'{"at": "2026-01-01T00:00:00Z", "case_id": "FAKE-QUIET", "hando'
     target.write_bytes(whole + cut_off)
     record_attempt("FAKE-DESAT", "second", (), target)
-    # what was in the file is untouched; the cut-off line is the only one that cannot be read
-    assert target.read_bytes().startswith(whole + cut_off + b"\n")
+    # what was in the file is untouched; the cut-off line is the only one that cannot be read. Windows writes
+    # its own line ending, so line endings are compared as line breaks.
+    assert target.read_bytes().replace(b"\r\n", b"\n").startswith(whole.replace(b"\r\n", b"\n") + cut_off + b"\n")
     rows = load_attempts(target)
     assert [row["handoff"] for row in rows] == ["first", "second"] and rows.unreadable == 1
     # a file that already ends in a line break gets no blank line added
     record_attempt("FAKE-DESAT", "third", (), target)
-    assert b"\n\n" not in target.read_bytes() and load_attempts(target).unreadable == 1
+    assert b"\n\n" not in target.read_bytes().replace(b"\r\n", b"\n") and load_attempts(target).unreadable == 1
 
 
 def test_a_missing_or_clean_history_file_reports_none_unreadable(tmp_path: Path):
