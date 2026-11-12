@@ -333,17 +333,20 @@ def _qt_app():
         return None
     from PySide6.QtWidgets import QApplication
 
-    return QApplication.instance()
+    app = QApplication.instance()
+    return app if isinstance(app, QApplication) else None
 
 
 def _live_toplevels() -> list:
+    """Windows with no parent widget. A menu or popup made with a parent is a window to Qt but goes with its parent."""
     app = _qt_app()
     if app is None:
         return []
     found = []
     for widget in app.topLevelWidgets():
         try:
-            widget.objectName()
+            if widget.parentWidget() is not None:
+                continue
         except RuntimeError:  # already deleted
             continue
         found.append(widget)
@@ -358,7 +361,8 @@ def _discard_so_close_cannot_ask(widget) -> None:
     try:
         page = finder()
         if page is not None and page.is_dirty():
-            page.load()
+            # Mark the edits as the saved state; load() would read the settings again and ask Ollama for models.
+            page._baseline = page.values()
     except RuntimeError:
         return
 
