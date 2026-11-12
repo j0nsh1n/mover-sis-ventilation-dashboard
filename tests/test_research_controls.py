@@ -24,8 +24,11 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="module")
 def light(qapp):
+    # Once per file. Tests that switch theme put light back before returning.
+    apply_theme(qapp, "light")
+    yield
     apply_theme(qapp, "light")
 
 
@@ -107,6 +110,7 @@ def test_the_trace_button_text_is_drawn_in_the_on_accent_token(qapp, theme):
         assert count_near(disabled, token_color("rule_strong"), 20) > 20, "a disabled button's text is the muted rule colour"
     finally:
         button.close()
+        apply_theme(qapp, "light")
 
 
 # ----- local model button -----
@@ -191,6 +195,7 @@ def test_a_trail_step_draws_a_numbered_pin_and_a_filled_limit_pin(qapp, theme):
     finally:
         numbered.close()
         limit.close()
+        apply_theme(qapp, "light")
 
 
 def test_a_gap_in_the_samples_breaks_the_line_instead_of_joining_across_it(qapp):

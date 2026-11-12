@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -326,6 +327,138 @@ def error_cards(monkeypatch):
     return shown
 
 
+def _qt_app():
+    # Importing PySide6 from a test that never uses it loads Qt for the rest of the run.
+    if "PySide6.QtWidgets" not in sys.modules:
+        return None
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance()
+
+
+def _live_toplevels() -> list:
+    app = _qt_app()
+    if app is None:
+        return []
+    found = []
+    for widget in app.topLevelWidgets():
+        try:
+            widget.objectName()
+        except RuntimeError:  # already deleted
+            continue
+        found.append(widget)
+    return found
+
+
+def _discard_so_close_cannot_ask(widget) -> None:
+    # MainWindow.close asks a modal question when Settings is dirty. Nothing clicks it, so the run would wait.
+    finder = getattr(widget, "_settings_page", None)
+    if not callable(finder):
+        return
+    try:
+        page = finder()
+        if page is not None and page.is_dirty():
+            page.load()
+    except RuntimeError:
+        return
+
+
+def _thread_still_running(widget) -> bool:
+    from PySide6.QtCore import QThread
+
+    try:
+        return any(thread.isRunning() for thread in widget.findChildren(QThread))
+    except RuntimeError:
+        return False
+
+
+def _flush_deferred_deletes() -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCoreApplication.processEvents()
+
+
+def _destroy_toplevels(widgets) -> list:
+    """Close, deleteLater, and flush. Returns windows left up because a worker thread is still running.
+
+    A closed window stays alive, and the next theme change restyles it. Deleting one while its
+    QThread is in a socket read aborts the process, so those wait for the window's own idle delete.
+    """
+    left: list = []
+    for widget in reversed(widgets):
+        try:
+            _discard_so_close_cannot_ask(widget)
+            widget.close()
+            if _thread_still_running(widget):
+                left.append(widget)
+                continue
+            widget.deleteLater()
+        except RuntimeError:  # already deleted by its owner
+            pass
+    _flush_deferred_deletes()
+    still: list = []
+    for widget in left:
+        try:
+            if _thread_still_running(widget):
+                still.append(widget)
+                continue
+            widget.deleteLater()
+        except RuntimeError:
+            pass
+    if still or left:
+        _flush_deferred_deletes()
+    return still
+
+
+# Windows whose worker was still running at the last reap. The next reap tries again, because a
+# snapshot taken while they are alive would otherwise treat them as someone else's and keep them.
+_deferred_toplevels: list = []
+
+
+def _reap_new_toplevels(before_ids: set[int], nodeid: str) -> None:
+    global _deferred_toplevels
+    live = _live_toplevels()
+    live_ids = {id(widget) for widget in live}
+    _deferred_toplevels = [widget for widget in _deferred_toplevels if id(widget) in live_ids]
+    deferred_ids = {id(widget) for widget in _deferred_toplevels}
+    leaked = [widget for widget in live if id(widget) not in before_ids or id(widget) in deferred_ids]
+    fresh = [widget for widget in leaked if id(widget) not in deferred_ids]
+    if fresh:
+        names = ", ".join(sorted({type(widget).__name__ for widget in fresh}))
+        message = (
+            f"{nodeid} left {len(fresh)} top-level widget(s) ({names}); "
+            "closed and deleted them so a later theme change does not restyle them"
+        )
+        # A failure here would bury an assertion that already failed, and Qt also opens menus on its own.
+        warnings.warn(message, UserWarning, stacklevel=2)
+        if _DIAGNOSE_WINDOWS_CI:
+            _diagnose("--- " + message)
+    if leaked:
+        _deferred_toplevels = _destroy_toplevels(leaked)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _reap_module_toplevels(request):
+    """Drop windows a module fixture left up, once the module's tests have finished."""
+    held = _live_toplevels()
+    before = {id(widget) for widget in held}
+    yield
+    _reap_new_toplevels(before, request.node.nodeid)
+    held.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reap_test_toplevels(request):
+    """Drop top-level widgets this test created. Ones that already existed (the app, a module page) stay."""
+    held = _live_toplevels()
+    before = {id(widget) for widget in held}
+    yield
+    _reap_new_toplevels(before, request.node.nodeid)
+    held.clear()
+
+
 @pytest.fixture
 def dispose():
     """Return ``keep(widget)``: every widget passed to it is closed and really deleted when the test ends.
@@ -333,8 +466,6 @@ def dispose():
     A closed top-level widget is not deleted by Qt, and a window holds Python callbacks that point back at
     itself, so left alone every window of every test stays alive and each later theme change restyles it too.
     """
-    from PySide6.QtCore import QCoreApplication, QEvent
-
     made: list = []
 
     def keep(widget):
@@ -342,12 +473,4 @@ def dispose():
         return widget
 
     yield keep
-    for widget in reversed(made):
-        try:
-            widget.close()
-            widget.deleteLater()
-        except RuntimeError:  # already deleted by its owner
-            pass
-    for _ in range(3):
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        QCoreApplication.processEvents()
+    _destroy_toplevels(made)

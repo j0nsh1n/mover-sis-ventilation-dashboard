@@ -31,8 +31,10 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture(params=["light", "dark"], autouse=True)
+@pytest.fixture(params=["light", "dark"], autouse=True, scope="module")
 def theme(qapp, request):
+    # Once per file per theme. Every test in this file checks both themes; repeating the switch per test
+    # restyles every widget still alive.
     apply_theme(qapp, request.param)
     yield request.param
     apply_theme(qapp, "light")
