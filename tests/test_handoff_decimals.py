@@ -103,14 +103,14 @@ def test_a_decimal_minute_and_the_end_of_its_range_are_taken_out_of_the_values()
     ]
 
 
-# —— a value belongs to the series word before it (the owner's option A, 2026-11-11) ——
+# —— a value belongs to the measurement word before it ——
 
 
 @pytest.mark.parametrize(
     ("text", "words", "read"),
     [
         ("spo2 97.5 throughout, map 75", ("spo2",), (97.5,)),  # stops at the next series word
-        ("spo2 86 at minute 20", ("spo2",), (86.0,)),  # at a minute
+        ("spo2 86 at minute 20", ("spo2",), (86.0,)),  # a written minute is never the value
         ("map 60, hr 110", ("map",), (60.0,)),  # at another measurement
         ("spo2 88 with rr 30", ("spo2",), (88.0,)),
         ("spo2 86 then phenylephrine 100 mcg", ("spo2",), (86.0,)),  # at a drug
@@ -223,3 +223,47 @@ def test_a_written_minute_is_a_time_and_never_a_value(text, words, read):
 )
 def test_a_value_on_either_side_of_a_written_minute_is_graded(case_id, text, expected):
     assert _graded(case_id, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "minutes"),
+    [
+        ("spo2 at minutes 20, 21", (20, 21)),  # a list after the plural word
+        ("spo2 missing at minutes 0, 1, 2", (0, 1, 2)),
+        ("spo2 at minute: 21", (21,)),
+        ("spo2 at minute #21", (21,)),
+        ("spo2 at minute21", (21,)),
+        ("spo2 86 at minute 21, 2 drops", (21,)),  # after the singular word a comma ends the minute
+    ],
+)
+def test_every_written_form_of_a_minute_is_read_as_minutes(text, minutes):
+    assert grading._minute_numbers(text) == minutes
+    assert not set(grading._numbers_after(text, ("spo2",))) & set(float(minute) for minute in minutes)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # no SpO2 series: naming the gap over a list of minutes states no value for it
+        ("FAKE-NO-SPO2", "SpO2 missing at minutes 0, 1, 2.", [("mentioned", "missing_spo2")]),
+        # SpO2 86 at minutes 20 and 21 is the desaturation; the minutes are not readings
+        ("FAKE-DESAT", "Desaturation, SpO2 86 at minutes 20, 21.", [("mentioned", "desaturation")]),
+        # "under 90" written after a minute is still the desaturation's detail
+        ("FAKE-DESAT", "SpO2 at minute 21 recorded under 90.", [("mentioned", "desaturation")]),
+    ],
+)
+def test_minutes_in_lists_and_before_a_detail_are_graded(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+def test_naming_a_missing_map_at_a_minute_states_no_value_for_it():
+    empty = grading.PracticeCase("FAKE-E", "empty timeline", (), ())
+    assert [(item.status, item.kind) for item in grade(empty, "MAP missing from minute 0.")] == [
+        ("mentioned", "missing_map"),
+        ("missed", "missing_spo2"),
+    ]
+
+
+def test_a_value_is_looked_for_within_24_characters_of_its_word():
+    assert grading._numbers_after("spo2" + " " * 24 + "86", ("spo2",)) == (86.0,)
+    assert grading._numbers_after("spo2" + " " * 25 + "86", ("spo2",)) == ()

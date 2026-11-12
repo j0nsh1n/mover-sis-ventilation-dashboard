@@ -70,7 +70,10 @@ _SATURATION_UNDER_NINETY = re.compile(
 # A minute may carry a fraction ("minute 10.5"); it counts as the whole minute it falls in, and the claim, fraction
 # and range end included, is taken out of the text so that none of it is read as a value.
 _MINUTE_CLAIM = re.compile(
-    r"\b(?:minutes|minute|mins|min)\s+(\d+(?:\.\d+)?)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+(?:\.\d+)?))?"
+    # only the plural word starts a list ("minutes 0, 1, 2"); after "minute 21," a number is something else
+    r"\bminutes\s*[:#]?\s*(?P<list>\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)+)"
+    r"|\b(?:minutes|minute|mins|min)\s*[:#]?\s*(?P<start>\d+(?:\.\d+)?)"
+    r"(?:\s*(?:to|through|thru|and|-|–)\s*(?P<end>\d+(?:\.\d+)?))?"
 )
 _SPO2_SERIES = ("spo2", "sp02", "oxygen saturation", "saturation")
 _MAP_SERIES = ("blood pressure", "map")
@@ -539,9 +542,12 @@ def _details_by_finding(text: str) -> dict[str, str]:
 def _minute_numbers(text: str) -> tuple[int, ...]:
     found: list[int] = []
     for match in _MINUTE_CLAIM.finditer(text):
-        found.append(int(float(match.group(1))))
-        if match.group(2):
-            found.append(int(float(match.group(2))))
+        if match.group("list"):
+            found += [int(float(number)) for number in re.split(r"\s*,\s*", match.group("list"))]
+            continue
+        found.append(int(float(match.group("start"))))
+        if match.group("end"):
+            found.append(int(float(match.group("end"))))
     return tuple(found)
 
 
