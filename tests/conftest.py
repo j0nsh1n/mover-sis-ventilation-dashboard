@@ -16,15 +16,46 @@ from src.config import load_thresholds
 _DIAGNOSE_WINDOWS_CI = bool(os.environ.get("CI")) and sys.platform == "win32"
 
 
+# The real terminal, opened while pytest's capture is paused: pytest captures file descriptor 2 itself, so neither
+# sys.stderr nor sys.__stderr__ reaches the log while a test runs.
+_REAL_ERR: list = []
+
+
 def _diagnose(line: str) -> None:
-    sys.stderr.write(line + "\n")
-    sys.stderr.flush()
+    out = _REAL_ERR[0] if _REAL_ERR else sys.__stderr__
+    out.write(line + "\n")
+    out.flush()
 
 
 if _DIAGNOSE_WINDOWS_CI:
+    import faulthandler
+
+    _fonts_told: list[bool] = []
+
+    def pytest_configure(config):
+        capture = config.pluginmanager.getplugin("capturemanager")
+        with capture.global_and_fixture_disabled():
+            _REAL_ERR.append(os.fdopen(os.dup(2), "w", buffering=1))
 
     def pytest_runtest_setup(item):
+        # past pytest's capture, so the line shows even when the run hangs or crashes
         _diagnose(f">>> {item.nodeid}")
+        # a test that runs ten minutes is stuck: write every thread's stack and end the run, not wait six hours
+        faulthandler.dump_traceback_later(600, exit=True, file=_REAL_ERR[0] if _REAL_ERR else sys.__stderr__)
+        if not _fonts_told:
+            from PySide6.QtGui import QFontDatabase, QFontInfo, QGuiApplication
+
+            app = QGuiApplication.instance()
+            if isinstance(app, QGuiApplication):
+                _fonts_told.append(True)
+                font = app.font()
+                screen = QGuiApplication.primaryScreen()
+                bundled = [name for name in QFontDatabase.families() if name in ("Inter", "Charter")]
+                _diagnose(
+                    f"### font {font.family()!r} pt {font.pointSizeF()} px {font.pixelSize()}"
+                    f" resolved {QFontInfo(font).family()!r}; bundled loaded {bundled};"
+                    f" dpi {screen.logicalDotsPerInch() if screen else None}"
+                    f" ratio {screen.devicePixelRatio() if screen else None}")
 
     def pytest_runtest_logreport(report):
         if report.failed:
