@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from src.config import load_thresholds
+
+# Temporary, Windows CI only: the Windows job crashes before pytest prints why its tests failed, so each failure,
+# each test's start and the widgets left alive before a theme change are written out as they happen.
+_DIAGNOSE_WINDOWS_CI = bool(os.environ.get("CI")) and sys.platform == "win32"
+
+
+def _diagnose(line: str) -> None:
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()
+
+
+if _DIAGNOSE_WINDOWS_CI:
+
+    def pytest_runtest_setup(item):
+        _diagnose(f">>> {item.nodeid}")
+
+    def pytest_runtest_logreport(report):
+        if report.failed:
+            _diagnose(f"=== FAILED {report.nodeid} ({report.when})\n{report.longreprtext[-4000:]}\n=== END")
 
 
 @pytest.fixture(scope="session")
@@ -228,6 +249,12 @@ def applied_theme(request, qapp):
 
     apply_theme(qapp, request.param)
     yield request.param
+    if _DIAGNOSE_WINDOWS_CI:
+        from PySide6.QtWidgets import QApplication
+
+        _diagnose(f"--- before the theme goes back to light: {len(QApplication.allWidgets())} widgets alive")
+        for widget in QApplication.topLevelWidgets():
+            _diagnose(f"--- top level {type(widget).__name__} {widget.objectName()!r} visible={widget.isVisible()}")
     apply_theme(qapp, "light")
 
 
