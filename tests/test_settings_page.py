@@ -511,7 +511,8 @@ def test_the_count_keeps_quoted_line_breaks_in_their_record_and_is_left_out_abov
     assert settings_ui._count_surgeries(table) == 5000
     monkeypatch.setattr(settings_ui, "_COUNT_LIMIT_BYTES", table.stat().st_size - 1)
     assert settings_ui._count_surgeries(table) is None
-    folder = tmp_path / "emr"
+    # not "emr": Windows does not tell it from the "EMR" folder the synthetic EMR fixture makes here
+    folder = tmp_path / "large-tables"
     folder.mkdir()
     for name in ("patient_information.csv", "patient_ventilator.csv", "patient_vitals.csv"):
         (folder / name).write_bytes(table.read_bytes())

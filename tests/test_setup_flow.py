@@ -72,6 +72,7 @@ def test_the_demo_folder_is_never_inside_the_repo_or_program_folder(monkeypatch,
 
     monkeypatch.delenv("MOVER_DEMO_DATA_DIR")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "xdg"))  # the per-user data folder Windows uses
     root = demo_data_dir()
     assert not root.is_relative_to(app_dir()) and root == (tmp_path / "xdg" / "mover-suite" / "demo-data").resolve()
     monkeypatch.setenv("MOVER_DEMO_DATA_DIR", str(app_dir() / "data" / "demo"))
@@ -173,6 +174,7 @@ def test_the_label_follows_the_data_not_the_configured_demo_folder(tmp_path, mon
     assert demo_data_in_use(), "a changed demo location must not turn demo data into a real copy"
     monkeypatch.delenv("MOVER_DEMO_DATA_DIR")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "xdg"))  # the per-user data folder Windows uses
     assert demo_data_in_use()
 
 
