@@ -2,6 +2,16 @@
 
 ## Current State
 
+- **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
+  offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
+  failure marks; wall clock from the start file to the log mtime is 6105 s.
+  The pytest count line is not in that log. Slowest calls were 81.12 s, 81.10 s,
+  64.56 s, 60.80 s, and 60.43 s, each a theme change with windows still alive.
+  After tests close those windows, the same command took 481 s, exit 0,
+  progress 2451 passed and 7 skipped. Slowest call 12.01 s. The Windows CI
+  subset took 440 s, exit 0, progress 2424 passed and 7 skipped. No finished
+  subset baseline exists; that job had been killed at 6 h. Ruff and mypy
+  passed. Not pushed.
 - **Phase (2026-11-01):** Phase 1 documentation and the Phase 2 Monitoring
   shell are committed locally as `bf73b41` and not pushed. Phase 3 shared
   data context is implemented on the same branch. Terra and Opus 5.5
@@ -284,6 +294,16 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
+- **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** tests were
+  leaving windows alive, and each theme change restyled every one. An autouse
+  reap in `tests/conftest.py` closes and deletes new top-level widgets and
+  warns instead of failing. Sparkline and research-controls switch theme once
+  per file. Full suite 6105 s before, 481 s after; Windows subset 440 s.
+  The working tree also has uncommitted edits on top of that commit: the reap
+  skips a popup that has a parent, a dirty Settings page is marked clean
+  without reloading, and `tests/test_window_reaper.py` is new. Those were not
+  in the timed run. Next is stage 8 (AppImage) when that work is picked up.
+  Not pushed.
 - **Visual overhaul, stages 1 to 4 (2026-11-10, branch `feat/visual-overhaul`):**
   stage 1 tokens, fonts, base stylesheet, flag marks and the hatched missing
   cell; stage 2 the app frame (left rail, running head, footer, Ctrl+K, no
@@ -308,10 +328,12 @@ Wave root (optional) ──► wave_decode                   │
 - **Handoff grading changed (owner-approved, in spec.md):** a negation word
   denies only inside its own sentence, and the Situation awareness and
   contingency plans box is saved but not graded.
-- **Known and open:** a closed `MainWindow` is never freed (it connects its
-  own bound methods to its children's signals), so tests delete their windows
-  with the `dispose` fixture in `tests/conftest.py`; the wiring in `app.py`
-  is unchanged. The answer gate's age check (`_claimed_ages` in
+- **Known and open:** a closed idle `MainWindow` is freed when the event loop
+  runs (`closeEvent` schedules `_free_when_idle`). Tests that never closed
+  their windows left them alive. `tests/conftest.py` now closes and deletes
+  top-level widgets a test left behind, and warns with the test name and the
+  widget classes. A window whose worker thread is still running waits, because
+  deleting it aborts the process. The answer gate's age check (`_claimed_ages` in
   `src/llm/agent.py`) reads a case ID ending in a digit plus "f" or "m" as an
   age and sex; not fixed. The small-model plan is
   `_work/mover-suite/SMALL-MODEL-PLAN.md`; nothing of it is built.
