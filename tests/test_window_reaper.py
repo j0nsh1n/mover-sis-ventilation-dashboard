@@ -23,15 +23,27 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _release_the_thread_at_the_end():
+    """Run on its own, the thread test leaves its thread waiting; a QThread still running at exit aborts Python."""
+    yield
+    _release.set()
+    busy = _left.get("busy")
+    if busy is not None and shiboken6.isValid(busy[1]):
+        busy[1].wait(5000)
+
+
 @pytest.fixture(scope="module")
 def module_window(qapp):
-    app = qapp
+    from PySide6.QtCore import QEvent
+
     window = QWidget()
     window.show()
-    app.processEvents()
+    qapp.processEvents()
     yield window
     window.close()
     window.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_a_window_from_a_module_fixture_is_alive_in_the_first_test(module_window):
