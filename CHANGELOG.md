@@ -170,7 +170,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   reported, and a new attempt is never merged into a cut-off last line; History
   says "not graded" for an attempt with text only in the ungraded box; the page
   fits the narrowest window.
-
+- The local-AI answer check now ties each value, minute and flag to the case it
+  is written about. An answer that still puts a detail on the wrong case, or names
+  a case ID that was not retrieved (including a cut-off one), after one rewrite is
+  withheld with the reasons, instead of shown with a note.
+- The answer check sends back answers that guess a cause or name a diagnosis the
+  record does not state, and answers that call a list complete while another
+  cited case shows the same flag.
+- A model disclaimer such as "findings do not imply clinical recommendations" is
+  no longer mistaken for clinical advice.
 - Opening the Cases/Articles dropdown by keyboard shows both choices. A scroll
   arrow no longer covers half of "Articles". The same fix applies to the other
   dropdowns that ignore the mouse wheel until focused.
