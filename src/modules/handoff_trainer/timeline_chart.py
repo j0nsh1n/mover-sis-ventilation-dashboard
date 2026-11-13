@@ -56,8 +56,8 @@ class Track:
 
 
 TRACKS: tuple[Track, ...] = (
-    Track("map_art", "Arterial MAP", "mmHg", "s_map", MAP_RANGE, (50.0, 90.0), 1.5),
-    Track("nmap", "Noninvasive MAP", "mmHg", "s_pip", MAP_RANGE, (50.0, 90.0), 1.0),
+    Track("map_art", "Arterial MAP", "mmHg", "s_pip", MAP_RANGE, (50.0, 90.0), 1.5),
+    Track("nmap", "Noninvasive MAP", "mmHg", "s_map", MAP_RANGE, (50.0, 90.0), 1.0),
     Track("spo2", "SpO₂", "%", "s_spo2", SPO2_RANGE, (85.0, 100.0), 1.0),
 )
 

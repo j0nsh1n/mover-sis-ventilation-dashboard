@@ -23,6 +23,8 @@ from src.runtime_paths import (
     DEMO_MARKER,
     clear_session_path_overrides,
     configure_emr_directory,
+    configure_processed_directory,
+    default_processed_for_emr,
     demo_data_dir,
     demo_data_in_use,
     emr_dir,
@@ -149,7 +151,8 @@ def test_a_failed_build_says_so_in_words_and_keeps_the_exception_text_in_the_log
     assert (emr_dir(), processed_dir()) == before
 
 
-def test_demo_data_in_use_is_true_only_while_the_emr_is_inside_a_demo_folder_the_app_made(tmp_path, synthetic_emr):
+def test_demo_data_in_use_is_true_only_while_the_emr_or_processed_folder_is_in_a_demo_folder_the_app_made(
+        tmp_path, synthetic_emr):
     assert not demo_data_in_use()
     root = tmp_path / "demo-data"
     build_demo_data(root)
@@ -157,6 +160,8 @@ def test_demo_data_in_use_is_true_only_while_the_emr_is_inside_a_demo_folder_the
     assert demo_data_in_use() and emr_dir() == (root / "EMR").resolve()
     assert load_settings()["setup_complete"] is True
     configure_emr_directory(synthetic_emr, persist=True)
+    assert demo_data_in_use(), "the cases analyzed from the demo are still the ones in use"
+    configure_processed_directory(default_processed_for_emr(synthetic_emr), persist=True)
     assert not demo_data_in_use()
     assert root.is_dir() and (root / DEMO_MARKER).is_file(), "the demo folder is left in place"
     # the same folder without the marker is not demo data, whatever it holds
@@ -191,6 +196,34 @@ def test_a_real_folder_never_gets_the_label_even_where_the_demo_would_live(tmp_p
     shutil.copytree(synthetic_emr, other)
     configure_emr_directory(other, persist=False)
     assert not demo_data_in_use()
+
+
+def test_demo_cases_are_named_fictional_even_when_the_emr_in_use_is_real(tmp_path, monkeypatch, synthetic_emr):
+    root = tmp_path / "demo-data"
+    build_demo_data(root)
+    clear_session_path_overrides()
+    configure_emr_directory(synthetic_emr, persist=False)
+    assert not demo_data_in_use()
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(root / "processed"))
+    assert demo_data_in_use()
+
+
+def test_settings_refuses_a_demo_folder_mixed_with_a_real_one(tmp_path, synthetic_emr):
+    from src.desktop.settings_ui import find_problems
+
+    root = tmp_path / "demo-data"
+    build_demo_data(root)
+    clear_session_path_overrides()
+    real_processed = tmp_path / "real-processed"
+
+    def problems(emr, processed):
+        return find_problems({"emr_dir": str(emr), "processed_dir": str(processed), "wave_dir": "",
+                              "ollama_models_dir": ""})
+
+    for emr, processed in ((root / "EMR", real_processed), (synthetic_emr, root / "processed")):
+        assert "go together" in problems(emr, processed).get("processed_dir", ""), (emr, processed)
+    assert "processed_dir" not in problems(root / "EMR", root / "processed")
+    assert "processed_dir" not in problems(synthetic_emr, real_processed)
 
 
 def test_a_demo_folder_that_overlaps_the_emr_folder_is_refused_in_plain_words(tmp_path, synthetic_emr):
@@ -541,6 +574,7 @@ def test_demo_data_is_named_as_fictional_everywhere_the_source_is_named_and_real
     assert _pump(qapp, lambda: window._setup_flow is None, seconds=120)
     assert window.reloads == [True], "the same loading the normal path runs"
     assert "Fictional demo data" in footer.source.text()
+    assert window.research.data_is_demo, "questions asked on it are named as demo data"
     assert "not patient records" in footer.source.accessibleName() and "not patient records" in footer.source.toolTip()
     window._open_settings()
     page = window._suite_pages["settings"]
@@ -553,6 +587,7 @@ def test_demo_data_is_named_as_fictional_everywhere_the_source_is_named_and_real
     assert not demo_data_in_use() and page.demo_note.isHidden()
     window._close_settings()
     assert footer.source.text() == "MOVER SIS local copy"
+    assert not window.research.data_is_demo, "questions asked from here on are named as real data"
     assert (env / "demo-data" / DEMO_MARKER).is_file()
 
 

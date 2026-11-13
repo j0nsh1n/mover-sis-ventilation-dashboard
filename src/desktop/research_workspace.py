@@ -240,6 +240,8 @@ class ResearchWorkspace(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.result: RetrievalResult | None = None
+        # Whether the data on screen is the fictional demo data; the window sets it, and each new question keeps it
+        self.data_is_demo = False
         self._question = ""
         self._scope = "Cases"
         self.article_result: ArticleSearchResult | None = None
@@ -1105,7 +1107,7 @@ class ResearchWorkspace(QWidget):
         self._board_request = self._active_turn_request
         self._question = question
         self.question_edit.setText(question)
-        turn = Turn(self._active_turn_request, question, self.selected_model(), scope=self.scope)
+        turn = Turn(self._active_turn_request, question, self.selected_model(), scope=self.scope, demo=self.data_is_demo)
         turn.board = self._snapshot_board()
         self.conversation.append_turn(turn)
         self.set_searching(True)

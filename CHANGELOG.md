@@ -14,6 +14,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   can be tried without the MOVER dataset. While it is in use, the top bar, the
   footer, Settings and About say it is fictional demo data. Choosing a real EMR
   folder in Settings removes the label and leaves the demo folder in place.
+  Each answer in Conversation says which data it was asked on, and copied
+  answers carry that line, so an answer keeps its label after a switch. Settings
+  refuses a demo EMR folder with a real processed folder, or the reverse; if
+  such a mix comes from elsewhere, the app names the data fictional.
 
 - View can open Handoff practice, Medication and vitals, or a fictional WHO
   checklist. Monitoring still opens first. Handoff practice grades fictional
@@ -164,6 +168,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Handoff practice draws arterial and noninvasive MAP in the same colours as
+  the Medication and Signal pages; they were swapped.
 - Handoff practice: a wrong value for a missing MAP or SpO2 series now counts
   ("0 of 1 found"); boxes up to eight lines no longer scroll; a check scrolls its
   feedback into view; saved attempts that cannot be read are skipped and

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.answer_markdown import MarkdownAnswer, plain_text
+from src.desktop.shell import DEMO_STAMP, RESEARCH_STAMP
 
 if TYPE_CHECKING:
     from src.desktop.research_workspace import QuestionState
@@ -35,6 +36,9 @@ class Turn:
     note: str = ""
     board: QuestionState | None = None
     scope: str = "Cases"
+    # Whether the question was asked on the fictional demo data. The turn keeps this after the folders change,
+    # so an answer never takes the name of data it was not read from.
+    demo: bool = False
     # How many source extracts or abstracts this question's answer was read from; 0 until known
     extracts: int = 0
     # Named steps of a running question: the finished ones, the one in progress, and a 0-1 bar position
@@ -46,6 +50,10 @@ class Turn:
     @property
     def badge(self) -> str:
         return self.model or "No AI answer"
+
+    @property
+    def data_stamp(self) -> str:
+        return DEMO_STAMP if self.demo else RESEARCH_STAMP
 
     def advance(self, message: str, phase: str = "", fraction: float | None = None) -> None:
         """Record a progress message. A new phase finishes the step before it; the bar never moves back."""
@@ -130,6 +138,12 @@ class TurnWidget(QFrame):
         self.cancel_button.clicked.connect(self.cancel_requested)
         meta.addWidget(self.cancel_button)
         layout.addLayout(meta)
+        # Set once: the data a question was asked on does not change after it is asked
+        self.data_label = QLabel(turn.data_stamp)
+        self.data_label.setObjectName("quietText")
+        self.data_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.data_label.setWordWrap(True)
+        layout.addWidget(self.data_label)
         self.question_label = QLabel(turn.question)
         self.question_label.setTextFormat(Qt.TextFormat.PlainText)
         self.question_label.setWordWrap(True)
@@ -209,6 +223,7 @@ class TurnWidget(QFrame):
         sources = self._source_lines(turn)
         if sources:
             parts.append("Sources:\n" + "\n".join(sources))
+        parts.append(turn.data_stamp)
         return "\n\n".join(part for part in parts if part)
 
     def _copy(self, turn: Turn) -> None:

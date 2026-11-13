@@ -37,6 +37,7 @@ from src.runtime_paths import (
     configure_processed_directory,
     configure_wave_directory,
     data_dir,
+    demo_root_of,
     emr_dir,
     processed_dir,
     resolve_emr_directory,
@@ -174,6 +175,14 @@ def find_problems(vals: dict[str, str], *, require_emr: bool = False) -> dict[st
                 problems["processed_dir"] = f"Processed: {blocked}"
         except Exception as e:
             problems["processed_dir"] = f"Processed: {e}"
+    if emr_for_output is not None and vals["processed_dir"] and "processed_dir" not in problems:
+        emr_demo = demo_root_of(emr_for_output, "EMR")
+        processed_demo = demo_root_of(Path(vals["processed_dir"]), "processed")
+        if emr_demo != processed_demo:
+            problems["processed_dir"] = (
+                "Processed: the demo data's EMR and processed folders go together. "
+                "Choose both from the demo folder, or neither."
+            )
     models = vals["ollama_models_dir"]
     if models and not Path(models).expanduser().is_dir():
         problems["ollama_models_dir"] = f"Ollama models directory does not exist: {Path(models).expanduser()}"

@@ -1093,3 +1093,14 @@ def test_a_page_too_narrow_for_the_table_scrolls_the_table_and_not_the_page(pane
     qapp.processEvents()
     assert panel.timeline_table.horizontalScrollBar().maximum() > 0, "no column is cut off without a way to reach it"
     assert panel.page_scroll.horizontalScrollBar().maximum() == 0
+
+
+def test_a_measurement_has_the_same_colour_on_the_handoff_medication_and_signal_pages():
+    from src.desktop.charts import signal_info
+    from src.modules.medication_vitals.timeline import TRACK_SPECS
+
+    handoff = {track.label: track.token for track in TRACKS}
+    assert handoff == {label.replace("SpO2", "SpO₂"): spec.token
+                       for label, spec in TRACK_SPECS.items() if label != "Heart rate"}
+    assert handoff["Noninvasive MAP"] == signal_info("nMAP").token
+    assert handoff["SpO₂"] == signal_info("SPO2").token

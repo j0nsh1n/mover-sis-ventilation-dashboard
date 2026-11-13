@@ -113,20 +113,30 @@ def read_demo_marker(root: Path) -> dict | None:
     return data if isinstance(data, dict) and data.get("made_by") == "MOVER Suite" else None
 
 
-def demo_root_in_use() -> Path | None:
-    """The demo folder the EMR in use belongs to, or None.
+def demo_root_of(folder: Path, part: str) -> Path | None:
+    """The demo folder that ``folder`` is the ``part`` ("EMR" or "processed") folder of, or None.
 
-    The answer follows the data, not the configured demo location: the EMR folder in use must be the ``EMR``
-    folder beside a marker this app wrote, so changing ``MOVER_DEMO_DATA_DIR`` later cannot change what the
-    data is called, and a real folder never gets the label.
+    The answer follows the data, not the configured demo location: the folder must sit beside a marker this
+    app wrote, so changing ``MOVER_DEMO_DATA_DIR`` later cannot change what the data is called, and a real
+    folder never gets the label.
     """
     try:
-        emr = emr_dir().resolve()
+        folder = folder.expanduser().resolve()
     except OSError:
         return None
-    if emr.name == "EMR" and read_demo_marker(emr.parent) is not None:
-        return emr.parent
+    if folder.name == part and read_demo_marker(folder.parent) is not None:
+        return folder.parent
     return None
+
+
+def demo_root_in_use() -> Path | None:
+    """The demo folder the EMR or processed folder in use belongs to, or None.
+
+    Either one is enough: cases analyzed from the demo are fictional whichever EMR is set, and a demo EMR
+    feeds fictional rows to the Medication page. Settings refuses that mix; this keeps the label honest when
+    it comes from somewhere else, such as an environment override.
+    """
+    return demo_root_of(emr_dir(), "EMR") or demo_root_of(processed_dir(), "processed")
 
 
 def demo_data_in_use() -> bool:

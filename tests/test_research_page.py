@@ -478,6 +478,24 @@ def test_each_question_shows_its_number_model_and_extract_count(view):
     assert "2 questions" in view.conversation.empty_label.text()
 
 
+def test_each_answer_keeps_the_name_of_the_data_it_was_asked_on(view):
+    from src.desktop.shell import DEMO_STAMP, RESEARCH_STAMP
+
+    view.data_is_demo = True
+    view.begin_question("Asked on the demo?", 1)
+    view.set_answer("An answer.", 1)
+    view.set_searching(False)
+    first = view.conversation.turn_widgets[1]
+    assert first.data_label.text() == DEMO_STAMP
+    assert first.copy_text(view.conversation.turn(1)).endswith(DEMO_STAMP), "the label goes with copied text"
+    view.data_is_demo = False
+    view.begin_question("Asked on real data?", 2)
+    second = view.conversation.turn_widgets[2]
+    assert second.data_label.text() == RESEARCH_STAMP
+    assert second.copy_text(view.conversation.turn(2)).endswith(RESEARCH_STAMP)
+    assert first.data_label.text() == DEMO_STAMP, "an earlier answer keeps the name of its own data"
+
+
 def test_a_running_question_shows_named_steps_a_bar_and_a_cancel_that_cancels(view):
     cancelled = []
     view.cancel_requested.connect(lambda: cancelled.append(True))
@@ -522,7 +540,9 @@ def test_copy_with_sources_puts_the_question_answer_and_numbered_sources_on_the_
     view.set_answer("SYN-000 peaks at minute 3.", 1)
     widget = view.conversation.turn_widgets[1]
     widget.copy_button.click()
-    assert QApplication.clipboard().text() == "Where?\n\nSYN-000 peaks at minute 3.\n\nSources:\n1  SYN-000 · Chole"
+    assert QApplication.clipboard().text() == (
+        "Where?\n\nSYN-000 peaks at minute 3.\n\nSources:\n1  SYN-000 · Chole"
+        "\n\nDe-identified research data · not for patient care")
     view.begin_question("Pending?", 2)
     assert not view.conversation.turn_widgets[2].copy_button.isEnabled(), "nothing to copy before an answer"
 
@@ -544,7 +564,7 @@ def test_copy_with_sources_keeps_list_numbers_and_bullets(view, qapp):
     view.conversation.turn_widgets[1].copy_button.click()
     copied = QApplication.clipboard().text()
     assert ("Which?\n\nCases:\n\n1. SYN-000 at minute 3\n2. SYN-001 at minute 5\n- PIP high\n- ETCO2 missing"
-            "\n\nSources:\n1  SYN-000 · Chole") == copied
+            "\n\nSources:\n1  SYN-000 · Chole\n\nDe-identified research data · not for patient care") == copied
 
 
 def test_the_conversation_keeps_its_actions(view):
