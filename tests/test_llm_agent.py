@@ -425,6 +425,29 @@ def test_claimed_ages_reads_common_age_phrasings(phrase):
     assert _claimed_ages(phrase) == {65}
 
 
+@pytest.mark.parametrize("pid", ["SYN000891eb5f", "0123456789abc12f"])
+def test_claimed_ages_never_reads_the_end_of_a_case_id_as_an_age(pid):
+    from src.llm.agent import _claimed_ages
+
+    assert _claimed_ages(f"{pid} had pip_high flags.") == set()
+    assert _claimed_ages(f"Case {pid}, a 55-year-old.") == {55}
+    assert _claimed_ages(f"({pid}; 55F)") == {55}
+
+
+def test_a_case_whose_id_ends_in_a_digit_and_f_is_not_charged_a_wrong_age():
+    """A real ID shape: 16 hex characters ending in a digit then "f". Its own age stated right is no problem."""
+    from src.llm.agent import find_unstated_case_facts
+
+    session = _cited_session()
+    session.cases.loc[session.cases["PID"] == "aabb0011", "PID"] = "0123456789abc12f"
+    session.cited_pids = ["0123456789abc12f", "ccdd0022"]  # ages 50 and 60
+    # naming the case without its age: the ID's end ("12f") is not a claimed age of 12
+    assert find_unstated_case_facts("0123456789abc12f had pip_high flags.", session) == []
+    assert find_unstated_case_facts("0123456789abc12f is a 50-year-old woman.", session) == []
+    problems = find_unstated_case_facts("0123456789abc12f is a 40-year-old woman.", session)
+    assert len(problems) == 1 and "0123456789abc12f is age 50" in problems[0]
+
+
 def test_claimed_ages_ignores_durations():
     from src.llm.agent import _claimed_ages
 

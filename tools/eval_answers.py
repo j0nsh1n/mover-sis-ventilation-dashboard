@@ -44,6 +44,8 @@ DEFAULT_ENTRIES = ROOT / "tests" / "fixtures" / "eval_answers.yaml"
 PROTOTYPE_DRAFTS = ROOT / "tests" / "fixtures" / "drive_prototype.yaml"
 SCRIPTED_MODEL = "recorded-answers"
 EXPECT_FLAGS = ("grounded", "directive", "uncited_pid", "rewritten")
+# Optional, default false: checks added after the first eval set was recorded.
+OPTIONAL_FLAGS = ("case_fact", "causal", "misattributed", "incomplete_list")
 
 _SIGNALS = {
     "pip": "Peak inspiratory pressure",
@@ -83,7 +85,7 @@ class Entry:
     @property
     def expected_to_fail(self) -> bool:
         e = self.expect
-        return not e["grounded"] or e["directive"] or e["uncited_pid"] or e.get("case_fact", False)
+        return not e["grounded"] or e["directive"] or e["uncited_pid"] or any(e.get(f, False) for f in OPTIONAL_FLAGS)
 
 
 @dataclass
@@ -252,6 +254,9 @@ def classify(problems: Sequence[str]) -> dict[str, bool]:
         "directive": lambda p: p.startswith("- prescriptive phrasing"),
         "uncited_pid": lambda p: "is not one of the cited cases" in p,
         "dose": lambda p: p.startswith("- dose does not match"),
+        "causal": lambda p: p.startswith("- causal or diagnostic claim"),
+        "misattributed": lambda p: "is not in that case's extract" in p,
+        "incomplete_list": lambda p: "presents the list as complete" in p,
     }
     seen = {name: any(test(p) for p in problems) for name, test in kinds.items()}
     known = [p for p in problems if any(test(p) for test in kinds.values())]
@@ -260,6 +265,9 @@ def classify(problems: Sequence[str]) -> dict[str, bool]:
         "directive": seen["directive"],
         "uncited_pid": seen["uncited_pid"],
         "case_fact": len(known) < len(problems),
+        "causal": seen["causal"],
+        "misattributed": seen["misattributed"],
+        "incomplete_list": seen["incomplete_list"],
     }
 
 
@@ -310,8 +318,11 @@ def check_expectations(outcome: Outcome) -> list[str]:
         for flag in EXPECT_FLAGS
         if outcome.observed[flag] != expect[flag]
     ]
-    if outcome.observed["case_fact"] != expect.get("case_fact", False):
-        wrong.append(f"case_fact: expected {expect.get('case_fact', False)}, got {outcome.observed['case_fact']}")
+    wrong += [
+        f"{flag}: expected {expect.get(flag, False)}, got {outcome.observed[flag]}"
+        for flag in OPTIONAL_FLAGS
+        if outcome.observed[flag] != expect.get(flag, False)
+    ]
     wrong += [f"final lacks {s!r}" for s in expect.get("final_contains", ()) if s not in outcome.final]
     wrong += [f"final still has {s!r}" for s in expect.get("final_excludes", ()) if s in outcome.final]
     return wrong

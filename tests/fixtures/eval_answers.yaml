@@ -15,6 +15,9 @@
 #   directive    the draft is flagged for prescriptive wording
 #   uncited_pid  the draft names a case that was not cited
 #   case_fact    (optional, default false) the draft misstates a cited case's age
+#   causal       (optional, default false) the draft names a cause or diagnosis the extracts do not state
+#   misattributed  (optional, default false) the draft states a detail for a case whose extract lacks it
+#   incomplete_list  (optional, default false) an "only this case" claim leaves out a cited case
 #   rewritten    the gate sent the draft back for one rewrite
 # plus `final_contains` / `final_excludes`: strings the shipped answer must have / not have.
 # `advice_sentences` marks sentences the stand-in advice labeler calls advice (the model
@@ -136,6 +139,7 @@ entries:
       directive: true
       uncited_pid: false
       rewritten: true
+      causal: true
       final_contains: ["The record cannot establish cause"]
       final_excludes: ["You should administer", "Bronchospasm caused"]
 
@@ -338,3 +342,57 @@ entries:
       case_fact: true
       rewritten: true
       final_excludes: ["{age_2}-year-old"]
+
+  - id: clean-footer-disclaimer
+    question: What was the highest PIP in the first case?
+    search: high airway pressure
+    draft: >-
+      Case {pid_1} had a maximum PIP of {pip_max_1} cmH2O. This describes historical
+      de-identified data; findings do not imply clinical recommendations.
+    expect:
+      grounded: true
+      directive: false
+      uncited_pid: false
+      rewritten: false
+      final_contains: ["findings do not imply clinical recommendations"]
+
+  - id: misattributed-pip
+    question: What was the highest PIP in the first case?
+    search: high airway pressure
+    draft: Case {pid_1} had a maximum PIP of {pip_max_2} cmH2O.
+    rewrite: Case {pid_1} had a maximum PIP of {pip_max_1} cmH2O.
+    expect:
+      grounded: true
+      directive: false
+      uncited_pid: false
+      rewritten: true
+      misattributed: true
+      final_contains: ["{pip_max_1} cmH2O"]
+      final_excludes: ["withheld"]
+
+  - id: misattributed-pip-withheld
+    question: What was the highest PIP in the first case?
+    search: high airway pressure
+    draft: Case {pid_1} had a maximum PIP of {pip_max_2} cmH2O.
+    rewrite: Case {pid_1} reached a PIP of {pip_max_2} cmH2O at its peak.
+    expect:
+      grounded: true
+      directive: false
+      uncited_pid: false
+      rewritten: true
+      misattributed: true
+      final_contains: ["The local model's answer is withheld"]
+
+  - id: causal-diagnosis
+    question: Why did pressure rise in the first case?
+    search: high airway pressure
+    draft: Case {pid_1} had a maximum PIP of {pip_max_1} cmH2O, likely due to bronchospasm.
+    rewrite: Case {pid_1} had a maximum PIP of {pip_max_1} cmH2O; the record does not establish the cause.
+    expect:
+      grounded: true
+      directive: false
+      uncited_pid: false
+      rewritten: true
+      causal: true
+      final_contains: ["the record does not establish the cause"]
+      final_excludes: ["bronchospasm"]
