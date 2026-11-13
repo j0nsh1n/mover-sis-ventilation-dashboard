@@ -1,91 +1,86 @@
-"""Application themes: light, dark, and follow-system."""
+"""Application themes: light ("Paper"), dark ("Night ledger"), and follow-system."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QDir, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
+from src.desktop.fonts import install_app_font, serif_family
 from src.user_settings import THEME_DARK, THEME_LIGHT, THEME_SYSTEM, get_theme
 
 # Concrete theme last applied ("light" | "dark") — used by matplotlib charts.
 _active_concrete: str = THEME_LIGHT
 
 # ---------------------------------------------------------------------------
-# Shared stylesheet fragments (structure only; colors injected per theme)
+# Shared stylesheet (structure only; colors injected per theme)
+#
+# Rules of the design: one canvas, hairlines instead of boxes, radius 3 px, two
+# font weights (400 and 600), one accent. Hover and press change color only.
+# Every focusable control shows a 2 px accent ring; padding shrinks by 1 px when
+# it appears so nothing moves.
 # ---------------------------------------------------------------------------
 
 _STRUCTURE = """
 /* —— shell —— */
 QMainWindow {{
-    background: {bg};
-    color: {fg};
+    background: {paper};
+    color: {ink};
 }}
 QWidget {{
-    color: {fg};
-    font-size: 13px;
-    font-family: "Inter", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif;
+    color: {ink};
+    font-size: 14px;
+    font-family: "Inter", "Noto Sans", "Segoe UI", "Ubuntu", sans-serif;
 }}
 QToolTip {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
     padding: 6px 8px;
-    border-radius: 2px;
+    border-radius: 3px;
+    font-size: 12.5px;
 }}
 
-/* —— menu —— */
-QMenuBar {{
-    background: {surface};
-    color: {fg};
-    border-bottom: 1px solid {border};
-    padding: 2px 4px;
-    spacing: 2px;
-}}
-QMenuBar::item {{
-    background: transparent;
-    padding: 6px 12px;
-    border-radius: 2px;
-}}
-QMenuBar::item:selected {{
-    background: {hover};
-}}
+/* —— menu (context menus only; the app has no menu bar) —— */
 QMenu {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
+    border-radius: 3px;
     padding: 4px;
 }}
 QMenu::item {{
     padding: 7px 28px 7px 12px;
-    border-radius: 2px;
+    border-radius: 3px;
 }}
 QMenu::item:selected {{
-    background: {hover};
+    background: {sel};
+    color: {ink};
+}}
+QMenu::item:disabled {{
+    color: {rule_strong};
 }}
 QMenu::separator {{
     height: 1px;
-    background: {border};
+    background: {rule};
     margin: 6px 8px;
 }}
 
-/* —— cards / group boxes ——
-   Title sits on the top border: need margin-top + title background
-   matching the surface so the border does not cut through the text. */
+/* —— group boxes: a hairline, no card —— */
 QGroupBox {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: transparent;
+    border: 1px solid {rule};
+    border-radius: 3px;
     margin-top: 1.15em;
     padding-top: 14px;
     padding-left: 12px;
     padding-right: 12px;
     padding-bottom: 10px;
     font-weight: 600;
-    color: {fg};
+    color: {ink};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
@@ -93,56 +88,63 @@ QGroupBox::title {{
     left: 10px;
     top: 0px;
     padding: 0 6px;
-    color: {muted};
-    background-color: {bg};
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
+    color: {ink_3};
+    background-color: {paper};
+    font-size: 12.5px;
+    font-weight: 600;
 }}
 
 /* —— inputs —— */
 QLineEdit, QSpinBox, QComboBox, QTextEdit, QPlainTextEdit {{
-    background: {input_bg};
-    border: 1px solid {border};
-    border-radius: 2px;
-    padding: 6px 10px;
-    min-height: 26px;
-    color: {fg};
-    selection-background-color: {accent_soft};
-    selection-color: {fg};
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
+    padding: 7px 10px;
+    min-height: 20px;
+    color: {ink};
+    font-size: 13px;
+    selection-background-color: {accent};
+    selection-color: {on_accent};
 }}
-QLineEdit:hover, QSpinBox:hover, QComboBox:hover, QTextEdit:hover {{
-    border-color: {border_strong};
+QLineEdit:hover, QSpinBox:hover, QComboBox:hover, QTextEdit:hover, QPlainTextEdit:hover {{
+    border-color: {ink_3};
 }}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {{
-    border: 1px solid {accent};
-    background: {input_focus};
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+    border: 2px solid {accent};
+    padding: 6px 9px;
+}}
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {{
+    background: {paper};
+    color: {rule_strong};
+    border-color: {rule};
 }}
 QComboBox {{
     padding-right: 28px;
+}}
+QComboBox:focus {{
+    padding-right: 27px;
 }}
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 28px;
     border: none;
-    border-left: 1px solid {border};
     background: transparent;
 }}
 QComboBox::drop-down:hover {{
-    background: {border_strong};
+    background: {rule_faint};
 }}
-QComboBox:focus {{ border: 2px solid #8c739f; }}
 QComboBox::down-arrow {{
     image: url(movericons:{combo_arrow});
     width: 12px;
     height: 12px;
 }}
 QComboBox QAbstractItemView {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-    selection-background-color: {hover};
+    background: {sheet};
+    color: {ink};
+    border: 1px solid {rule};
+    selection-background-color: {sel};
+    selection-color: {ink};
     outline: none;
     padding: 4px;
 }}
@@ -152,179 +154,956 @@ QSpinBox::up-button, QSpinBox::down-button {{
     width: 16px;
 }}
 
-/* —— buttons —— */
+/* —— buttons: outlined by default, one filled primary, text buttons for the rest —— */
 QPushButton {{
-    background: {btn};
-    color: {btn_fg};
-    border: 1px solid {btn_border};
-    border-radius: 2px;
+    background: transparent;
+    color: {ink};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
     padding: 8px 14px;
+    font-size: 13px;
     font-weight: 600;
     min-height: 18px;
 }}
 QPushButton:hover {{
-    background: {btn_hover};
+    background: {rule_faint};
 }}
 QPushButton:pressed {{
-    background: {btn_pressed};
+    background: {rule};
 }}
 QPushButton:disabled {{
-    background: {disabled_bg};
-    color: {disabled_fg};
-    border-color: {border};
+    background: transparent;
+    color: {rule_strong};
+    border-color: {rule};
 }}
-QPushButton#secondaryBtn {{
-    background: {surface};
-    color: {fg};
-    border: 1px solid {border};
-}}
-QPushButton#secondaryBtn:hover {{
-    background: {hover};
-    border-color: {border_strong};
+QPushButton:focus {{
+    border: 2px solid {accent};
+    padding: 7px 13px;
 }}
 QPushButton#primaryBtn {{
     background: {accent};
-    color: {accent_fg};
+    color: {on_accent};
     border: 1px solid {accent};
 }}
-QPushButton#primaryBtn:hover {{
+QPushButton#primaryBtn:hover, QPushButton#primaryBtn:pressed {{
     background: {accent_hover};
     border-color: {accent_hover};
 }}
-QPushButton#primaryBtn:pressed {{
-    background: {accent_pressed};
+QPushButton#primaryBtn:disabled {{
+    background: {rule_faint};
+    color: {rule_strong};
+    border-color: {rule};
+}}
+/* an accent ring on an accent fill cannot be seen, so the filled button rings in ink */
+QPushButton#primaryBtn:focus {{
+    border: 2px solid {ink};
+    padding: 7px 13px;
+}}
+QPushButton#textBtn {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+}}
+QPushButton#textBtn:hover, QPushButton#textBtn:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#textBtn:disabled {{
+    background: transparent;
+    color: {rule_strong};
+    border-color: transparent;
+}}
+QPushButton#textBtn:focus {{
+    border: 2px solid {accent};
+    padding: 7px 13px;
 }}
 
-QPushButton:focus, QPushButton#primaryBtn:focus, QPushButton#secondaryBtn:focus {{
-    border: 2px solid #8c739f;
-}}
-
-/* —— tabs —— */
+/* —— tabs: text, with a line under the current one —— */
 QTabWidget::pane {{
-    border: 1px solid {border};
-    border-radius: 2px;
-    background: {surface};
+    border: none;
+    border-top: 1px solid {rule};
+    background: transparent;
     top: -1px;
     padding: 4px;
 }}
 QTabBar::tab {{
     background: transparent;
-    border: 1px solid transparent;
-    border-bottom: none;
-    border-top-left-radius: 2px;
-    border-top-right-radius: 2px;
-    padding: 9px 16px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 10px;
     margin-right: 2px;
-    color: {muted};
-    font-weight: 500;
+    color: {ink_3};
+    font-size: 13px;
+    font-weight: 600;
 }}
 QTabBar::tab:hover {{
-    background: {hover};
-    color: {fg};
+    color: {ink};
 }}
 QTabBar::tab:selected {{
-    background: {surface};
-    border: 1px solid {border};
-    border-bottom: 1px solid {surface};
-    color: {fg};
-    font-weight: 700;
+    color: {ink};
+    border-bottom: 2px solid {ink};
+}}
+/* the ring replaces the 2 px underline, so padding drops by 2 px at the sides and 1 px above and below
+   and the tab keeps its size; the side padding is what leaves clear space between ring and letters */
+QTabBar::tab:focus {{
+    border: 2px solid {accent};
+    padding: 7px 8px;
 }}
 
-/* —— tables —— */
-QTableWidget {{
-    background: {input_bg};
-    gridline-color: {border};
-    border: 1px solid {border};
-    border-radius: 2px;
-    alternate-background-color: {alt_row};
-    color: {fg};
-    selection-background-color: {accent_soft};
-    selection-color: {fg};
+/* —— lists and tables: one header line, faint row lines —— */
+QAbstractItemView {{
+    selection-background-color: {sel};
+    selection-color: {ink};
     outline: none;
 }}
-QTableWidget::item {{
-    padding: 4px 8px;
+QTableView, QListView, QTreeView {{
+    background: {paper};
+    gridline-color: transparent;
+    border: 2px solid transparent;
+    color: {ink};
+    font-size: 13px;
 }}
-QTableWidget::item:selected {{
-    background: {accent_soft};
+QTableView:focus, QListView:focus, QTreeView:focus {{
+    border: 2px solid {accent};
+}}
+QTableView::item {{
+    padding: 4px 8px;
+    border-bottom: 1px solid {rule_faint};
+}}
+QTableView::item:selected, QTableView::item:selected:!active {{
+    background: {sel};
+    color: {ink};
+}}
+QListView::item:selected, QListView::item:selected:!active {{
+    background: {sel};
+    color: {ink};
+}}
+QHeaderView {{
+    background: {paper};
 }}
 QHeaderView::section {{
-    background: {surface};
-    padding: 8px 10px;
+    background: {paper};
+    padding: 6px 10px;
     border: none;
-    border-right: 1px solid {border};
-    border-bottom: 1px solid {border};
-    font-weight: 700;
-    font-size: 11px;
-    color: {muted};
+    border-bottom: 1px solid {rule};
+    font-weight: 600;
+    font-size: 12.5px;
+    color: {ink_3};
+}}
+QHeaderView::section:vertical {{
+    border-bottom: 1px solid {rule_faint};
 }}
 QTableCornerButton::section {{
-    background: {surface};
+    background: {paper};
     border: none;
-    border-bottom: 1px solid {border};
-    border-right: 1px solid {border};
+    border-bottom: 1px solid {rule};
 }}
 
-/* —— status —— */
-QStatusBar {{
-    background: {surface};
-    color: {muted};
-    border-top: 1px solid {border};
-    padding: 2px 8px;
+/* —— app frame: rail, running head, practice tabs, footer —— */
+QFrame#navRail {{
+    background: {paper};
+    border: none;
+    border-right: 1px solid {rule};
+}}
+QToolButton#railButton {{
+    background: transparent;
+    color: {ink_3};
+    border: none;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-radius: 0;
+    padding: 8px 0 6px 0;
     font-size: 11px;
+    font-weight: 600;
+}}
+QToolButton#railButton:hover {{
+    color: {ink};
+}}
+QToolButton#railButton:checked {{
+    color: {ink};
+    border-left: 3px solid {accent};
+}}
+QToolButton#railButton:disabled {{
+    color: {rule_strong};
+}}
+/* the ring replaces the 3 px marks, so padding changes to keep icon and word where they were */
+QToolButton#railButton:focus {{
+    border: 2px solid {accent};
+    padding: 6px 1px 4px 1px;
+}}
+/* the current place keeps its mark under the ring: the left side stays the thicker one */
+QToolButton#railButton:focus:checked {{
+    border: 2px solid {accent};
+    border-left: 5px solid {accent};
+    padding: 6px 3px 4px 0;
+}}
+QFrame#runningHead {{
+    background: {paper};
+    border: none;
+}}
+QFrame#runningHead[practice="true"] {{
+    border-top: 3px solid {practice_bar};
+}}
+QLabel#stamp {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#fictionLabel {{
+    color: {practice};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QPushButton#findButton {{
+    background: transparent;
+    color: {ink_3};
+    border: 1px solid transparent;
+    padding: 4px 8px;
+    min-height: 0;
+    font-size: 12.5px;
+    font-weight: 400;
+}}
+QPushButton#findButton:hover, QPushButton#findButton:pressed {{
+    background: transparent;
+    color: {ink};
+}}
+QPushButton#findButton:focus {{
+    border: 2px solid {accent};
+    padding: 3px 7px;
+}}
+QFrame#practiceTabs {{
+    background: {paper};
+    border: none;
+}}
+QDialog#commandPalette {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+}}
+QListWidget#paletteList {{
+    background: {sheet};
+    border: 2px solid transparent;
+}}
+QListWidget#paletteList:focus {{
+    border: 2px solid {accent};
+}}
+QLabel#paletteHint {{
+    color: {ink_3};
+    font-size: 12px;
+}}
+
+/* —— status: the quiet footer —— */
+QStatusBar {{
+    background: {paper};
+    color: {ink_3};
+    border-top: 1px solid {rule};
+    padding: 2px 16px;
+    font-size: 12px;
+}}
+QStatusBar::item {{
+    border: none;
+}}
+QLabel#footerField {{
+    color: {ink_3};
+    font-size: 12px;
+    padding-left: 18px;
+}}
+
+/* —— research page: question, controls, evidence trail, conversation —— */
+QLineEdit#questionField {{
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid {rule_strong};
+    border-radius: 0;
+    padding: 2px 0 8px 0;
+    min-height: 34px;
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLineEdit#questionField:hover {{
+    border-color: {ink_3};
+}}
+/* the ring is the underline, thickened; padding drops by 1 px so the field keeps its height */
+QLineEdit#questionField:focus {{
+    border: none;
+    border-bottom: 2px solid {accent};
+    padding: 2px 0 7px 0;
+}}
+QLineEdit#questionField:disabled {{
+    background: transparent;
+    color: {ink_3};
+    border-bottom: 1px solid {rule};
+}}
+QGroupBox#scopeSwitch {{
+    border: none;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}}
+QRadioButton#scopeOption {{
+    background: transparent;
+    color: {ink_3};
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 10px;
+    margin-right: 2px;
+    spacing: 0;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QRadioButton#scopeOption::indicator {{
+    width: 0;
+    height: 0;
+}}
+QRadioButton#scopeOption:hover {{
+    color: {ink};
+}}
+QRadioButton#scopeOption:checked {{
+    color: {ink};
+    border-bottom: 2px solid {ink};
+}}
+QRadioButton#scopeOption:focus {{
+    border: 2px solid {accent};
+    padding: 7px 8px;
+}}
+QPushButton#modelMenuBtn {{
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 6px 28px 6px 10px;
+    font-weight: 400;
+}}
+QPushButton#modelMenuBtn:hover, QPushButton#modelMenuBtn:pressed {{
+    background: {rule_faint};
+}}
+QPushButton#modelMenuBtn::menu-indicator {{
+    image: none;
+    width: 0;
+}}
+QPushButton#modelMenuBtn:focus {{
+    border: 2px solid {accent};
+    padding: 5px 27px 5px 9px;
+}}
+QPushButton#linkBtn {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 2px 4px;
+    min-height: 0;
+    font-size: 12.5px;
+}}
+QPushButton#linkBtn:hover, QPushButton#linkBtn:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#linkBtn:disabled {{
+    background: transparent;
+    color: {rule_strong};
+    border-color: transparent;
+}}
+QPushButton#linkBtn:focus {{
+    border: 2px solid {accent};
+    padding: 1px 3px;
+}}
+QLabel#boardHeading {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#statement {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#stepHeading {{
+    font-size: 14px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#stepNumber {{
+    font-size: 14px;
+    font-weight: 600;
+    color: {ink_3};
+}}
+QLabel#quietText {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#bodyText {{
+    color: {ink};
+    font-size: 14px;
+}}
+QSplitter#boardSplitter::handle {{
+    background: transparent;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+}}
+QSplitter#boardSplitter::handle:hover {{
+    background: {accent};
+}}
+QScrollArea#conversationPanel {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QWidget#conversationPage {{
+    background: {sheet};
+}}
+QLabel#conversationTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#turnQuestion {{
+    font-family: {serif};
+    font-style: italic;
+    font-size: 20px;
+    color: {ink};
+}}
+QFrame#turnRule {{
+    background: {rule};
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
+}}
+QTextBrowser#turnAnswer {{
+    background: transparent;
+    border: 2px solid transparent;
+    padding: 0;
+    font-size: 14px;
+    selection-background-color: {accent};
+    selection-color: {on_accent};
+}}
+QTextBrowser#turnAnswer:focus {{
+    border: 2px solid {accent};
+    padding: 0;
+}}
+QPushButton#citationLink {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 2px 4px;
+    min-height: 0;
+    font-size: 13px;
+    font-weight: 400;
+    text-align: left;
+}}
+QPushButton#citationLink:hover, QPushButton#citationLink:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#citationLink:focus {{
+    border: 2px solid {accent};
+    padding: 1px 3px;
+}}
+QProgressBar#turnProgress {{
+    background: {rule};
+    border: none;
+    min-height: 3px;
+    max-height: 3px;
+}}
+QProgressBar#turnProgress::chunk {{
+    background: {accent};
+}}
+
+/* —— case page: header, chart readouts, minute slider, inspector —— */
+QLabel#caseTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#caseFacts {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#minuteStamp {{
+    font-size: 28px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#minuteCaption {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#trackValue {{
+    font-size: 20px;
+    font-weight: 600;
+    color: {ink};
+}}
+QLabel#trackValue[missing="true"] {{
+    font-size: 14px;
+    font-weight: 400;
+    font-style: italic;
+    color: {ink_3};
+    padding-top: 4px;
+}}
+QSlider#minuteSlider::groove:horizontal {{
+    height: 2px;
+    background: {rule_strong};
+}}
+QSlider#minuteSlider::handle:horizontal {{
+    background: {accent};
+    border: 2px solid {paper};
+    width: 10px;
+    height: 10px;
+    margin: -6px 0;
+    border-radius: 7px;
+}}
+QSlider#minuteSlider::handle:horizontal:hover {{
+    background: {accent_hover};
+}}
+/* the ring: the handle turns hollow with a thick accent edge, which reads on the paper without color alone */
+QSlider#minuteSlider::handle:horizontal:focus {{
+    background: {paper};
+    border: 3px solid {accent};
+    width: 8px;
+    height: 8px;
+    margin: -6px 0;
+    border-radius: 7px;
+}}
+QFrame#caseInspector {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#caseInspector[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#caseInspector QTableView, QFrame#caseInspector QListView {{
+    background: transparent;
+}}
+QFrame#caseInspector QHeaderView, QFrame#caseInspector QHeaderView::section {{
+    background: transparent;
+}}
+
+/* —— cases page: filter, preview panel —— */
+QLineEdit#casesFilter {{
+    padding: 7px 30px 7px 34px;
+}}
+QLineEdit#casesFilter:focus {{
+    padding: 6px 29px 6px 33px;
+}}
+/* number headings leave room at the right for the sort arrow; the cells keep the same room, so numbers sit under them */
+QTableView#casesTable QHeaderView::section {{
+    padding: 6px 22px 6px 8px;
+}}
+QFrame#casePreview {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#casePreview[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#casePreview QListView {{
+    background: transparent;
+}}
+QLabel#previewTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+
+/* —— handoff practice: the handoff panel, its boxes and section labels —— */
+QFrame#handoffSide {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QFrame#handoffSide[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QFrame#handoffSide QPlainTextEdit {{
+    background: {paper};
+    font-size: 14px;
+}}
+QLabel#handoffSectionLabel {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QTableView#handoffTable {{
+    border: 2px solid transparent;
+}}
+
+/* —— rules drawer: one side surface, rules in rows with faint lines, no boxes —— */
+QFrame#rulesDrawer {{
+    background: {sheet};
+    border: none;
+    border-left: 1px solid {rule};
+}}
+QLabel#drawerTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#drawerMeta {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+QLabel#drawerCount {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QLabel#drawerNotice {{
+    color: {ink};
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#drawerToggle {{
+    background: transparent;
+    color: {accent};
+    border: 1px solid transparent;
+    padding: 6px 4px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+}}
+QPushButton#drawerToggle:hover, QPushButton#drawerToggle:pressed {{
+    background: transparent;
+    color: {accent_hover};
+}}
+QPushButton#drawerToggle:focus {{
+    border: 2px solid {accent};
+    padding: 5px 3px;
+}}
+QLabel#ruleGroup {{
+    color: {ink_2};
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 18px;
+    padding-bottom: 6px;
+}}
+/* the focus ring and the current-rule bar swap borders for padding, so the text never moves */
+QFrame#ruleRow {{
+    background: transparent;
+    border: none;
+    border-top: 1px solid {rule_faint};
+    padding: 10px 12px 10px 12px;
+}}
+QFrame#ruleRow[highlight="true"] {{
+    background: {sel};
+    border-left: 3px solid {accent};
+    padding-left: 9px;
+}}
+QFrame#ruleRow:focus, QFrame#ruleRow[highlight="true"]:focus {{
+    border: 2px solid {accent};
+    padding: 9px 10px 8px 10px;
+}}
+QLabel#ruleCurrent {{
+    color: {ink};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QLabel#ruleName {{
+    color: {ink};
+    font-size: 14px;
+    font-weight: 600;
+}}
+QLabel#ruleId, QLabel#ruleCaption, QLabel#ruleNoRuler {{
+    color: {ink_3};
+    font-size: 12.5px;
+}}
+/* quiet text steps up one ink on the current rule's tint, where ink_3 is too close to the limit once antialiased */
+QFrame#ruleRow[highlight="true"] QLabel#ruleId, QFrame#ruleRow[highlight="true"] QLabel#ruleCaption,
+QFrame#ruleRow[highlight="true"] QLabel#ruleNoRuler {{
+    color: {ink_2};
+}}
+QLabel#ruleSeverity {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#ruleSummary {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#ruleDetail {{
+    color: {ink};
+    font-size: 13px;
+}}
+
+/* —— WHO checklist practice: the card is an object with edges, a framed sheet with dotted rules between its lines —— */
+QFrame#indexCard {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 2px;
+}}
+QLabel#cardTitle {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+}}
+QLabel#cardKey, QLabel#cardValue {{
+    font-size: 13.5px;
+    padding: 4px 0;
+    border-bottom: 1px dotted {grid};
+}}
+QLabel#cardKey {{
+    color: {ink_3};
+    min-width: 100px;
+}}
+QLabel#cardValue {{
+    color: {ink};
+}}
+QLabel#cardKey[last="true"], QLabel#cardValue[last="true"] {{
+    border-bottom: none;
+}}
+/* three stages with their counts on a window's least width: the count sits under the name and the tabs are tighter */
+QTabBar#stageTabs[narrow="true"]::tab {{
+    padding: 6px 6px;
+    margin-right: 0;
+}}
+QTabBar#stageTabs[narrow="true"]::tab:focus {{
+    padding: 5px 4px;
+}}
+
+/* —— settings page: section list, setting rows, folder checks, save bar —— */
+QLabel#pageTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#settingName {{
+    font-weight: 600;
+    color: {ink};
+}}
+QListWidget#settingsSections {{
+    background: transparent;
+    border: none;
+    outline: none;
+}}
+QListWidget#settingsSections::item {{
+    padding: 7px 12px;
+    border-left: 3px solid transparent;
+    color: {ink_3};
+    font-size: 14px;
+}}
+QListWidget#settingsSections::item:hover {{
+    color: {ink};
+}}
+QListWidget#settingsSections::item:selected, QListWidget#settingsSections::item:selected:!active {{
+    background: transparent;
+    color: {ink};
+    font-weight: 600;
+    border-left: 3px solid {accent};
+}}
+QListWidget#settingsSections:focus {{
+    border: 2px solid {accent};
+}}
+QListWidget#settingsSections[narrow="true"]::item {{
+    padding: 6px 10px;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+}}
+QListWidget#settingsSections[narrow="true"]::item:selected, QListWidget#settingsSections[narrow="true"]::item:selected:!active {{
+    border-left: none;
+    border-bottom: 3px solid {accent};
+}}
+QLabel#folderCheck {{
+    color: {ink_2};
+    font-size: 12.5px;
+}}
+QLabel#folderCheck[state="problem"] {{
+    color: {ink};
+    font-weight: 600;
+}}
+QWidget#settingsBar {{
+    background: {paper};
+    border-top: 1px solid {rule};
+}}
+QLabel#settingsStatus {{
+    color: {ink_2};
+    font-size: 13px;
+}}
+QLabel#settingsStatus[state="dirty"], QLabel#settingsStatus[state="problem"] {{
+    color: {ink};
+}}
+QLabel#demoNote {{
+    color: {ink};
+    font-size: 13px;
+    border-left: 3px solid {practice_bar};
+    padding-left: 10px;
+}}
+
+/* —— first-time setup: step list, headline, promises —— */
+QFrame#setupSide[mode="light"] {{
+    background: {ink};
+    border: none;
+}}
+QFrame#setupSide[mode="light"] QLabel {{
+    color: {paper};
+    background: transparent;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupSub, QFrame#setupSide[mode="light"] QLabel#setupStepName[state="todo"] {{
+    color: {rule};
+}}
+QFrame#setupSide[mode="light"] QLabel#setupMark, QFrame#setupSide[mode="light"] QLabel#setupStepNumber {{
+    border: 1px solid {rule};
+    border-radius: 15px;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupMark {{
+    border: 2px solid {paper};
+    border-radius: 27px;
+}}
+QFrame#setupSide[mode="light"] QLabel#setupStepNumber[state="current"] {{
+    background: {paper};
+    color: {ink};
+    border-color: {paper};
+}}
+QFrame#setupSide[mode="dark"] {{
+    background: {sheet_2};
+    border: none;
+    border-right: 1px solid {rule};
+}}
+QFrame#setupSide[mode="dark"] QLabel {{
+    color: {ink};
+    background: transparent;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupSub, QFrame#setupSide[mode="dark"] QLabel#setupStepName[state="todo"] {{
+    color: {ink_3};
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupMark, QFrame#setupSide[mode="dark"] QLabel#setupStepNumber {{
+    border: 1px solid {ink_3};
+    border-radius: 15px;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupMark {{
+    border: 2px solid {ink};
+    border-radius: 27px;
+}}
+QFrame#setupSide[mode="dark"] QLabel#setupStepNumber[state="current"] {{
+    background: {ink};
+    color: {sheet_2};
+    border-color: {ink};
+}}
+QLabel#setupMark, QLabel#aboutMark {{
+    font-family: {serif};
+    font-size: 24px;
+}}
+QLabel#aboutMark {{
+    border: 2px solid {ink};
+    border-radius: 27px;
+    color: {ink};
+}}
+QLabel#setupName {{
+    font-family: {serif};
+    font-size: 24px;
+}}
+QLabel#setupSub {{
+    font-size: 12.5px;
+}}
+QLabel#setupStepName {{
+    font-size: 14px;
+}}
+QLabel#setupStepName[state="current"] {{
+    font-weight: 600;
+}}
+QLabel#setupStepNumber {{
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QLabel#setupTitle {{
+    font-family: {serif};
+    font-size: 28px;
+    color: {ink};
+}}
+QLabel#setupKicker {{
+    color: {ink_3};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+QFrame#setupPromises {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
+}}
+QFrame#setupPromises QLabel {{
+    background: transparent;
+}}
+QToolButton#setupAdvanced {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: {ink};
+    font-weight: 600;
+    font-size: 13px;
+    padding: 4px 6px;
+}}
+QToolButton#setupAdvanced:hover {{
+    background: {rule_faint};
+}}
+QToolButton#setupAdvanced:focus {{
+    border: 2px solid {accent};
+    padding: 3px 5px;
+}}
+
+/* —— error card: a headline, the reason, the next step, details collapsed —— */
+QMessageBox#errorCard {{
+    background: {paper};
+}}
+QMessageBox#errorCard QLabel#qt_msgbox_label {{
+    font-family: {serif};
+    font-size: 20px;
+    color: {ink};
+    min-width: 360px;
+}}
+QMessageBox#errorCard QLabel#qt_msgbox_informativelabel {{
+    font-size: 13px;
+    color: {ink_2};
+}}
+QMessageBox#errorCard QTextEdit {{
+    background: {sheet};
+    font-size: 12.5px;
 }}
 
 /* —— labels —— */
 QLabel#heroTitle {{
     font-size: 20px;
-    font-weight: 700;
-    color: {fg};
-    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: {ink};
 }}
 QLabel#heroSub {{
-    color: {muted};
-    font-size: 12px;
+    color: {ink_3};
+    font-size: 12.5px;
     padding-top: 2px;
 }}
 QLabel#pathHint {{
-    color: {muted};
-    font-size: 11px;
-    line-height: 1.35;
+    color: {ink_3};
+    font-size: 12.5px;
 }}
 QLabel#sectionLabel {{
-    font-weight: 700;
-    font-size: 12px;
-    color: {muted};
+    font-weight: 600;
+    font-size: 12.5px;
+    color: {ink_3};
     margin-top: 4px;
-    letter-spacing: 0.02em;
 }}
 QLabel#metricTitle {{
-    color: {muted};
-    font-size: 11px;
+    color: {ink_3};
+    font-size: 12.5px;
     font-weight: 600;
-    letter-spacing: 0.03em;
 }}
 QLabel#metricValue {{
     font-size: 18px;
-    font-weight: 700;
-    color: {fg};
+    font-weight: 600;
+    color: {ink};
     padding-top: 2px;
 }}
 
 /* —— metric cards —— */
 QFrame#metricCard {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
-    border-top: 2px solid {accent};
+    background: {sheet};
+    border: 1px solid {rule};
+    border-radius: 3px;
     min-width: 108px;
 }}
 
 /* —— chart host —— */
 QWidget#chartView {{
-    background: {surface};
-    border: 1px solid {border};
-    border-radius: 2px;
+    background: {paper};
+    border: 1px solid {rule};
+    border-radius: 3px;
 }}
 QScrollArea {{
     background: transparent;
@@ -341,28 +1120,37 @@ QWidget#sidePanel {{
 
 /* —— checkboxes —— */
 QCheckBox {{
-    color: {fg};
+    color: {ink};
     spacing: 8px;
 }}
 QCheckBox::indicator {{
     width: 16px;
     height: 16px;
-    border-radius: 2px;
-    border: 1px solid {border_strong};
-    background: {input_bg};
+    border-radius: 3px;
+    border: 1px solid {rule_strong};
+    background: {sheet};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {ink_3};
 }}
 QCheckBox::indicator:checked {{
     background: {accent};
     border-color: {accent};
 }}
+QCheckBox::indicator:focus {{
+    border: 2px solid {accent};
+}}
+QCheckBox:disabled {{
+    color: {rule_strong};
+}}
 
 /* —— dialogs / wizard —— */
 QDialog, QWizard {{
-    background: {bg};
-    color: {fg};
+    background: {paper};
+    color: {ink};
 }}
 QWizard QWidget {{
-    color: {fg};
+    color: {ink};
 }}
 QDialogButtonBox QPushButton {{
     min-width: 88px;
@@ -370,7 +1158,7 @@ QDialogButtonBox QPushButton {{
 
 /* —— splitters —— */
 QSplitter::handle {{
-    background: {border};
+    background: {rule};
     width: 2px;
     margin: 4px 2px;
     border-radius: 0px;
@@ -386,12 +1174,12 @@ QScrollBar:vertical {{
     margin: 4px 2px;
 }}
 QScrollBar::handle:vertical {{
-    background: {scroll};
-    border-radius: 2px;
+    background: {rule_strong};
+    border-radius: 3px;
     min-height: 28px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {scroll_hover};
+    background: {ink_3};
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
@@ -402,9 +1190,12 @@ QScrollBar:horizontal {{
     margin: 2px 4px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {scroll};
-    border-radius: 2px;
+    background: {rule_strong};
+    border-radius: 3px;
     min-width: 28px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {ink_3};
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
     width: 0;
@@ -414,65 +1205,70 @@ QScrollBar::add-page, QScrollBar::sub-page {{
 }}
 """
 
+# Design tokens, with the design's hyphenated names written with underscores
+# (sheet-2 is sheet_2). Light is "Paper", dark is "Night ledger".
 _LIGHT = {
     "combo_arrow": "chevron-dark.svg",
-    "bg": "#f1f5f9",
-    "surface": "#ffffff",
-    "input_bg": "#ffffff",
-    "input_focus": "#ffffff",
-    "fg": "#0f172a",
-    "muted": "#64748b",
-    "border": "#e2e8f0",
-    "border_strong": "#cbd5e1",
-    "hover": "#f1f5f9",
-    "alt_row": "#f8fafc",
-    "accent": "#0d9488",
-    "accent_hover": "#0f766e",
-    "accent_pressed": "#115e59",
-    "accent_fg": "#f0fdfa",
-    "accent_soft": "#ccfbf1",
-    "btn": "#e2e8f0",
-    "btn_fg": "#1e293b",
-    "btn_border": "#cbd5e1",
-    "btn_hover": "#cbd5e1",
-    "btn_pressed": "#94a3b8",
-    "disabled_bg": "#f1f5f9",
-    "disabled_fg": "#94a3b8",
-    "scroll": "#cbd5e1",
-    "scroll_hover": "#94a3b8",
+    "paper": "#F3F0E8",
+    "sheet": "#FBFAF6",
+    "sheet_2": "#ECE8DE",
+    "ink": "#1C1B19",
+    "ink_2": "#47443D",
+    "ink_3": "#66625A",
+    "rule": "#DAD4C7",
+    "rule_faint": "#E6E1D6",
+    "rule_strong": "#8E877A",
+    "grid": "#E2DCCF",
+    "accent": "#2F43A3",
+    "accent_hover": "#24348A",
+    "on_accent": "#FFFFFF",
+    "sel": "#E2E5F4",
+    "practice": "#6E4D00",
+    "practice_bar": "#A27C12",
+    "hatch": "rgba(71, 68, 61, 0.30)",
+    "s_pip": "#B0502A",
+    "s_etco2": "#1B776B",
+    "s_hr": "#6A4C9C",
+    "s_spo2": "#2D69B0",
+    "s_map": "#7F6200",
 }
 
 _DARK = {
     "combo_arrow": "chevron-light.svg",
-    "bg": "#0b1220",
-    "surface": "#151e2e",
-    "input_bg": "#0f172a",
-    "input_focus": "#111827",
-    "fg": "#e8eef7",
-    "muted": "#94a3b8",
-    "border": "#243044",
-    "border_strong": "#334155",
-    "hover": "#1a2436",
-    "alt_row": "#121a29",
-    "accent": "#14b8a6",
-    "accent_hover": "#2dd4bf",
-    "accent_pressed": "#0d9488",
-    "accent_fg": "#042f2e",
-    "accent_soft": "#134e4a",
-    "btn": "#1e293b",
-    "btn_fg": "#f1f5f9",
-    "btn_border": "#334155",
-    "btn_hover": "#334155",
-    "btn_pressed": "#475569",
-    "disabled_bg": "#151e2e",
-    "disabled_fg": "#475569",
-    "scroll": "#334155",
-    "scroll_hover": "#475569",
+    "paper": "#131518",
+    "sheet": "#1A1D21",
+    "sheet_2": "#0F1113",
+    "ink": "#ECE8DF",
+    "ink_2": "#C3BDB0",
+    "ink_3": "#9C978B",
+    "rule": "#2B2F35",
+    "rule_faint": "#202328",
+    "rule_strong": "#686D75",
+    "grid": "#24282E",
+    "accent": "#A4B1F5",
+    "accent_hover": "#C0C9F8",
+    "on_accent": "#10142B",
+    "sel": "#252B48",
+    "practice": "#F0D27A",
+    "practice_bar": "#8A7429",
+    "hatch": "rgba(195, 189, 176, 0.24)",
+    "s_pip": "#EE8A5E",
+    "s_etco2": "#5AC6B6",
+    "s_hr": "#B9A1EC",
+    "s_spo2": "#80AFEE",
+    "s_map": "#D8BC55",
 }
+
+_RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
+
+
+def _serif_css() -> str:
+    """The title font as a stylesheet family list; asking for it registers the bundled files first."""
+    return f'"{serif_family()}", "Noto Serif", Georgia, serif'
 
 
 def _build_stylesheet(tokens: dict[str, str]) -> str:
-    return _STRUCTURE.format(**tokens)
+    return _STRUCTURE.format(serif=_serif_css(), **tokens)
 
 
 QDir.addSearchPath("movericons", str(Path(__file__).parent / "assets"))
@@ -485,41 +1281,51 @@ def active_theme() -> str:
     return _active_concrete
 
 
+def tokens(theme: str | None = None) -> dict[str, str]:
+    """Design tokens of ``theme`` (``light`` or ``dark``), or of the active theme when omitted."""
+    chosen = theme or _active_concrete
+    return dict(_DARK if chosen == THEME_DARK else _LIGHT)
+
+
+def token_color(name: str, theme: str | None = None) -> QColor:
+    """A token as a ``QColor``; accepts the plain hex colors and the ``rgba()`` hatch."""
+    value = tokens(theme)[name]
+    match = _RGBA.fullmatch(value)
+    if match:
+        red, green, blue, alpha = match.groups()
+        return QColor(int(red), int(green), int(blue), round(float(alpha) * 255))
+    return QColor(value)
+
+
+def chart_style_from(t: dict[str, str]) -> dict[str, str]:
+    """Colors for matplotlib figures drawn from the token set ``t``.
+
+    ``info``, ``warn`` and ``critical`` are the same ink: a rule flag is told apart by its
+    shape and its word, never by a color of its own.
+    """
+    return {
+        "figure_facecolor": t["paper"],
+        "axes_facecolor": t["paper"],
+        "text": t["ink"],
+        "muted": t["ink_3"],
+        "grid": t["grid"],
+        "spine": t["rule"],
+        "bar": t["ink_2"],
+        "info": t["ink"],
+        "warn": t["ink"],
+        "critical": t["ink"],
+    }
+
+
 def chart_style() -> dict[str, str]:
     """Colors for matplotlib figures matching the active UI theme."""
-    if _active_concrete == THEME_DARK:
-        return {
-            "figure_facecolor": _DARK["surface"],
-            "axes_facecolor": _DARK["input_bg"],
-            "text": _DARK["fg"],
-            "muted": _DARK["muted"],
-            "grid": _DARK["border"],
-            "spine": _DARK["border_strong"],
-            "bar": "#f97316",
-            "info": "#60a5fa",
-            "warn": "#fbbf24",
-            "critical": "#f87171",
-        }
-    return {
-        "figure_facecolor": _LIGHT["surface"],
-        "axes_facecolor": "#ffffff",
-        "text": _LIGHT["fg"],
-        "muted": _LIGHT["muted"],
-        "grid": _LIGHT["border"],
-        "spine": _LIGHT["border_strong"],
-        "bar": "#ea580c",
-        "info": "#3b82f6",
-        "warn": "#d97706",
-        "critical": "#dc2626",
-    }
+    return chart_style_from(tokens())
 
 
 def chat_role_color(role: str) -> str:
     """HTML color for chat role labels under the active theme."""
-    dark = _active_concrete == THEME_DARK
-    if role == "user":
-        return "#2dd4bf" if dark else "#0f766e"
-    return "#94a3b8" if dark else "#475569"
+    t = tokens()
+    return t["accent"] if role == "user" else t["ink_3"]
 
 
 def system_prefers_dark() -> bool:
@@ -555,26 +1361,23 @@ def resolve_theme_mode(mode: str | None = None) -> str:
 
 def _palette_from_tokens(t: dict[str, str]) -> QPalette:
     p = QPalette()
-    window = QColor(t["bg"])
-    base = QColor(t["input_bg"])
-    alt = QColor(t["surface"])
-    text = QColor(t["fg"])
-    muted = QColor(t["muted"])
-    highlight = QColor(t["accent"])
-    button = QColor(t["btn"])
-    disabled = QColor(t["disabled_fg"])
+    window = QColor(t["paper"])
+    base = QColor(t["sheet"])
+    text = QColor(t["ink"])
+    muted = QColor(t["ink_3"])
+    disabled = QColor(t["rule_strong"])
     p.setColor(QPalette.ColorRole.Window, window)
     p.setColor(QPalette.ColorRole.WindowText, text)
     p.setColor(QPalette.ColorRole.Base, base)
-    p.setColor(QPalette.ColorRole.AlternateBase, alt)
-    p.setColor(QPalette.ColorRole.ToolTipBase, alt)
+    p.setColor(QPalette.ColorRole.AlternateBase, QColor(t["sheet_2"]))
+    p.setColor(QPalette.ColorRole.ToolTipBase, base)
     p.setColor(QPalette.ColorRole.ToolTipText, text)
     p.setColor(QPalette.ColorRole.Text, text)
-    p.setColor(QPalette.ColorRole.Button, button)
+    p.setColor(QPalette.ColorRole.Button, window)
     p.setColor(QPalette.ColorRole.ButtonText, text)
     p.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-    p.setColor(QPalette.ColorRole.Highlight, highlight)
-    p.setColor(QPalette.ColorRole.HighlightedText, QColor(t["accent_fg"]))
+    p.setColor(QPalette.ColorRole.Highlight, QColor(t["accent"]))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor(t["on_accent"]))
     p.setColor(QPalette.ColorRole.Link, QColor(t["accent"]))
     p.setColor(QPalette.ColorRole.PlaceholderText, muted)
     p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled)
@@ -594,10 +1397,11 @@ def apply_theme(app: QCoreApplication | None = None, mode: str | None = None) ->
         app = QApplication.instance()
     concrete = resolve_theme_mode(mode)
     _active_concrete = concrete
-    tokens = _DARK if concrete == THEME_DARK else _LIGHT
-    sheet = _build_stylesheet(tokens)
+    palette = tokens(concrete)
+    sheet = _build_stylesheet(palette)
     if isinstance(app, QApplication):
+        install_app_font(app)
         app.setStyle("Fusion")
-        app.setPalette(_palette_from_tokens(tokens))
+        app.setPalette(_palette_from_tokens(palette))
         app.setStyleSheet(sheet)
     return concrete

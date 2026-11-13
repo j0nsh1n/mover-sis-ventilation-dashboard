@@ -17,9 +17,10 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 
 - Load SIS EMR tables from a user-chosen folder; optional wave root; write/read processed
   parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
-- Desktop UI is primary. On first run or with an invalid EMR folder, a modal Setup
-  wizard validates the folder before data loading. Canceling first-run setup leaves
-  the Research workspace in the setup-required state until setup is completed.
+- Desktop UI is primary. On first run or with an invalid EMR folder, first-time setup
+  fills the window and validates the folder before data loading. Leaving first-run
+  setup before it has saved leaves the Research workspace in the setup-required state
+  until setup is completed.
 - The desktop central widget is the **Research** evidence workspace (G) in
   `ResearchWorkspace`, set from `src/desktop/app.py` `_build_ui`. The Ask, Summary,
   Case timeline, and Rule reference tabs are retired. Equivalent functions remain
@@ -56,8 +57,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - The Research workspace opens a retrieved case, or a case chosen in the Cases list,
   in the focused signal view (F). F shows PIP, ETCO₂, and heart rate at a selected
   minute, plus source rows, and the case's flag episodes. Episodes are listed in time
-  order and marked on a flag lane under the traces. Selecting an episode, or a mark on
-  the lane, shows its rule, the loaded preset's current thresholds for that rule, and
+  order and drawn as bands on a flag lane under the traces. Selecting an episode, or
+  its band on the lane, shows its rule, the loaded preset's current thresholds for that rule, and
   each of the rule's signals over the episode (min, max, mean, missing minutes), adds
   the rule's other signals as extra tracks, and can open the rule in the Rules drawer.
   Traces break at missing minutes. A case with no flags says so. Returning to G
@@ -70,7 +71,8 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   cases with PID, procedure, age, sex, duration, anomaly score, warn and critical
   counts, and top rules by name. The list states its scope: the loaded sample, with
   the indexed-surgery count when a full-EMR scan knows it. When a full-EMR scan
-  exists, a switch lists the scan's scored cases instead. A click or Enter opens the
+  exists, a switch lists the scan's scored cases instead. A click selects a case
+  and shows its preview (beside the list, or under it in a narrow window); Enter, a double-click or Open case opens the
   case in F; Back or Escape returns to the list. Opening a case from the Cases list
   does not change the question's evidence board.
 - Reloading processed data, or loading data with a different preset, closes any open
@@ -132,7 +134,7 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `55y woman, hysterectomy, sevoflurane, elevated PIP` to request a grounded
   research answer about similar cases and documented management patterns.
 - **Pipeline CLI:** `PYTHONPATH=. python -m src.pipeline.run --n-cases 50 --preset default`
-- **Full-EMR scan:** File → Scan full EMR, or
+- **Full-EMR scan:** Ctrl+K → Scan full EMR, or
   `PYTHONPATH=. python -m src.pipeline.corpus_scan --preset default`
 - **Profile (threshold calibration):**
   `PYTHONPATH=. python -m src.pipeline.profile --processed-dir data/processed --out profile.md`
@@ -140,10 +142,12 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   `PYTHONPATH=. python -m src.pipeline.synthetic --out data/synthetic/EMR --n-cases 30`,
   then run the pipeline with `--emr-dir data/synthetic/EMR --output-dir data/synthetic/processed`
 - **Streamlit (optional):** `PYTHONPATH=. streamlit run src/dashboard/app.py`
-- Settings: gear icon / `Ctrl+,` (paths, Ollama models dir, chat and embedding model,
-  rule preset for new runs, theme). Setup opens before the app loads data on first run
-  or for an invalid EMR path.
-- File > Run pipeline and File > Scan full EMR use the saved rule preset (`default`
+- Settings: a page of the window, from the left navigation or `Ctrl+,` (paths, Ollama
+  models dir, chat and embedding model, rule preset for new runs, theme). Nothing is
+  written until Save; leaving with unsaved changes asks to save, discard or stay; a
+  refused save changes nothing. Setup opens before the app loads data on first run or
+  for an invalid EMR path.
+- Run pipeline and Scan full EMR (both in Ctrl+K) use the saved rule preset (`default`
   when unset). The Rules drawer, Research questions, and case fetches use the preset
   recorded with the loaded data, or the saved preset when no data is loaded; run the
   pipeline again to apply a new preset to loaded data.
@@ -329,9 +333,24 @@ Desktop UI stays PySide6. Python 3.14 remains the language for the UI and existi
 processing. No new Rust component and no port of tests into Rust is granted.
 Existing Rust updater, signer, and desktop contract suites stay as they are.
 
-Monitoring opens first. View can switch to Handoff practice, Medication and
-vitals, or the WHO checklist. Those pages are working practice tools, not empty
-tabs. The corner label names the page that is open.
+Research (Monitoring) opens first. The left navigation reaches Research, Cases,
+Signal (the open case), Practice (Handoff practice, Medication and vitals and the
+WHO checklist as tabs), Rules and Settings. There is no menu bar: every former
+menu action is in the Ctrl+K command search and keeps its shortcut (Ctrl+1 to
+Ctrl+4, Ctrl+O, Ctrl+Shift+O, Ctrl+R, Ctrl+Q, Ctrl+,). The running head shows a
+breadcrumb for the open place, "Find Ctrl+K", and the research-only line (on
+practice pages that show only invented material, "Fictional practice";
+Medication and vitals with an open case keeps the research-only line and the
+data footer). Neither line is ever cut: in a narrow window
+the breadcrumb and Find give up room first, then the research-only line shortens to
+"Not for patient care" and the practice line to "Fictional practice", with the full
+sentence in the tooltip and the accessible name. The footer shows the data source (folder
+paths only in its tooltip and in Settings), analyzed and indexed counts, the rule
+preset and threshold-hash prefix, and the local model state. In a narrow window a
+footer field shows whole words ending in "…" or is left out, never a cut word; the
+data source and the counts give up room last. The window title
+names the open page. The practice pages are working practice tools, not empty
+tabs.
 
 ### Shared source, preset, and generation
 
@@ -383,9 +402,10 @@ Monitoring tool.
 
 Optional Streamlit in `src/dashboard/` stays during migration.
 
-Carry native QA into the suite record. The original candidate AppImage and
-`/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`
-stay unchanged and UNRUN. Suite results do not mark that candidate passed.
+Carry native QA into the suite record. The original candidate AppImage was deleted
+on 2026-11-10 at the owner's request; its record,
+`/home/jonathans/Projects/medical/mover/_work/appimage-fix-first/CANDIDATE-QA.md`,
+stays unchanged and UNRUN. Suite results do not mark that candidate passed.
 
 ### Decided practice contracts (2026-11-01)
 
@@ -421,6 +441,28 @@ Handoff grading:
   finding when it comes earlier. A minute inside another episode of the same
   kind belongs to that episode. A drug given a minute that none of its doses
   show is unsupported, and that drug stays missed.
+- A value belongs to the measurement word just before it (SpO2, saturation,
+  MAP, blood pressure) and is looked for within 24 characters after it, not
+  counting written minutes. The reach stops at the next measurement (another
+  of those, or heart rate, pulse, respiratory rate, ETCO2, temperature; "pulse
+  ox" is not one), tracked drug, the word dose or a sentence end. A written
+  minute ("minute 21", "minutes 10 to 16", "minutes 0, 1, 2") is a time, never
+  a value. The value is the last number before the first written minute; when
+  none comes before it, the last number before the next one. So "SpO2 97.5
+  throughout, MAP 75" states SpO2 97.5, and "SpO2 86 at minute 21" and "SpO2
+  at minute 21 was 86" both state SpO2 86.
+- A sentence ends at a full stop, question mark, exclamation mark, semicolon or
+  line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. A negation
+  word (no, not, never, without, denies, denied) denies a finding or a drug
+  only inside its own sentence; it never reaches into the next one.
+- The practice page has five I-PASS section boxes: Illness severity, Patient
+  summary, Action list, Situation awareness and contingency plans, and
+  Synthesis by receiver. The grader receives the filled boxes joined in order,
+  each under its heading. The Situation awareness and contingency plans box is
+  not graded: its text is saved with the attempt but not passed to the grader,
+  the page says so beside the box and in the feedback, and a handoff with text
+  only in that box is saved with nothing graded. An attempt saves its
+  `sections` (one entry per box) and the joined text that was graded.
 - The page does not recommend treatment. Cases are fictional only. A
   real-case practice path is not included. Replaying a real MOVER case is a
   future idea that waits for the Phase 6 calibration on real data and needs
@@ -504,9 +546,10 @@ device and is not clinical decision support.
 Suite criteria (added 2026-11-07, from "Approved suite target", "Shared source,
 preset, and generation", and "Decided practice contracts"):
 
-- [x] Monitoring opens first; View switches to Handoff practice, Medication and
-      vitals, and the WHO checklist and back; the corner label names the open
-      page (tests; suite QA 12.8).
+- [x] Research opens first; the left navigation and Ctrl+1 to Ctrl+4 switch to
+      the practice tools and back; the breadcrumb and window title name the open
+      page; every former menu action is in Ctrl+K with its shortcut (tests;
+      suite QA 12.8 predates the new frame and is rerun in stage 8).
 - [x] A source change, a preset change, or a new recorded threshold hash
       invalidates shared fetch caches; older-generation results are rejected;
       case-fetch keys include the EMR path, preset, and threshold hash (tests).

@@ -103,8 +103,9 @@ def test_sql_shaped_title_round_trips_and_deletes_nothing(tmp_path):
 
 
 def test_oversized_field_is_a_reported_dialog_not_a_crash(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog
     from src.desktop.app import MainWindow
+    from src.desktop.error_card import ErrorCard
     from src.services.articles import CSV_FIELD_LIMIT
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "missing-emr"))
@@ -115,7 +116,7 @@ def test_oversized_field_is_a_reported_dialog_not_a_crash(qapp, tmp_path, monkey
     write_csv(path, [row(id="ok"), row(id="huge", abstract="c" * (CSV_FIELD_LIMIT + 1))])
     shown = []
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
-    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: shown.append((title, text)))
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: shown.append((box.windowTitle(), box.why)) or 0)
     win = MainWindow()
     try:
         win._import_articles()
@@ -290,7 +291,7 @@ def test_article_board_has_inert_sources_citations_and_saved_scope(qapp, tmp_pat
     store.import_file(FIXTURE)
     view = ResearchWorkspace()
     view.set_article_catalog(store.count)
-    view.scope_combo.setCurrentText("Articles")
+    view.scope_switch.set_scope("Articles")
     view.begin_question("pressure", 1)
     result = store.search("pressure")
     view.set_article_results(result)
@@ -303,18 +304,18 @@ def test_article_board_has_inert_sources_citations_and_saved_scope(qapp, tmp_pat
     widget = view.conversation.turn_widgets[1]
     assert "[A1]" in widget.answer_text.toPlainText()
     assert not widget.citation_buttons
-    view.scope_combo.setCurrentText("Cases")
+    view.scope_switch.set_scope("Cases")
     view.show_turn(1)
     assert view.scope == "Articles" and view.article_result == result
     assert view.article_list.count() == len(result.articles)
-    view.scope_combo.setCurrentText("Cases")
+    view.scope_switch.set_scope("Cases")
     asked = []
     view.question_submitted.connect(lambda q: asked.append((q, view.scope)))
     widget.ask_button.click()
     assert asked == [("pressure", "Articles")]
     view.begin_question("running article question", 2)
-    view.scope_combo.setCurrentText("Cases")
-    assert view.scope == "Cases" and view.scope_combo.currentText() == "Cases"
+    view.scope_switch.set_scope("Cases")
+    assert view.scope == "Cases" and view.scope_switch.scope() == "Cases"
     assert view.conversation.turns[-1].state == "cancelled"
     assert view.conversation.turns[-1].board.scope == "Articles"
     view.close()
@@ -333,7 +334,7 @@ def test_articles_work_without_emr_and_show_empty_states(qapp, tmp_path, monkeyp
     view = win.research
     view.set_models([])
     view.set_setup_required(True)
-    view.scope_combo.setCurrentText("Articles")
+    view.scope_switch.set_scope("Articles")
     assert view.ask_button.isEnabled() and view.status_label.text() == NO_CATALOG
 
     def ask(question):

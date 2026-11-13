@@ -5,14 +5,20 @@ from __future__ import annotations
 import os
 import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 
 from src.user_settings import settings_path
+
+
+def log_path() -> Path:
+    """The local log that error details go to."""
+    return settings_path().parent / "app-errors.log"
 
 
 def error_message(operation: str, exc: BaseException) -> str:
     code = f"{operation}:{type(exc).__name__}"
     try:
-        path = settings_path().parent / "app-errors.log"
+        path = log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as handle:

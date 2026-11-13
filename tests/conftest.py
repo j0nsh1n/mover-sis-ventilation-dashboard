@@ -2,12 +2,65 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import warnings
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from src.config import load_thresholds
+
+# Temporary, Windows CI only: the Windows job crashes before pytest prints why its tests failed, so each failure,
+# each test's start and the widgets left alive before a theme change are written out as they happen.
+_DIAGNOSE_WINDOWS_CI = bool(os.environ.get("CI")) and sys.platform == "win32"
+
+
+# The real terminal, opened while pytest's capture is paused: pytest captures file descriptor 2 itself, so neither
+# sys.stderr nor sys.__stderr__ reaches the log while a test runs.
+_REAL_ERR: list = []
+
+
+def _diagnose(line: str) -> None:
+    out = _REAL_ERR[0] if _REAL_ERR else sys.__stderr__
+    out.write(line + "\n")
+    out.flush()
+
+
+if _DIAGNOSE_WINDOWS_CI:
+    import faulthandler
+
+    _fonts_told: list[bool] = []
+
+    def pytest_configure(config):
+        capture = config.pluginmanager.getplugin("capturemanager")
+        with capture.global_and_fixture_disabled():
+            _REAL_ERR.append(os.fdopen(os.dup(2), "w", buffering=1))
+
+    def pytest_runtest_setup(item):
+        # past pytest's capture, so the line shows even when the run hangs or crashes
+        _diagnose(f">>> {item.nodeid}")
+        # a test that runs ten minutes is stuck: write every thread's stack and end the run, not wait six hours
+        faulthandler.dump_traceback_later(600, exit=True, file=_REAL_ERR[0] if _REAL_ERR else sys.__stderr__)
+        if not _fonts_told:
+            from PySide6.QtGui import QFontDatabase, QFontInfo, QGuiApplication
+
+            app = QGuiApplication.instance()
+            if isinstance(app, QGuiApplication):
+                _fonts_told.append(True)
+                font = app.font()
+                screen = QGuiApplication.primaryScreen()
+                bundled = [name for name in QFontDatabase.families() if name in ("Inter", "Charter")]
+                _diagnose(
+                    f"### font {font.family()!r} pt {font.pointSizeF()} px {font.pixelSize()}"
+                    f" resolved {QFontInfo(font).family()!r}; bundled loaded {bundled};"
+                    f" dpi {screen.logicalDotsPerInch() if screen else None}"
+                    f" ratio {screen.devicePixelRatio() if screen else None}")
+
+    def pytest_runtest_logreport(report):
+        if report.failed:
+            _diagnose(f"=== FAILED {report.nodeid} ({report.when})\n{report.longreprtext[-4000:]}\n=== END")
 
 
 @pytest.fixture(scope="session")
@@ -215,3 +268,213 @@ def pipeline_result(synthetic_emr, tmp_path, monkeypatch):
         write_sample_csv=False,
         validate=True,
     )
+
+
+@pytest.fixture(scope="module", params=["light", "dark"])
+def applied_theme(request, qapp):
+    """Apply each theme once for a module's tests, then go back to light.
+
+    Applying a theme repolishes every live widget, including the ones earlier tests
+    left behind, so doing it once per test makes a full run crawl.
+    """
+    from src.desktop.theme import apply_theme
+
+    apply_theme(qapp, request.param)
+    yield request.param
+    if _DIAGNOSE_WINDOWS_CI:
+        from PySide6.QtWidgets import QApplication
+
+        _diagnose(f"--- before the theme goes back to light: {len(QApplication.allWidgets())} widgets alive")
+        for widget in QApplication.topLevelWidgets():
+            _diagnose(f"--- top level {type(widget).__name__} {widget.objectName()!r} visible={widget.isVisible()}")
+    apply_theme(qapp, "light")
+
+
+@pytest.fixture
+def word_is_whole():
+    """``word_is_whole(table, row, column)``: whether the missing-cell delegate paints the text uncut at that column's width.
+
+    Worked out from font metrics, so it holds for any font and style on any platform.
+    """
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QFont, QFontMetrics
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    from src.desktop.marks import _CELL_PADDING
+
+    def check(table, row: int, column: int) -> bool:
+        index = table.model().index(row, column)
+        option = QStyleOptionViewItem()
+        option.widget = table
+        table.itemDelegate().initStyleOption(option, index)
+        option.rect = QRect(0, 0, table.columnWidth(column), table.rowHeight(row))
+        room = table.style().subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, table).width() - _CELL_PADDING
+        italic = QFont(option.font)
+        italic.setItalic(True)
+        return QFontMetrics(italic).elidedText(option.text, Qt.TextElideMode.ElideRight, room) == option.text
+
+    return check
+
+
+@pytest.fixture
+def error_cards(monkeypatch):
+    """Record every error card instead of showing it. Each entry is the ErrorCard, so a test reads what it needs."""
+    from src.desktop.error_card import ErrorCard
+
+    shown: list = []
+    monkeypatch.setattr(ErrorCard, "exec", lambda box: shown.append(box) or 0)
+    monkeypatch.setattr(ErrorCard, "open", lambda box: shown.append(box))
+    return shown
+
+
+def _qt_app():
+    # Importing PySide6 from a test that never uses it loads Qt for the rest of the run.
+    if "PySide6.QtWidgets" not in sys.modules:
+        return None
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    return app if isinstance(app, QApplication) else None
+
+
+def _live_toplevels() -> list:
+    """Windows with no parent widget. A menu or popup made with a parent is a window to Qt but goes with its parent."""
+    app = _qt_app()
+    if app is None:
+        return []
+    found = []
+    for widget in app.topLevelWidgets():
+        try:
+            if widget.parentWidget() is not None:
+                continue
+        except RuntimeError:  # already deleted
+            continue
+        found.append(widget)
+    return found
+
+
+def _discard_so_close_cannot_ask(widget) -> None:
+    # MainWindow.close asks a modal question when Settings is dirty. Nothing clicks it, so the run would wait.
+    finder = getattr(widget, "_settings_page", None)
+    if not callable(finder):
+        return
+    try:
+        page = finder()
+        if page is not None and page.is_dirty():
+            # Mark the edits as the saved state; load() would read the settings again and ask Ollama for models.
+            page._baseline = page.values()
+    except RuntimeError:
+        return
+
+
+def _thread_still_running(widget) -> bool:
+    from PySide6.QtCore import QThread
+
+    try:
+        return any(thread.isRunning() for thread in widget.findChildren(QThread))
+    except RuntimeError:
+        return False
+
+
+def _flush_deferred_deletes() -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for _ in range(3):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QCoreApplication.processEvents()
+
+
+def _destroy_toplevels(widgets) -> list:
+    """Close, deleteLater, and flush. Returns windows left up because a worker thread is still running.
+
+    A closed window stays alive, and the next theme change restyles it. Deleting one while its
+    QThread is in a socket read aborts the process, so those wait for the window's own idle delete.
+    """
+    left: list = []
+    for widget in reversed(widgets):
+        try:
+            _discard_so_close_cannot_ask(widget)
+            widget.close()
+            if _thread_still_running(widget):
+                left.append(widget)
+                continue
+            widget.deleteLater()
+        except RuntimeError:  # already deleted by its owner
+            pass
+    _flush_deferred_deletes()
+    still: list = []
+    for widget in left:
+        try:
+            if _thread_still_running(widget):
+                still.append(widget)
+                continue
+            widget.deleteLater()
+        except RuntimeError:
+            pass
+    if still or left:
+        _flush_deferred_deletes()
+    return still
+
+
+# Windows whose worker was still running at the last reap. The next reap tries again, because a
+# snapshot taken while they are alive would otherwise treat them as someone else's and keep them.
+_deferred_toplevels: list = []
+
+
+def _reap_new_toplevels(before_ids: set[int], nodeid: str) -> None:
+    global _deferred_toplevels
+    live = _live_toplevels()
+    live_ids = {id(widget) for widget in live}
+    _deferred_toplevels = [widget for widget in _deferred_toplevels if id(widget) in live_ids]
+    deferred_ids = {id(widget) for widget in _deferred_toplevels}
+    leaked = [widget for widget in live if id(widget) not in before_ids or id(widget) in deferred_ids]
+    fresh = [widget for widget in leaked if id(widget) not in deferred_ids]
+    if fresh:
+        names = ", ".join(sorted({type(widget).__name__ for widget in fresh}))
+        message = (
+            f"{nodeid} left {len(fresh)} top-level widget(s) ({names}); "
+            "closed and deleted them so a later theme change does not restyle them"
+        )
+        # A failure here would bury an assertion that already failed, and Qt also opens menus on its own.
+        warnings.warn(message, UserWarning, stacklevel=2)
+        if _DIAGNOSE_WINDOWS_CI:
+            _diagnose("--- " + message)
+    if leaked:
+        _deferred_toplevels = _destroy_toplevels(leaked)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _reap_module_toplevels(request):
+    """Drop windows a module fixture left up, once the module's tests have finished."""
+    held = _live_toplevels()
+    before = {id(widget) for widget in held}
+    yield
+    _reap_new_toplevels(before, request.node.nodeid)
+    held.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reap_test_toplevels(request):
+    """Drop top-level widgets this test created. Ones that already existed (the app, a module page) stay."""
+    held = _live_toplevels()
+    before = {id(widget) for widget in held}
+    yield
+    _reap_new_toplevels(before, request.node.nodeid)
+    held.clear()
+
+
+@pytest.fixture
+def dispose():
+    """Return ``keep(widget)``: every widget passed to it is closed and really deleted when the test ends.
+
+    A closed top-level widget is not deleted by Qt, and a window holds Python callbacks that point back at
+    itself, so left alone every window of every test stays alive and each later theme change restyles it too.
+    """
+    made: list = []
+
+    def keep(widget):
+        made.append(widget)
+        return widget
+
+    yield keep
+    _destroy_toplevels(made)

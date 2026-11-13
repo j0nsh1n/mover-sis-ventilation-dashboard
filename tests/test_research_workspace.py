@@ -66,13 +66,13 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view.open_detail("caseA")
     assert view.stack.currentIndex() == 1
     assert view.minute_slider.value() == 1
-    assert "33" in view.sample_label.text()
+    assert "PIP 33 cmH₂O" in view.detail_chart.cursor_summary()
 
     def inspect_dialog(self):
         table = self.findChild(QTableWidget)
         assert table is not None
         assert table.item(1, 1).text() == "33"
-        assert table.item(1, 2).text() == "—"
+        assert table.item(1, 2).text() == "missing"
         return 0
 
     monkeypatch.setattr(QDialog, "exec", inspect_dialog)
@@ -81,7 +81,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     assert view.stack.currentIndex() == 0
     assert view.question_edit.text() == "Where is peak pressure?"
     assert "caseB" in view.comparison_label.text()
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert view.question_edit.text() == ""
     assert view.candidate_table.rowCount() == 0
     assert not view.comparison_card.isVisible()
@@ -215,7 +215,7 @@ def test_cancel_search_restores_board_and_ignores_late_results(qapp, monkeypatch
     win.research.set_answer("Previous answer")
     try:
         win._start_research_search("New question")
-        assert win.research.reset_button.isEnabled()
+        assert win.research.conversation.reset_button.isEnabled()
         assert not win.research.cancel_button.isHidden()
         win.research.cancel_button.click()
         assert win._research_worker.wait(1000)
@@ -238,7 +238,7 @@ def test_reset_during_search_cancels_and_clears_board(qapp, monkeypatch):
     cancelled = []
     view.cancel_requested.connect(lambda: cancelled.append(True))
     view.begin_question("A running question")
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert cancelled == [True]
     assert view.question_edit.text() == ""
     assert view.answer_text.toPlainText() == ""
@@ -330,6 +330,16 @@ def episode_view(qapp):
     view.close()
 
 
+def test_episode_list_writes_each_severity_as_its_shape_and_word(episode_view):
+    """Each row is the shape, the rule's name, the severity word and the minutes, in time order."""
+    view, _ = episode_view
+    assert [view.episode_list.item(row).text() for row in range(view.episode_list.count())] == [
+        "△ High end-tidal CO2 · warn · min 1–2",
+        "◆ Low oxygen saturation · critical · min 1–4",
+    ]
+    assert view.episode_list.accessibleName() == "Rule episodes"
+
+
 def test_episode_order_lane_and_keyboard(episode_view, qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -350,9 +360,10 @@ def test_episode_order_lane_and_keyboard(episode_view, qapp):
     assert view.selected_rule_id is None
     assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
     assert not view.rule_link.isEnabled()
-    view._select_flag_minute(2.)
+    view.detail_chart.episode_clicked.emit(1)
     assert view.selected_rule_id == "spo2_low"
-    assert view.minute_slider.value() == 2
+    assert view.minute_slider.value() == 1
+    assert view.episode_list.currentRow() == 1
     view.return_to_canvas()
     assert "SPO2" not in view.chart_track_names
     pd.testing.assert_frame_equal(view._case_views["caseA"].cases, fetched.cases)
@@ -515,7 +526,7 @@ def test_chart_preserves_nan_and_deleted_row_gaps(episode_view):
     line = figure.axes[3].lines[0]
     assert list(line.get_xdata()) == [0, 1, 2, 3, 4, 5]
     assert np.isnan(line.get_ydata()[2:4]).all()
-    assert len(figure.axes[-1].collections[0].get_offsets()) == 4
+    assert sum(len(mark.get_xdata()) for mark in figure.axes[-1].lines) == 4
     plt.close(figure)
 
 
@@ -568,30 +579,279 @@ def test_duplicate_minutes_open_detail_and_keep_last_measurement(episode_view):
     plt.close(figure)
 
 
-def test_lane_empty_space_and_outside_axis_do_not_select(qapp):
+def test_lane_clicks_select_only_when_they_land_on_an_episode_band(qapp):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
     from src.desktop.charts import FocusedSignalChart
 
     chart = FocusedSignalChart()
-    chart.resize(900, 320)
-    chart.set_case(pd.DataFrame({"t_min": [0, 100], "PIP": [20., 21.]}),
-                   pd.DataFrame({"t_min": [0.], "severity": ["warn"]}))
+    chart.resize(900, 420)
+    # One episode over minutes 40-60 of a 0-100 case.
+    chart.set_case(pd.DataFrame({"t_min": [0, 100], "PIP": [20., 21.]}), pd.DataFrame(),
+                   pd.DataFrame([{"rule_id": "pip_high", "severity": "warn", "t_start_min": 40., "t_end_min": 60.}]))
     chart.show()
     QTest.qWait(180)
     clicked = []
-    chart.minute_clicked.connect(clicked.append)
-    y = int(chart._axes_rects[-1].center().y())
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(chart.width() // 2, y))
+    chart.episode_clicked.connect(clicked.append)
     lane = chart._axes_rects[-1]
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(lane.left()) - 1, y))
     low, high = chart._xlim
-    mark_x = lane.left() + lane.width() * (0 - low) / (high - low)
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(mark_x) + 8, y))
+
+    def x_of(minute):
+        return int(lane.left() + lane.width() * (minute - low) / (high - low))
+
+    y = int(lane.center().y())
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(10), y))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(90), y))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(50), int(chart._axes_rects[0].center().y())))
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(lane.left()) - 40, y))
     assert clicked == []
-    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(int(mark_x) + 5, y))
-    assert clicked == [0.]
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x_of(50), y))
+    assert clicked == [0]
     chart.close()
+
+
+def test_a_click_on_overlapping_bands_picks_the_one_drawn_on_top(qapp):
+    """Past six lane rows a band shares a row with an earlier one and is drawn over it; the click follows the picture."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from src.desktop.charts import MAX_LANE_ROWS, FocusedSignalChart
+
+    count = MAX_LANE_ROWS + 1
+    chart = FocusedSignalChart()
+    chart.resize(900, 700)
+    ts = pd.DataFrame({"t_min": [float(m) for m in range(60)], "PIP": [20.] * 60, "ETCO2": [35.] * 60, "HR": [70.] * 60})
+    episodes = pd.DataFrame([{"rule_id": f"r{i}", "severity": "warn", "t_start_min": 10. + i, "t_end_min": 40.}
+                             for i in range(count)])
+    chart.set_case(ts, pd.DataFrame(), episodes)
+    chart.show()
+    QTest.qWait(180)
+    bands = dict((band.index, (band, rect)) for band, rect in chart.band_rects())
+    last = bands[count - 1]
+    assert last[0].row in {band.row for band, _ in bands.values() if band.index != count - 1}  # it shares a row
+    clicked = []
+    chart.episode_clicked.connect(clicked.append)
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=last[1].center().toPoint())
+    assert clicked == [count - 1]
+    # one pixel outside its left edge the picture shows the earlier band, not the later band's click margin
+    clicked.clear()
+    just_outside = QPoint(int(last[1].left()) - 1, int(last[1].center().y()))
+    assert not last[1].contains(just_outside.toPointF()) and bands[0][1].contains(just_outside.toPointF())
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=just_outside)
+    assert clicked == [0]
+    # a point only an earlier band covers still picks that band
+    first = bands[0]
+    only_first = first[1].adjusted(0, 0, 0, 0)
+    only_first.setRight(min(rect.left() for index, (_, rect) in bands.items() if index and bands[index][0].row == first[0].row) - 6)
+    clicked.clear()
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=only_first.center().toPoint())
+    assert clicked == [0]
+    chart.close()
+
+
+def test_a_click_on_the_selected_episode_returns_the_minute_to_its_start(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    chart = view.detail_chart
+    view.episode_list.setCurrentRow(1)  # spo2_low, minutes 1 to 4, adds the SpO2 track
+    qapp.processEvents()
+    tracks = list(view.chart_track_names)
+    assert view.minute_slider.value() == 1 and "SPO2" in tracks
+    view.minute_slider.setValue(5)  # the cursor has moved away from the episode
+    band = next(rect for band, rect in chart.band_rects() if band.index == 1)
+    QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=band.center().toPoint())
+    assert view.minute_slider.value() == 1 and view.minute_stamp.text() == "1"
+    # the episode stays selected and nothing else resets
+    assert view.selected_rule_id == "spo2_low" and view.episode_list.currentRow() == 1
+    assert [view.episode_list.row(item) for item in view.episode_list.selectedItems()] == [1]
+    assert view.chart_track_names == tracks and view.rule_link.isEnabled() and view.threshold_ruler.spec() is not None
+    assert chart._selected == 1
+
+
+def _shown_episode(view):
+    """The episode each of the three places shows, as an index or None: the highlighted row, the rule, the lane."""
+    rows = [view.episode_list.row(item) for item in view.episode_list.selectedItems()]
+    rule = None if view.selected_rule_id is None else list(view._episodes.rule_id).index(view.selected_rule_id)
+    return (rows[0] if rows else None), rule, view.detail_chart._selected
+
+
+def _nothing_selected(view, qapp):
+    view.clear_episode_selection()
+    view.minute_slider.setValue(view.minute_slider.maximum())
+    qapp.processEvents()
+
+
+def test_focus_alone_never_changes_the_page_from_the_episode_list(episode_view, qapp):
+    from PySide6.QtCore import Qt
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    minute, tracks = view.minute_stamp.text(), list(view.chart_track_names)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert view.episode_list.hasFocus()
+    assert not view.episode_list.selectedItems() and view.selected_rule_id is None
+    assert view.minute_stamp.text() == minute and view.chart_track_names == tracks
+    assert not view.threshold_ruler.isVisibleTo(view) and not view.rule_link.isEnabled()
+    assert _shown_episode(view) == (None, None, None)
+
+
+@pytest.mark.parametrize("key", ["Down", "Up", "Return", "Enter", "Space", "Home"])
+def test_a_picking_key_selects_the_first_episode_and_the_arrows_go_on_from_there(episode_view, qapp, key):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, getattr(Qt.Key, f"Key_{key}"))
+    assert _shown_episode(view) == (0, 0, 0)
+    assert view.selected_rule_id == "etco2_high" and view.threshold_ruler.isVisibleTo(view)
+    assert view.minute_slider.value() == 1  # the episode's start
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Down)
+    assert _shown_episode(view) == (1, 1, 1)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Up)
+    assert _shown_episode(view) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("key", ["Enter", "Down", "Up", "Home"])
+def test_number_pad_keys_pick_the_first_episode_like_the_main_keys(episode_view, qapp, key):
+    """A real number pad sends its Enter and arrows with the keypad flag set."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, getattr(Qt.Key, f"Key_{key}"), Qt.KeyboardModifier.KeypadModifier)
+    assert _shown_episode(view) == (0, 0, 0)
+    assert view.selected_rule_id == "etco2_high"
+
+
+def test_e_on_the_chart_picks_the_first_episode_after_tabbing_through_the_list(episode_view, qapp):
+    """Tabbing through the list leaves row 0 current but not selected; "next" still starts at the first episode."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert _shown_episode(view) == (None, None, None)
+    view.detail_chart.setFocus()
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    assert _shown_episode(view) == (0, 0, 0) and view.selected_rule_id == "etco2_high"
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    assert _shown_episode(view) == (1, 1, 1) and view.selected_rule_id == "spo2_low"
+
+
+@pytest.mark.parametrize("button", ["clear_episode_button", "rule_link"])
+def test_clearing_from_the_keyboard_leaves_focus_on_the_episode_list(episode_view, qapp, button):
+    """The focused button turns itself off; focus must not fall to Back, where the next Space would leave the page."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.episode_list.setCurrentRow(1)
+    focused = getattr(view, button)
+    focused.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert focused.hasFocus()
+    if button == "clear_episode_button":
+        QTest.keyClick(focused, Qt.Key.Key_Space)
+    else:
+        view.clear_episode_selection()
+    qapp.processEvents()
+    assert _shown_episode(view) == (None, None, None)
+    assert view.episode_list.hasFocus() and not view.back_button.hasFocus()
+
+
+def test_a_mouse_click_selects_the_clicked_row_and_a_selected_episode_survives_tabbing_in(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    rect = view.episode_list.visualItemRect(view.episode_list.item(1))
+    QTest.mouseClick(view.episode_list.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    assert _shown_episode(view) == (1, 1, 1) and view.selected_rule_id == "spo2_low"
+    minute = view.minute_slider.value()
+    view.minute_slider.setFocus()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    assert _shown_episode(view) == (1, 1, 1) and view.minute_slider.value() == minute
+
+
+def test_the_row_the_rule_and_the_lane_always_show_the_same_episode(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    seen = []
+
+    def check():
+        row, rule, lane = _shown_episode(view)
+        assert row == rule == lane, (row, rule, lane)
+        seen.append(row)
+
+    _nothing_selected(view, qapp)
+    check()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    check()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Space)
+    check()
+    view.detail_chart.episode_clicked.emit(1)
+    check()
+    QTest.keyClick(view.detail_chart, Qt.Key.Key_E)
+    check()
+    view.episode_list.clearSelection()
+    check()
+    view.episode_list.setCurrentRow(1)
+    check()
+    view.clear_episode_button.click()
+    check()
+    view.return_to_canvas()
+    view.open_detail("caseA")
+    check()
+    assert {None, 0, 1} <= set(seen)
+
+
+def test_tab_leaves_the_episode_list_both_ways_without_changing_the_page(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    view.context_button.setFocus()
+    QTest.keyClick(view.context_button, Qt.Key.Key_Tab)
+    assert view.episode_list.hasFocus()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
+    assert not view.episode_list.hasFocus() and view.window().focusWidget() is not None
+    QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Backtab)
+    assert view.episode_list.hasFocus()
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Backtab)
+    assert view.context_button.hasFocus()
+    assert _shown_episode(view) == (None, None, None) and view.minute_slider.value() == view.minute_slider.maximum()
+
+
+def test_clear_episode_selection_is_off_while_nothing_is_selected_and_tab_skips_it(episode_view, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    view, _ = episode_view
+    _nothing_selected(view, qapp)
+    assert not view.clear_episode_button.isEnabled() and not view.rule_link.isEnabled()
+    view.episode_list.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
+    assert view.window().focusWidget() not in (view.clear_episode_button, view.rule_link)
+    QTest.keyClick(view.episode_list, Qt.Key.Key_Space)
+    assert view.clear_episode_button.isEnabled() and view.rule_link.isEnabled()
+    view.clear_episode_button.click()
+    assert not view.clear_episode_button.isEnabled() and not view.rule_link.isEnabled()
+    view.open_detail("caseA")
+    assert not view.clear_episode_button.isEnabled()
 
 
 def test_cursor_marks_each_track_value_and_skips_missing(qapp):
@@ -624,10 +884,12 @@ def test_chart_renders_at_widget_size_after_debounced_resize(qapp, monkeypatch, 
 
     chart = FocusedSignalChart()
     monkeypatch.setattr(chart, "devicePixelRatioF", lambda: dpr)
-    chart.resize(650, 320)
+    # Above the chart's least height, which three tracks and a one-row lane set at 384 px.
+    chart.resize(650, 430)
     chart.set_case(pd.DataFrame({"t_min": [0., 1.], "PIP": [20., 21.]}), pd.DataFrame())
     chart.show()
     QTest.qWait(180)
+    assert chart.height() == 430
     assert chart._pixmap.width() == int(chart.width() * dpr)
     assert chart._pixmap.height() == int(chart.height() * dpr)
     assert chart._pixmap.devicePixelRatioF() == dpr
@@ -635,34 +897,42 @@ def test_chart_renders_at_widget_size_after_debounced_resize(qapp, monkeypatch, 
     chart.set_minute(1.)
     chart.repaint()
     assert chart._pixmap.cacheKey() == old_image
-    chart.resize(1000, 380)
+    chart.resize(1000, 500)
     qapp.processEvents()
     assert chart._pixmap.cacheKey() == old_image
     QTest.qWait(180)
     assert chart._pixmap.width() == int(1000 * dpr)
-    assert chart._pixmap.height() == int(380 * dpr)
-    chart.resize(650, 320)
+    assert chart._pixmap.height() == int(500 * dpr)
+    chart.resize(650, 430)
     QTest.qWait(180)
     assert chart._pixmap.cacheKey() == old_image
     chart.close()
 
 
 @pytest.mark.parametrize("width,extras", [(650, ()), (650, ("SPO2",)), (1150, ())])
-def test_sized_chart_keeps_axis_titles_inside_image(width, extras):
+def test_sized_chart_keeps_every_word_inside_the_image(width, extras):
     import matplotlib.pyplot as plt
-    from src.desktop.charts import focused_signals_figure
+    from src.desktop.charts import chart_min_height, focused_signals_figure
 
-    height = 250 + 65 * len(extras)
-    figure = focused_signals_figure(pd.DataFrame({"t_min": [0., 1.], "PIP": [20., 21.]}),
-                                    None, extra_signals=extras, figsize=(width / 110, height / 110))
+    height = chart_min_height(3 + len(extras), 1)
+    figure = focused_signals_figure(pd.DataFrame({"t_min": [0., 1., 2.], "PIP": [20., 21., 22.]}),
+                                    None, extra_signals=extras, figsize=(width / 110, height / 110),
+                                    flags=pd.DataFrame({"t_min": [1.], "severity": ["warn"], "rule_id": ["pip_high"]}),
+                                    rule_labels={"pip_high": "High PIP"})
     figure.canvas.draw()
     renderer = figure.canvas.get_renderer()
-    for axis in figure.axes:
-        for title in (axis.xaxis.label, axis.yaxis.label):
-            if title.get_text():
-                bounds = title.get_window_extent(renderer)
-                assert bounds.x0 >= 0 and bounds.y0 >= 0
-                assert bounds.x1 <= width and bounds.y1 <= height
+    words = [text for text in figure.texts + [t for ax in figure.axes for t in ax.texts]
+             if text.get_text().strip()]
+    for ax in figure.axes:
+        low, high = ax.get_xlim()
+        # A tick the axis does not draw (its place is outside the limits) is not a word on the image.
+        words += [tick.label1 for tick in ax.xaxis.get_major_ticks()
+                  if tick.label1.get_text().strip() and low <= tick.get_loc() <= high]
+    assert any(text.get_text() == "min from incision" for text in words)
+    for text in words:
+        bounds = text.get_window_extent(renderer)
+        assert bounds.x0 >= -1 and bounds.y0 >= -1, text.get_text()
+        assert bounds.x1 <= width + 1 and bounds.y1 <= height + 1, text.get_text()
     plt.close(figure)
 
 
@@ -698,12 +968,15 @@ def test_missing_episode_start_has_exact_cursor_and_missing_sample(episode_view)
     view.set_case_data("caseA", fetched.timeseries, fetched.flags, fetched=fetched, open_detail=True)
     view.episode_list.setCurrentRow(1)
     assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 1
-    assert "PIP: missing" in view.sample_label.text()
+    assert "PIP missing" in view.detail_chart.cursor_summary()
+    assert view.detail_chart.value_labels["PIP"].text() == "missing"
     assert view.signal_statistics["SPO2"]["missing"] == 1
 
 
 @pytest.mark.parametrize("width", [900, 1400])
-def test_lane_mouse_click_selects_worst_episode_and_flagged_minute(episode_view, width):
+@pytest.mark.parametrize("row,rule", [(0, "etco2_high"), (1, "spo2_low")])
+def test_lane_mouse_click_selects_the_episode_under_it(episode_view, width, row, rule):
+    """The two episodes overlap, so they sit in two lane rows; the row clicked, not the worst severity, decides."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
@@ -713,30 +986,41 @@ def test_lane_mouse_click_selects_worst_episode_and_flagged_minute(episode_view,
     chart = view.detail_chart
     low, high = chart._xlim
     lane = chart._axes_rects[-1]
-    x = int(lane.left() + lane.width() * (2 - low) / (high - low))
-    y = int(lane.center().y())
+    x = int(lane.left() + lane.width() * (1.5 - low) / (high - low))
+    y = int(lane.top() + lane.height() * (row + 0.5) / 2)
     QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=QPoint(x, y))
-    assert view.selected_rule_id == "spo2_low"
-    assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 2
+    assert view.selected_rule_id == rule
+    assert view._minute_rows.iloc[view.minute_slider.value()].t_min == 1
 
 
-def test_tab_reaches_episode_list_and_rule_link(episode_view, qapp):
-    from PySide6.QtCore import Qt
+def test_tab_follows_the_screen_through_the_whole_case_page(episode_view, qapp):
+    from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
     view, _ = episode_view
-    view.minute_slider.setFocus()
-    QTest.keyClick(view.minute_slider, Qt.Key.Key_Tab)
-    assert view.follow_up_edit.hasFocus()
-    QTest.keyClick(view.follow_up_edit, Qt.Key.Key_Tab)
-    assert view.follow_up_button.hasFocus()
-    QTest.keyClick(view.follow_up_button, Qt.Key.Key_Tab)
-    assert view.episode_list.hasFocus()
-    QTest.keyClick(view.episode_list, Qt.Key.Key_Home)
-    QTest.keyClick(view.episode_list, Qt.Key.Key_Tab)
-    assert view.clear_episode_button.hasFocus()
-    QTest.keyClick(view.clear_episode_button, Qt.Key.Key_Tab)
-    assert view.rule_link.hasFocus()
+    view.episode_list.setCurrentRow(0)  # an episode must be selected for its rule reference to be reachable
+    qapp.processEvents()
+    # on screen the rule reference sits left of "Clear episode selection", so Tab reaches it first
+    reference = view.rule_link.mapTo(view.window(), QPoint(0, 0))
+    clear = view.clear_episode_button.mapTo(view.window(), QPoint(0, 0))
+    assert reference.y() == clear.y() and reference.x() < clear.x()
+    view.back_button.setFocus()
+    chain = [view.more_signals_button, view.detail_chart, view.minute_slider, view.follow_up_edit,
+             view.follow_up_button, view.open_table_button, view.source_row_table, view.context_button,
+             view.episode_list, view.rule_link, view.clear_episode_button]
+    for expected in chain:
+        QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+        assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
+    # with no episode selected the two buttons are off, so Tab goes past them; the rest of the order is the same
+    view.clear_episode_selection()
+    qapp.processEvents()
+    view.back_button.setFocus()
+    for expected in chain[:-2]:
+        QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+        assert expected.hasFocus(), expected.objectName() or expected.accessibleName() or expected.text()
+    QTest.keyClick(view.window().focusWidget(), Qt.Key.Key_Tab)
+    assert view.window().focusWidget() not in (view.rule_link, view.clear_episode_button)
+    assert not view.episode_list.selectedItems()
 
 
 def test_unknown_rule_phase_and_extra_track_limit(episode_view):
@@ -748,8 +1032,9 @@ def test_unknown_rule_phase_and_extra_track_limit(episode_view):
     episodes.loc[1, "rule_id"] = "unknown_synthetic_rule"
     fetched.episodes = episodes
     view.set_case_data("caseA", fetched.timeseries, fetched.flags, fetched=fetched, open_detail=True)
-    assert "maintenance → emergence" in view.episode_list.item(0).text()
+    assert "maintenance → emergence" in view.episode_list.item(0).toolTip()
     view.episode_list.setCurrentRow(0)
+    assert "Phase: maintenance → emergence" in view.rule_detail.text()
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "SPO2", "TV", "RR"]
     assert "TV_mlkg: min missing, max missing, mean missing; 2 missing minutes; not charted" in view.rule_detail.text()
     assert "likely_mech_vent" not in view.signal_statistics
@@ -814,14 +1099,14 @@ def test_more_signals_choices_persist_across_episodes_clear_and_cases(episode_vi
     view.episode_list.setCurrentRow(0)
     assert view.selected_rule_id == "etco2_high"
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
-    view.detail_chart.minute_clicked.emit(3.)
+    view.detail_chart.episode_clicked.emit(1)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
     view.set_results(RetrievalResult(candidates=(_candidate("caseA"), _candidate("caseB"))))
     other = replace(fetched, timeseries=fetched.timeseries.assign(PID="caseB"))
     view.set_case_data("caseB", other.timeseries, fetched.flags, fetched=other, open_detail=True)
     assert view._current_pid == "caseB"
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
 
 
 def test_chosen_extras_take_the_slots_before_a_rules_signals(episode_view, monkeypatch):
@@ -846,7 +1131,7 @@ def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(e
     view.episode_list.setCurrentRow(1)
     _choose_extras(view, monkeypatch, "PEEP", accept=False)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV", "SPO2"]
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
     seen = {}
 
     def inspect(dialog):
@@ -858,86 +1143,59 @@ def test_more_signals_cancel_keeps_the_choice_and_lists_only_the_users_signals(e
     assert seen["TV"] and not seen["SPO2"] and not seen["PEEP"]
 
 
-def _value_events(seen, combo):
-    from PySide6.QtGui import QAccessible
-
-    return [
-        value
-        for kind, obj, value in seen
-        if kind == QAccessible.Event.ValueChanged and obj is combo
-    ]
-
-
-def test_main_combos_publish_purpose_before_the_current_item(qapp):
+def test_scope_switch_and_model_menu_publish_their_purpose_and_state(qapp):
     from PySide6.QtGui import QAccessible
 
     view = ResearchWorkspace()
-    view.model_combo.addItem("(Ollama stopped — click Start)")
     view.show()
     qapp.processEvents()
     try:
-        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
-        model = QAccessible.queryAccessibleInterface(view.model_combo)
+        scope = QAccessible.queryAccessibleInterface(view.scope_switch)
         assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Cases"
+        cases = QAccessible.queryAccessibleInterface(view.scope_switch.option("Cases"))
+        articles = QAccessible.queryAccessibleInterface(view.scope_switch.option("Articles"))
+        assert cases.text(QAccessible.Text.Name) == "Cases" and cases.role() == QAccessible.Role.RadioButton
+        assert cases.state().checked and not articles.state().checked
+        view.scope_switch.set_scope("Articles")
+        assert articles.state().checked and not cases.state().checked and view.scope == "Articles"
+        model = QAccessible.queryAccessibleInterface(view.model_menu)
         assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "(Ollama stopped — click Start)"
-        assert view.scope_combo.currentText() == "Cases"
-        assert view.selected_model() is None
-        view.model_combo.setItemText(0, "qwen3:14b")
+        assert model.text(QAccessible.Text.Description) == "Local AI not checked"
+        view.set_models(["qwen3:14b"])
+        view.set_model_state("ready")
+        assert model.text(QAccessible.Text.Description) == "qwen3:14b ready"
+        assert model.text(QAccessible.Text.Name) == "Local AI"
         assert view.selected_model() == "qwen3:14b"
-        renamed = QAccessible.queryAccessibleInterface(view.model_combo)
-        assert renamed.text(QAccessible.Text.Name) == "Local AI"
-        assert renamed.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        assert scope.childCount() == 1
     finally:
         view.close()
 
 
-def test_purpose_combos_notify_value_when_the_selection_changes(qapp, monkeypatch):
-    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+def test_model_menu_announces_a_new_state_and_a_choice_but_a_refresh_is_not_a_choice(qapp, monkeypatch):
+    from PySide6.QtGui import QAccessible
 
     seen = []
-
-    def capture(event):
-        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
-        seen.append((event.type(), event.object(), value))
-
-    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
+    monkeypatch.setattr(QAccessible, "updateAccessibility", lambda event: seen.append((event.type(), event.object())))
     view = ResearchWorkspace()
-    view.model_combo.addItem("(Ollama stopped — click Start)")
-    view.model_combo.addItem("qwen3:14b")
-    view.show()
-    qapp.processEvents()
+    view.set_models(["first", "second"])
+    chosen = []
+    view.model_changed.connect(chosen.append)
     try:
         seen.clear()
-        view.scope_combo.setCurrentIndex(1)
-        scope_values = _value_events(seen, view.scope_combo)
-        assert scope_values == ["Articles"]
-        assert not any(
-            kind == QAccessible.Event.NameChanged and obj is view.scope_combo
-            for kind, obj, _value in seen
-        )
-        scope = QAccessible.queryAccessibleInterface(view.scope_combo)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Articles"
-        assert view.scope == "Articles"
+        view.set_model_state("ready")
+        assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
         seen.clear()
-        view.model_combo.setCurrentIndex(1)
-        assert _value_events(seen, view.model_combo) == ["qwen3:14b"]
-        assert view.selected_model() == "qwen3:14b"
-        model = QAccessible.queryAccessibleInterface(view.model_combo)
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        assert scope.childCount() == 1
+        view.model_menu.choose("second")
+        assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
+        assert chosen == ["second"] and view.selected_model() == "second"
+        view.set_models(["first", "second", "third"], "first")
+        view.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+        assert chosen == ["second"], "only a person's choice is a choice"
+        assert view.selected_model() is None
     finally:
         view.close()
 
 
-def test_apply_ollama_status_notifies_value_while_combo_signals_are_blocked(qapp, monkeypatch, tmp_path):
-    from PySide6.QtGui import QAccessible, QAccessibleValueChangeEvent
+def test_apply_ollama_status_updates_the_menu_without_counting_as_a_choice(qapp, monkeypatch, tmp_path):
     from src.desktop.app import MainWindow
     from src.llm.service import OllamaStatus
 
@@ -945,65 +1203,55 @@ def test_apply_ollama_status_notifies_value_while_combo_signals_are_blocked(qapp
     monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "emr"))
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    seen = []
-
-    def capture(event):
-        value = event.value() if isinstance(event, QAccessibleValueChangeEvent) else None
-        seen.append((event.type(), event.object(), value))
-
-    monkeypatch.setattr(QAccessible, "updateAccessibility", capture)
     win = MainWindow()
-    combo = win.research.model_combo
-    signals = []
-    combo.currentTextChanged.connect(signals.append)
+    menu = win.research.model_menu
+    chosen = []
+    win.research.model_changed.connect(chosen.append)
     try:
-        seen.clear()
         win._apply_ollama_status(
             OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], "http://127.0.0.1:11434")
         )
-        assert signals == []
-        assert _value_events(seen, combo) == ["synthetic:a"]
-        iface = QAccessible.queryAccessibleInterface(combo)
-        assert iface.text(QAccessible.Text.Name) == "Local AI"
-        assert iface.text(QAccessible.Text.Value) == "synthetic:a"
+        assert chosen == []
         assert win.research.selected_model() == "synthetic:a"
-        seen.clear()
+        assert menu.text() == "synthetic:a ready"
         win._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
-        assert signals == []
-        assert _value_events(seen, combo) == ["(Ollama stopped — click Start)"]
+        assert chosen == []
         assert win.research.selected_model() is None
-        assert QAccessible.queryAccessibleInterface(combo).text(QAccessible.Text.Value) == (
-            "(Ollama stopped — click Start)"
-        )
+        assert menu.text() == "Local AI stopped"
+        assert menu.placeholder_text() == "(Ollama stopped — choose Start AI)"
+        assert menu.model_actions() == []
     finally:
         win.close()
 
 
 def test_purpose_combo_names_survive_repeated_creation(qapp):
+    """The handoff and checklist pages still name their combos by purpose; the mechanism must hold across lifetimes."""
     from PySide6.QtGui import QAccessible
 
-    first = ResearchWorkspace()
+    from src.desktop.accessibility import name_combo
+    from src.desktop.scroll_safe_combo import ScrollSafeComboBox
+
+    first = ScrollSafeComboBox()
+    name_combo(first, "Fictional scenario")
+    first.addItem("one")
     first.show()
     qapp.processEvents()
     first.close()
     first.deleteLater()
     qapp.processEvents()
-    second = ResearchWorkspace()
-    second.model_combo.addItem("qwen3:14b")
+    second = ScrollSafeComboBox()
+    name_combo(second, "Fictional scenario")
+    second.addItems(["one", "two"])
     second.show()
     qapp.processEvents()
     try:
-        scope = QAccessible.queryAccessibleInterface(second.scope_combo)
-        model = QAccessible.queryAccessibleInterface(second.model_combo)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Cases"
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Value) == "qwen3:14b"
-        assert "ShowMenu" in scope.actionNames()
-        second.scope_combo.setCurrentIndex(1)
-        assert scope.text(QAccessible.Text.Name) == "Question scope"
-        assert scope.text(QAccessible.Text.Value) == "Articles"
-        assert second.selected_model() == "qwen3:14b"
+        iface = QAccessible.queryAccessibleInterface(second)
+        assert iface.text(QAccessible.Text.Name) == "Fictional scenario"
+        assert iface.text(QAccessible.Text.Value) == "one"
+        assert "ShowMenu" in iface.actionNames()
+        second.setCurrentIndex(1)
+        assert iface.text(QAccessible.Text.Name) == "Fictional scenario"
+        assert iface.text(QAccessible.Text.Value) == "two"
     finally:
         second.close()
         second.deleteLater()
@@ -1016,7 +1264,7 @@ def test_a_chosen_signal_without_samples_gets_a_note_not_an_empty_track(episode_
     assert view.chart_track_names == ["PIP", "ETCO2", "HR"]
     assert view.extras_note.isVisibleTo(view)
     assert view.extras_note.text() == "No TV samples in this case"
-    assert view.more_signals_button.text() == "More signals (1/3)"
+    assert view.more_signals_button.text() == "+ Track (1/3)"
     _with_extra_columns(view, fetched, TV=[400.] * 6)
     assert view.chart_track_names == ["PIP", "ETCO2", "HR", "TV"]
     assert not view.extras_note.isVisibleTo(view)
@@ -1038,3 +1286,85 @@ def test_signal_detail_does_not_scroll_sideways_at_900_px_with_the_drawer_open(e
     assert view.context_button.isVisible()
     right = view.context_button.mapTo(scroll.viewport(), view.context_button.rect().topRight()).x()
     assert right <= scroll.viewport().width()
+
+
+def test_the_research_page_and_conversation_carry_no_colors_of_their_own(qapp):
+    """Every screen of the workspace, the case page included, takes its colours from the tokens."""
+    import re
+    from pathlib import Path
+
+    view = ResearchWorkspace()
+    try:
+        assert view.styleSheet() == ""
+        for name in ("research_workspace.py", "conversation_panel.py", "evidence_trail.py", "research_controls.py",
+                     "case_page.py", "threshold_ruler.py"):
+            source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / name).read_text(encoding="utf-8")
+            assert re.findall(r"#[0-9a-fA-F]{6}\b|QColor\(\"#|rgba?\(", source) == [], name
+    finally:
+        view.close()
+
+
+def test_the_focused_chart_code_names_no_color_of_its_own():
+    """The case chart's source holds no colour literal; case_timeline_figure and the older figures are out of scope."""
+    import ast
+    import re
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "src" / "desktop" / "charts.py"
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    names = {"_build_focused_in_style", "_build_focused", "focused_signals_figure", "FocusedSignalChart",
+             "token_rgba", "signal_info", "case_marks", "gap_spans", "pack_episodes"}
+    spans = [(node.lineno, node.end_lineno) for node in ast.parse(source).body
+             if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
+    assert len(spans) == len(names), "a focused-chart function was renamed; update this list"
+    for start, end in spans:
+        code = "\n".join(lines[start - 1:end])
+        assert re.findall(r"#[0-9a-fA-F]{3,8}\b|QColor\(\"|rgba?\(\d", code) == [], lines[start - 1]
+    assert "SIGNAL_PANEL_COLOR" not in source
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_focused_figure_draws_with_the_themes_tokens(qapp, theme):
+    """Paper ground, the three signal hues on their tracks, the accent for an outline, ink for the flag shapes."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_hex
+
+    from src.desktop.charts import focused_signals_figure
+    from src.desktop.theme import tokens
+
+    palette = tokens(theme)
+    ts = pd.DataFrame({"t_min": range(6), "PIP": [20., 21., 22., 23., 24., 25.], "ETCO2": [30.] * 6, "HR": [70.] * 6})
+    flags = pd.DataFrame({"t_min": [2.], "severity": ["warn"], "rule_id": ["pip_high"]})
+    figure = focused_signals_figure(ts, None, flags=flags, theme=theme)
+    assert to_hex(figure.get_facecolor()) == palette["paper"].lower()
+    assert [to_hex(ax.lines[0].get_color()) for ax in figure.axes[:3]] == [
+        palette[t].lower() for t in ("s_pip", "s_etco2", "s_hr")]
+    warn = next(line for line in figure.axes[-1].lines if line.get_label() == "warn")
+    assert to_hex(warn.get_markeredgecolor()) == palette["ink"].lower()
+    plt.close(figure)
+
+
+def test_the_chart_redraws_in_the_new_theme_and_keeps_no_stale_image(qapp):
+    from PySide6.QtTest import QTest
+
+    from src.desktop.charts import FocusedSignalChart
+    from src.desktop.theme import apply_theme, tokens
+
+    chart = FocusedSignalChart()
+    chart.resize(700, 430)
+    chart.set_case(pd.DataFrame({"t_min": [0., 1., 2.], "PIP": [10., 30., 20.], "ETCO2": [35., 36., 40.],
+                                 "HR": [60., 70., 80.]}), pd.DataFrame())
+    chart.set_minute(1.)
+    chart.show()
+    QTest.qWait(180)
+    try:
+        for theme in ("light", "dark", "light"):
+            apply_theme(qapp, theme)
+            QTest.qWait(20)
+            corner = chart._pixmap.toImage().pixelColor(2, 2).name().lower()
+            assert corner == tokens(theme)["paper"].lower(), theme
+            assert dict((c, color) for c, _p, color in chart.cursor_points())["PIP"] == tokens(theme)["s_pip"]
+    finally:
+        apply_theme(qapp, "light")
+        chart.close()

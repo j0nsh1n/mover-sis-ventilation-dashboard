@@ -15,7 +15,7 @@ from pathlib import Path
 from src.services.retrieval import EmbeddingCache, Embedder, cosine, source_text_hash, tokenize_search_text
 
 ARTICLE_FIELDS = ("id", "title", "abstract", "year", "authors", "doi_or_url", "source", "rights_note")
-NO_CATALOG = "No article catalog yet. Use File > Import articles…"
+NO_CATALOG = "No article catalog yet. Press Ctrl+K and choose Import articles…"
 NO_MATCHES = "No matching articles in the local catalog."
 ABSTRACT_LIMIT = 5
 # Python's csv default (131,072) rejects long real abstracts; anything past this is not an abstract.

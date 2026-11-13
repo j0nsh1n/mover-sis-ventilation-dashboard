@@ -62,23 +62,12 @@ def test_charts_pure_matplotlib_no_plotly():
     assert mods_after == mods_before
     import pandas as pd
 
-    cases = pd.DataFrame(
-        {
-            "PID": ["a", "b", "c"],
-            "anomaly_score": [10, 5, 1],
-            "Procedure_short": ["x", "y", "z"],
-        }
-    )
-    fig = charts.top_cases_figure(cases, n=3)
+    fig = charts.score_histogram_figure([10, 5, 1], width=250)
     assert fig is not None
-    flags = pd.DataFrame(
-        {
-            "rule_id": ["pip_high", "pip_high", "etco2_low"],
-            "severity": ["warn", "critical", "warn"],
-        }
-    )
-    fig2 = charts.flag_rules_figure(flags)
+    fig2 = charts.rule_minutes_figure([("pip_high", 2.0), ("etco2_low", 1.0)], width=320)
     assert fig2 is not None
+    fig4 = charts.duration_ticks_figure([60.0, 90.0, 120.0], width=250)
+    assert fig4 is not None
     ts = pd.DataFrame(
         {
             "t_min": list(range(10)),
@@ -237,12 +226,12 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
     started = time.perf_counter()
     timer.start(10)
     try:
-        win.research.start_button.click()
+        win.research.start_action.trigger()
         first_worker = win._ollama_worker
         win._ollama_start()
         assert win._ollama_worker is first_worker
-        assert win.research.start_button.text() == "Starting…"
-        assert not win.research.start_button.isEnabled()
+        assert win.research.start_action.text() == "Starting…"
+        assert not win.research.start_action.isEnabled()
         while not ticks and time.perf_counter() - started < 0.1:
             qapp.processEvents()
             time.sleep(0.001)
@@ -250,7 +239,7 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
         assert first_worker.wait(3000)
         qapp.processEvents()
         assert len(calls) == 1
-        assert win.research.start_button.isEnabled()
+        assert win.research.start_action.isEnabled()
         assert "ready" in win.research.status_label.text().lower()
     finally:
         win.close()
@@ -258,11 +247,10 @@ def test_ollama_start_keeps_timer_responsive(qapp, monkeypatch):
 
 @requires_qt
 def test_ollama_failure_names_reason(qapp, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", lambda box: 0)
     monkeypatch.setattr("src.llm.service.start_ollama", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("port busy")))
     win = MainWindow()
     try:
@@ -270,7 +258,7 @@ def test_ollama_failure_names_reason(qapp, monkeypatch):
         assert win._ollama_worker.wait(1000)
         qapp.processEvents()
         assert "port busy" in win.research.status_label.text()
-        assert win.research.start_button.isEnabled()
+        assert win.research.start_action.isEnabled()
     finally:
         win.close()
 
@@ -378,7 +366,7 @@ def test_corrupt_scan_dialog_names_file(qapp, tmp_path, monkeypatch):
     cases.write_bytes(b"not parquet")
     (tmp_path / "corpus_meta.json").write_text("{}")
     dialogs = []
-    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(getattr(box, "words", box.text)()))
     win = MainWindow()
     try:
         win._load_corpus_scan()
@@ -397,13 +385,13 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path / "missing"))
     dialogs = []
-    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(box.text()))
+    monkeypatch.setattr(QMessageBox, "open", lambda box: dialogs.append(getattr(box, "words", box.text)()))
     win = MainWindow()
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
         assert "Missing processed files: cases.parquet" in dialogs[0]
-        assert "File > Run pipeline" in dialogs[0]
+        assert "choose Run pipeline" in dialogs[0]
         assert str(tmp_path / "missing") not in dialogs[0]
     finally:
         win.close()
@@ -419,7 +407,7 @@ def test_scan_cancel_requests_interruption_and_keeps_previous(qapp, monkeypatch,
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
     dialogs = []
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(QMessageBox, "critical", lambda *args: dialogs.append(args[2]))
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", lambda box: dialogs.append(box.words()) or 0)
 
     def scan(*args, should_stop, **kwargs):
         while not should_stop():
@@ -477,8 +465,7 @@ def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
 
 
 @requires_qt
-def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QMessageBox
+def test_pipeline_error_dialog_never_shows_folder_paths_in_the_status_bar(qapp, monkeypatch, tmp_path):
     from src.desktop.app import MainWindow
 
     emr = tmp_path / "emr-a-bad"
@@ -489,13 +476,14 @@ def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypa
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     shown = []
 
-    def critical(parent, title, text):
-        shown.append((title, text, parent.statusBar().currentMessage()))
+    def critical(box):
+        shown.append((box.windowTitle(), box.words(), box.parent().statusBar().currentMessage()))
+        return 0
 
-    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", critical)
     win = MainWindow()
     try:
-        assert str(emr) in win.statusBar().currentMessage()
+        assert str(emr) not in win.statusBar().currentMessage()
         win._on_pipeline_fail(
             "The operation could not finish (pipeline:DataValidationError). "
             "Details are in app-errors.log in the settings folder."
@@ -508,14 +496,17 @@ def test_pipeline_error_dialog_hides_folder_paths_until_it_closes(qapp, monkeypa
         assert during == "Pipeline failed"
         assert str(emr) not in during and str(processed) not in during
         after = win.statusBar().currentMessage()
-        assert "Pipeline failed" in after
-        assert str(emr) in after and str(processed) in after
+        assert after == "Pipeline failed"
+        assert str(emr) not in after and str(processed) not in after
+        # the folders are in the source field's tooltip and in Settings, nowhere else in the footer
+        tip = win._footer.source.toolTip()
+        assert str(emr) in tip and str(processed) in tip
     finally:
         win.close()
 
 
 @requires_qt
-def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_status(
+def test_pipeline_dialog_keeps_paths_out_of_a_nested_reload_and_keeps_the_latest_status(
     qapp, monkeypatch, tmp_path
 ):
     from PySide6.QtCore import QObject, QTimer, Signal
@@ -538,7 +529,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
     emitter = _Emitter(win)
     samples: list[str] = []
     bailed: list[bool] = []
-    latest = "Loaded 4 cases · 10 min rows · 1 flags"
+    latest = "Loaded 4 cases"
 
     def pipeline_box():
         boxes = [
@@ -549,7 +540,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
         return boxes[-1] if boxes else None
 
     def queued_status() -> None:
-        win._update_status_paths(latest)
+        win._set_status(latest)
         samples.append(win.statusBar().currentMessage())
         box = pipeline_box()
         assert box is not None
@@ -572,7 +563,7 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
             box.accept()
 
     try:
-        assert str(emr) in win.statusBar().currentMessage()
+        assert str(emr) not in win.statusBar().currentMessage()
         QTimer.singleShot(0, during_dialog)
         QTimer.singleShot(3000, bail)
         win._on_pipeline_fail(
@@ -589,10 +580,10 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
         assert samples[1].startswith("No processed cache")
         assert samples[2] == latest
         after = win.statusBar().currentMessage()
-        assert after.startswith(latest)
-        assert "Pipeline failed" not in after
-        assert str(emr) in after and str(processed) in after
-        assert " ·  EMR:" in after
+        assert after == latest
+        assert str(emr) not in after and str(processed) not in after
+        tip = win._footer.source.toolTip()
+        assert str(emr) in tip and str(processed) in tip
     finally:
         win._worker = None
         for box in win.findChildren(QMessageBox):
@@ -602,18 +593,18 @@ def test_pipeline_dialog_hides_paths_for_a_nested_reload_and_keeps_the_latest_st
 
 @requires_qt
 def test_pipeline_dialog_preserves_a_newer_direct_status(qapp, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QMessageBox
     from src.desktop.app import MainWindow
 
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
     latest = "Version 9.9.9 is ready. Restart when convenient."
 
-    def critical(parent, _title, _text):
-        parent.statusBar().showMessage(latest)
-        assert str(tmp_path) not in parent.statusBar().currentMessage()
+    def critical(box):
+        box.parent().statusBar().showMessage(latest)
+        assert str(tmp_path) not in box.parent().statusBar().currentMessage()
+        return 0
 
-    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr("src.desktop.error_card.ErrorCard.exec", critical)
     win = MainWindow()
     try:
         win._on_pipeline_fail("pipeline:DataValidationError")
@@ -623,7 +614,7 @@ def test_pipeline_dialog_preserves_a_newer_direct_status(qapp, monkeypatch, tmp_
 
 
 @requires_qt
-def test_question_card_scope_line_fits_default_window_with_probe_error(qapp, monkeypatch, tmp_path):
+def test_status_and_scope_lines_fit_default_window_with_probe_error(qapp, monkeypatch, tmp_path):
     from src.desktop.app import MainWindow
 
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
@@ -634,36 +625,72 @@ def test_question_card_scope_line_fits_default_window_with_probe_error(qapp, mon
     qapp.processEvents()
     try:
         research = win.research
-        card = research.scope_combo.parentWidget()
-        grid = research._evidence_grid
-        assert grid.getItemPosition(grid.indexOf(card))[:4] == (0, 0, 1, 2)
-        research.model_status.setText("Ollama: stopped — click Start to activate")
+        research.set_model_status("Ollama: stopped — choose Start AI in the Local AI menu")
         research.set_status(_PROBE_FAILURE)
         research.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
         qapp.processEvents()
-        _assert_card_readable(win, _PROBE_FAILURE)
+        _assert_lines_readable(win, _PROBE_FAILURE)
         longer = _PROBE_FAILURE + " " + ("extra detail " * 40)
         research.set_status(longer)
         qapp.processEvents()
         status = research.status_label
         assert longer in status.text()
         assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
+        _assert_lines_readable(win, longer)
     finally:
         win.close()
 
 
-def _assert_card_readable(win, expected: str) -> None:
+def _assert_lines_readable(win, expected: str) -> None:
+    """The Ollama status, the reason and the scope line are whole and sit on the screen, one under the other."""
     research = win.research
-    card = research.scope_combo.parentWidget()
-    scope = research.scope_label
+    model = research.model_status
     status = research.status_label
+    scope = research.scope_label
     viewport = research.board_scroll.viewport()
+    assert model.isVisible() and "Ollama" in model.text()
     assert expected in status.text()
-    assert status.height() + 1 >= status.heightForWidth(max(status.width(), 1))
-    assert scope.height() + 1 >= scope.heightForWidth(max(scope.width(), 1))
+    for label in (model, status, scope):
+        assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1)), label.text()
+    # Page coordinates: the reason sits under the Ollama line, and both sit above the evidence trail.
+    page = research._board_page
+    model_bottom = model.mapTo(page, model.rect().bottomLeft()).y()
+    status_top = status.mapTo(page, status.rect().topLeft()).y()
+    status_bottom = status.mapTo(page, status.rect().bottomLeft()).y()
+    scope_top = scope.mapTo(page, scope.rect().topLeft()).y()
+    assert model_bottom <= status_top and status_bottom <= scope_top
+    # And the scope line is in view without scrolling at the default window size.
     scope_bottom = scope.mapTo(win, scope.rect().bottomLeft()).y()
-    card_bottom = card.mapTo(win, card.rect().bottomLeft()).y()
     view_bottom = viewport.mapTo(win, viewport.rect().bottomLeft()).y()
     assert scope_bottom <= view_bottom
-    assert card_bottom <= view_bottom
-    assert card_bottom <= win.statusBar().y()
+    assert scope_bottom <= win.statusBar().y()
+
+
+@requires_qt
+@pytest.mark.parametrize("available", [True, False])
+def test_ollama_state_is_a_word_not_a_color(qapp, monkeypatch, tmp_path, available):
+    from types import SimpleNamespace
+
+    from src.desktop.app import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
+    monkeypatch.setenv("MOVER_PROCESSED_DIR", str(tmp_path))
+    win = MainWindow()
+    try:
+        win._set_ollama_status_ui(SimpleNamespace(available=available, models=["demo"], started_by_app=False))
+        text = win.research.model_status.text()
+        assert ("running" if available else "stopped") in text
+        if not available:
+            assert "Start AI" in text and "click Start" not in text, "names the menu item that exists"
+        assert "color" not in text, "one accent, no red or green state colors"
+        assert win._scan_cancel_button.styleSheet() == "", "the focus ring comes from the app stylesheet's accent"
+    finally:
+        win.close()
+
+
+def test_the_main_window_source_has_no_color_literals_outside_the_tokens():
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "src" / "desktop" / "app.py").read_text(encoding="utf-8")
+    assert re.findall(r"#[0-9a-fA-F]{6}\b", source) == []

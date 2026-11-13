@@ -187,7 +187,7 @@ def test_workspace_walk_covers_the_moved_outputs(prototype_emr, tmp_path):
     events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
     assert all(event["ok"] for event in events)
     assert [event["step"] for event in events] == ["load-data", "question", "charts", "extra-signal", "scoring"]
-    assert events[2]["charts_expanded"]
+    assert events[2]["charts_shown"]
     assert events[3]["chart_track_names"] == ["PIP", "ETCO2", "HR", "SPO2"]
     assert events[4]["scoring_expanded"]
 

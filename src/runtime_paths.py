@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -85,6 +86,62 @@ def data_dir() -> Path:
         old = xdg / "mover-sis-monitor" / "data"
         return (old if old.is_dir() else xdg / "mover-suite" / "data").resolve()
     return app_dir() / "data"
+
+
+# Written inside the demo folder by the app that made it; a folder without it is never touched.
+DEMO_MARKER = ".mover-demo-data"
+
+
+def demo_data_dir() -> Path:
+    """Where the fictional demo data lives: the per-user data folder, never the program folder or the repo."""
+    override = os.environ.get("MOVER_DEMO_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return (base.expanduser() / "mover-suite" / "demo-data").resolve()
+
+
+def read_demo_marker(root: Path) -> dict | None:
+    """The marker of a demo folder this app made, or None for any other folder."""
+    try:
+        data = json.loads((root / DEMO_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("made_by") == "MOVER Suite" else None
+
+
+def demo_root_of(folder: Path, part: str) -> Path | None:
+    """The demo folder that ``folder`` is the ``part`` ("EMR" or "processed") folder of, or None.
+
+    The answer follows the data, not the configured demo location: the folder must sit beside a marker this
+    app wrote, so changing ``MOVER_DEMO_DATA_DIR`` later cannot change what the data is called, and a real
+    folder never gets the label.
+    """
+    try:
+        folder = folder.expanduser().resolve()
+    except OSError:
+        return None
+    if folder.name == part and read_demo_marker(folder.parent) is not None:
+        return folder.parent
+    return None
+
+
+def demo_root_in_use() -> Path | None:
+    """The demo folder the EMR or processed folder in use belongs to, or None.
+
+    Either one is enough: cases analyzed from the demo are fictional whichever EMR is set, and a demo EMR
+    feeds fictional rows to the Medication page. Settings refuses that mix; this keeps the label honest when
+    it comes from somewhere else, such as an environment override.
+    """
+    return demo_root_of(emr_dir(), "EMR") or demo_root_of(processed_dir(), "processed")
+
+
+def demo_data_in_use() -> bool:
+    """True while the EMR folder in use is the one inside a demo folder this app made."""
+    return demo_root_in_use() is not None
 
 
 def emr_dir() -> Path:

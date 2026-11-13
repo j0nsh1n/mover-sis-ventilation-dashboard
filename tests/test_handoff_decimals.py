@@ -1,0 +1,269 @@
+"""A number in a handoff is read whole: "86.0" is 86.0, never 0 or 5 or 0.5.
+
+Expected grades are worked out from the practice cases' data and the grading contract, not from what the code
+printed. FAKE-DESAT: SpO2 88 at minute 20 and 86 at 21, nothing else out of range. FAKE-CUFF: cuff MAP 60 at
+minute 0 and 58 at minute 6 (one hypotension episode, minutes 0 to 6). FAKE-ART-LOW: arterial MAP 60 from minute 10
+to 16, one Phenylephrine bolus at minute 12. FAKE-QUIET: MAP 80 and SpO2 98 throughout, nothing to report.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from src.modules.handoff_trainer import grading
+from src.modules.handoff_trainer.cases import practice_cases
+from src.modules.handoff_trainer.grading import grade
+
+_CASES = {case.case_id: case for case in practice_cases()}
+
+
+def _graded(case_id: str, text: str) -> list[tuple[str, str]]:
+    return [(item.status, item.kind) for item in grade(_CASES[case_id], text)]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        ("FAKE-DESAT", "Desaturation, SpO2 86.0 at minute 20.", [("mentioned", "desaturation")]),
+        ("FAKE-CUFF", "Hypotension, MAP 58.0 at minute 3.", [("mentioned", "hypotension")]),
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP 60.0 from minute 10 to 16. Phenylephrine 100 mcg at minute 12.",
+            [("mentioned", "hypotension"), ("mentioned", "vasopressor")],
+        ),
+        ("FAKE-QUIET", "Stable. SpO2 97.5 throughout.", []),
+    ],
+)
+def test_a_decimal_reading_grades_like_the_same_reading_without_a_point(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("case_id", "whole", "decimal"),
+    [
+        ("FAKE-DESAT", "Desaturation, SpO2 86 at minute 20.", "Desaturation, SpO2 86.0 at minute 20."),
+        ("FAKE-CUFF", "Hypotension, MAP 58 at minute 3.", "Hypotension, MAP 58.0 at minute 3."),
+        ("FAKE-QUIET", "Stable. SpO2 97 throughout.", "Stable. SpO2 97.5 throughout."),
+    ],
+)
+def test_integers_still_read_as_before(case_id, whole, decimal):
+    assert _graded(case_id, whole) == _graded(case_id, decimal)
+
+
+def test_a_decimal_is_read_whole_by_the_value_reader():
+    assert grading._numbers_after("spo2 86.0 at", ("spo2",)) == (86.0,)
+    assert grading._numbers_after("map 58.5 mmhg", ("map",)) == (58.5,)
+    assert grading._numbers_after("spo2 97.5", ("spo2",)) == (97.5,)
+    assert grading._numbers_after("spo2 86 at", ("spo2",)) == (86.0,)
+
+
+def test_a_decimal_at_the_end_of_a_sentence_is_read_whole_and_its_stop_ends_the_sentence():
+    assert grading._numbers_after("spo2 86.0.", ("spo2",)) == (86.0,)
+    assert grading._numbers_after("spo2 86.0. 97.5 later", ("spo2",)) == (86.0,)
+    assert _graded("FAKE-DESAT", "Desaturation, SpO2 86.0.") == [("mentioned", "desaturation")]
+
+
+def test_two_values_in_one_sentence_are_each_a_whole_number():
+    assert _graded("FAKE-DESAT", "Desaturation, SpO2 88.0 then 86.0 at minute 20.") == [("mentioned", "desaturation")]
+    assert _graded("FAKE-DESAT", "Desaturation, SpO2 88.0 then 70.5 at minute 20.") == [
+        ("unsupported", "desaturation"),
+        ("missed", "desaturation"),
+    ]
+    read = grading._numbers_after("spo2 88.0 then 86.0", ("spo2",))
+    assert read and set(read) <= {88.0, 86.0}
+
+
+def test_a_value_in_the_next_sentence_is_not_borrowed():
+    assert grading._numbers_after("spo2 low. 86.0 at minute 20", ("spo2",)) == ()
+    assert grading._numbers_after("spo2 low? 86.0 later", ("spo2",)) == ()
+    assert grading._numbers_after("spo2 low\n86.0 later", ("spo2",)) == ()
+    assert _graded("FAKE-QUIET", "SpO2 stable. 86.0 later") == []
+
+
+def test_the_leftover_of_a_decimal_minute_is_not_a_value():
+    body = grading._without_minute_claims("map minute 10.5")
+    assert grading._numbers_after(body, ("map",)) == ()
+    assert grading._minute_numbers("hypotension minute 10.5") == (10,)
+
+
+def test_a_decimal_minute_and_the_end_of_its_range_are_taken_out_of_the_values():
+    assert grading._minute_numbers("map 60 minute 10.5 to 16") == (10, 16)
+    assert grading._minute_numbers("minutes 10-16.5") == (10, 16)
+    body = grading._without_minute_claims("map 60 from minute 10.5 to 16.5 mmhg")
+    assert grading._numbers_after(body, ("map",)) == (60.0,)
+    assert "5" not in body and "16" not in body
+    assert _graded("FAKE-ART-LOW", "Hypotension, MAP 60.0 from minute 10.5 to 16.") == [
+        ("mentioned", "hypotension"),
+        ("missed", "vasopressor"),
+    ]
+    assert _graded("FAKE-ART-LOW", "Hypotension, MAP 60.0 from minute 10.5 to 20.") == [
+        ("unsupported", "hypotension"),
+        ("missed", "hypotension"),
+        ("missed", "vasopressor"),
+    ]
+
+
+# —— a value belongs to the measurement word before it ——
+
+
+@pytest.mark.parametrize(
+    ("text", "words", "read"),
+    [
+        ("spo2 97.5 throughout, map 75", ("spo2",), (97.5,)),  # stops at the next series word
+        ("spo2 86 at minute 20", ("spo2",), (86.0,)),  # a written minute is never the value
+        ("map 60, hr 110", ("map",), (60.0,)),  # at another measurement
+        ("spo2 88 with rr 30", ("spo2",), (88.0,)),
+        ("spo2 86 then phenylephrine 100 mcg", ("spo2",), (86.0,)),  # at a drug
+        ("spo2 fell from 98 to 86", ("spo2",), (86.0,)),  # of the numbers before a stop, the last
+        ("no spo2 - no spo2", ("spo2",), ()),  # the 2 of a later "SpO2" is never a value
+        # every kind of stop
+        ("spo2 86, etco2 40", ("spo2",), (86.0,)),
+        ("spo2 86, end tidal 40", ("spo2",), (86.0,)),
+        ("spo2 86, temp 36.5", ("spo2",), (86.0,)),
+        ("spo2 86, temperature 37", ("spo2",), (86.0,)),
+        ("spo2 86, heart rate 110", ("spo2",), (86.0,)),
+        ("spo2 86, respiratory rate 30", ("spo2",), (86.0,)),
+        ("spo2 86, pulse 110", ("spo2",), (86.0,)),
+        ("spo2 86 bp 60/40", ("spo2",), (86.0,)),
+        ("map 60, sat 98", ("map",), (60.0,)),
+        ("map 60, sats 98", ("map",), (60.0,)),
+        ("map 60 then a dose of 100", ("map",), (60.0,)),
+        # "pulse ox" is how a saturation is measured, not another measurement
+        ("spo2 on pulse ox was 86", ("spo2",), (86.0,)),
+        ("saturation on the pulse oximeter 86", ("saturation",), (86.0,)),
+        ("spo2 | 86", ("spo2",), (86.0,)),
+    ],
+)
+def test_a_value_is_read_up_to_the_next_measurement_drug_or_dose(text, words, read):
+    assert grading._numbers_after(text, words) == read
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # SpO2 stays at 98 and MAP at 80: a normal SpO2 followed by any MAP claims no desaturation
+        ("FAKE-QUIET", "Stable. SpO2 97.5 throughout, MAP 75.", []),
+        ("FAKE-QUIET", "Stable. SpO2 98, MAP 76.", []),
+        # SpO2 86 at minute 21: the reading is the desaturation's own value, not the minute after it
+        ("FAKE-DESAT", "SpO2 86 at minute 21.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 88 with RR 30.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 on pulse ox was 86.", [("mentioned", "desaturation")]),
+        # arterial MAP 60 from minute 10 to 16, Phenylephrine 100 mcg at minute 12: a heart rate is not a MAP
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP 60, HR 110. Phenylephrine 100 mcg at minute 12.",
+            [("mentioned", "hypotension"), ("mentioned", "vasopressor")],
+        ),
+    ],
+)
+def test_a_reading_after_its_value_is_not_taken_for_that_value(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        *[(f"map 60, {word} 98", ("map",)) for word in ("spo2", "sp02", "saturation", "sats", "sat")],
+        *[(f"spo2 86, {word} 60", ("spo2",)) for word in ("map", "blood pressure", "bp")],
+        *[(f"spo2 86, {word} 30", ("spo2",)) for word in (
+            "heart rate", "hr", "pulse", "respiratory rate", "resp rate", "rr", "etco2", "end tidal", "end-tidal",
+            "temperature", "temp", "dose", "doses")],
+        *[(f"spo2 86 then {drug.casefold()} 100", ("spo2",)) for drug in grading.TRACKED_DRUGS],
+    ],
+)
+def test_every_stop_word_ends_the_reach_to_the_value(text, words):
+    first = float(text.split()[1].rstrip(","))
+    assert grading._numbers_after(text, words) == (first,)
+
+
+@pytest.mark.parametrize("text", ["spo2 on pulse ox 86", "spo2 by pulse-ox 86", "saturation by pulse oximetry 86"])
+def test_pulse_ox_is_how_a_saturation_is_measured_not_another_measurement(text):
+    words = ("saturation",) if text.startswith("saturation") else ("spo2",)
+    assert grading._numbers_after(text, words) == (86.0,)
+
+
+@pytest.mark.parametrize(
+    ("text", "words", "read"),
+    [
+        ("spo2 at minute 21 was 86", ("spo2",), (86.0,)),  # a value after a written minute still counts
+        ("spo2 86 at minute 21", ("spo2",), (86.0,)),  # and one before it
+        ("map at minute 12 was 90", ("map",), (90.0,)),
+        ("map 60 from minutes 10 to 16", ("map",), (60.0,)),  # a range of minutes is a time too
+        ("spo2 86 at minute 21, nasal 2 drops", ("spo2",), (86.0,)),  # the value before the minute, not after it
+        ("map 58.0 at minute 3 2. phenylephrine", ("map",), (58.0,)),
+        ("spo2 at minute 21", ("spo2",), ()),  # a minute alone is no value
+    ],
+)
+def test_a_written_minute_is_a_time_and_never_a_value(text, words, read):
+    assert grading._numbers_after(text, words) == read
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # SpO2 86 at minute 21 is part of the desaturation, whichever side of the minute the value is written
+        ("FAKE-DESAT", "SpO2 at minute 21 was 86.", [("mentioned", "desaturation")]),
+        ("FAKE-DESAT", "SpO2 86 at minute 21.", [("mentioned", "desaturation")]),
+        # arterial MAP was 60 at minute 12, not 90: the value is unsupported, so the episode stays missed
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP at minute 12 was 90.",
+            [("unsupported", "hypotension"), ("missed", "hypotension"), ("missed", "vasopressor")],
+        ),
+        # a number after the minute (the nasal drops) is not the reading written before it
+        ("FAKE-DESAT", "SpO2 86 at minute 20, phenylephrine nasal 2 drops.", [("mentioned", "desaturation")]),
+        (
+            "FAKE-ART-LOW",
+            "Hypotension, MAP 60 at minute 12, phenylephrine nasal 2 drops.",
+            [("mentioned", "hypotension"), ("missed", "vasopressor")],
+        ),
+        # no SpO2 series: naming the gap at a minute is not stating a value for it
+        ("FAKE-NO-SPO2", "SpO2 missing from minute 0.", [("mentioned", "missing_spo2")]),
+    ],
+)
+def test_a_value_on_either_side_of_a_written_minute_is_graded(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "minutes"),
+    [
+        ("spo2 at minutes 20, 21", (20, 21)),  # a list after the plural word
+        ("spo2 missing at minutes 0, 1, 2", (0, 1, 2)),
+        ("spo2 at minute: 21", (21,)),
+        ("spo2 at minute #21", (21,)),
+        ("spo2 at minute21", (21,)),
+        ("spo2 86 at minute 21, 2 drops", (21,)),  # after the singular word a comma ends the minute
+    ],
+)
+def test_every_written_form_of_a_minute_is_read_as_minutes(text, minutes):
+    assert grading._minute_numbers(text) == minutes
+    assert not set(grading._numbers_after(text, ("spo2",))) & set(float(minute) for minute in minutes)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "text", "expected"),
+    [
+        # no SpO2 series: naming the gap over a list of minutes states no value for it
+        ("FAKE-NO-SPO2", "SpO2 missing at minutes 0, 1, 2.", [("mentioned", "missing_spo2")]),
+        # SpO2 86 at minutes 20 and 21 is the desaturation; the minutes are not readings
+        ("FAKE-DESAT", "Desaturation, SpO2 86 at minutes 20, 21.", [("mentioned", "desaturation")]),
+        # "under 90" written after a minute is still the desaturation's detail
+        ("FAKE-DESAT", "SpO2 at minute 21 recorded under 90.", [("mentioned", "desaturation")]),
+    ],
+)
+def test_minutes_in_lists_and_before_a_detail_are_graded(case_id, text, expected):
+    assert _graded(case_id, text) == expected
+
+
+def test_naming_a_missing_map_at_a_minute_states_no_value_for_it():
+    empty = grading.PracticeCase("FAKE-E", "empty timeline", (), ())
+    assert [(item.status, item.kind) for item in grade(empty, "MAP missing from minute 0.")] == [
+        ("mentioned", "missing_map"),
+        ("missed", "missing_spo2"),
+    ]
+
+
+def test_a_value_is_looked_for_within_24_characters_of_its_word():
+    assert grading._numbers_after("spo2" + " " * 24 + "86", ("spo2",)) == (86.0,)
+    assert grading._numbers_after("spo2" + " " * 25 + "86", ("spo2",)) == ()

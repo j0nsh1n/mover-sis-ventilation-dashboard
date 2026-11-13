@@ -496,7 +496,7 @@ def unload_ollama_model(
     except OllamaError as e:
         msg = str(e)
         if "Cannot reach" in msg or "refused" in msg.lower():
-            return False, "Ollama isn't running — click Start first."
+            return False, "Ollama isn't running — choose Start AI in the Local AI menu first."
         return False, msg
     except Exception as ex:
         return False, str(ex)

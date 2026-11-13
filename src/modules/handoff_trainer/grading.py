@@ -24,6 +24,8 @@ INOTROPES: tuple[str, ...] = (
 )
 TRACKED_DRUGS: tuple[str, ...] = VASOPRESSORS + INOTROPES
 EXCLUDED_DRUG = "phenylephrine nasal"
+# A missing series is one item of its own, whatever the handoff says about it.
+SERIES_GAP_KINDS: tuple[str, ...] = ("missing_map", "missing_spo2")
 
 MAP_LOW = 65.0
 SPO2_LOW = 90.0
@@ -37,10 +39,41 @@ SPO2_MAX_GAP = 1
 _HYPO_CONCEPT = ("hypotension", "low map", "low blood pressure", "map under 65", "map below 65")
 _DESAT_CONCEPT = ("desatur", "low oxygen")
 _NEGATION = re.compile(r"\b(no|not|without|denies|denied|never)\b")
-_SPO2_NUMBER = re.compile(r"\b(spo2|sp02|saturation)\b[^\n.]{0,30}\d")
-_MAP_NUMBER = re.compile(r"\b(map|blood pressure)\b[^\n.]{0,30}\d")
+# The one definition of where a sentence ends: a full stop, question mark, exclamation mark, semicolon or
+# line break. A full stop followed directly by a digit ("0.5", "v2.1") does not end one. Every look-back in this file
+# (negation, owner, value, minute, drug) stops here and never reaches into the next sentence.
+_SENTENCE_END_PATTERN = r"[?!;\n]|\.(?!\d)"
+_SENTENCE_END = re.compile(_SENTENCE_END_PATTERN)
+_NEGATION_REACH = 40
+# Words that start another measurement, a drug or a dose. The reach from a series word to its value stops at any of
+# them, so "SpO2 97.5 throughout, MAP 75" reads 97.5 for SpO2.
+_MEASURE_WORDS = (
+    "spo2", "sp02", "saturation", "sats", "sat", "map", "blood pressure", "bp", "heart rate", "hr",
+    "respiratory rate", "resp rate", "rr", "etco2", "end tidal", "end-tidal", "temperature", "temp",
+)
+_VALUE_STOP = (
+    rf"{_SENTENCE_END_PATTERN}|\b(?:"
+    + "|".join(re.escape(word) for word in (*_MEASURE_WORDS, *(drug.casefold() for drug in TRACKED_DRUGS)))
+    # a pulse is a heart rate, but "pulse ox" and "pulse oximeter" are how a saturation is measured
+    + r"|pulse(?![\s-]*ox)|doses?)\b"
+)
+# One character of the reach from a series word to its value: inside the sentence, before any stop above.
+_TO_VALUE = rf"(?:(?!{_VALUE_STOP}).)"
+# A number is read whole. It never starts right after a full stop, so a reach that passes the point of "86.0"
+# cannot stop on its "0".
+_NUMBER = r"(?<![\d.])(\d+(?:\.\d+)?)(?!\d)"
+_SPO2_NUMBER = re.compile(rf"\b(spo2|sp02|saturation)\b{_TO_VALUE}{{0,30}}\d")
+_MAP_NUMBER = re.compile(rf"\b(map|blood pressure)\b{_TO_VALUE}{{0,30}}\d")
+_SATURATION_UNDER_NINETY = re.compile(
+    rf"\b(?:spo2|sp02|oxygen saturation|saturation)\b{_TO_VALUE}{{0,20}}(?:under|below|<)\s*90\b"
+)
+# A minute may carry a fraction ("minute 10.5"); it counts as the whole minute it falls in, and the claim, fraction
+# and range end included, is taken out of the text so that none of it is read as a value.
 _MINUTE_CLAIM = re.compile(
-    r"\b(?:minutes|minute|mins|min)\s+(\d+)(?:\s*(?:to|through|thru|and|-|–)\s*(\d+))?"
+    # only the plural word starts a list ("minutes 0, 1, 2"); after "minute 21," a number is something else
+    r"\bminutes\s*[:#]?\s*(?P<list>\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)+)"
+    r"|\b(?:minutes|minute|mins|min)\s*[:#]?\s*(?P<start>\d+(?:\.\d+)?)"
+    r"(?:\s*(?:to|through|thru|and|-|–)\s*(?P<end>\d+(?:\.\d+)?))?"
 )
 _SPO2_SERIES = ("spo2", "sp02", "oxygen saturation", "saturation")
 _MAP_SERIES = ("blood pressure", "map")
@@ -53,7 +86,6 @@ _OWNERS: tuple[tuple[str, str], ...] = (
 _OWNER_PATTERN = re.compile(
     "|".join(rf"(?P<o{index}>(?<![a-z0-9])(?:{pattern})(?![a-z0-9]))" for index, (_, pattern) in enumerate(_OWNERS))
 )
-_SENTENCE_BREAK = re.compile(r"[;\n]|\.(?!\d)")
 _GAP_WORDS = re.compile(
     r"\b(?:missing|unavailable|absent|unrecorded|not recorded|not measured|no reading|none recorded|not available)\b"
 )
@@ -113,7 +145,7 @@ def detect(case: PracticeCase) -> tuple[TimelineEvent, ...]:
 
 def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     """Score one handoff as mentioned, missed, or unsupported."""
-    text = " ".join(handoff.casefold().split())
+    text = _normalise(handoff)
     events = detect(case)
     owned = _details_by_finding(text)
     items: list[Grade] = []
@@ -132,6 +164,11 @@ def grade(case: PracticeCase, handoff: str) -> tuple[Grade, ...]:
     return tuple(items)
 
 
+def _normalise(handoff: str) -> str:
+    """Lower case, with spaces collapsed inside each line; a line break stays, because it ends a sentence."""
+    return "\n".join(" ".join(line.split()) for line in handoff.casefold().splitlines())
+
+
 def timeline_text(case: PracticeCase) -> str:
     """Show the fictional numbers the learner is grading, without a verdict."""
     lines = [case.title, f"Fictional id {case.case_id}."]
@@ -146,8 +183,8 @@ def timeline_text(case: PracticeCase) -> str:
     if not case.doses:
         lines.append("No medication rows.")
     for dose in case.doses:
-        kind = _dose_kind(dose)
-        amount = "dose not recorded" if dose.amount is None else f"{_number(dose.amount)} {dose.unit}".strip()
+        kind = classify_dose(dose)
+        amount = "dose not recorded" if dose.amount is None else f"{format_number(dose.amount)} {dose.unit}".strip()
         if kind == "infusion" and dose.end_minute is not None:
             span = f"from minute {dose.minute} to minute {dose.end_minute}"
         else:
@@ -195,11 +232,11 @@ def _drug_events(doses: tuple[Dose, ...]) -> tuple[TimelineEvent, ...]:
         if canonical is None:
             continue
         kind = "vasopressor" if canonical in VASOPRESSORS else "inotrope"
-        dose_kind = _dose_kind(dose)
+        dose_kind = classify_dose(dose)
         if dose.amount is None:
             amount = "dose not recorded"
         else:
-            amount = f"{_number(dose.amount)} {dose.unit}".strip()
+            amount = f"{format_number(dose.amount)} {dose.unit}".strip()
         if dose_kind == "infusion" and dose.end_minute is not None:
             when = f"from minute {dose.minute} to minute {dose.end_minute}"
             end = dose.end_minute
@@ -275,7 +312,7 @@ def _canonical_drug(name: str) -> str | None:
     return None
 
 
-def _dose_kind(dose: Dose) -> str:
+def classify_dose(dose: Dose) -> str:
     if dose.end_minute is None or dose.end_minute == dose.minute:
         return "bolus"
     if dose.end_minute > dose.minute:
@@ -375,9 +412,7 @@ def _phrase_at(text: str, phrases: tuple[str, ...], *, negated: bool) -> bool:
             found = text.find(phrase, start)
             if found < 0:
                 break
-            window = text[max(0, found - 40) : found]
-            has_negation = _NEGATION.search(window) is not None
-            if has_negation == negated:
+            if _negation_before(text, found) == negated:
                 return True
             start = found + len(phrase)
     return False
@@ -387,11 +422,17 @@ def _names_drug(text: str, drug: str, *, negated: bool) -> bool:
     cleaned = text.replace(EXCLUDED_DRUG, " ")
     pattern = rf"(?<![a-z0-9]){re.escape(drug.casefold())}(?![a-z0-9])"
     for match in re.finditer(pattern, cleaned):
-        window = cleaned[max(0, match.start() - 40) : match.start()]
-        has_negation = _NEGATION.search(window) is not None
-        if has_negation == negated:
+        if _negation_before(cleaned, match.start()) == negated:
             return True
     return False
+
+
+def _negation_before(text: str, index: int) -> bool:
+    """A negation word in the sentence ``index`` is in, within the reach before it. An earlier sentence never counts."""
+    start = max(0, index - _NEGATION_REACH)
+    for end in _SENTENCE_END.finditer(text, 0, index):
+        start = max(start, end.end())
+    return _NEGATION.search(text[start:index]) is not None
 
 
 def _claims_desat(text: str) -> bool:
@@ -400,7 +441,7 @@ def _claims_desat(text: str) -> bool:
         return False
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+    if _SATURATION_UNDER_NINETY.search(_value_text(text)):
         return True
     return bool(low_values)
 
@@ -412,7 +453,7 @@ def _names_hypotension(text: str) -> bool:
 def _names_desaturation(text: str, event: TimelineEvent) -> bool:
     if _positive(text, _DESAT_CONCEPT):
         return True
-    if re.search(r"\b(?:spo2|sp02|oxygen saturation|saturation)\b[^\n.]{0,20}(?:under|below|<)\s*90\b", text):
+    if _SATURATION_UNDER_NINETY.search(_value_text(text)):
         return True
     return any(
         value < SPO2_LOW and any(abs(value - known) < 0.01 for known in event.values)
@@ -425,7 +466,7 @@ def _hypotension_detail(
 ) -> tuple[bool, bool]:
     minutes_ok, minutes_bad = _minute_fit(text, event, peers)
     body = _without_minute_claims(text)
-    matched, contradicted = _stated_values(body, ("map", "blood pressure"), event, peers, MAP_LOW)
+    matched, contradicted = _stated_values(text, ("map", "blood pressure"), event, peers, MAP_LOW)
     threshold = _has_standalone(body, 65)
     return minutes_ok or threshold or matched, minutes_bad or contradicted
 
@@ -438,7 +479,7 @@ def _desaturation_detail(
     under_ninety = re.search(r"(?:under|below|<)\s*90\b", body) is not None
     stated = [
         value
-        for value in _numbers_after(body, ("spo2", "sp02", "saturation"))
+        for value in _numbers_after(text, ("spo2", "sp02", "saturation"))
         if not (under_ninety and abs(value - 90.0) < 0.01)
     ]
     matched = any(_shows_value(value, (event,)) for value in stated)
@@ -489,7 +530,7 @@ def _inside_any(minute: int, events: tuple[TimelineEvent, ...]) -> bool:
 
 def _details_by_finding(text: str) -> dict[str, str]:
     owned: dict[str, list[str]] = {}
-    for sentence in _SENTENCE_BREAK.split(text.replace(EXCLUDED_DRUG, " ")):
+    for sentence in _SENTENCE_END.split(text.replace(EXCLUDED_DRUG, " ")):
         marks = [(match.start(), _OWNERS[int(str(match.lastgroup)[1:])][0]) for match in _OWNER_PATTERN.finditer(sentence)]
         for index, (start, owner) in enumerate(marks):
             begin = 0 if index == 0 else start
@@ -501,9 +542,12 @@ def _details_by_finding(text: str) -> dict[str, str]:
 def _minute_numbers(text: str) -> tuple[int, ...]:
     found: list[int] = []
     for match in _MINUTE_CLAIM.finditer(text):
-        found.append(int(match.group(1)))
-        if match.group(2):
-            found.append(int(match.group(2)))
+        if match.group("list"):
+            found += [int(float(number)) for number in re.split(r"\s*,\s*", match.group("list"))]
+            continue
+        found.append(int(float(match.group("start"))))
+        if match.group("end"):
+            found.append(int(float(match.group("end"))))
     return tuple(found)
 
 
@@ -511,21 +555,45 @@ def _without_minute_claims(text: str) -> str:
     return _MINUTE_CLAIM.sub(" ", text)
 
 
+# Stands for a written minute in the text values are read from. A character from Unicode's private use area, so
+# nothing a learner types can be taken for it.
+_MINUTE_HERE = "\ue000"
+_VALUE_REACH = 24
+
+
+def _value_text(text: str) -> str:
+    """The text values are read from: a written minute ("minute 21", "minutes 10 to 16") is a time, never a value."""
+    return _MINUTE_CLAIM.sub(f" {_MINUTE_HERE} ", text)
+
+
 def _has_standalone(text: str, number: int) -> bool:
     return re.search(rf"(?<!\d){number}(?!\d)", text) is not None
 
 
 def _numbers_after(text: str, words: tuple[str, ...]) -> tuple[float, ...]:
-    pattern = (
-        r"\b(?:"
-        + "|".join(re.escape(word) for word in words)
-        + r")\b[^\n.]{0,24}(?<!\d)(\d+(?:\.\d+)?)(?!\d)"
-    )
-    return tuple(float(match.group(1)) for match in re.finditer(pattern, text))
+    """The value written after each of ``words``.
+
+    The reach runs to the next sentence end, measurement, drug or dose, and a value starts within 24 characters of
+    the word. A written minute is never a value and splits the reach: the value is the last number before the first
+    minute ("SpO2 86 at minute 21, 2 drops" reads 86), or after it when none comes before ("SpO2 at minute 21 was
+    86" reads 86). "SpO2 fell from 98 to 86" reads 86.
+    """
+    text = _value_text(text)
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in words) + rf")\b({_TO_VALUE}*)")
+    found: list[float] = []
+    for match in pattern.finditer(text):
+        reach = match.group(1)
+        groups: dict[int, list[float]] = {}
+        for number in re.finditer(_NUMBER, reach):
+            if number.start() <= _VALUE_REACH:
+                groups.setdefault(reach.count(_MINUTE_HERE, 0, number.start()), []).append(float(number.group(1)))
+        if groups:
+            found.append(groups[min(groups)][-1])
+    return tuple(found)
 
 
 def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
-    for sentence in re.split(r"[.\n;]", text):
+    for sentence in _SENTENCE_END.split(text):
         if not any(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", sentence) for word in series):
             continue
         if _GAP_WORDS.search(sentence):
@@ -536,13 +604,13 @@ def _acknowledges_gap(text: str, series: tuple[str, ...]) -> bool:
 
 
 def _spo2_value_claim(text: str) -> bool:
-    if _SPO2_NUMBER.search(text):
+    if _SPO2_NUMBER.search(_value_text(text)):
         return True
     return _positive(text, ("normal saturation", "saturation was normal", "oxygenation was normal", "saturation was fine", "spo2 was normal"))
 
 
 def _map_value_claim(text: str) -> bool:
-    if _MAP_NUMBER.search(text):
+    if _MAP_NUMBER.search(_value_text(text)):
         return True
     return _positive(text, ("blood pressure was normal", "map was normal", "pressure was stable"))
 
@@ -550,10 +618,10 @@ def _map_value_claim(text: str) -> bool:
 def _cell(label: str, value: float | None, unit: str) -> str:
     if value is None:
         return f"{label} missing"
-    return f"{label} {_number(value)} {unit}"
+    return f"{label} {format_number(value)} {unit}"
 
 
-def _number(value: float) -> str:
+def format_number(value: float) -> str:
     if value == int(value):
         return str(int(value))
     return str(value)

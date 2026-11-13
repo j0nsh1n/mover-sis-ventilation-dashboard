@@ -202,7 +202,7 @@ def test_the_answer_shows_under_the_field_labeled_with_minute_and_pid(workspace,
     ask(workspace, qapp)
     assert workspace.follow_up_label.text() == "Minute 2 · caseA"
     assert "PIP 22" in workspace.follow_up_answer.toPlainText()
-    assert workspace.follow_up_edit.placeholderText() == "Ask about this minute"
+    assert workspace.follow_up_edit.placeholderText() == "Ask about minute 2"
     assert "PID=caseA" in client.sent[0] and "caseB" not in client.sent[0]
     assert workspace.conversation.turns == []
 
