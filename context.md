@@ -11,7 +11,18 @@
   progress 2451 passed and 7 skipped. Slowest call 12.01 s. The Windows CI
   subset took 440 s, exit 0, progress 2424 passed and 7 skipped. No finished
   subset baseline exists; that job had been killed at 6 h. Ruff and mypy
-  passed. Not pushed.
+  passed. With the review fixes (`7eaed31`, `da8a749`) the full run took about
+  6 minutes, 2,465 passed. Pushed; on PR #40 CI the Linux tests take 20 min
+  (were 2.5 h) and the Windows job 14 min (was cut off at 6 h).
+- **Windows CI (2026-11-12):** five layout tests (ten results) fail only on
+  Windows and are left open by the owner's choice: Cases table 1 to 2 px of
+  sideways scroll (`test_cases_page.py`, three tests), Handoff table and a
+  Handoff text box 1 px short (`test_handoff_panel.py`), the missing-cell hatch
+  crossing its text (`test_marks.py`), and Settings at the least width about
+  400 px too wide (`test_settings_page.py`). The bundled fonts load there;
+  the Settings case does not reproduce here with a Windows-length path. A
+  Windows-CI-only report in `tests/conftest.py` (`_DIAGNOSE_WINDOWS_CI`) is
+  temporary.
 - **Phase (2026-11-01):** Phase 1 documentation and the Phase 2 Monitoring
   shell are committed locally as `bf73b41` and not pushed. Phase 3 shared
   data context is implemented on the same branch. Terra and Opus 5.5
@@ -299,11 +310,11 @@ Wave root (optional) ──► wave_decode                   │
   reap in `tests/conftest.py` closes and deletes new top-level widgets and
   warns instead of failing. Sparkline and research-controls switch theme once
   per file. Full suite 6105 s before, 481 s after; Windows subset 440 s.
-  The working tree also has uncommitted edits on top of that commit: the reap
-  skips a popup that has a parent, a dirty Settings page is marked clean
-  without reloading, and `tests/test_window_reaper.py` is new. Those were not
-  in the timed run. Next is stage 8 (AppImage) when that work is picked up.
-  Not pushed.
+  The review fixes are committed (`7eaed31`, `da8a749`): the reap counts only
+  windows with no parent widget, marks a dirty Settings page clean without
+  reloading it, and `tests/test_window_reaper.py` tests its rules. About 300
+  tests still leave a window that the reap deletes with a warning. Next is
+  stage 8 (AppImage) when that work is picked up.
 - **Visual overhaul, stages 1 to 4 (2026-11-10, branch `feat/visual-overhaul`):**
   stage 1 tokens, fonts, base stylesheet, flag marks and the hatched missing
   cell; stage 2 the app frame (left rail, running head, footer, Ctrl+K, no
@@ -333,9 +344,9 @@ Wave root (optional) ──► wave_decode                   │
   their windows left them alive. `tests/conftest.py` now closes and deletes
   top-level widgets a test left behind, and warns with the test name and the
   widget classes. A window whose worker thread is still running waits, because
-  deleting it aborts the process. The answer gate's age check (`_claimed_ages` in
-  `src/llm/agent.py`) reads a case ID ending in a digit plus "f" or "m" as an
-  age and sex; not fixed. The small-model plan is
+  deleting it aborts the process. The answer gate's age check reading the end
+  of a case ID as an age is fixed on `fix/answer-gate` (PR #39, `f52dba4`),
+  not on this branch. The small-model plan is
   `_work/mover-suite/SMALL-MODEL-PLAN.md`; nothing of it is built.
 - **Date:** 2026-11-01. Phase 2 closeout was 2026-10-27 local / 2026-10-28 UTC.
 - **Branch / HEAD:** `feat/v0.15-signal-grounding`. The local Phase 1 and
