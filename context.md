@@ -2,21 +2,24 @@
 
 ## Current State
 
-- **Cloud answers and the chat thread (2026-11-14, `feat/cloud-ai`, branched
-  from `feat/visual-overhaul`, local only):** answers can come from the Claude
-  API (key in the system password store), Claude Code or Codex next to Ollama,
-  chosen in the research page's grouped AI menu; real MOVER cases go to a
-  cloud service only when the owner switches on trimmed sending. Research
-  answers are a chat thread with the ask box at the bottom; follow-ups are
-  shown earlier answers (`src/llm/history.py`), on real cases only trimmed
-  cloud ones. Answer-check fixes: minus signs at a table row's start,
-  heading numbers, true age bands, GitHub tables. Last full offscreen gate
-  on `6b535b2`: 2635 passed, 7 skipped; desktop contracts 10/10. A Sonnet 5.5
-  review of `6b535b2` returned FAIL (a real-data answer could reach a cloud
-  service on a later demo-data question; waveform paths in trimmed sends; a
-  wrong age next to a true band); the fixes followed (see the next commit); re-review pending. Gemini 4 Argon
-  visual review not yet run (Antigravity quota). Not pushed.
-
+- **Cloud answers and the chat thread (2026-11-14, `feat/cloud-ai`, PR #41
+  into `feat/visual-overhaul`, draft, not merged):** answers can come from the
+  Claude API (key in the system password store), Claude Code or Codex next to
+  Ollama, chosen in the research page's grouped AI menu; real MOVER cases go
+  to a cloud service only when the owner switches on trimmed sending.
+  Research answers are a chat thread with the ask box at the bottom;
+  follow-ups are shown earlier answers (`src/llm/history.py`): on a cloud
+  service, demo questions get demo turns only and real questions trimmed
+  cloud turns only. Answer-check fixes: minus signs at a table row's start,
+  heading numbers, true age bands, GitHub tables. Last full offscreen gate on
+  `d3c8f43`'s tree before a one-line narrow-height change: 2690 passed, 7
+  skipped (narrow files rerun green after it); desktop contracts 10/10; PR CI
+  (one check) green. Reviews: Sonnet 5.5 FAIL on `6b535b2`, fixed, PASS on
+  `75b687c`, `e583b83` and `d3c8f43`; Gemini 4 Argon visual PASS on
+  `d3c8f43` from pictures. Open for the owner: merge, the review's judgement
+  calls (Codex on real data, free-text procedure line, raw real data in the
+  training log, the thread across a data switch, server-side fallback, spec
+  text), and installing `anthropic` and `keyring` in the AppImage builder.
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
   offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
   failure marks; wall clock from the start file to the log mtime is 6105 s.
