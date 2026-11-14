@@ -187,6 +187,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A follow-up on fictional data no longer sends an earlier real-data answer to a cloud
+  service, and a real trimmed send no longer includes waveform paths or other absolute
+  paths. A wrong age or a wrong age band is still caught when the answer also states a
+  true band, checked against the named case. The training log and command-line work
+  files are readable only by the user. Typed ages and dates are banded or masked, and
+  an articles question sent to a cloud service has case numbers removed. A withheld
+  answer no longer says a local model wrote it. Cancelling or closing stops the next
+  Claude API call, and the tests cannot open a window on the desktop.
 - Answers no longer strike valid numbers as "[number not in sources]": a minute such as
   -45 at the start of a source-table row kept its minus sign; a negative minute next to a
   signal ("38 at -45") is checked as a minute; a heading number ("## 2.") is a label; an

@@ -1,8 +1,11 @@
 """Earlier turns a follow-up question may be shown.
 
-A turn is sent only when it was actually answered, in the same scope as the new
-question, and — when the new question is real data going to a cloud service —
-only if that earlier answer itself went out under trimming. The text that is
+A turn is sent only when it was actually answered and in the same scope as the
+new question. When that question goes to a cloud service and the scope is
+cases, the earlier turn's data kind has to match: a fictional question sends
+turns asked on fictional data, and a real question sends turns a cloud service
+answered under trimming. A turn whose data kind was never recorded counts as
+real. A local model still receives every same-scope turn. The text that is
 sent is the answer body: verification notes and the research footer are gone,
 and the body is cut at 2500 characters. ``history=()`` adds nothing.
 """
@@ -24,8 +27,8 @@ BODY_CAP = 2500
 EARLIER_PREFIX = "Earlier question: "
 
 # ``agent.WITHHELD_ANSWER`` starts with this. A withheld answer is not a source
-# and is not shown to the next question.
-_WITHHELD_PREFIX = "The local model's answer is withheld"
+# and is not shown to the next question. True for a local model and a cloud service.
+_WITHHELD_PREFIX = "The answer is withheld"
 _NOTE = "**Verification note:**"
 
 
@@ -45,6 +48,8 @@ class PriorTurn:
     trimmed: bool = False
     scope: str = "cases"
     state: str = "answered"
+    # False is real data, and also a turn whose data kind was never recorded.
+    demo: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
@@ -95,8 +100,15 @@ def _sendable(turn: PriorTurn, *, scope: str, real_data: bool, to_cloud: bool) -
         return False
     if (turn.answer or "").lstrip().startswith(_WITHHELD_PREFIX):
         return False
-    if real_data and to_cloud and not (turn.trimmed and turn.backend in CLOUD_BACKENDS):
-        return False
+    # One rule for every cloud service. Articles are published text, so they are
+    # exempt. A local model (to_cloud false) still receives every same-scope turn.
+    # demo False counts as real: a turn that never recorded its data kind stays here.
+    if to_cloud and scope == "cases":
+        if real_data:
+            if not (turn.trimmed and turn.backend in CLOUD_BACKENDS):
+                return False
+        elif not turn.demo:
+            return False
     return bool(answer_body(turn.answer).strip())
 
 
@@ -113,10 +125,11 @@ def turns_to_send(
     Non-answers (failed, cancelled, still running, no model, withheld) and
     turns from the other scope are dropped first. The last ``limit`` of what
     remains are kept, so three sendable turns go out even when older turns
-    were not answers. On real data sent to a cloud service, a turn goes out
-    only when that turn was itself answered by a cloud service under trimming:
-    a local model's earlier answer, and a cloud answer that was not trimmed,
-    stay on this computer.
+    were not answers. On a cloud service, a cases question is shown an earlier
+    turn only when the data kind matches. Fictional data sends turns asked on
+    fictional data (``demo``). Real data sends turns a cloud service answered
+    under trimming. A turn with no recorded data kind counts as real. Articles,
+    and a local model, still receive every answered turn in the same scope.
     """
     want = scope_name(scope)
     kept = [

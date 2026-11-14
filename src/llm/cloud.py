@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from src.llm.grounding import PID_TOKEN
 from src.llm.ollama_client import ChatClient, ChatResult, OllamaError
@@ -338,7 +338,7 @@ class ClaudeApiClient:
                 raise CloudError(f"No Claude API key: save one in Settings, AI, or set {API_KEY_ENV}.")
             import anthropic
 
-            self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout_s, max_retries=2)
+            self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout_s, max_retries=1)
         return self._client
 
     def chat_turn(self, model: str, messages: Sequence[dict[str, Any]], *, tools: Any = None,
@@ -429,6 +429,33 @@ def _stop_group(proc: subprocess.Popen) -> None:
             proc.wait(timeout=3)
 
 
+def _mkdir_private(path: Path) -> None:
+    """A directory of case text: owner-only, including one that already exists."""
+    path.mkdir(parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def _write_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(text)
+
+
+def _append_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(text)
+
+
+def _create_private(path: Path):
+    """An owner-only binary file for a child process's stdout or stderr."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "wb")
+
+
 class CliClient:
     """Claude Code or Codex on this computer, run once per answer in an empty folder with its tools off."""
 
@@ -453,7 +480,7 @@ class CliClient:
             command = [self.binary, "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
                        "--color", "never", "-C", str(call_dir), "-o", str(call_dir / "answer.txt")]
             if schema is not None:
-                (call_dir / "schema.json").write_text(json.dumps(schema), encoding="utf-8")
+                _write_private(call_dir / "schema.json", json.dumps(schema))
                 command += ["--output-schema", str(call_dir / "schema.json")]
         if model and model != CLI_DEFAULT:
             command += ["--model" if self.backend == CLAUDE_CLI else "-m", model]
@@ -475,11 +502,11 @@ class CliClient:
         if self.backend == CODEX_CLI and system:
             prompt = f"{system}\n\n{prompt}"
         call_dir = self.workdir / uuid.uuid4().hex
-        call_dir.mkdir(parents=True)
+        _mkdir_private(call_dir)
         try:
-            (call_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
-            with open(call_dir / "prompt.txt", "rb") as stdin, open(call_dir / "out.txt", "wb") as stdout, \
-                    open(call_dir / "err.txt", "wb") as stderr:
+            _write_private(call_dir / "prompt.txt", prompt)
+            with open(call_dir / "prompt.txt", "rb") as stdin, _create_private(call_dir / "out.txt") as stdout, \
+                    _create_private(call_dir / "err.txt") as stderr:
                 proc = subprocess.Popen(
                     self._command(model, system, call_dir, schema), stdin=stdin, stdout=stdout, stderr=stderr,
                     cwd=call_dir, start_new_session=sys.platform != "win32", env=_cli_env(),
@@ -493,6 +520,9 @@ class CliClient:
                         _stop_group(proc)
                         raise TimeoutError(f"{name} did not answer within {timeout_s or self.timeout_s:g} s.")
                     time.sleep(0.1)
+            answer_file = call_dir / "answer.txt"
+            if answer_file.is_file():
+                os.chmod(answer_file, 0o600)
             out = (call_dir / "out.txt").read_text(encoding="utf-8", errors="replace")
             if proc.returncode != 0:
                 raise CloudError(f"{name} exited with status {proc.returncode}.")
@@ -529,16 +559,27 @@ _EVENT_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?): (.+
 # identifier, and a wider band only hides more) and is covered by a test.
 _AGE_FORM = re.compile(
     r"(?<![\w.\u2013-])(?:"
-    r"(?P<label>Age:\s*|aged\s+|age\s+)(?P<nlabel>\d{1,3}(?:\.\d+)?)"
+    r"(?P<label>Age:\s*|aged\s+|age\s+of\s+|age\s+)(?P<nlabel>\d{1,3}(?:\.\d+)?)"
     r"|(?P<n>\d{1,3}(?:\.\d+)?)(?P<tail>"
-    r"-year-old"
+    r"-year[- ]old"
     r"|\s+years?\s+old"
+    r"|\s+year-old"
+    r"|\s+yrs?\s+old"
+    r"|\s+y\.o\."
     r"|\s+y/o"
     r"|\s+yo"
+    r"|yo"
     r"|(?P<gap>[ \t]?)(?P<sex>[FM])(?![A-Za-z])"
     r"))",
     re.IGNORECASE,
 )
+# A date with no clock time. Datetimes are already "[time not sent]" by then.
+_DATE_ONLY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+# The waveform section is presence of a local folder. Its body is a path.
+_WAVE_SECTION = re.compile(r"## Waveform data\n(?:- .*\n?)*")
+# Absolute paths: POSIX with at least two segments, and Windows "C:\...".
+# A slash after a scheme or another slash is a URL, not a filesystem path.
+_ABS_PATH = re.compile(r"(?<![\w:/])/(?:[^/\s]+/){1,}[^/\s]+|[A-Za-z]:\\[^\s]+")
 LINE_CAP = 400
 _EARLIER = "Earlier question: "
 
@@ -604,6 +645,9 @@ class Trimmer:
         text = _DATE_TIME.sub("[time not sent]", text)
         text = _CLOCK.sub("[time not sent]", text)
         text = _band_ages(text)
+        text = _DATE_ONLY.sub("[date not sent]", text)
+        text = _WAVE_SECTION.sub("## Waveform data\nWaveform data: not sent\n", text)
+        text = _ABS_PATH.sub("[path not sent]", text)
         lines = text.split("\n")
         if len(lines) > LINE_CAP:
             lines = lines[:LINE_CAP] + [f"[{len(lines) - LINE_CAP} more lines not sent]"]
@@ -621,6 +665,7 @@ class TrimmingClient:
     """
 
     sends_trimmed = True
+    leaves_computer = True
 
     def __init__(self, inner: ChatClient, trimmer: Trimmer):
         self.inner = inner
@@ -638,6 +683,7 @@ class TrimmingClient:
 class RecordingClient:
     """Keeps each call exactly as it went out and came back, for the training log."""
 
+    leaves_computer: ClassVar[bool] = True
     inner: ChatClient
     calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -664,11 +710,10 @@ def training_log_dir() -> Path:
 def write_training_record(record: dict[str, Any], folder: Path | None = None) -> Path:
     """Append one answer to today's file. The record never holds a key: none passes through it."""
     folder = folder or training_log_dir()
-    folder.mkdir(parents=True, exist_ok=True)
+    _mkdir_private(folder)
     now = datetime.now(timezone.utc)
     path = folder / f"{now:%Y-%m-%d}.jsonl"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"time": now.isoformat(timespec="seconds"), **record}, ensure_ascii=False) + "\n")
+    _append_private(path, json.dumps({"time": now.isoformat(timespec="seconds"), **record}, ensure_ascii=False) + "\n")
     return path
 
 

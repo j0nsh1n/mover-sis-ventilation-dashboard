@@ -277,6 +277,24 @@ def test_a_five_year_band_holding_the_real_age_is_true_and_one_missing_it_is_not
         assert problems and "60" in problems[0], wrong
 
 
+def test_a_true_band_does_not_excuse_a_wrong_age_or_a_wrong_band():
+    """The three probes: a true band used to hide a wrong exact age and a wrong band."""
+    from src.llm.agent import find_unstated_case_facts
+
+    session = _sample_session()
+    session.active_pid = "ccdd0022"  # this case is 60
+    first = find_unstated_case_facts("ccdd0022 is a 55-year-old woman (age 60-64).", session)
+    assert first and "55" in first[0] and "60" in first[0]
+    second = find_unstated_case_facts("ccdd0022: age 60-64. ccdd0022 is 55 years old.", session)
+    assert second and "55" in second[0] and "60" in second[0]
+    cited = _cited_session()  # aabb0011 is 50, ccdd0022 is 60; ages are optional
+    problems = find_unstated_case_facts(
+        "aabb0011 was aged 60-64 with a PIP episode. ccdd0022 was aged 60-64.", cited,
+    )
+    assert any("aabb0011" in problem and "50" in problem for problem in problems)
+    assert all("ccdd0022" not in problem for problem in problems)
+
+
 def test_unstated_facts_check_is_inert_without_a_selection():
     from src.llm.agent import find_unstated_case_facts
 

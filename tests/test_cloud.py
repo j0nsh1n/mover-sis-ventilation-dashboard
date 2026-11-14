@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import sys
 import time
 from datetime import datetime, timezone
@@ -160,6 +162,27 @@ def test_aliases_come_back_as_whole_tokens_only():
     assert trimmer.inbound("Case-A and Case-B, not Case-AB or Case-Z") == "pid-one and pid-two, not Case-AB or Case-Z"
 
 
+def test_a_real_send_drops_waveform_paths_and_any_absolute_path():
+    pid = "ab0123456789cdef"
+    text = (
+        "## Demographics & procedure\n"
+        "- Age: 47\n"
+        "- Note: see /fake/root/other/file.txt and C:\\fake\\root\\Waveforms\\ab\\notes.txt\n"
+        "\n## Waveform data\n"
+        f"- Waveform folder present: /fake/root/Waveforms/ab/{pid} (30 files)\n"
+        "- High-fidelity waveforms are not decoded in this text context; "
+        "only path presence is noted.\n"
+        "\n## Assistant instructions reminder\n"
+        "- Base answers only on the sections above.\n"
+    )
+    sent = Trimmer([pid]).outbound(text)
+    assert "Waveform data: not sent" in sent
+    assert "/fake" not in sent and "\\" not in sent
+    assert "Waveforms" not in sent and "/ab/" not in sent and "\\ab\\" not in sent
+    assert pid not in sent and "[path not sent]" in sent
+    assert "Assistant instructions reminder" in sent
+
+
 def test_a_long_message_is_cut_at_the_line_cap():
     def rows(n: int) -> str:
         return "\n".join(f"row {i}" for i in range(n))
@@ -214,6 +237,31 @@ class FakeSdk:
         if self.error is not None:
             raise self.error
         return self.response
+
+
+def test_an_interactive_claude_call_retries_at_most_once(monkeypatch):
+    created = {}
+
+    class Fake:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+            self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+
+        def with_options(self, **kwargs):
+            return self
+
+        def _create(self, **request):
+            return SimpleNamespace(
+                stop_reason="end_turn", model="m",
+                content=[SimpleNamespace(type="text", text="An answer.")],
+            )
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", Fake)
+    monkeypatch.setenv(cloud.API_KEY_ENV, KEY)
+    assert ClaudeApiClient().chat_turn("m", [{"role": "user", "content": "Q?"}]).content == "An answer."
+    assert created["max_retries"] == 1
 
 
 def test_the_api_request_carries_the_system_text_turns_and_closed_schema_and_no_ollama_settings():
@@ -388,6 +436,50 @@ def test_cancel_stops_a_running_command(tmp_path, monkeypatch):
 
 
 # ----- the training log -----
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_the_training_log_and_cli_work_files_are_private(tmp_path, monkeypatch):
+    folder = tmp_path / "ai-log"
+    path = cloud.write_training_record({"question": "invented"}, folder=folder)
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    path.chmod(0o644)
+    folder.chmod(0o755)
+    cloud.write_training_record({"question": "again"}, folder=folder)
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    modes: dict[str, int] = {}
+    original_rmtree = shutil.rmtree
+
+    def spy(target, **kwargs):
+        target = Path(target)
+        modes["dir"] = stat.S_IMODE(target.stat().st_mode)
+        modes["prompt"] = stat.S_IMODE((target / "prompt.txt").stat().st_mode)
+        answer = target / "answer.txt"
+        if answer.is_file():
+            modes["answer"] = stat.S_IMODE(answer.stat().st_mode)
+        original_rmtree(target, **kwargs)
+
+    monkeypatch.setattr(cloud.shutil, "rmtree", spy)
+    body = "out = sys.argv[sys.argv.index('-o') + 1]\nopen(out, 'w').write('From codex.')\n"
+    binary = _fake_command(tmp_path, body)
+    CliClient(CODEX_CLI, tmp_path / "cloud-cli", binary=binary).chat_turn(
+        "", [{"role": "user", "content": "invented question"}],
+    )
+    assert modes == {"dir": 0o700, "prompt": 0o600, "answer": 0o600}
+
+
+def test_conftest_forces_offscreen_qt_before_other_imports():
+    text = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
+    mark = text.index('os.environ["QT_QPA_PLATFORM"] = "offscreen"')
+    assert "Tests must never show windows on the developer's desktop." in text
+    assert mark < text.index('os.environ.pop("DISPLAY"')
+    assert mark < text.index('os.environ.pop("WAYLAND_DISPLAY"')
+    assert mark < text.index("import pytest")
+    assert os.environ["QT_QPA_PLATFORM"] == "offscreen"
+    assert "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ
+
 
 def test_each_answer_is_logged_with_what_went_out_and_never_the_key(monkeypatch, config_dir):
     monkeypatch.setenv(cloud.API_KEY_ENV, KEY)

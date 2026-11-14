@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import os
-import sys
-import warnings
-from pathlib import Path
 
-import pandas as pd
-import pytest
+# Tests must never show windows on the developer's desktop.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ.pop("DISPLAY", None)
+os.environ.pop("WAYLAND_DISPLAY", None)
 
-from src.config import load_thresholds
+import sys  # noqa: E402
+import warnings  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+
+from src.config import load_thresholds  # noqa: E402
 
 # Temporary, Windows CI only: the Windows job crashes before pytest prints why its tests failed, so each failure,
 # each test's start and the widgets left alive before a theme change are written out as they happen.

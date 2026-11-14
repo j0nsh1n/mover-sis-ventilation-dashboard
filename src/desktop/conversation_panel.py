@@ -156,6 +156,7 @@ class Turn:
             trimmed=self.trimmed,
             scope=self.scope,
             state=self.state,
+            demo=self.demo,
         )
 
 

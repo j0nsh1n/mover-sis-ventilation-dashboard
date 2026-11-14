@@ -381,7 +381,7 @@ entries:
       uncited_pid: false
       rewritten: true
       misattributed: true
-      final_contains: ["The local model's answer is withheld"]
+      final_contains: ["The answer is withheld"]
 
   - id: causal-diagnosis
     question: Why did pressure rise in the first case?

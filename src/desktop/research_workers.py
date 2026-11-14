@@ -143,15 +143,18 @@ class ResearchWorker(QThread):
         self.history = tuple(history)
 
     def _sent_history(self) -> tuple[PriorTurn, ...]:
-        """Turns this question may be shown. Article text is never trimmed."""
+        """Turns this question may be shown. Article text is never trimmed.
+
+        Any cloud service leaves the computer, including a question on fictional
+        data. The history rule then keeps only turns of the same data kind.
+        """
         articles = isinstance(self.engine, ArticleCatalog)
-        real = self.real_data and not articles
         cloud = self.cloud is not None and self.cloud.is_cloud
         return turns_to_send(
             self.history,
             scope="articles" if articles else "cases",
-            real_data=real,
-            to_cloud=real and cloud,
+            real_data=self.real_data and not articles,
+            to_cloud=cloud,
         )
 
     def _model_id(self) -> str | None:
@@ -205,7 +208,7 @@ class ResearchWorker(QThread):
                                                    should_stop=self.isInterruptionRequested, history=sent)
                     response = answer_from_articles(
                         question=self.question, model=self._model_id() or "", articles=article_result.articles,
-                        client=client, history=sent,
+                        client=client, history=sent, should_stop=self.isInterruptionRequested,
                     )
                     if cloud is not None:
                         cloud.log(question=self.question, kind="articles", answer=response.answer,
@@ -260,6 +263,7 @@ class ResearchWorker(QThread):
                 kind=intent.kind,
                 on_progress=progress,
                 history=sent,
+                should_stop=self.isInterruptionRequested,
             )
             if cloud is not None:
                 cloud.log(question=self.question, kind=intent.kind, answer=response.answer, trace=response.tool_trace)
@@ -314,7 +318,7 @@ class MinuteQuestionWorker(QThread):
         try:
             going_out = self.cloud is not None and self.cloud.is_cloud
             sent = turns_to_send(
-                self.history, scope="cases", real_data=self.real_data, to_cloud=self.real_data and going_out,
+                self.history, scope="cases", real_data=self.real_data, to_cloud=going_out,
             )
             # The extract stays this minute's window. Earlier extracts are not resent;
             # only the earlier answers travel, as history.
@@ -327,11 +331,14 @@ class MinuteQuestionWorker(QThread):
             response = answer_from_minute(
                 question=self.question, model=model, candidate=self.candidate,
                 extract=self.extract, client=client, preset=self.preset, history=sent,
+                should_stop=self.isInterruptionRequested,
             )
             if cloud is not None:
                 cloud.log(question=self.question, kind="minute", answer=response.answer, trace=response.tool_trace)
             if not self.isInterruptionRequested():
                 self.answer.emit(response)
+        except InterruptedError:
+            return
         except CloudError as exc:
             if not self.isInterruptionRequested():
                 self.failed.emit(str(exc))

@@ -501,7 +501,7 @@ def test_a_value_still_on_the_wrong_case_after_the_rewrite_is_withheld():
     client = DraftClient(wrong, wrong)
     result = _answer_two(client, "PIP maximum 22 cmH2O", "PIP maximum 41 cmH2O")
     assert len(client.sent) == 2
-    assert "The local model's answer is withheld" in result.answer
+    assert "The answer is withheld" in result.answer
     assert f"{pid_a}: 41 is not in that case's extract" in result.answer
     assert any(step.startswith("withheld:") for step in result.tool_trace)
     assert pid_b in result.answer

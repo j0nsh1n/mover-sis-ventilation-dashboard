@@ -33,6 +33,7 @@ def answer_from_articles(
     *, question: str, model: str, articles: Sequence[Article], client: ChatClient,
     on_status: ProgressCb | None = None,
     history: Sequence[PriorTurn] = (),
+    should_stop: Callable[[], bool] | None = None,
 ) -> AgentResult:
     cited = articles[:ABSTRACT_LIMIT]
     if not cited:
@@ -47,7 +48,7 @@ def answer_from_articles(
         model=model, question=question, session=SessionState(), client=client,
         mode=MODE_ANALYZE, skip_prefetch=True, extra_prefetched=extracts,
         allow_tools=False, source_scope="articles", sources=blocks, on_status=on_status,
-        history=history,
+        history=history, should_stop=should_stop,
     )
 
 
@@ -118,6 +119,7 @@ def answer_from_retrieval(
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
     history: Sequence[PriorTurn] = (),
+    should_stop: Callable[[], bool] | None = None,
 ) -> AgentResult:
     """Answer from at most three source extracts without corpus tools."""
     prefetched = format_grounded_extracts(
@@ -164,6 +166,7 @@ def answer_from_retrieval(
         sources=sources,
         answer_kind=kind,
         history=history,
+        should_stop=should_stop,
     )
 
 
@@ -177,6 +180,7 @@ def answer_from_minute(
     preset: str = "default",
     on_status: ProgressCb | None = None,
     history: Sequence[PriorTurn] = (),
+    should_stop: Callable[[], bool] | None = None,
 ) -> AgentResult:
     """Answer a question about one minute of one case from that minute's extract alone."""
     return run_agent(
@@ -191,4 +195,5 @@ def answer_from_minute(
         allow_tools=False,
         sources=[f"{extract}\n{_case_facts(candidate)}"],
         history=history,
+        should_stop=should_stop,
     )

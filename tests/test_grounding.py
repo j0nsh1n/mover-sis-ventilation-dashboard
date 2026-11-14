@@ -705,3 +705,19 @@ def test_an_age_band_holding_the_stated_age_is_grounded_and_one_missing_it_is_no
     assert find_ungrounded_numbers("SYN0000000001: age 55\u201359.", [_MINUTE_SOURCE]) == []
     assert find_ungrounded_numbers("SYN0000000001: age 60-64.", [_MINUTE_SOURCE]) == ["60", "64"]
     assert find_ungrounded_numbers("SYN0000000001: age 56-60.", [_MINUTE_SOURCE]) == ["56", "60"], "not a band"
+
+
+def test_an_age_band_uses_the_named_cases_age_and_any_source_only_when_unnamed():
+    from src.llm.grounding import _true_age_bands
+
+    younger = "SOURCE EXTRACT PID=ab0123456789cdef\nAge: 50"
+    older = "SOURCE EXTRACT PID=fedcba9876543210\nAge: 60"
+    answer = "ab0123456789cdef was aged 60-64. fedcba9876543210 was aged 60-64."
+    spans = _true_age_bands(answer, [younger, older])
+    assert len(spans) == 1
+    assert answer[spans[0][0]:spans[0][1]] == "60-64"
+    assert spans[0][0] == answer.rindex("60-64")
+    named_only_in_the_previous_sentence = "ab0123456789cdef had a stable course. The patient was aged 60-64."
+    assert _true_age_bands(named_only_in_the_previous_sentence, [younger, older]) == []
+    assert _true_age_bands("aged 55-59.", ["Age: 58"])
+    assert _true_age_bands("aged 60-64.", ["Age: 58"]) == []

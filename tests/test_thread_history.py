@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 
 from src.llm import cloud
-from src.llm.agent import find_unstated_case_facts, run_agent
+from src.llm.agent import WITHHELD_ANSWER, find_unstated_case_facts, run_agent
 from src.llm.cloud import (
     CLAUDE_API,
     REAL_DATA_BLOCKED,
@@ -35,8 +35,9 @@ from src.llm.history import (
 )
 from src.llm.ollama_client import ChatResult, OllamaError
 from src.llm.prompts import VERIFICATION_FOOTER, build_extract_system_prompt
-from src.llm.retrieve import answer_from_minute, answer_from_retrieval
+from src.llm.retrieve import answer_from_articles, answer_from_minute, answer_from_retrieval
 from src.llm.tools import SessionState
+from src.services.articles import Article, ArticleCatalog, ArticleSearchResult
 from src.services.retrieval import RetrievalResult, SearchCandidate
 
 P1X = "P1X"
@@ -82,10 +83,11 @@ def _extract(pid: str) -> str:
 def _turn(
     question: str, answer: str, *pids: str, backend: str = CLAUDE_API, trimmed: bool = True,
     scope: str = "cases", state: str = "answered", sources: tuple[str, ...] = (),
+    demo: bool = False,
 ) -> PriorTurn:
     return PriorTurn(
         question=question, answer=answer, sources=sources, pids=pids, backend=backend,
-        trimmed=trimmed, scope=scope, state=state,
+        trimmed=trimmed, scope=scope, state=state, demo=demo,
     )
 
 
@@ -190,6 +192,13 @@ def test_p2_a_pid_only_in_a_prior_turn_is_still_aliased(monkeypatch, config_dir)
         ("3 yo", "0–4 yo"),
         ("59 yo", "55–59 yo"),
         ("60 yo", "60–64 yo"),
+        ("47yo", "45–49yo"),
+        ("47 y.o.", "45–49 y.o."),
+        ("47-year old", "45–49-year old"),
+        ("47 year-old", "45–49 year-old"),
+        ("47 yrs old", "45–49 yrs old"),
+        ("47 yr old", "45–49 yr old"),
+        ("age of 47", "age of 45–49"),
     ],
 )
 def test_p3_age_forms_are_banded(text, expected):
@@ -200,7 +209,7 @@ def test_p3_age_forms_are_banded(text, expected):
 
 @pytest.mark.parametrize(
     "text",
-    ["58 mmHg", "58 min", "t=58", "PIP 58", "58 mg", "58 bpm", "minute -58", "Case-A"],
+    ["58 mmHg", "58 min", "t=58", "PIP 58", "58 mg", "58 bpm", "minute -58", "1:2", "Case-A"],
 )
 def test_p3_a_banding_probe_leaves_non_ages_alone(text):
     assert Trimmer([]).outbound(text) == text
@@ -209,6 +218,19 @@ def test_p3_a_banding_probe_leaves_non_ages_alone(text):
 def test_p3_a_temperature_like_98_6f_may_be_over_banded():
     # Harmless: a wider band hides a temperature, it does not reveal a case.
     assert Trimmer([]).outbound("98.6F") == "95–99F"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("born 2021-03-04", "born [date not sent]"),
+        ("on 03/04/2021", "on [date not sent]"),
+        ("on 3/4/21", "on [date not sent]"),
+    ],
+)
+def test_typed_dates_are_masked(text, expected):
+    assert Trimmer([]).outbound(text) == expected
+    assert Trimmer([]).outbound(f"extract {text}") == f"extract {expected}"
 
 
 def test_p3_a_banded_restatement_is_not_a_wrong_age():
@@ -264,15 +286,20 @@ def test_p5_an_untrimmed_cloud_turn_is_not_sent_on_real_data(monkeypatch, config
     assert "demo body" not in _outbound(remote)
 
 
-def test_p5_a_trimmed_prior_is_sent_on_fictional_data(monkeypatch, config_dir):
+def test_p5_a_trimmed_prior_is_not_sent_on_fictional_data(monkeypatch, config_dir):
+    """A trimmed cloud turn with no demo flag is real data, so a fictional question leaves it here.
+
+    The old expectation sent that turn unchanged. Its stored answer has the real case
+    numbers put back, and a fictional follow-up used to forward them untrimmed.
+    """
     prior = _turn("trimmed question", "trimmed body age 58", P1X, trimmed=True)
     remote, _session, _result = _ask(
         monkeypatch, reply="The course was stable.", history=(prior,),
         pids=[P1X], question="fictional now", real_data=False,
     )
-    assert "Earlier question: trimmed question" in remote.received[0][1]["content"]
-    assert "age 58" in remote.received[0][2]["content"]
-    assert P1X in _outbound(remote)
+    sent = _outbound(remote)
+    assert "trimmed question" not in sent and "trimmed body" not in sent
+    assert [message["role"] for message in remote.received[0]] == ["system", "user"]
 
 
 def test_p6_real_data_with_cloud_off_raises_before_a_client_and_leaks_no_history(monkeypatch, config_dir):
@@ -331,9 +358,10 @@ def test_p7_three_turn_thread_message_list_and_advice_check_has_no_history(monke
 
 
 def test_p8_fictional_history_goes_out_unchanged_for_every_backend(monkeypatch, config_dir):
+    # These turns were asked on fictional data. A real or unrecorded turn would not go out.
     history = (
-        _turn(f"local ask {P1X}", f"local answer {P1X}", P1X, backend="ollama", trimmed=False),
-        _turn(f"cloud ask {P2X}", f"cloud answer {P2X}", P2X, backend=CLAUDE_API, trimmed=False),
+        _turn(f"local ask {P1X}", f"local answer {P1X}", P1X, backend="ollama", trimmed=False, demo=True),
+        _turn(f"cloud ask {P2X}", f"cloud answer {P2X}", P2X, backend=CLAUDE_API, trimmed=False, demo=True),
     )
     remote, _session, _result = _ask(
         monkeypatch, reply="The course was stable.", history=history, pids=[P1X],
@@ -745,7 +773,7 @@ def test_f10_only_answered_turns_are_sent():
         _turn("fail", "failed", state="failed"),
         _turn("cancel", "cancelled", state="cancelled"),
         _turn("none", "No AI answer.", state="no_model"),
-        _turn("held", "The local model's answer is withheld because it names a case.", state="answered"),
+        _turn("held", WITHHELD_ANSWER.format(problems="- names a case."), state="answered"),
         _turn("ok", "the real body", backend="ollama", trimmed=False),
     )
     recorder = Recorder()
@@ -836,6 +864,7 @@ def test_w3_editing_a_turn_does_not_change_the_history_that_was_recorded(qapp):
 
     view = ResearchWorkspace()
     view.set_models(["test-model"])
+    view.data_is_demo = True
     view.begin_question("first", 1)
     view.set_answer("body 42", 1, backend=CLAUDE_API, trimmed=True, sources=("extract 42",))
     turn = view.conversation.turns[0]
@@ -844,6 +873,7 @@ def test_w3_editing_a_turn_does_not_change_the_history_that_was_recorded(qapp):
     turn.backend = "ollama"
     assert view.conversation.history_before() == (frozen,)
     assert frozen.answer == "body 42" and frozen.backend == CLAUDE_API and frozen.trimmed is True
+    assert frozen.demo is True
     view.close()
     view.deleteLater()
     qapp.processEvents()
@@ -946,3 +976,182 @@ def test_a_case_number_nobody_listed_still_goes_out_aliased_and_comes_back(monke
     run_agent(model="m", question="And then?", session=SessionState(), client=session.client,
               allow_tools=False, sources=[f"PID {listed}."], history=(prior,))
     assert remote.received and all(unlisted not in str(messages) for messages in remote.received)
+
+
+def test_a_real_local_turn_does_not_reach_claude_on_a_demo_question(monkeypatch, config_dir):
+    secret = "REAL-LOCAL-NOTE-77"
+    local = _turn(
+        "what happened in the real case", f"incision note {secret}", P1X,
+        backend="ollama", trimmed=False, demo=False,
+    )
+    remote, _session, _result = _ask(
+        monkeypatch, reply="The course was stable.", history=(local,),
+        pids=[P1X], question="demo follow-up", real_data=False,
+    )
+    sent = _outbound(remote)
+    assert secret not in sent and "what happened in the real case" not in sent
+    assert [message["role"] for message in remote.received[0]] == ["system", "user"]
+
+
+def test_a_demo_turn_is_sent_on_a_demo_question_to_claude(monkeypatch, config_dir):
+    prior = _turn("demo earlier", "demo body stays", P1X, backend="ollama", trimmed=False, demo=True)
+    remote, _session, _result = _ask(
+        monkeypatch, reply="The course was stable.", history=(prior,),
+        pids=[P1X], question="demo follow-up", real_data=False,
+    )
+    assert remote.received[0][1]["content"] == "Earlier question: demo earlier"
+    assert "demo body stays" in remote.received[0][2]["content"]
+
+
+def test_a_demo_turn_is_sent_to_a_local_question():
+    prior = _turn("demo earlier", "demo body stays", P1X, backend="ollama", trimmed=False, demo=True)
+    real = _turn("real earlier", "real body stays", P1X, backend="ollama", trimmed=False, demo=False)
+    recorder = Recorder()
+    run_agent(
+        model="m", question="next", session=SessionState(), client=recorder,
+        skip_prefetch=True, allow_tools=False, extra_prefetched="PIP 22",
+        sources=["PIP 22"], history=(prior, real),
+    )
+    contents = [message["content"] for message in _answer_calls(recorder)[0]]
+    assert "Earlier question: demo earlier" in contents and "demo body stays" in contents
+    assert "Earlier question: real earlier" in contents and "real body stays" in contents
+
+
+def test_an_articles_question_to_a_cloud_service_sends_no_case_number(monkeypatch, config_dir):
+    pid = "ab0123456789cdef"
+    remote = Recorder("The papers describe pressure.")
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kwargs: remote)
+    session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False)
+    article = Article(
+        id="ventilation", title="Fictional ventilation", year=2019, authors="Smith et al.",
+        abstract="PEEP of 5 cmH2O was used.", doi_or_url="https://example.org/ventilation",
+        source="synthetic", rights_note="fictional test article", imported_at="2026-10-17",
+    )
+    history = (
+        _turn(f"earlier about {pid}", f"see {pid} in the note", scope="articles",
+              backend="ollama", trimmed=False, demo=True),
+    )
+    answer_from_articles(
+        question=f"what about {pid}?", model="m", articles=[article],
+        client=session.client, history=history,
+    )
+    sent = _outbound(remote)
+    assert pid not in sent and sent.count("[case number not sent]") >= 3
+    local = Recorder("The papers describe pressure.")
+    answer_from_articles(
+        question=f"what about {pid}?", model="m", articles=[article], client=local, history=history,
+    )
+    assert pid in _outbound(local)
+
+
+def test_a_stop_after_the_first_call_makes_no_second():
+    class StopAfterFirst:
+        def __init__(self):
+            self.calls = 0
+            self.stop = False
+
+        def chat_turn(self, model, messages, **kwargs):
+            self.calls += 1
+            self.stop = True
+            return ChatResult(content="The course was stable.")
+
+    client = StopAfterFirst()
+    with pytest.raises(InterruptedError):
+        answer_from_retrieval(
+            question="What now?", model="m", candidates=[_candidate(P1X)],
+            extracts=[_extract(P1X)], client=client, should_stop=lambda: client.stop,
+        )
+    assert client.calls == 1
+
+
+def test_workers_filter_demo_cloud_history_and_pass_cancellation(monkeypatch, config_dir):
+    # Qt stays imported here, as in the other worker tests, so collecting this file does not load it.
+    import src.desktop.research_workers as workers
+    from src.desktop.research_workers import MinuteQuestionWorker, ResearchWorker
+
+    real = _turn("real q", "REAL-SECRET body", P1X, backend="ollama", trimmed=False, demo=False)
+    demo = _turn("demo q", "demo body stays", P1X, backend="ollama", trimmed=False, demo=True)
+    recorded: list[dict] = []
+    original = workers.turns_to_send
+
+    def spy(history, **kwargs):
+        recorded.append(kwargs)
+        return original(history, **kwargs)
+
+    monkeypatch.setattr(workers, "turns_to_send", spy)
+    chosen = CloudConfig(CLAUDE_API)
+    research = ResearchWorker(
+        SimpleNamespace(), "q", None, None, cloud=chosen, real_data=False, history=(real, demo),
+    )
+    assert [turn.question for turn in research._sent_history()] == ["demo q"]
+    assert recorded[-1]["to_cloud"] is True and recorded[-1]["real_data"] is False
+
+    remote = Recorder("The minute was stable.")
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kwargs: remote)
+    minute = MinuteQuestionWorker(
+        _candidate(P1X), _extract(P1X), "demo minute?", "m",
+        cloud=chosen, real_data=False, history=(real, demo),
+    )
+    minute.run()
+    assert recorded[-1]["to_cloud"] is True and recorded[-1]["real_data"] is False
+    sent = _outbound(remote)
+    assert "REAL-SECRET" not in sent and "real q" not in sent and "demo body stays" in sent
+
+    seen: dict = {}
+
+    def retrieval(**kwargs):
+        seen["retrieval"] = kwargs["should_stop"]
+        return SimpleNamespace(answer="ok", tool_trace=[], sources=())
+
+    def minute_answer(**kwargs):
+        seen["minute"] = kwargs["should_stop"]
+        return SimpleNamespace(answer="ok", tool_trace=[])
+
+    def articles_answer(**kwargs):
+        seen["articles"] = kwargs["should_stop"]
+        return SimpleNamespace(answer="ok", tool_trace=[])
+
+    monkeypatch.setattr(workers, "answer_from_retrieval", retrieval)
+    monkeypatch.setattr(workers, "answer_from_minute", minute_answer)
+    monkeypatch.setattr(workers, "answer_from_articles", articles_answer)
+
+    class Engine:
+        extract_limit = 3
+        preset = "default"
+
+        def search(self, query, on_progress=None, **kwargs):
+            return RetrievalResult(candidates=(_candidate(P1X),))
+
+        def fetch_extracts(self, pids, on_progress=None, session_frames=None):
+            return [_extract(P1X)], list(pids[:1])
+
+        def candidates_for(self, pids):
+            return [_candidate(pid) for pid in pids]
+
+    session = SimpleNamespace(cases=None, timeseries=None, flags=None, episodes=None, events=None)
+    worker = ResearchWorker(Engine(), "now", "m", session, cloud=chosen, real_data=False, history=())
+    worker.run()
+    assert seen["retrieval"] == worker.isInterruptionRequested
+
+    minute2 = MinuteQuestionWorker(
+        _candidate(P1X), _extract(P1X), "q", "m", cloud=chosen, real_data=False,
+    )
+    minute2.run()
+    assert seen["minute"] == minute2.isInterruptionRequested
+
+    article = Article(
+        id="ventilation", title="Fictional ventilation", year=2019, authors="Smith et al.",
+        abstract="PEEP of 5 cmH2O was used.", doi_or_url="https://example.org/ventilation",
+        source="synthetic", rights_note="fictional test article", imported_at="2026-10-17",
+    )
+
+    class Catalog(ArticleCatalog):
+        def __init__(self):
+            pass
+
+        def search(self, query, **kwargs):
+            return ArticleSearchResult(articles=(article,), catalog_count=1)
+
+    papers = ResearchWorker(Catalog(), "papers?", "m", session, cloud=chosen, real_data=False)
+    papers.run()
+    assert seen["articles"] == papers.isInterruptionRequested

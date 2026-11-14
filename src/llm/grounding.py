@@ -636,15 +636,51 @@ def _source_ages(sources: Sequence[str]) -> set[int]:
     return ages
 
 
+def _pid_at(text: str, start: int) -> str | None:
+    """The case named in the sentence around ``start``, else the nearest case before it."""
+    boundaries = ".!?\n"
+    left = max(text.rfind(mark, 0, start) for mark in boundaries)
+    sentence_start = left + 1
+    right_hits = [text.find(mark, start) for mark in boundaries]
+    right_hits = [hit for hit in right_hits if hit >= 0]
+    sentence_end = min(right_hits) if right_hits else len(text)
+    in_sentence = list(PID_TOKEN.finditer(text, sentence_start, sentence_end))
+    if in_sentence:
+        before = [match for match in in_sentence if match.start() <= start]
+        return (before[-1] if before else in_sentence[0]).group(1)
+    preceding = list(PID_TOKEN.finditer(text, 0, sentence_start))
+    if preceding:
+        return preceding[-1].group(1)
+    return None
+
+
+def _ages_for_case(sources: Sequence[str], pid: str | None) -> set[int]:
+    """Ages from the source that names ``pid``. Any source when the band names no case."""
+    if pid is None:
+        return _source_ages(sources)
+    ages: set[int] = set()
+    for text in sources:
+        if any(match.group(1).lower() == pid.lower() for match in PID_TOKEN.finditer(text)):
+            ages.update(_source_ages([text]))
+    return ages
+
+
 def _true_age_bands(answer: str, sources: Sequence[str]) -> list[tuple[int, int]]:
-    """Spans of five-year age bands in ``answer`` that hold an age stated in the sources."""
-    ages = _source_ages(sources)
+    """Spans of five-year age bands in ``answer`` that hold an age stated for that case.
+
+    A band is checked against the source that names the same case: the case number
+    in the band's sentence, or the nearest case number before that sentence. Only
+    a band that names no case falls back to an age from any source.
+    """
     spans = []
     for match in _AGE_BAND.finditer(answer):
         low_s, high_s = (match.group(1), match.group(2)) if match.group(1) else (match.group(3), match.group(4))
         low, high = int(low_s), int(high_s)
-        if low % 5 == 0 and high == low + 4 and any(low <= age <= high for age in ages):
-            start = match.start(1) if match.group(1) else match.start(3)
+        if low % 5 != 0 or high != low + 4:
+            continue
+        start = match.start(1) if match.group(1) else match.start(3)
+        ages = _ages_for_case(sources, _pid_at(answer, start))
+        if any(low <= age <= high for age in ages):
             end = match.end(2) if match.group(1) else match.end(4)
             spans.append((start, end))
     return spans
