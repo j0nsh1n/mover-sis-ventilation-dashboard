@@ -624,19 +624,21 @@ def f_follow_up(run: Run) -> dict[str, Any]:
     research.follow_up_edit.setFocus()
     QTest.keyClicks(research.follow_up_edit, "What do the rows show at this minute?")
     QTest.keyClick(research.follow_up_edit, Qt.Key.Key_Return)
-    run.wait(lambda: research._follow_up_active is None and research.follow_up_answer.isVisible(),
-             "the follow-up answer")
-    answer = research.follow_up_answer.toPlainText()
-    label = research.follow_up_label.text()
+    # The answer lands in the conversation thread as a minute turn; the Signal page points to it.
+    run.wait(lambda: research._follow_up_active is None and len(research.conversation.turns) == turns + 1
+             and research.conversation.turns[-1].state != "running", "the follow-up answer")
+    turn = research.conversation.turns[-1]
+    answer = turn.answer
+    label = turn.context_label
     assert label == f"Minute {minute:g} · {pid}", label
     if research.selected_model():
         assert answer and "Asking" not in answer, answer
     else:
         assert answer == FOLLOW_UP_NO_MODEL, answer
-    assert len(research.conversation.turns) == turns
-    research.signal_scroll.ensureWidgetVisible(research.follow_up_answer)
+    pointer = research.follow_up_label.text()
+    assert pointer == f"Answered in the conversation · {label}", pointer
     run.settle()
-    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer,
+    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer, "follow_up_pointer": pointer,
             "conversation_turns": len(research.conversation.turns)}
 
 
