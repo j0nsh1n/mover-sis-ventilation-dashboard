@@ -365,3 +365,27 @@ def test_follow_up_and_conversation_questions_never_reach_each_other(workspace, 
     assert "CONVERSATION_" not in later and "FOLLOW_UP_QUESTION_SENTINEL" not in later
     assert "FOLLOW_UP_ANSWER_SENTINEL" not in later
     assert workspace.conversation.turns == []
+
+
+@pytest.mark.parametrize("demo", [True, False])
+def test_a_minute_question_goes_to_the_cloud_only_for_fictional_data(workspace, qapp, monkeypatch, demo):
+    from src.llm import cloud
+
+    sent: list[list[dict]] = []
+
+    class Remote:
+        def chat_turn(self, model, messages, **kwargs):
+            if kwargs.get("format"):
+                return ChatResult(content=json.dumps(dict.fromkeys(kwargs["format"]["required"], "description")))
+            sent.append(messages)
+            return ChatResult(content="The extract lists PIP 22 at the selected minute.")
+
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **_kwargs: Remote())
+    use_client(monkeypatch, None)  # the local model must not be asked either way
+    workspace.cloud = cloud.CloudConfig(cloud.CLAUDE_API)
+    workspace.data_is_demo = demo
+    ask(workspace, qapp, model="Claude API · claude-opus-5-5")
+    if demo:
+        assert len(sent) == 1 and "PIP 22" in workspace.follow_up_answer.toPlainText()
+    else:
+        assert sent == [] and cloud.REAL_DATA_BLOCKED in workspace.follow_up_answer.toPlainText()

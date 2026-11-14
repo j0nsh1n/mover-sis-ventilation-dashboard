@@ -72,6 +72,7 @@ def test_a_settings_file_in_todays_format_loads_into_every_field_unchanged(page,
         "emr_dir": str(env.emr), "wave_dir": "", "processed_dir": str(env.processed),
         "ollama_models_dir": str(env.models), "ollama_model": "demo:3b",
         "ollama_embed_model": "nomic-embed-text", "theme": "dark", "preset": "strict",
+        "ai_backend": "ollama", "cloud_model": "", "cloud_real_data": "",
     }
     assert not page.is_dirty()
     assert page.save_button.isEnabled() is False
@@ -594,3 +595,34 @@ def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_
     assert page.discard_button.geometry().top() == page.status.geometry().top() or \
         abs(page.discard_button.geometry().center().y() - page.status.geometry().center().y()) < 30
     apply_theme(qapp, "dark")
+
+
+def test_the_answer_service_is_local_by_default_and_saves_only_what_was_chosen(page, env):
+    assert page.combo_service.currentData() == "ollama"
+    assert not page.cloud_model_row.isEnabled() and not page.real_data_row.isEnabled()
+    assert page.combo_real_data.currentData() == "", "real cases are not sent unless the owner chooses it"
+    page.combo_service.setCurrentIndex(page.combo_service.findData("claude_cli"))
+    assert page.cloud_model_row.isEnabled() and page.real_data_row.isEnabled()
+    assert page.changes() == ["answer service"]
+    page.edit_cloud_model.setText("sonnet")
+    assert page.save() is True
+    saved = json.loads(settings_path().read_text(encoding="utf-8"))
+    assert (saved["ai_backend"], saved["cloud_model"]) == ("claude_cli", "sonnet") and "cloud_real_data" not in saved
+    page.combo_real_data.setCurrentIndex(page.combo_real_data.findData("on"))
+    assert page.save() is True and json.loads(settings_path().read_text(encoding="utf-8"))["cloud_real_data"] is True
+    page.combo_service.setCurrentIndex(page.combo_service.findData("ollama"))
+    page.combo_real_data.setCurrentIndex(page.combo_real_data.findData(""))
+    page.edit_cloud_model.setText("")
+    assert page.save() is True
+    saved = json.loads(settings_path().read_text(encoding="utf-8"))
+    assert not {"ai_backend", "cloud_model", "cloud_real_data"} & set(saved), "back to local saves no cloud keys"
+
+
+def test_the_page_never_asks_for_a_key_and_says_where_one_is_read(page, env, monkeypatch):
+    from PySide6.QtWidgets import QLineEdit
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    page.combo_service.setCurrentIndex(page.combo_service.findData("claude_api"))
+    assert "ANTHROPIC_API_KEY" in page.service_row.note.text() and page.service_row.note.property("state") == "problem"
+    names = [edit.accessibleName().lower() for edit in page.findChildren(QLineEdit)]
+    assert not any("key" in name for name in names)

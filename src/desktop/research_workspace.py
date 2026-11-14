@@ -49,6 +49,7 @@ from src.desktop.case_page import (
 from src.desktop.charts import BASE_TRACKS, FocusedSignalChart, focused_minute_rows, signal_info
 from src.desktop.evidence_trail import GUTTER, Sparkline, TrailStep
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
+from src.llm.cloud import CloudConfig
 from src.desktop.fonts import make_tabular
 from src.desktop.marks import MissingCellDelegate, mark_missing, severity_glyph
 from src.desktop.research_controls import LocalModelButton, ScopeSwitch, TraceButton
@@ -242,6 +243,8 @@ class ResearchWorkspace(QWidget):
         self.result: RetrievalResult | None = None
         # Whether the data on screen is the fictional demo data; the window sets it, and each new question keeps it
         self.data_is_demo = False
+        # The answer service chosen in Settings; the window sets it
+        self.cloud: CloudConfig | None = None
         self._question = ""
         self._scope = "Cases"
         self.article_result: ArticleSearchResult | None = None
@@ -1984,6 +1987,7 @@ class ResearchWorkspace(QWidget):
         worker = MinuteQuestionWorker(
             self._case_views[self._current_pid].candidate, self._minute_extract(self._current_pid, minute), question, model,
             self._rule_catalog.preset if self._rule_catalog is not None else "default", parent=self,
+            cloud=self.cloud, real_data=not self.data_is_demo,
         )
         self._follow_up_workers[request_id] = worker
         worker.answer.connect(lambda response: self._on_follow_up(request_id, str(getattr(response, "answer", "") or "No answer was returned.")))
@@ -1992,7 +1996,8 @@ class ResearchWorkspace(QWidget):
         self.follow_up_button.setEnabled(False)
         self.follow_up_cancel.show()
         self.follow_up_edit.setEnabled(False)
-        self._show_follow_up("Asking the local model…")
+        self._show_follow_up(f"Asking {self.cloud.label}…" if self.cloud is not None and self.cloud.is_cloud
+                             else "Asking the local model…")
         worker.start()
 
     def _on_follow_up(self, request_id: int, text: str) -> None:

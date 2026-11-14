@@ -20,6 +20,9 @@ KNOWN_KEYS = frozenset(
         "ollama_model",
         "ollama_embed_model",
         "ollama_base_url",
+        "ai_backend",  # ollama | claude_api | claude_cli | codex_cli
+        "cloud_model",
+        "cloud_real_data",  # True only after the owner checked the MOVER data use agreement
         "theme",  # light | dark | system
         "setup_complete",
         "n_cases",

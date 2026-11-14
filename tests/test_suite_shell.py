@@ -829,3 +829,31 @@ def test_escape_from_rules_opened_on_the_rail_returns_focus_to_the_rail_button(w
     qapp.processEvents()
     assert not drawer.is_open
     assert qapp.focusWidget() is rules
+
+
+def test_a_cloud_service_answers_fictional_data_and_stays_off_for_real_cases(window, qapp):
+    from src.llm.cloud import REAL_DATA_BLOCKED
+    from src.user_settings import update_settings
+
+    update_settings(ai_backend="claude_api")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    assert window.research.selected_model() == "Claude API · claude-opus-5-5"
+    assert "leave this computer" in window.research.model_status.text()
+    window.research.begin_question("Fictional?", 1)
+    assert window.research.conversation.turn_widgets[1].badge_label.text().startswith("Question 1 · Claude API")
+    window._shown_data_is_demo = False
+    window._show_ai_service()
+    assert window.research.selected_model() is None, "no model: the question gets search results, no answer"
+    assert window.research.model_status.text() == REAL_DATA_BLOCKED
+    update_settings(cloud_real_data=True)
+    window._show_ai_service()
+    assert window.research.selected_model() == "Claude API · claude-opus-5-5"
+
+
+def test_a_question_on_real_cases_is_routed_as_real_data(window):
+    window._shown_data_is_demo = False
+    assert window._answer_route(articles=False)["real_data"] is True
+    assert window._answer_route(articles=True)["real_data"] is False, "published abstracts are not MOVER data"
+    window._shown_data_is_demo = True
+    assert window._answer_route(articles=False)["real_data"] is False

@@ -30,7 +30,7 @@ from src.llm.grounding import (
     find_ungrounded_numbers,
     remove_ungrounded_numbers,
 )
-from src.llm.ollama_client import ChatResult, OllamaClient, OllamaError
+from src.llm.ollama_client import ChatClient, ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     ARTICLE_SYSTEM_PROMPT,
     ARTICLE_VERIFICATION_FOOTER,
@@ -758,7 +758,7 @@ def run_agent(
     model: str,
     question: str,
     session: SessionState,
-    client: OllamaClient | None = None,
+    client: ChatClient | None = None,
     mode: str = MODE_CHAT,
     max_rounds: int = MAX_TOOL_ROUNDS,
     temperature: float | None = None,
@@ -770,7 +770,8 @@ def run_agent(
     source_scope: Literal["cases", "articles"] = "cases",
     answer_kind: Literal["question", "scenario", "compare"] = "question",
 ) -> AgentResult:
-    client = client or OllamaClient()
+    if client is None:
+        client = OllamaClient()
     mode = (mode or MODE_CHAT).lower()
     # Analyze slightly warmer (scheduler suggest mode); chat/compare stay low for tools
     if temperature is None:

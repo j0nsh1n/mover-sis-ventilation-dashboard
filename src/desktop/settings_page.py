@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.accessibility import announce
+from src.llm.cloud import BACKEND_LABELS, BACKENDS, CLOUD_BACKENDS, DEFAULT_MODELS, OLLAMA, service_note, service_ready
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
     FolderRow,
@@ -57,7 +58,7 @@ from src.user_settings import (
 
 SECTIONS = (
     ("Data sources", "Where MOVER Suite reads its tables. Files are read in place and never uploaded."),
-    ("Local AI", "Optional. Models run on this computer through Ollama; case text does not leave it."),
+    ("Local AI", "Optional. Ollama runs models on this computer. A cloud service is used only when chosen here."),
     ("Appearance", "How the window looks. Charts follow the same choice."),
     ("Keyboard", "Every command is also in the Find box (Ctrl+K)."),
     ("About", "The version of MOVER Suite and where its parts come from."),
@@ -287,6 +288,30 @@ class SettingsPage(QWidget):
 
     def _ai_section(self) -> QWidget:
         page, layout = self._section_page(1)
+        self.service_row = SettingRow(
+            "Answer service", "", "Where research answers come from. Search and case ranking stay on this computer.")
+        self.combo_service = self._combo("Answer service")
+        for backend in BACKENDS:
+            self.combo_service.addItem(BACKEND_LABELS[backend], backend)
+        self.combo_service.currentIndexChanged.connect(self._service_changed)
+        self.service_row.add_control(self.combo_service)
+        layout.addWidget(self.service_row)
+        self.cloud_model_row = SettingRow("Cloud model", "", "Blank uses the service's own default.")
+        self.edit_cloud_model = QLineEdit()
+        self.edit_cloud_model.setAccessibleName("Cloud model")
+        self.edit_cloud_model.textChanged.connect(self._edited)
+        self.cloud_model_row.add_control(self.edit_cloud_model)
+        layout.addWidget(self.cloud_model_row)
+        self.real_data_row = SettingRow(
+            "Real MOVER cases", "",
+            "Fictional demo and practice data may always use the chosen cloud service.")
+        self.combo_real_data = self._combo("Real MOVER cases")
+        self.combo_real_data.addItem("Not sent to a cloud service", "")
+        self.combo_real_data.addItem("Sent trimmed: case aliases, age bands, minutes from incision", "on")
+        self.combo_real_data.currentIndexChanged.connect(self._edited)
+        self.real_data_row.add_control(self.combo_real_data)
+        self.real_data_row.set_note("Check the MOVER data use agreement before sending real cases.")
+        layout.addWidget(self.real_data_row)
         self.row_models = FolderRow(
             "Models directory", "",
             "Models stay on disk, not inside the app. The app sets OLLAMA_MODELS to this folder when it starts Ollama.",
@@ -310,8 +335,23 @@ class SettingsPage(QWidget):
         self.embed_ready = embed
         layout.addWidget(embed)
         layout.addStretch(1)
-        self._tab_stops += [self.row_models.edit, self.row_models.choose_button, self.combo_model, self.edit_embed]
+        self._tab_stops += [self.combo_service, self.edit_cloud_model, self.combo_real_data,
+                            self.row_models.edit, self.row_models.choose_button, self.combo_model, self.edit_embed]
+        self._show_service()
         return page
+
+    def _service_changed(self) -> None:
+        self._show_service()
+        self._edited()
+
+    def _show_service(self) -> None:
+        """The cloud rows follow the chosen service, and its note says what choosing it means."""
+        backend = self.combo_service.currentData() or OLLAMA
+        cloud = backend in CLOUD_BACKENDS
+        self.cloud_model_row.setEnabled(cloud)
+        self.real_data_row.setEnabled(cloud)
+        self.edit_cloud_model.setPlaceholderText(DEFAULT_MODELS.get(backend) or "the service's default")
+        self.service_row.set_note(service_note(backend), "note" if service_ready(backend) else "problem")
 
     def _appearance_section(self) -> QWidget:
         page, layout = self._section_page(2)
@@ -417,6 +457,9 @@ class SettingsPage(QWidget):
             "ollama_models_dir": self.row_models.text(),
             "ollama_model": self.combo_model.currentText().strip(),
             "ollama_embed_model": self.edit_embed.text().strip() or "nomic-embed-text",
+            "ai_backend": self.combo_service.currentData() or OLLAMA,
+            "cloud_model": self.edit_cloud_model.text().strip(),
+            "cloud_real_data": self.combo_real_data.currentData() or "",
             "theme": theme if theme in (THEME_LIGHT, THEME_DARK, THEME_SYSTEM) else THEME_SYSTEM,
             "preset": self.combo_preset.currentData() or "default",
         }
@@ -434,6 +477,9 @@ class SettingsPage(QWidget):
             theme_index = self.combo_theme.findData(saved["theme"])
             self.combo_theme.setCurrentIndex(theme_index if theme_index >= 0 else self.combo_theme.findData(THEME_SYSTEM))
             self.edit_embed.setText(saved["ollama_embed_model"])
+            self.combo_service.setCurrentIndex(max(0, self.combo_service.findData(saved["ai_backend"])))
+            self.edit_cloud_model.setText(saved["cloud_model"])
+            self.combo_real_data.setCurrentIndex(max(0, self.combo_real_data.findData(saved["cloud_real_data"])))
             self._load_models(saved["ollama_model"], saved["ollama_embed_model"])
             self.refresh_in_use()
             self._refresh_demo_note()

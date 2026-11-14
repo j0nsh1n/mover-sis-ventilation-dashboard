@@ -55,6 +55,7 @@ from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.__version__ import get_version
+from src.llm.cloud import BACKEND_LABELS, REAL_DATA_BLOCKED, cloud_config, may_send
 from src.runtime_paths import (
     apply_persisted_settings,
     configure_emr_directory,
@@ -463,6 +464,7 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self.research = ResearchWorkspace()
         self.research.data_is_demo = self._shown_data_is_demo
+        self.research.cloud = cloud_config(load_settings())
         self._article_catalog = None
         try:
             self._article_catalog = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3")
@@ -659,6 +661,7 @@ class MainWindow(QMainWindow):
         # From here on whatever is shown comes from the folders in use now.
         self._shown_data_is_demo = demo_data_in_use()
         self.research.data_is_demo = self._shown_data_is_demo
+        self._show_ai_service()
         # The same case number in another folder is another record, so the Medication page must read it again.
         self._medication_shown = False
         self.cases = self.ts = self.flags = self.episodes = self.events = None
@@ -961,6 +964,7 @@ class MainWindow(QMainWindow):
             ready = False
         self.research.set_setup_required(not ready)
         self._sync_path_fields_from_runtime()
+        self._show_ai_service()
         self._set_status("Settings saved" if ready else "EMR setup required")
         saved = f"Saved: {', '.join(changed) if changed else 'nothing had changed'}."
         page = self._settings_page()
@@ -1287,6 +1291,27 @@ class MainWindow(QMainWindow):
             research.start_action.setEnabled(not busy)
             research.stop_action.setEnabled(False)
             research.unload_action.setEnabled(False)
+        self._show_ai_service()
+
+    def _answer_route(self, *, articles: bool) -> dict:
+        """Where this question's answer comes from, and whether its data counts as real MOVER cases."""
+        return {"cloud": self.research.cloud, "real_data": not articles and not self._shown_data_is_demo}
+
+    def _show_ai_service(self) -> None:
+        """A chosen cloud service replaces the Ollama models in the menu, or says why it is off for this data."""
+        config = cloud_config(load_settings())
+        self.research.cloud = config
+        if not config.is_cloud:
+            return
+        if may_send(config, real_data=not self._shown_data_is_demo):
+            self.research.set_models([config.label], config.label)
+            self._set_model_state("ready")
+            self.research.set_model_status(
+                f"Answers from {config.label}: each question and its extracts leave this computer.")
+        else:
+            self.research.set_models([], placeholder=f"({BACKEND_LABELS[config.backend]} is off for real cases)")
+            self._set_model_state("stopped")
+            self.research.set_model_status(REAL_DATA_BLOCKED)
 
     def _ollama_start(self) -> None:
         self._start_ollama_worker("start")
@@ -1475,6 +1500,7 @@ class MainWindow(QMainWindow):
             self.research.selected_model(),
             None if articles else self._make_session_snapshot(),
             parent=self,
+            **self._answer_route(articles=articles),
         )
         self._research_workers[request_id] = self._research_worker
         self._research_worker.progress.connect(

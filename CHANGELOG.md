@@ -9,6 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Cloud answers, while the local model is worked on: Settings, Local AI, Answer
+  service offers Claude API (key read from `ANTHROPIC_API_KEY`, never saved),
+  Claude Code CLI or Codex CLI next to the local Ollama model. Each answer names
+  the service and passes the same answer check. Real MOVER cases are not sent
+  unless real-data sending is switched on in Settings; then they go trimmed (case
+  aliases, 5-year age bands, minutes from incision, no clock times). Every cloud
+  answer is logged on this computer for training a local model, in the settings
+  folder's `ai-log`.
+
 - Fictional demo data: setup (on first run, or "Run data setup…" in Settings)
   offers "Try with fictional demo data", which builds a small invented dataset on this computer so the app
   can be tried without the MOVER dataset. While it is in use, the top bar, the

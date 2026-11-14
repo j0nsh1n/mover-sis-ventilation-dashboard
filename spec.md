@@ -5,7 +5,8 @@
 Researchers need a **local, offline desktop tool** to explore de-identified MOVER SIS
 perioperative records (UC Irvine): align ventilator/vitals per surgery (`PID`), surface
 transparent rule-based anomaly flags, and discuss **documented management patterns** via
-a local LLM—without sending case text to the cloud or implying clinical decision support.
+a local LLM—without implying clinical decision support. Case text leaves the computer only through the
+opt-in cloud answer services below.
 
 ## Intended Users
 
@@ -85,6 +86,14 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
 - Ollama lifecycle: Start / Stop / Unload / Refresh; models dir via settings → `OLLAMA_MODELS`.
 - Ollama HTTP must default to **loopback only** (case text stays local unless an explicit
   env override is set for remote).
+- Cloud answer services (owner decision 2026-11-13, while the local model is worked on).
+  Local AI stays the default. A cloud AI (Claude API, Claude Code CLI, Codex CLI) is used
+  only when chosen in Settings, and every answer from it says so. With real MOVER data,
+  nothing goes to a cloud AI unless the owner has switched on real-data sending; then only
+  trimmed extracts go: case aliases, age bands, minutes from incision, flagged minutes, no
+  free text. Cloud answers pass the same answer check as local ones. Each one is logged on
+  this computer for training a local model. Code: `src/llm/cloud.py`; tests:
+  `tests/test_cloud.py`. The Claude API key is read from `ANTHROPIC_API_KEY` and never saved.
 - Answer gate rejects prescriptive clinical directives and unstated case facts where
   implemented in `src/llm/agent.py` / `prompts.py`. A value, minute or flag stated for a
   case must be in that case's own extract (`src/llm/attribution.py`); a cut-off or
@@ -200,13 +209,17 @@ a local LLM—without sending case text to the cloud or implying clinical decisi
   - **GitHub Pages** (small signed manifest) and **public GitHub Releases**
     (versioned Linux and Windows packages) for installed app updates
   - No cloud LLM/email required for core product
+  - **Claude API, Claude Code CLI, Codex CLI** (optional, opt-in cloud answers; see
+    Functional requirements)
 
 ## Security & Privacy
 
 - No secrets in source. Prefer environment variables / local settings JSON for paths.
 - `.streamlit/secrets.toml` is gitignored (Streamlit only if used).
 - Case text must not leave the machine via remote Ollama unless explicit override env is set
-  (see `src/llm/ollama_client.py` and `tests/test_local_only.py`).
+  (see `src/llm/ollama_client.py` and `tests/test_local_only.py`). The opt-in cloud answer
+  services are the one other route; real MOVER cases take it only when the owner has
+  switched on real-data sending, and then only trimmed (`src/llm/cloud.py`).
 - Update requests carry no case data, research data, telemetry, or machine ID.
   The updater verifies an Ed25519-signed manifest using a pinned public key,
   then checks package size and SHA256. Windows install and rollback run in CI.

@@ -3,6 +3,8 @@ numpy==2.5.3
 pyarrow==25.0.1
 plotly==7.1.0
 pyyaml==6.0.3
+# Claude API answers while the local model is worked on (official SDK; key from ANTHROPIC_API_KEY)
+anthropic==2.8.0
 
 # Desktop app (primary UI)
 PySide6==6.11.2

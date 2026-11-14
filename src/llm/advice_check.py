@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from src.llm.ollama_client import OllamaClient
+from src.llm.ollama_client import ChatClient
 from src.llm.prompts import ADVICE_CHECK_SYSTEM, advice_check_message
 from src.llm.schemas import strip_think
 
@@ -65,7 +65,7 @@ def split_sentences(text: str) -> list[str]:
 
 
 def check_advice(
-    text: str, client: OllamaClient, model: str, *, timeout_s: float = TIMEOUT_S
+    text: str, client: ChatClient, model: str, *, timeout_s: float = TIMEOUT_S
 ) -> AdviceCheck:
     """Label each sentence of ``text`` in one model call. Never raises."""
     if not model:
@@ -75,7 +75,7 @@ def check_advice(
 
 def label_sentences(
     sentences: Sequence[str],
-    client: OllamaClient,
+    client: ChatClient,
     model: str,
     *,
     timeout_s: float = TIMEOUT_S,

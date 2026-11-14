@@ -8,8 +8,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from src.llm.cloud import CloudConfig, CloudError, CloudSession, open_cloud_session
 from src.llm.intent import Intent, classify
-from src.llm.ollama_client import OllamaClient
+from src.llm.ollama_client import ChatClient, OllamaClient
 from src.llm.retrieve import answer_from_articles, answer_from_minute, answer_from_retrieval
 from src.services.articles import ArticleCatalog
 from src.services.case_fetch import fetch_cases
@@ -22,6 +23,17 @@ from src.services.retrieval import (
 )
 
 COMPARE_MINIMUM = 2
+ANSWER_TIMEOUT_S = 300.0
+
+
+def _answer_client(cloud: CloudConfig | None, *, real_data: bool, pids: list[str],
+                   should_stop) -> tuple[ChatClient, CloudSession | None]:
+    """The local client, or a cloud session that refuses before building anything when the data may not go."""
+    if cloud is None or not cloud.is_cloud:
+        return OllamaClient(timeout_s=ANSWER_TIMEOUT_S), None
+    session = open_cloud_session(cloud, real_data=real_data, pids=pids, timeout_s=ANSWER_TIMEOUT_S,
+                                 should_stop=should_stop)
+    return session.client, session
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
@@ -111,12 +123,19 @@ class ResearchWorker(QThread):
     answer = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, engine: RetrievalEngine | ArticleCatalog, question: str, model: str | None, session, parent=None):
+    def __init__(self, engine: RetrievalEngine | ArticleCatalog, question: str, model: str | None, session, parent=None,
+                 *, cloud: CloudConfig | None = None, real_data: bool = True):
         super().__init__(parent)
         self.engine = engine
         self.question = question
         self.model = model
         self.session = session
+        self.cloud = cloud
+        # Unless told otherwise, case data counts as real: the cloud then stays shut without the owner's switch.
+        self.real_data = real_data
+
+    def _model_id(self) -> str | None:
+        return self.cloud.model_id if self.cloud is not None and self.cloud.is_cloud else self.model
 
     def run(self) -> None:
         try:
@@ -126,10 +145,16 @@ class ResearchWorker(QThread):
                     return
                 self.shortlist.emit(article_result)
                 if self.model and article_result.articles:
+                    # Article abstracts are published text, not MOVER data.
+                    client, cloud = _answer_client(self.cloud, real_data=False, pids=[],
+                                                   should_stop=self.isInterruptionRequested)
                     response = answer_from_articles(
-                        question=self.question, model=self.model, articles=article_result.articles,
-                        client=OllamaClient(timeout_s=300.0),
+                        question=self.question, model=self._model_id() or "", articles=article_result.articles,
+                        client=client,
                     )
+                    if cloud is not None:
+                        cloud.log(question=self.question, kind="articles", answer=response.answer,
+                                  trace=response.tool_trace)
                     if not self.isInterruptionRequested():
                         self.answer.emit(response)
                 return
@@ -165,19 +190,25 @@ class ResearchWorker(QThread):
                 next(candidate for candidate in chosen if candidate.pid == pid)
                 for pid in fetched
             ]
+            client, cloud = _answer_client(self.cloud, real_data=self.real_data, pids=pids,
+                                           should_stop=self.isInterruptionRequested)
             response = answer_from_retrieval(
                 question=self.question,
-                model=self.model,
+                model=self._model_id() or "",
                 candidates=candidates,
                 extracts=extracts,
-                client=OllamaClient(timeout_s=300.0),
+                client=client,
                 preset=self.engine.preset,
                 kind=intent.kind,
                 on_progress=progress,
             )
+            if cloud is not None:
+                cloud.log(question=self.question, kind=intent.kind, answer=response.answer, trace=response.tool_trace)
             self.answer.emit(response)
         except InterruptedError:
             pass
+        except CloudError as exc:  # written for the reader and never holding a key
+            self.failed.emit(str(exc))
         except Exception as exc:
             from src.desktop.errors import error_message
 
@@ -208,22 +239,34 @@ class MinuteQuestionWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, candidate: SearchCandidate, extract: str, question: str, model: str,
-                 preset: str = "default", parent=None):
+                 preset: str = "default", parent=None, *, cloud: CloudConfig | None = None, real_data: bool = True):
         super().__init__(parent)
         self.candidate = candidate
         self.extract = extract
         self.question = question
         self.model = model
         self.preset = preset
+        self.cloud = cloud
+        self.real_data = real_data
 
     def run(self) -> None:
         try:
+            going_out = self.cloud is not None and self.cloud.is_cloud
+            client, cloud = _answer_client(self.cloud, real_data=self.real_data,
+                                           pids=[self.candidate.pid] if going_out else [],
+                                           should_stop=self.isInterruptionRequested)
+            model = self.cloud.model_id if cloud is not None and self.cloud is not None else self.model
             response = answer_from_minute(
-                question=self.question, model=self.model, candidate=self.candidate,
-                extract=self.extract, client=OllamaClient(timeout_s=300.0), preset=self.preset,
+                question=self.question, model=model, candidate=self.candidate,
+                extract=self.extract, client=client, preset=self.preset,
             )
+            if cloud is not None:
+                cloud.log(question=self.question, kind="minute", answer=response.answer, trace=response.tool_trace)
             if not self.isInterruptionRequested():
                 self.answer.emit(response)
+        except CloudError as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))
         except Exception as exc:
             if not self.isInterruptionRequested():
                 from src.desktop.errors import error_message

@@ -15,7 +15,7 @@ import pandas as pd
 from src.guardrails.exceptions import PipelineError
 from src.llm.agent import AgentResult, ProgressCb, run_agent
 from src.llm.case_context import load_medications
-from src.llm.ollama_client import OllamaClient
+from src.llm.ollama_client import ChatClient
 from src.llm.prompts import MODE_ANALYZE
 from src.llm.tools import SessionState
 from src.services.retrieval import (
@@ -29,7 +29,7 @@ RetrieveProgressCb = Callable[[RetrievalProgress], None]
 
 
 def answer_from_articles(
-    *, question: str, model: str, articles: Sequence[Article], client: OllamaClient,
+    *, question: str, model: str, articles: Sequence[Article], client: ChatClient,
     on_status: ProgressCb | None = None,
 ) -> AgentResult:
     cited = articles[:ABSTRACT_LIMIT]
@@ -108,7 +108,7 @@ def answer_from_retrieval(
     model: str,
     candidates: Sequence[SearchCandidate],
     extracts: Sequence[str],
-    client: OllamaClient,
+    client: ChatClient,
     preset: str = "default",
     mode: str = MODE_ANALYZE,
     kind: Literal["question", "scenario", "compare"] = "question",
@@ -168,7 +168,7 @@ def answer_from_minute(
     model: str,
     candidate: SearchCandidate,
     extract: str,
-    client: OllamaClient,
+    client: ChatClient,
     preset: str = "default",
     on_status: ProgressCb | None = None,
 ) -> AgentResult:
