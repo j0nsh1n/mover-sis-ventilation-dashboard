@@ -49,7 +49,7 @@ class ControlledSearch(QThread):
     failed = Signal(str)
     gates: dict[str, threading.Event] = {}
 
-    def __init__(self, engine, question, model, session, parent=None):
+    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True, history=()):
         super().__init__(parent)
         self.question = question
 
@@ -79,7 +79,7 @@ def test_cancel_then_new_question_runs_and_ignores_old_results(window, monkeypat
     new = win._research_worker
     try:
         assert new is not old
-        assert win.research.question_edit.text() == "new"
+        assert win.research.conversation.turns[-1].question == "new"
         ControlledSearch.gates["new"].set()
         pump(app, lambda: not new.isRunning())
         answer = win.research.answer_text.toPlainText()
@@ -156,6 +156,8 @@ def test_absent_processed_autoload_names_path_after_setup(window, monkeypatch, t
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(root))
     monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
     win._autoload_processed()
+    assert dialogs == []
+    win._autoload_processed(asked=True)
     assert len(dialogs) == 1
     assert "Missing processed files: cases.parquet" in dialogs[0]
     assert "choose Run pipeline" in dialogs[0]
@@ -177,7 +179,7 @@ class ProgressThenAnswer(QThread):
     release = threading.Event()
     answers = True
 
-    def __init__(self, engine, question, model, session, parent=None):
+    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True, history=()):
         super().__init__(parent)
 
     def run(self):
@@ -203,7 +205,9 @@ def test_progress_line_clears_when_the_search_ends(window, monkeypatch, syntheti
     pump(app, lambda: not worker.isRunning() and not win.research._searching)
     status = win.research.status_label.text()
     assert "Rewriting" not in status and "Model round" not in status
-    assert status == "Search finished."
+    # The turn already says whether the search finished, so the board does not repeat "Search finished."
+    assert "Search finished." not in status
+    assert status == ""
     # The turn's saved board does not bring the running step back either
     turn = win.research.conversation.turns[-1]
     assert "Rewriting" not in " ".join(turn.board.labels)

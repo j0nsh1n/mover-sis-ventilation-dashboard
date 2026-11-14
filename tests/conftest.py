@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import os
-import sys
-import warnings
-from pathlib import Path
 
-import pandas as pd
-import pytest
+# Tests must never show windows on the developer's desktop.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ.pop("DISPLAY", None)
+os.environ.pop("WAYLAND_DISPLAY", None)
 
-from src.config import load_thresholds
+import sys  # noqa: E402
+import warnings  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+
+from src.config import load_thresholds  # noqa: E402
 
 # Temporary, Windows CI only: the Windows job crashes before pytest prints why its tests failed, so each failure,
 # each test's start and the widgets left alive before a theme change are written out as they happen.
@@ -124,6 +130,60 @@ def fresh_settings_root(monkeypatch):
 
     monkeypatch.setattr(user_settings, "_config_roots", {})
     monkeypatch.setattr(user_settings, "_migration_note", None)
+
+
+class MemoryPasswordStore:
+    """Stands in for KWallet / Credential Manager, so no test reads or writes the real password store."""
+
+    priority = 1
+
+    def __init__(self):
+        self.secrets: dict[tuple[str, str], str] = {}
+        self.broken = False
+
+    def _check(self):
+        from keyring.errors import KeyringLocked
+
+        if self.broken:
+            raise KeyringLocked("locked")
+
+    def get_password(self, service, user):
+        self._check()
+        return self.secrets.get((service, user))
+
+    def set_password(self, service, user, password):
+        self._check()
+        self.secrets[(service, user)] = password
+
+    def delete_password(self, service, user):
+        from keyring.errors import PasswordDeleteError
+
+        self._check()
+        if self.secrets.pop((service, user), None) is None:
+            raise PasswordDeleteError("not found")
+
+
+@pytest.fixture(autouse=True)
+def password_store(monkeypatch):
+    """Every test gets an empty in-memory password store and no Claude API key in its environment."""
+    import keyring
+
+    store = MemoryPasswordStore()
+    monkeypatch.setattr(keyring, "get_keyring", lambda: store)
+    for name in ("get_password", "set_password", "delete_password"):
+        monkeypatch.setattr(keyring, name, getattr(store, name))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from src.llm import cloud
+
+    monkeypatch.setattr(cloud, "_stored", None)
+
+    def no_network(*_args, **_kwargs):
+        raise AssertionError("a test tried to build a real Claude API client")
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", no_network)
+    return store
 
 
 @pytest.fixture

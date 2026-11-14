@@ -9,6 +9,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming. Research answers are a chat thread: the ask box sits at the bottom, with Cases/Articles and the AI menu beside it. Each turn folds Sources and Checks (amber when a check found a problem). Clear board empties the evidence and keeps the thread; New thread clears both. A minute question from the Signal page is a turn in that thread.
+
+- Cloud answers, while the local model is worked on: the research page's AI menu
+  lists Ollama's models, the Claude API's models (asked from the API), Claude Code
+  and Codex, grouped by service; a pick answers from the next question on and is
+  remembered. Rows that cannot answer now are greyed out with the reason (no key,
+  command not found, off for real cases). The Claude API key is pasted in Settings,
+  AI and kept in the system password store (KWallet / Secret Service, Windows
+  Credential Manager), never in the settings file; an exported `ANTHROPIC_API_KEY`
+  comes first. The CLIs answer with their own logins: an exported API key is not
+  passed to them. Each answer names the service and passes the same answer check. Real MOVER cases are not sent
+  unless real-data sending is switched on in Settings; then they go trimmed (case
+  aliases, 5-year age bands, minutes from incision, no clock times). Every cloud
+  answer is logged on this computer for training a local model, in the settings
+  folder's `ai-log`. The menu, the Settings section and the strings that point
+  there are named AI; Start, Stop and Unload name Ollama. A long Claude API list
+  keeps the first four models inline and puts the rest under More Claude API models.
+  When real MOVER cases are not sent, the menu shows one line instead of one per service.
+
 - Fictional demo data: setup (on first run, or "Run data setup…" in Settings)
   offers "Try with fictional demo data", which builds a small invented dataset on this computer so the app
   can be tried without the MOVER dataset. While it is in use, the top bar, the
@@ -168,6 +187,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The research thread keeps a minute question running when you leave the signal page for the conversation, and that page's "Answered in the conversation" line opens the turn. Source-row columns fit the board. The Evidence heading names the question on the board, and that turn's button reads On board. Trace the evidence no longer prints Ctrl+Enter on the button (the shortcut stays in the tip), so Send and Stop stay the same height. The model line sits under the composer and the search line sits under Evidence. A narrow window gives the thread more room, and each turn's buttons name their question.
+
+- A follow-up on fictional data no longer sends an earlier real-data answer to a cloud
+  service, and a real trimmed send no longer includes waveform paths or other absolute
+  paths. A wrong age or a wrong age band is still caught when the answer also states a
+  true band, checked against the named case. The training log and command-line work
+  files are readable only by the user. Typed ages and dates are banded or masked, and
+  an articles question sent to a cloud service has case numbers removed. A withheld
+  answer no longer says a local model wrote it. Cancelling or closing stops the next
+  Claude API call, and the tests cannot open a window on the desktop.
+- Answers no longer strike valid numbers as "[number not in sources]": a minute such as
+  -45 at the start of a source-table row kept its minus sign; a negative minute next to a
+  signal ("38 at -45") is checked as a minute; a heading number ("## 2.") is a label; an
+  age band holding the real age ("age 55-59") counts as true in both the number and age
+  checks. Tables in answers render as tables (and copy as rows), not raw "|" text.
+- No dialog at launch, after a Settings save or after a finished job when the
+  analysed cases have not been built yet: the research page says so quietly. The
+  dialog still opens when you choose Reload processed data, or when a load fails.
+- Claude Code and Codex on their own default model now get the same answer check
+  as every other answer; the empty model name had skipped it.
 - Handoff practice draws arterial and noninvasive MAP in the same colours as
   the Medication and Signal pages; they were swapped.
 - Handoff practice: a wrong value for a missing MAP or SpO2 series now counts

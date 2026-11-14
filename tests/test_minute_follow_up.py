@@ -195,16 +195,32 @@ def test_extra_signals_the_user_chose_are_in_the_rows(workspace):
     assert "t_min | PIP (cmH₂O) | ETCO2 (mmHg) | HR (bpm) | SPO2" in workspace._minute_extract("caseA", 2.0)
 
 
+def _minute_turn(view):
+    turns = [turn for turn in view.conversation.turns if turn.context_label]
+    assert turns, "the minute question never became a turn"
+    return turns[-1]
+
+
+def _minute_text(view) -> str:
+    turn = _minute_turn(view)
+    return view.conversation.turn_widgets[turn.request_id].answer_text.toPlainText()
+
+
 def test_the_answer_shows_under_the_field_labeled_with_minute_and_pid(workspace, qapp, monkeypatch):
     client = Describing("The extract lists **PIP 22** at the selected minute.")
     use_client(monkeypatch, client)
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp)
-    assert workspace.follow_up_label.text() == "Minute 2 · caseA"
-    assert "PIP 22" in workspace.follow_up_answer.toPlainText()
+    turn = _minute_turn(workspace)
+    assert turn.context_label == "Minute 2 · caseA"
+    assert turn.cited_pids == ("caseA",), "the case is recorded, so the answer is aliased if it later goes out"
+    assert turn.sent is not None and turn.sent.pids == ("caseA",)
+    assert "PIP 22" in _minute_text(workspace)
+    assert workspace.follow_up_label.text() == "Answered in the conversation · Minute 2 · caseA"
+    assert not workspace.follow_up_answer.isVisible()
+    assert "PIP 22" not in workspace.follow_up_answer.toPlainText()
     assert workspace.follow_up_edit.placeholderText() == "Ask about minute 2"
     assert "PID=caseA" in client.sent[0] and "caseB" not in client.sent[0]
-    assert workspace.conversation.turns == []
 
 
 def test_enter_asks_the_question(workspace, qapp, monkeypatch):
@@ -212,14 +228,17 @@ def test_enter_asks_the_question(workspace, qapp, monkeypatch):
     workspace.set_models(["fake"])
     workspace.follow_up_edit.setText("What happened here?")
     workspace.follow_up_edit.returnPressed.emit()
-    pump(qapp, lambda: workspace.follow_up_answer.isVisible() and "Asking" not in workspace.follow_up_answer.toPlainText())
+    pump(qapp, lambda: bool(_minute_text(workspace)) and "Asking" not in _minute_text(workspace))
 
 
 def test_without_a_chat_model_it_says_so(workspace, qapp, monkeypatch):
     use_client(monkeypatch, Describing())
     ask(workspace, qapp, model=None)
-    assert workspace.follow_up_answer.toPlainText() == FOLLOW_UP_NO_MODEL
-    assert workspace.follow_up_label.text() == f"Minute {workspace.minute_slider.value()} · caseA"
+    turn = _minute_turn(workspace)
+    assert _minute_text(workspace) == FOLLOW_UP_NO_MODEL
+    assert turn.state == "no_model"
+    assert turn.context_label == f"Minute {workspace.minute_slider.value()} · caseA"
+    assert workspace.follow_up_label.text() == f"Answered in the conversation · {turn.context_label}"
     assert not workspace._follow_up_workers
 
 
@@ -227,15 +246,16 @@ def test_links_in_the_answer_are_inert(workspace, qapp, monkeypatch):
     use_client(monkeypatch, Describing("See [the page](https://example.com/page) for PIP 22."))
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp)
-    assert workspace.follow_up_answer.openLinks() is False and workspace.follow_up_answer.openExternalLinks() is False
-    assert "href" not in workspace.follow_up_answer.toHtml()
+    box = workspace.conversation.turn_widgets[_minute_turn(workspace).request_id].answer_text
+    assert box.openLinks() is False and box.openExternalLinks() is False
+    assert "href" not in box.toHtml()
 
 
 def test_a_fabricated_number_in_the_answer_is_removed(workspace, qapp, monkeypatch):
     use_client(monkeypatch, Describing("PIP was 87 cmH2O at this minute, and PIP 22 earlier."))
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp)
-    shown = workspace.follow_up_answer.toPlainText()
+    shown = _minute_text(workspace)
     assert "87" not in shown and REMOVED_MARK in shown and "22" in shown
 
 
@@ -244,15 +264,19 @@ def test_changing_minute_case_or_leaving_clears_the_answer(workspace, qapp, monk
     use_client(monkeypatch, Describing())
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp)
-    assert workspace.follow_up_answer.isVisible()
+    turn = _minute_turn(workspace)
+    answer = _minute_text(workspace)
+    assert answer
     if change == "minute":
         workspace.minute_slider.setValue(3)
     elif change == "case":
         workspace.open_detail("caseB")
     else:
         workspace.return_to_canvas()
-    assert not workspace.follow_up_answer.isVisible() and not workspace.follow_up_label.isVisible()
-    assert workspace.follow_up_answer.toPlainText() == "" and workspace._follow_up_key is None
+    assert not workspace.follow_up_answer.isVisible()
+    assert _minute_text(workspace) == answer
+    assert turn.context_label == "Minute 2 · caseA"
+    assert not workspace.follow_up_label.isVisible() or "Minute 2 · caseA" not in workspace.follow_up_label.text()
 
 
 def test_rerendering_the_same_minute_keeps_the_answer(workspace, qapp, monkeypatch):
@@ -260,7 +284,8 @@ def test_rerendering_the_same_minute_keeps_the_answer(workspace, qapp, monkeypat
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp)
     workspace._render_minute(2)
-    assert workspace.follow_up_answer.isVisible()
+    assert "Minute 2 · caseA" in workspace.follow_up_label.text()
+    assert workspace.follow_up_label.isVisible()
 
 
 @pytest.mark.parametrize("change", ["minute", "case", "cancel"])
@@ -281,10 +306,20 @@ def test_a_late_answer_for_an_old_minute_or_case_is_dropped(workspace, qapp, mon
         workspace.open_detail("caseB")
     else:
         workspace.follow_up_cancel.click()
+    label = workspace.conversation.turns[-1].context_label
     gate.set()
     pump(qapp, lambda: worker.isFinished() and not workspace._follow_up_workers, "the late worker")
     qapp.processEvents()
-    assert workspace.follow_up_answer.toPlainText() == "" and not workspace.follow_up_answer.isVisible()
+    turn = _minute_turn(workspace)
+    assert turn.context_label == label == "Minute 2 · caseA"
+    assert not workspace.follow_up_answer.isVisible()
+    assert "Minute 3" not in turn.context_label and "caseB" not in turn.context_label
+    if change == "minute":
+        assert "Late answer." in _minute_text(workspace)
+        assert not workspace.follow_up_label.isVisible()
+    else:
+        assert turn.state == "cancelled"
+        assert "Late answer." not in _minute_text(workspace)
     assert workspace.follow_up_button.isEnabled() and not workspace.follow_up_cancel.isVisible()
 
 
@@ -297,9 +332,14 @@ def test_an_answer_that_arrives_after_the_minute_changed_is_ignored_by_request_i
     workspace.follow_up_button.click()
     pump(qapp, lambda: bool(client.sent), "the request to reach the model")
     old_request = workspace._follow_up_active
+    label = workspace.conversation.turn(old_request).context_label
     workspace.minute_slider.setValue(workspace.minute_slider.value() - 1)
     workspace._on_follow_up(old_request, "Late answer.")
-    assert workspace.follow_up_answer.toPlainText() == "" and not workspace.follow_up_answer.isVisible()
+    turn = workspace.conversation.turn(old_request)
+    assert turn.context_label == label
+    assert "Late answer." in workspace.conversation.turn_widgets[old_request].answer_text.toPlainText()
+    assert not workspace.follow_up_answer.isVisible()
+    assert label not in workspace.follow_up_label.text() or not workspace.follow_up_label.isVisible()
     gate.set()
     pump(qapp, lambda: not workspace._follow_up_workers, "the worker to finish")
 
@@ -316,9 +356,11 @@ def test_a_new_question_after_cancel_gets_its_own_answer(workspace, qapp, monkey
     use_client(monkeypatch, Describing("New answer."))
     workspace.follow_up_button.click()
     gate.set()
-    pump(qapp, lambda: "New answer." in workspace.follow_up_answer.toPlainText())
+    pump(qapp, lambda: any("New answer." in turn.answer for turn in workspace.conversation.turns))
     qapp.processEvents()
-    assert "Old answer." not in workspace.follow_up_answer.toPlainText()
+    assert workspace.conversation.turns[0].state == "cancelled"
+    assert "Old answer." not in workspace.conversation.turns[-1].answer
+    assert "New answer." in _minute_text(workspace)
 
 
 def test_a_failed_request_is_reported_under_the_field(workspace, qapp, monkeypatch):
@@ -328,7 +370,8 @@ def test_a_failed_request_is_reported_under_the_field(workspace, qapp, monkeypat
 
     use_client(monkeypatch, Broken())
     ask(workspace, qapp)
-    message = workspace.follow_up_answer.toPlainText()
+    message = _minute_text(workspace)
+    assert _minute_turn(workspace).state == "failed"
     assert message.startswith("The question could not be answered:")
     assert "minute-question:OllamaError" in message
     assert "the model is not running" not in message
@@ -336,11 +379,14 @@ def test_a_failed_request_is_reported_under_the_field(workspace, qapp, monkeypat
 
 
 def test_follow_up_and_conversation_questions_never_reach_each_other(workspace, qapp, monkeypatch):
+    """A minute question and the thread are one history. The next question is shown the earlier answer."""
     follow_up_client = Describing("FOLLOW_UP_ANSWER_SENTINEL at the selected minute.")
     use_client(monkeypatch, follow_up_client)
     workspace.minute_slider.setValue(2)
     ask(workspace, qapp, question="FOLLOW_UP_QUESTION_SENTINEL?")
-    assert "FOLLOW_UP_ANSWER_SENTINEL" in workspace.follow_up_answer.toPlainText()
+    assert "FOLLOW_UP_ANSWER_SENTINEL" in _minute_text(workspace)
+    history = workspace.conversation.history_before()
+    assert history and history[-1].question == "FOLLOW_UP_QUESTION_SENTINEL?"
 
     conversation_client = Describing("CONVERSATION_ANSWER_SENTINEL for caseA.")
     use_client(monkeypatch, conversation_client)
@@ -352,16 +398,117 @@ def test_follow_up_and_conversation_questions_never_reach_each_other(workspace, 
     )
     session = SimpleNamespace(cases=None, timeseries=None, flags=None, episodes=None, events=None)
     answers = []
-    worker = ResearchWorker(engine, "CONVERSATION_QUESTION_SENTINEL?", "fake", session)
+    worker = ResearchWorker(
+        engine, "CONVERSATION_QUESTION_SENTINEL?", "fake", session, history=history,
+    )
     worker.answer.connect(answers.append)
     worker.run()
     assert answers
     sent = " ".join(conversation_client.sent)
-    assert "FOLLOW_UP" not in sent and "selected minute" not in sent.lower()
+    assert "FOLLOW_UP_QUESTION_SENTINEL" in sent and "FOLLOW_UP_ANSWER_SENTINEL" in sent
 
     use_client(monkeypatch, follow_up_client)
     ask(workspace, qapp, question="SECOND_FOLLOW_UP?")
     later = follow_up_client.sent[-1]
-    assert "CONVERSATION_" not in later and "FOLLOW_UP_QUESTION_SENTINEL" not in later
-    assert "FOLLOW_UP_ANSWER_SENTINEL" not in later
-    assert workspace.conversation.turns == []
+    assert "FOLLOW_UP_QUESTION_SENTINEL" in later and "FOLLOW_UP_ANSWER_SENTINEL" in later
+    assert _minute_turn(workspace).context_label == "Minute 2 · caseA"
+
+
+@pytest.mark.parametrize("leave", ["show_canvas", "return_to_canvas"])
+def test_leaving_for_the_research_canvas_keeps_a_running_minute_question(workspace, qapp, monkeypatch, leave):
+    gate = threading.Event()
+    client = Describing("The extract lists **PIP 22** at the selected minute.", gate=gate)
+    use_client(monkeypatch, client)
+    workspace.set_models(["fake"])
+    workspace.minute_slider.setValue(2)
+    workspace.follow_up_edit.setText("What happened here?")
+    workspace.follow_up_button.click()
+    pump(qapp, lambda: bool(client.sent), "the request to reach the model")
+    turn = _minute_turn(workspace)
+    assert turn.state == "running"
+    if leave == "show_canvas":
+        workspace.show_canvas()
+    else:
+        workspace.return_to_canvas()
+    qapp.processEvents()
+    assert workspace.stack.currentIndex() == 0
+    assert turn.state == "running"
+    assert workspace._follow_up_active == turn.request_id
+    assert any(worker.isRunning() for worker in workspace.follow_up_workers())
+    gate.set()
+    pump(qapp, lambda: turn.state == "answered", "the answer to land in the thread")
+    assert "PIP 22" in _minute_text(workspace)
+
+
+@pytest.mark.parametrize("stop", ["case", "close", "cancel"])
+def test_changing_case_closing_the_case_or_cancel_stops_a_running_minute_question(workspace, qapp, monkeypatch, stop):
+    gate = threading.Event()
+    client = Describing("Late answer.", gate=gate)
+    use_client(monkeypatch, client)
+    workspace.set_models(["fake"])
+    workspace.minute_slider.setValue(2)
+    workspace.follow_up_edit.setText("What happened here?")
+    workspace.follow_up_button.click()
+    pump(qapp, lambda: bool(client.sent), "the request to reach the model")
+    turn = _minute_turn(workspace)
+    try:
+        if stop == "case":
+            workspace.open_detail("caseB")
+        elif stop == "close":
+            workspace.invalidate_case_data()
+        else:
+            workspace.follow_up_cancel.click()
+        qapp.processEvents()
+        assert turn.state == "cancelled"
+        assert workspace._follow_up_active is None
+    finally:
+        gate.set()
+        pump(qapp, lambda: not workspace._follow_up_workers, "the worker to finish")
+    assert turn.state == "cancelled"
+    assert "Late answer." not in _minute_text(workspace)
+
+
+def test_the_minute_pointer_opens_that_turn_in_the_thread(workspace, qapp, monkeypatch):
+    use_client(monkeypatch, Describing("The extract lists **PIP 22** at the selected minute."))
+    workspace.minute_slider.setValue(2)
+    ask(workspace, qapp)
+    button = workspace.follow_up_label
+    assert button.objectName() == "linkBtn"
+    assert button.text() == "Answered in the conversation · Minute 2 · caseA"
+    button.click()
+    qapp.processEvents()
+    assert workspace.stack.currentIndex() == 0
+    turn = _minute_turn(workspace)
+    widget = workspace.conversation.turn_widgets[turn.request_id]
+    assert widget.answer_text.hasFocus()
+    viewport = workspace.conversation.viewport()
+    top = widget.mapTo(viewport, widget.rect().topLeft()).y()
+    bottom = widget.mapTo(viewport, widget.rect().bottomLeft()).y()
+    assert top < viewport.height() and bottom > 0
+
+
+@pytest.mark.parametrize("demo", [True, False])
+def test_a_minute_question_goes_to_the_cloud_only_for_fictional_data(workspace, qapp, monkeypatch, demo):
+    from src.llm import cloud
+
+    sent: list[list[dict]] = []
+
+    class Remote:
+        def chat_turn(self, model, messages, **kwargs):
+            if kwargs.get("format"):
+                return ChatResult(content=json.dumps(dict.fromkeys(kwargs["format"]["required"], "description")))
+            sent.append(messages)
+            return ChatResult(content="The extract lists PIP 22 at the selected minute.")
+
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **_kwargs: Remote())
+    use_client(monkeypatch, None)  # the local model must not be asked either way
+    workspace.cloud = cloud.CloudConfig(cloud.CLAUDE_API)
+    workspace.data_is_demo = demo
+    ask(workspace, qapp, model="Claude API · claude-opus-5-5")
+    text = _minute_text(workspace)
+    if demo:
+        assert len(sent) == 1 and "PIP 22" in text
+        assert _minute_turn(workspace).state == "answered"
+    else:
+        assert sent == [] and cloud.REAL_DATA_BLOCKED in text
+        assert _minute_turn(workspace).state == "failed"

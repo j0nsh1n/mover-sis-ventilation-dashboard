@@ -187,7 +187,7 @@ def test_desktop_switching_folders_during_a_scan(emr, tmp_path, monkeypatch, all
 
         # The reload skipped during the scan runs when it ends
         reloads = []
-        monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(True))
+        monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: reloads.append(True))
         win._after_corpus_scan(busy)
         assert reloads == [True] and not win._reload_after_scan
         # but not while the window is closing

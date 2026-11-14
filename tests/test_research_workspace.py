@@ -46,6 +46,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view.question_submitted.connect(asked.append)
     view.ask_button.click()
     assert asked == ["Where is peak pressure?"]
+    assert view.composer.text() == ""
 
     view.set_results(RetrievalResult(candidates=(_candidate("caseA"), _candidate("caseB"))))
     requests = []
@@ -79,7 +80,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view._show_current_source()
     view.return_to_canvas()
     assert view.stack.currentIndex() == 0
-    assert view.question_edit.text() == "Where is peak pressure?"
+    assert view.composer.text() == ""
     assert "caseB" in view.comparison_label.text()
     view.conversation.reset_button.click()
     assert view.question_edit.text() == ""
@@ -123,7 +124,8 @@ def test_mainwindow_retrieval_keyword_fallback(qapp, synthetic_emr, tmp_path, mo
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         qapp.processEvents()
-        if win.research.ask_button.isEnabled() and not win.research.result.candidates:
+        if (not win.research._searching and win.research.result is not None
+                and not win.research.result.candidates):
             break
         time.sleep(0.01)
     assert win.research.result.candidates == ()
@@ -143,7 +145,7 @@ def test_startup_opens_setup_before_loading_when_emr_invalid(qapp, tmp_path, mon
     calls = []
     monkeypatch.setattr(MainWindow, "_setup_bypassed", lambda self: False)
     monkeypatch.setattr(MainWindow, "_open_setup_wizard", lambda self, first_run=False: calls.append(("setup", first_run)))
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: calls.append(("autoload",)))
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: calls.append(("autoload",)))
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kwargs: calls.append(("models",)))
     win = MainWindow()
     win.show()
@@ -225,7 +227,8 @@ def test_cancel_search_restores_board_and_ignores_late_results(qapp, monkeypatch
         qapp.processEvents()
         assert stopped
         assert win.research.result is original
-        assert win.research.question_edit.text() == "Previous question"
+        assert win.research._question == "Previous question"
+        assert win.research.composer.text() == ""
         assert win.research.answer_text.toPlainText() == "Previous answer"
         assert win.research.ask_button.isEnabled()
     finally:
@@ -1159,12 +1162,12 @@ def test_scope_switch_and_model_menu_publish_their_purpose_and_state(qapp):
         view.scope_switch.set_scope("Articles")
         assert articles.state().checked and not cases.state().checked and view.scope == "Articles"
         model = QAccessible.queryAccessibleInterface(view.model_menu)
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Description) == "Local AI not checked"
+        assert model.text(QAccessible.Text.Name) == "AI"
+        assert model.text(QAccessible.Text.Description) == "AI not checked"
         view.set_models(["qwen3:14b"])
         view.set_model_state("ready")
         assert model.text(QAccessible.Text.Description) == "qwen3:14b ready"
-        assert model.text(QAccessible.Text.Name) == "Local AI"
+        assert model.text(QAccessible.Text.Name) == "AI"
         assert view.selected_model() == "qwen3:14b"
     finally:
         view.close()
@@ -1188,7 +1191,7 @@ def test_model_menu_announces_a_new_state_and_a_choice_but_a_refresh_is_not_a_ch
         assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
         assert chosen == ["second"] and view.selected_model() == "second"
         view.set_models(["first", "second", "third"], "first")
-        view.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+        view.set_models([], placeholder="(Ollama stopped — choose Start Ollama)")
         assert chosen == ["second"], "only a person's choice is a choice"
         assert view.selected_model() is None
     finally:
@@ -1217,8 +1220,8 @@ def test_apply_ollama_status_updates_the_menu_without_counting_as_a_choice(qapp,
         win._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
         assert chosen == []
         assert win.research.selected_model() is None
-        assert menu.text() == "Local AI stopped"
-        assert menu.placeholder_text() == "(Ollama stopped — choose Start AI)"
+        assert menu.text() == "AI stopped"
+        assert menu.placeholder_text() == "(Ollama stopped — choose Start Ollama)"
         assert menu.model_actions() == []
     finally:
         win.close()

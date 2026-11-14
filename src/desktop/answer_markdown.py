@@ -15,6 +15,20 @@ class _TextOnlyDocument(QTextDocument):
 
 
 _BULLETS = {QTextListFormat.Style.ListDisc, QTextListFormat.Style.ListCircle, QTextListFormat.Style.ListSquare}
+# GitHub's dialect, because answers use its pipe tables; CommonMark alone shows them as raw "|" text.
+# Raw HTML stays off, and links and images are flattened below.
+_FEATURES = QTextDocument.MarkdownFeature(
+    QTextDocument.MarkdownFeature.MarkdownDialectGitHub.value | QTextDocument.MarkdownFeature.MarkdownNoHTML.value
+)
+
+
+def _table_text(table) -> str:
+    """A table as plain rows, cells joined by " | "."""
+    return "\n".join(
+        " | ".join(table.cellAt(row, column).firstCursorPosition().block().text().strip()
+                   for column in range(table.columns()))
+        for row in range(table.rows())
+    )
 
 
 def plain_text(markdown: str) -> str:
@@ -25,11 +39,19 @@ def plain_text(markdown: str) -> str:
     blank line; consecutive list items and code lines by a single newline.
     """
     document = _TextOnlyDocument()
-    document.setMarkdown(markdown, QTextDocument.MarkdownFeature.MarkdownNoHTML)
+    document.setMarkdown(markdown, _FEATURES)
     out: list[str] = []
-    previous = ""  # the kind of the last block written: "list", "code" or "text"
+    previous = ""  # the kind of the last block written: "list", "code", "table" or "text"
     block = document.begin()
     while block.isValid():
+        table = QTextCursor(block).currentTable()
+        if table is not None:
+            if out:
+                out.append("\n\n")
+            out.append(_table_text(table))
+            previous = "table"
+            block = document.findBlock(table.lastPosition() + 1)
+            continue
         code = block.blockFormat().hasProperty(QTextFormat.Property.BlockCodeLanguage)
         # An image becomes an object character; a hard line break is a line separator.
         text = block.text().replace("\ufffc", "").replace("\u2028", "\n").replace("\xa0", " ")
@@ -67,7 +89,7 @@ class MarkdownAnswer(QTextBrowser):
     def append_markdown(self, text: str) -> None:
         document = _TextOnlyDocument()
         document.setDefaultFont(self.document().defaultFont())
-        document.setMarkdown(text, QTextDocument.MarkdownFeature.MarkdownNoHTML)
+        document.setMarkdown(text, _FEATURES)
         replacements: list[tuple[int, int, QTextCharFormat]] = []
         block = document.begin()
         while block.isValid():

@@ -188,3 +188,27 @@ def test_plain_text_keeps_what_the_reader_sees(qapp, markdown, expected):
     from src.desktop.answer_markdown import plain_text
 
     assert plain_text(markdown) == expected
+
+
+_TABLE_ANSWER = "Rows near the minute:\n\n| t_min | PIP (cmH2O) |\n|---|---|\n| -45 | 38 |\n| -44 | 39 |\n\nPIP rose."
+
+
+def test_a_pipe_table_renders_as_a_table_not_raw_text(qapp):
+    view = MarkdownAnswer()
+    view.append_markdown(_TABLE_ANSWER)
+    tables = [frame for frame in view.document().rootFrame().childFrames() if hasattr(frame, "cellAt")]
+    assert len(tables) == 1 and (tables[0].rows(), tables[0].columns()) == (3, 2)
+    assert tables[0].cellAt(1, 0).firstCursorPosition().block().text() == "-45"
+    assert "|" not in view.toPlainText()
+
+
+def test_a_copied_table_keeps_its_rows():
+    from src.desktop.answer_markdown import plain_text
+
+    assert plain_text(_TABLE_ANSWER) == "Rows near the minute:\n\nt_min | PIP (cmH2O)\n-45 | 38\n-44 | 39\n\nPIP rose."
+
+
+def test_a_bare_web_address_stays_text(qapp):
+    view = MarkdownAnswer()
+    view.append_markdown("Visit http://example.com or www.example.com now.")
+    assert "<a " not in view.toHtml() and view.toPlainText() == "Visit http://example.com or www.example.com now."

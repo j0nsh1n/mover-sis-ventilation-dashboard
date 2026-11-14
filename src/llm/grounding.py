@@ -94,7 +94,21 @@ _COUNT_NOUN = re.compile(
     r"|articles?|patients?|papers?|studies)\b",
     re.IGNORECASE,
 )
-_LIST_PREFIX = re.compile(r"(?m)^[ \t>]*(?:[-*•]\s+)?\**(\d{1,3})[.)]\**(?=\s)")
+# A heading's number ("## 2. What the extract shows") is a label like a list item's.
+_LIST_PREFIX = re.compile(r"(?m)^[ \t>]*(?:#{1,6}[ \t]+)?(?:[-*•]\s+)?\**(\d{1,3})[.)]\**(?=\s)")
+# "age 55-59" and a restated band: "55–59-year-old", "55–59 yo", "55–59F".
+_AGE_BAND = re.compile(
+    r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)"
+    r"|(?<![\w.\u2013-])(\d{1,3})\s*(?:-|\u2013)\s*(\d{1,3})(?!\d)"
+    r"\s*(?:-year-old|years?\s+old|y/o\b|yo\b|[FM]\b)",
+    re.IGNORECASE,
+)
+# An exact age in a source: "Age: 58", "aged 58", "58-year-old", "58 yo", "58F".
+_SOURCE_AGE = re.compile(
+    r"\bage[d]?\s*[:=]?\s*(\d{1,3})(?![\d\u2013-])"
+    r"|(?<![\w.\u2013-])(\d{1,3}(?:\.\d+)?)(?:-year-old|\s+years?\s+old|\s+y/o\b|\s+yo\b|\s*[FM]\b)",
+    re.IGNORECASE,
+)
 _ORDINAL = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)
 # A year is a citation detail only in author-year form: "et al. 2019", "(Smith, 2019)".
 _CITED_YEAR = re.compile(
@@ -311,7 +325,12 @@ def _sign_at(text: str, start: int) -> bool:
         return not before.isdigit()
     if before == "" or before in _SIGN_LEAD:
         if before.isspace():
-            return not text[: start - 1].rstrip()[-1:].isdigit()
+            gap = text[: start - 1]
+            # A minus that starts a line (a table row's first cell) is a sign whatever the line above ends with;
+            # within a line, "5 - 3" after a digit is a subtraction.
+            if "\n" in gap[len(gap.rstrip()):]:
+                return True
+            return not gap.rstrip()[-1:].isdigit()
         return True
     return False
 
@@ -581,10 +600,16 @@ def _ungrounded(
     index = _SourceValues(sources, question)
     numbers = _scan(masked)
     attributed = _attribute(answer, numbers, answer=True)
+    bands = _true_age_bands(answer, sources)
     bad = []
     for number in numbers:
+        if any(start <= number.start < end for start, end in bands):
+            continue
         unit = _kind(answer, number)
-        pool = index.pool(attributed.get(number.start), unit)
+        # No signal reads below zero, so a negative number beside one ("38 at -45") is a minute
+        # relative to incision, checked against every source value.
+        keys = None if number.value < 0 else attributed.get(number.start)
+        pool = index.pool(keys, unit)
         if pool is None:
             if index.has(number) or index.derived(number, answer):
                 continue
@@ -599,6 +624,66 @@ def _ungrounded(
             continue
         bad.append(number)
     return bad
+
+
+def _source_ages(sources: Sequence[str]) -> set[int]:
+    ages: set[int] = set()
+    for text in sources:
+        for match in _SOURCE_AGE.finditer(text):
+            raw = match.group(1) or match.group(2)
+            if raw:
+                ages.add(int(float(raw)))
+    return ages
+
+
+def _pid_at(text: str, start: int) -> str | None:
+    """The case named in the sentence around ``start``, else the nearest case before it."""
+    boundaries = ".!?\n"
+    left = max(text.rfind(mark, 0, start) for mark in boundaries)
+    sentence_start = left + 1
+    right_hits = [text.find(mark, start) for mark in boundaries]
+    right_hits = [hit for hit in right_hits if hit >= 0]
+    sentence_end = min(right_hits) if right_hits else len(text)
+    in_sentence = list(PID_TOKEN.finditer(text, sentence_start, sentence_end))
+    if in_sentence:
+        before = [match for match in in_sentence if match.start() <= start]
+        return (before[-1] if before else in_sentence[0]).group(1)
+    preceding = list(PID_TOKEN.finditer(text, 0, sentence_start))
+    if preceding:
+        return preceding[-1].group(1)
+    return None
+
+
+def _ages_for_case(sources: Sequence[str], pid: str | None) -> set[int]:
+    """Ages from the source that names ``pid``. Any source when the band names no case."""
+    if pid is None:
+        return _source_ages(sources)
+    ages: set[int] = set()
+    for text in sources:
+        if any(match.group(1).lower() == pid.lower() for match in PID_TOKEN.finditer(text)):
+            ages.update(_source_ages([text]))
+    return ages
+
+
+def _true_age_bands(answer: str, sources: Sequence[str]) -> list[tuple[int, int]]:
+    """Spans of five-year age bands in ``answer`` that hold an age stated for that case.
+
+    A band is checked against the source that names the same case: the case number
+    in the band's sentence, or the nearest case number before that sentence. Only
+    a band that names no case falls back to an age from any source.
+    """
+    spans = []
+    for match in _AGE_BAND.finditer(answer):
+        low_s, high_s = (match.group(1), match.group(2)) if match.group(1) else (match.group(3), match.group(4))
+        low, high = int(low_s), int(high_s)
+        if low % 5 != 0 or high != low + 4:
+            continue
+        start = match.start(1) if match.group(1) else match.start(3)
+        ages = _ages_for_case(sources, _pid_at(answer, start))
+        if any(low <= age <= high for age in ages):
+            end = match.end(2) if match.group(1) else match.end(4)
+            spans.append((start, end))
+    return spans
 
 
 def find_ungrounded_numbers(

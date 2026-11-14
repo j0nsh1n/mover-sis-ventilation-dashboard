@@ -119,3 +119,12 @@ def test_hover_and_press_change_color_only():
             continue
         names = {line.split(":", 1)[0].strip() for line in body.strip().split(";") if line.strip()}
         assert names <= properties_allowed, (selector.strip(), names - properties_allowed)
+
+
+def test_a_disabled_menu_item_uses_the_ink_3_token():
+    for name in ("light", "dark"):
+        palette = tokens(name)
+        sheet = theme._build_stylesheet(palette)
+        match = re.search(r"QMenu::item:disabled\s*\{([^}]*)\}", sheet)
+        assert match is not None
+        assert f"color: {palette['ink_3']}" in match.group(1)
