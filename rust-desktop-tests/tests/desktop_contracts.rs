@@ -156,9 +156,9 @@ fn fields_and_actions_expose_meaningful_accessible_names() {
         "Practice",
         "Rules",
         "Settings",
-        "New question",
-        "Reset",
-        "Local AI",
+        "Clear board",
+        "New thread",
+        "AI",
         "Trace the evidence",
     ] {
         let key = label.replace(' ', "_").to_lowercase();
@@ -190,7 +190,7 @@ fn keyboard_focus_is_named_visible_and_recovers_after_warning() {
             "{control} shows no focus"
         );
     }
-    assert_eq!(observed.text("warning_focus_name"), "Research question");
+    assert_eq!(observed.text("warning_focus_name"), "Ask a question");
     observed.finish();
 }
 
@@ -292,16 +292,29 @@ fn startup_at_double_scale_fits_screen_and_keeps_board_usable() {
     let names = observed.text("header_action_names");
     assert_eq!(
         names.lines().collect::<Vec<_>>(),
-        [
-            "Question scope",
-            "Local AI",
-            "New question",
-            "Add comparison",
-            "Trace the evidence"
-        ]
+        ["Clear board", "Add comparison"]
     );
+    let composer = observed.text("composer_action_names");
+    assert_eq!(
+        composer.lines().collect::<Vec<_>>(),
+        ["Question scope", "AI", "Trace the evidence"]
+    );
+    for row in observed.text("composer_actions").lines() {
+        let bounds: Vec<i32> = row.split(',').map(|part| part.parse().unwrap()).collect();
+        let [x, width, bar_width] = bounds[..] else {
+            panic!("composer geometry")
+        };
+        assert!(
+            x >= 0 && width > 0 && x + width <= bar_width,
+            "clipped composer control: {row}"
+        );
+    }
+    let thread = observed.text("thread_names");
+    for name in ["threadComposer", "Ask a question", "turnBubble", "foldToggle", "New thread"] {
+        assert!(thread.contains(name), "thread names missing {name}: {thread}");
+    }
     let actions = observed.text("header_actions");
-    assert_eq!(actions.lines().count(), 5);
+    assert_eq!(actions.lines().count(), 2);
     for row in actions.lines() {
         let bounds: Vec<i32> = row.split(',').map(|part| part.parse().unwrap()).collect();
         let [x, width, viewport_width] = bounds[..] else {

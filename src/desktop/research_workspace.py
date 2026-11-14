@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -49,9 +50,9 @@ from src.desktop.case_page import (
 from src.desktop.charts import BASE_TRACKS, FocusedSignalChart, focused_minute_rows, signal_info
 from src.desktop.evidence_trail import GUTTER, Sparkline, TrailStep
 from src.desktop.conversation_panel import AnswerText, ConversationPanel, Turn, TurnState
+from src.llm.cloud import CloudConfig
 from src.desktop.fonts import make_tabular
 from src.desktop.marks import MissingCellDelegate, mark_missing, severity_glyph
-from src.desktop.research_controls import LocalModelButton, ScopeSwitch, TraceButton
 from src.desktop.research_workers import MinuteQuestionWorker
 from src.desktop.rules_drawer import RulesDrawer, threshold_parts
 from src.desktop.theme import token_color
@@ -108,11 +109,10 @@ FOLLOW_UP_NO_MODEL = "No AI answer. The minute's source rows are above."
 RULES_DRAWER_MAX_WIDTH = 420
 RULES_DRAWER_SHARE = 0.42
 PAGE_MARGINS = (32, 24, 32, 32)
-CONVERSATION_WIDTH = 380
-CASES_PLACEHOLDER = "Try: Where does pressure peak in laparoscopic cases?"
-ARTICLES_PLACEHOLDER = "Search titles and abstracts in the local catalog"
-CASES_EXTRACTS = "The local model reads at most three retrieved source extracts."
-ARTICLES_EXTRACTS = "The local model reads at most five article abstracts."
+CONVERSATION_WIDTH = 480
+PANEL_MIN_WIDTH = 360
+CASES_EXTRACTS = "The AI reads at most three retrieved source extracts."
+ARTICLES_EXTRACTS = "The AI reads at most five article abstracts."
 SPARK_WAITING = "PIP / source samples load on demand"
 # The observation's signal column: its label on the sparkline and its colour token.
 _SPARK_SIGNALS = {"PIP": ("PIP", "s_pip"), "ETCO2": ("ETCO₂", "s_etco2")}
@@ -131,7 +131,6 @@ ROW_HEIGHT = 32
 HEADER_HEIGHT = 30
 # Board width from which the observation and its source rows sit side by side.
 SIDE_BY_SIDE_WIDTH = 720
-CONTROLS_GAP = 24
 # Bar position of a running question by search phase; the bar only moves forward.
 PHASE_PROGRESS = {
     "": 0.05, "preparing": 0.1, "filtering": 0.25, "embedding_query": 0.35, "ranking": 0.5,
@@ -170,6 +169,42 @@ def _link_button(text: str) -> QPushButton:
     button.setObjectName("linkBtn")
     button.setAutoDefault(True)
     return button
+
+
+class _ElidedLine(QLabel):
+    """One quiet line. A long question is cut with an ellipsis; the full text stays available."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full = ""
+        self.setObjectName("quietText")
+        self.setWordWrap(False)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def full_text(self) -> str:
+        return self._full
+
+    def set_full(self, text: str) -> None:
+        self._full = text
+        self.setAccessibleName(text)
+        self.setToolTip(text)
+        self._apply()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._apply()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._apply()
+
+    def _apply(self) -> None:
+        width = self.width()
+        if width <= 0 or not self._full:
+            self.setText(self._full)
+            return
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, max(0, width - 2)))
 
 
 def _step_heading(text: str, number: int | None = None) -> QWidget:
@@ -242,6 +277,8 @@ class ResearchWorkspace(QWidget):
         self.result: RetrievalResult | None = None
         # Whether the data on screen is the fictional demo data; the window sets it, and each new question keeps it
         self.data_is_demo = False
+        # The answer service chosen in Settings; the window sets it
+        self.cloud: CloudConfig | None = None
         self._question = ""
         self._scope = "Cases"
         self.article_result: ArticleSearchResult | None = None
@@ -253,6 +290,7 @@ class ResearchWorkspace(QWidget):
         # The status line shows a running step ("Model round 1/8…") that must not outlive its search
         self._status_is_progress = False
         self._active_turn_request: int | None = None
+        self._reask_before: int | None = None
         self._board_request: int | None = None
         self._before_board_request: int | None = None
         self._restoring_board = False
@@ -284,6 +322,9 @@ class ResearchWorkspace(QWidget):
         self._follow_up_request = 0
         self._follow_up_active: int | None = None
         self._follow_up_workers: dict[int, MinuteQuestionWorker] = {}
+        self._minute_pointer = ""
+        self._minute_turn_id: int | None = None
+        self._minute_dropped: set[int] = set()
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -312,17 +353,16 @@ class ResearchWorkspace(QWidget):
         layout.setContentsMargins(*PAGE_MARGINS)
         layout.setSpacing(0)
 
-        # The question is the page's title: the largest text on the screen.
-        self.question_edit = QLineEdit()
-        self.question_edit.setObjectName("questionField")
-        self.question_edit.setAccessibleName("Research question")
-        self.question_edit.setPlaceholderText(CASES_PLACEHOLDER)
-        self.question_edit.returnPressed.connect(self._submit_question)
-        layout.addWidget(self.question_edit)
-
-        self.scope_switch = ScopeSwitch()
+        # The ask box, the scope switch and the AI menu live on the conversation panel.
+        # While an answer runs the box is disabled (a draft already typed is kept) and Send becomes Stop.
+        self.conversation = ConversationPanel()
+        self.composer = self.conversation.composer
+        self.question_edit = self.composer
+        self.scope_switch = self.conversation.scope_switch
+        self.model_menu = self.conversation.model_menu
+        self.ask_button = self.conversation.ask_button
+        self.cancel_button = self.ask_button
         self.scope_switch.changed.connect(self._change_scope)
-        self.model_menu = LocalModelButton()
         self.model_menu.model_chosen.connect(self.model_changed)
         self.start_action = self.model_menu.start_action
         self.refresh_action = self.model_menu.refresh_action
@@ -334,73 +374,55 @@ class ResearchWorkspace(QWidget):
         self.setup_action.triggered.connect(self.setup_requested)
         self.stop_action.triggered.connect(self.model_stop_requested)
         self.unload_action.triggered.connect(self.model_unload_requested)
-        self.new_question_button = _text_button("New question")
-        self.new_question_button.setAccessibleName("New question")
+        self.ask_button.clicked.connect(self._on_ask_clicked)
+        self.composer.submitted.connect(self._submit_question)
+        self.new_question_button = _text_button("Clear board")
+        self.new_question_button.setAccessibleName("Clear board")
         self.new_question_button.setAccessibleDescription("Clear the board and keep the conversation")
         self.new_question_button.clicked.connect(self._new_question)
         self.add_comparison_button = _text_button("Add comparison")
         self.add_comparison_button.setAccessibleName("Add comparison")
         self.add_comparison_button.setAccessibleDescription("Add a second retrieved case to the evidence trail")
         self.add_comparison_button.clicked.connect(self._add_comparison)
-        self.cancel_button = _text_button("Cancel")
-        self.cancel_button.setAccessibleName("Cancel research request")
-        self.cancel_button.clicked.connect(self.cancel_requested)
-        self.cancel_button.hide()
-        self.ask_button = TraceButton()
-        self.ask_button.clicked.connect(self._submit_question)
-        for keys in ("Ctrl+Return", "Ctrl+Enter"):
-            shortcut = QShortcut(QKeySequence(keys), page)
-            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(self._submit_with_shortcut)
-
+        self._panel_width: int | None = None
+        self._placing_panel = False
         self._build_actions()
 
-        choices = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        choices.setSpacing(12)
-        choices.addWidget(self.scope_switch)
-        choices.addWidget(self.model_menu)
-        choices.addStretch(1)
-        secondary = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        secondary.setSpacing(8)
-        for widget in (self.new_question_button, self.add_comparison_button, self.cancel_button):
-            secondary.addWidget(widget)
-        actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        actions.setSpacing(8)
-        actions.addLayout(secondary)
-        actions.addWidget(self.ask_button)
-        self._choices_row, self._secondary_row, self._actions_row = choices, secondary, actions
-        # One row when it fits; otherwise the actions drop under the choices, still right-aligned.
-        controls = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        controls.setSpacing(CONTROLS_GAP)
-        controls.addLayout(choices)
-        controls.addStretch(1)
-        controls.addLayout(actions)
-        self._controls_layout = controls
-        layout.addSpacing(14)
-        layout.addLayout(controls)
-
-        self.model_status = _wrap("Local AI has not been checked. Search remains available.")
+        # The model line sits under the composer controls. The search line sits under Evidence.
+        self.model_status = _wrap("AI has not been checked. Search remains available.")
         self.model_status.setObjectName("quietText")
+        composer_bar = self.conversation.composer_bar.layout()
+        if composer_bar is not None:
+            composer_bar.addWidget(self.model_status)
         self.status_label = _wrap("Set up an EMR folder to search indexed surgeries.")
         self.status_label.setObjectName("quietText")
         self.status_label.setAccessibleName("Research search status")
-        layout.addSpacing(8)
-        layout.addWidget(self.model_status)
-        layout.addWidget(self.status_label)
         self.answer_text = QTextEdit(self)
         self.answer_text.setReadOnly(True)
         self.answer_text.hide()
 
-        heading = QHBoxLayout()
-        heading.setSpacing(12)
+        heading = QVBoxLayout()
+        heading.setSpacing(8)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
         title = QLabel("Evidence")
         title.setObjectName("boardHeading")
-        heading.addWidget(title)
+        title_row.addWidget(title)
         note = QLabel("Each step shows where the next one came from. Lines are provenance, not cause.")
         note.setObjectName("quietText")
         note.setWordWrap(True)
-        heading.addWidget(note, 1)
-        layout.addSpacing(32)
+        title_row.addWidget(note, 1)
+        heading.addLayout(title_row)
+        self.board_question = _ElidedLine()
+        self.board_question.hide()
+        heading.addWidget(self.board_question)
+        heading.addWidget(self.status_label)
+        self._evidence_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._evidence_actions.setSpacing(8)
+        self._evidence_actions.addWidget(self.new_question_button)
+        self._evidence_actions.addWidget(self.add_comparison_button)
+        self._evidence_actions.addStretch(1)
+        heading.addLayout(self._evidence_actions)
         layout.addLayout(heading)
         layout.addSpacing(20)
 
@@ -514,6 +536,10 @@ class ResearchWorkspace(QWidget):
         self.source_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.source_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.source_table.setItemDelegate(MissingCellDelegate(self.source_table))
+        source_header = self.source_table.horizontalHeader()
+        # Stretch alone. stretchLastSection as well adds a second stretch and the last column spills.
+        source_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        source_header.setStretchLastSection(False)
         self.source_table.hide()
         _fit_rows(self.source_table, 0)
         right.addWidget(self.source_table)
@@ -550,7 +576,6 @@ class ResearchWorkspace(QWidget):
         self._layout_mode = "wide"
         scroll.setWidget(page)
         self.board_scroll = scroll
-        self.conversation = ConversationPanel()
         self.conversation.case_requested.connect(self._open_cited_case)
         self.conversation.show_requested.connect(self.show_turn)
         self.conversation.ask_scoped_requested.connect(self._ask_again)
@@ -563,29 +588,37 @@ class ResearchWorkspace(QWidget):
         self.board_splitter.addWidget(self.conversation)
         self.board_splitter.setStretchFactor(0, 1)
         self.board_splitter.setStretchFactor(1, 0)
+        self.board_splitter.setChildrenCollapsible(False)
         self.board_splitter.setSizes([1000, CONVERSATION_WIDTH])
+        self.board_splitter.splitterMoved.connect(self._remember_panel_width)
         self.canvas_scroll = QScrollArea()
         self.canvas_scroll.setWidgetResizable(True)
         self.canvas_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.canvas_scroll.setWidget(self.board_splitter)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self.board_splitter)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._submit_with_shortcut)
+        self.conversation.tab_order_changed.connect(self._apply_focus_order)
         self.stack.addWidget(self.canvas_scroll)
         self._extract_text = ""
         self._show_all_rows = False
         self._fit_shortlist()
         self._set_case_actions(False)
         self._set_extract_text(CASES_EXTRACTS)
+        self._apply_focus_order()
 
     def _build_actions(self) -> None:
         """Actions behind the page's buttons, so Ctrl+K lists the same things the buttons do."""
         self.trace_action = QAction("Trace the evidence", self)
         self.trace_action.triggered.connect(self._submit_with_shortcut)
-        self.new_question_action = QAction("New question", self)
+        self.new_question_action = QAction("Clear board", self)
         self.new_question_action.setToolTip("Clear the board and keep the conversation")
         self.new_question_action.triggered.connect(self._new_question)
         self.add_comparison_action = QAction("Add comparison", self)
         self.add_comparison_action.triggered.connect(self._add_comparison)
-        self.reset_action = QAction("Reset conversation and board", self)
+        self.reset_action = QAction("New thread", self)
         self.reset_action.setToolTip("Clear the conversation and the board")
         self.reset_action.triggered.connect(self._reset_canvas)
         self.scope_actions: dict[str, QAction] = {}
@@ -602,7 +635,7 @@ class ResearchWorkspace(QWidget):
     def command_entries(self) -> list[tuple[QAction, str, str]]:
         """Palette lines for the research page: the action, its group and extra search words."""
         research = "Research"
-        local = "Local AI"
+        local = "AI menu"
         menu = self.model_menu
         return [
             (self.trace_action, research, "search ask question evidence"),
@@ -618,11 +651,18 @@ class ResearchWorkspace(QWidget):
         ]
 
     def _sync_actions(self) -> None:
-        """Keep the palette's copies of the buttons on the same enabled rules as the buttons."""
+        """Keep the palette's copies of the buttons on the same enabled rules as the buttons.
+
+        Send stays enabled while it reads Stop, so a click can cancel. The palette's
+        Trace action does not: it would start a second question.
+        """
         busy_reason = "A search is running. Cancel it or wait for it to finish."
-        for action, button in ((self.trace_action, self.ask_button), (self.add_comparison_action, self.add_comparison_button)):
-            action.setEnabled(button.isEnabled() and not button.isHidden())
-            action.setToolTip("" if action.isEnabled() else (busy_reason if self._searching else "Not available here."))
+        self.trace_action.setEnabled(self._composer_ready() and not self._answer_running())
+        self.trace_action.setToolTip("" if self.trace_action.isEnabled() else (busy_reason if self._answer_running() else "Not available here."))
+        self.add_comparison_action.setEnabled(self.add_comparison_button.isEnabled() and not self.add_comparison_button.isHidden())
+        self.add_comparison_action.setToolTip(
+            "" if self.add_comparison_action.isEnabled() else (busy_reason if self._searching else "Not available here.")
+        )
 
     def _build_signal_detail(self) -> None:
         page = SignalPage()
@@ -709,15 +749,15 @@ class ResearchWorkspace(QWidget):
         self.follow_up_button.clicked.connect(self._ask_about_minute)
         ask_row.addWidget(self.follow_up_button)
         self.follow_up_cancel = _text_button("Cancel")
-        self.follow_up_cancel.clicked.connect(lambda: self._reset_follow_up())
+        self.follow_up_cancel.clicked.connect(self._cancel_minute_question)
         self.follow_up_cancel.hide()
         ask_row.addWidget(self.follow_up_cancel)
         column.addLayout(ask_row)
-        self.follow_up_label = _wrap()
-        self.follow_up_label.setObjectName("quietText")
-        self.follow_up_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.follow_up_label = _link_button("")
+        self.follow_up_label.setAccessibleDescription("Shows this minute's turn in the conversation")
+        self.follow_up_label.clicked.connect(self._open_minute_in_thread)
         self.follow_up_label.hide()
-        column.addWidget(self.follow_up_label)
+        column.addWidget(self.follow_up_label, alignment=Qt.AlignmentFlag.AlignLeft)
         self.follow_up_answer = AnswerText()
         self.follow_up_answer.setAccessibleName("Answer about the selected minute")
         self.follow_up_answer.hide()
@@ -820,7 +860,8 @@ class ResearchWorkspace(QWidget):
 
         # Focus follows the screen: back, the chart column from the top, then the inspector from the top.
         order = (self.back_button, self.more_signals_button, self.detail_chart, self.minute_slider,
-                 self.follow_up_edit, self.follow_up_button, self.follow_up_cancel, self.open_table_button,
+                 self.follow_up_edit, self.follow_up_button, self.follow_up_cancel, self.follow_up_label,
+                 self.open_table_button,
                  self.source_row_table, self.context_button, self.episode_list, self.rule_link,
                  self.clear_episode_button)
         for earlier, later in zip(order, order[1:], strict=False):
@@ -832,7 +873,7 @@ class ResearchWorkspace(QWidget):
         self.signal_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.signal_scroll.setWidget(page)
         self.stack.addWidget(self.signal_scroll)
-        self.stack.currentChanged.connect(lambda _index: self._reset_follow_up(clear_question=True))
+        self.stack.currentChanged.connect(self._on_research_stack)
 
     def _show_rule_widgets(self, shown: bool) -> None:
         """The selected rule's name, description and ruler show only while an episode is selected."""
@@ -871,9 +912,16 @@ class ResearchWorkspace(QWidget):
         if self.scope == "Articles":
             self._render_scope()
 
-    def _ask_again(self, question: str, scope: str) -> None:
+    def _ask_again(self, question: str, scope: str, request_id: int) -> None:
+        # History for this ask is the turns before this one, not the turn itself.
+        self._reask_before = request_id
         self.scope_switch.set_scope(scope)
         self.question_submitted.emit(question)
+
+    def take_reask(self) -> int | None:
+        before = getattr(self, "_reask_before", None)
+        self._reask_before = None
+        return before
 
     def _change_scope(self, scope: str) -> None:
         self._stop_running_question()
@@ -896,7 +944,6 @@ class ResearchWorkspace(QWidget):
         self.comparison_card.setVisible(not articles and self._comparison_pid is not None)
         self.add_comparison_button.setVisible(not articles)
         self._set_extract_text(ARTICLES_EXTRACTS if articles else CASES_EXTRACTS)
-        self.question_edit.setPlaceholderText(ARTICLES_PLACEHOLDER if articles else CASES_PLACEHOLDER)
         # The scope line belongs beside the step that is showing.
         head = self._articles_head if articles else self._shortlist_head
         if head.indexOf(self.scope_label) < 0:
@@ -906,9 +953,8 @@ class ResearchWorkspace(QWidget):
         if articles:
             self.scope_label.setText(f"Articles: {self._catalog_count:,} in the local catalog")
             self.status_label.setText(self._article_error or (NO_CATALOG if not self._catalog_count else "Ready to search local articles."))
-        ready = not self._searching and (articles or not self._setup_required)
-        self.ask_button.setEnabled(ready and not (articles and self._article_error))
-        self.question_edit.setEnabled(ready)
+            self.status_label.setVisible(bool(self.status_label.text()))
+        self._apply_composer_state()
         self.scope_actions[self.scope].setChecked(True)
         self._sync_actions()
         self._layout_mode = ""
@@ -919,35 +965,65 @@ class ResearchWorkspace(QWidget):
         if self.scope == "Articles":
             self._render_scope()
             return
-        self.ask_button.setEnabled(not required)
-        self.question_edit.setEnabled(not required)
+        self._apply_composer_state()
         self._sync_actions()
         self.status_label.setText(
             "Setup required. Choose a valid EMR folder before searching."
             if required else "Ready to search indexed surgeries."
         )
+        self.status_label.setVisible(True)
 
     def set_searching(self, active: bool) -> None:
-        ready = not active and (self.scope == "Articles" or not self._setup_required)
-        self.ask_button.setEnabled(ready)
-        self.question_edit.setEnabled(ready)
         self._searching = active
-        self.cancel_button.setVisible(active)
+        self._apply_composer_state()
         self.add_comparison_button.setEnabled(not active)
         self.inspect_button.setEnabled(not active and self._selected_pid is not None)
         self.compare_button.setEnabled(not active and self._selected_pid is not None)
         self._sync_actions()
         self._apply_board_layout()
 
+    def _answer_running(self) -> bool:
+        return self._searching or self._follow_up_active is not None
+
+    def _composer_ready(self) -> bool:
+        """True when a new question may be typed: setup is done, and articles have a catalog."""
+        if self._searching:
+            return False
+        if self.scope == "Articles":
+            return not self._article_error
+        return not self._setup_required
+
+    def _apply_composer_state(self) -> None:
+        """Disable the box while an answer runs, and turn Send into Stop. A typed draft is kept."""
+        running = self._answer_running()
+        ready = (self.scope == "Articles" and not self._article_error) or (self.scope != "Articles" and not self._setup_required)
+        self.composer.setEnabled(ready and not running)
+        self.ask_button.set_running(running)
+        self.ask_button.setEnabled(running or (ready and not self._searching))
+
+    def _on_ask_clicked(self) -> None:
+        if self._searching:
+            self.cancel_requested.emit()
+            return
+        if self._follow_up_active is not None:
+            self._cancel_minute_question()
+            return
+        self._submit_question()
+
     def _submit_with_shortcut(self) -> None:
-        # Enter in the field already submits; the shortcut also works from the switch, the menu and the trail.
-        if self.ask_button.isEnabled():
-            self._submit_question()
+        # Ctrl+Enter traces from the board and the composer. It does not start a second question.
+        if self._answer_running() or not self.trace_action.isEnabled():
+            return
+        self._submit_question()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if watched is self.board_scroll.viewport() and event.type() == QEvent.Type.Resize:
             self._apply_board_layout()
         return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._apply_focus_order()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -962,13 +1038,14 @@ class ResearchWorkspace(QWidget):
         orientation = Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
         if self.board_splitter.orientation() != orientation:
             self.board_splitter.setOrientation(orientation)
-            self.board_splitter.setSizes([max(300, self.height() - 360), 340] if stacked
-                                         else [max(600, board_width - CONVERSATION_WIDTH), CONVERSATION_WIDTH])
+            if not stacked:
+                self.board_splitter.setSizes([max(600, board_width - CONVERSATION_WIDTH), CONVERSATION_WIDTH])
+        self.board_splitter.setStretchFactor(0, 1)
+        self.board_splitter.setStretchFactor(1, 1 if stacked else 0)
         self._layout_mode = "wide" if board_width >= 1100 else "narrow" if board_width >= 640 else "single"
-        room = board_width - (0 if stacked else CONVERSATION_WIDTH) - PAGE_MARGINS[0] - PAGE_MARGINS[2]
-        # The page never has more than its viewport, which a scroll bar narrows.
-        room = min(room, self.board_scroll.viewport().width() - PAGE_MARGINS[0] - PAGE_MARGINS[2])
-        self._fit_controls(room)
+        room = self.board_scroll.viewport().width() - PAGE_MARGINS[0] - PAGE_MARGINS[2]
+        self._fit_evidence_actions(room)
+        self._place_panel(stacked, board_width)
         side_by_side = room - GUTTER >= SIDE_BY_SIDE_WIDTH
         self._observation_columns.setDirection(
             QBoxLayout.Direction.LeftToRight if side_by_side else QBoxLayout.Direction.TopToBottom
@@ -981,48 +1058,80 @@ class ResearchWorkspace(QWidget):
             QBoxLayout.Direction.LeftToRight if room - GUTTER >= pair else QBoxLayout.Direction.TopToBottom
         )
 
-    def _fit_controls(self, room: int) -> None:
-        """Lay the controls out in as few rows as the width allows.
+    def _fit_evidence_actions(self, room: int) -> None:
+        """Clear board and Add comparison sit in the Evidence header, stacked when the board is narrow."""
+        buttons = [button for button in (self.new_question_button, self.add_comparison_button) if not button.isHidden()]
+        for button in buttons:
+            button.ensurePolished()
+        widths = [button.sizeHint().width() for button in buttons]
+        side = sum(widths) + self._evidence_actions.spacing() * max(len(widths) - 1, 0)
+        self._evidence_actions.setDirection(
+            QBoxLayout.Direction.LeftToRight if side <= max(room, 0) else QBoxLayout.Direction.TopToBottom
+        )
 
-        One row when everything fits; otherwise the actions drop under the choices, on the right;
-        and when even the actions are too wide, the Trace button drops under the other actions.
-        The scope switch and the model menu stack the same way when they are too wide for the board.
-        """
-        # Unpolished buttons report plainer, narrower sizes than the styled ones will have.
-        for control in (self.scope_switch, self.model_menu, self.new_question_button, self.add_comparison_button,
-                        self.cancel_button, self.ask_button):
-            control.ensurePolished()
-        # Summed from the parts, not read from the layout, whose own width changes when it stacks.
-        choices = self.scope_switch.sizeHint().width() + self._choices_row.spacing() + self.model_menu.sizeHint().width()
-        self._choices_row.setDirection(
-            QBoxLayout.Direction.LeftToRight if choices <= room else QBoxLayout.Direction.TopToBottom
+    def _remember_panel_width(self, _pos: int, _index: int) -> None:
+        if self._placing_panel or not self.isVisible() or self.board_splitter.orientation() != Qt.Orientation.Horizontal:
+            return
+        sizes = self.board_splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            self._panel_width = sizes[1]
+
+    def _place_panel(self, stacked: bool, board_width: int) -> None:
+        """Default about 480 px, never under 360, never more than half the window. A drag is kept."""
+        self.conversation.set_stacked(stacked)
+        if stacked:
+            self.conversation.setMinimumWidth(0)
+            self.conversation.setMaximumWidth(16777215)
+            page = self.board_splitter.height() or self.height()
+            # At least about 45% of the page, and 432 px when the window can spare the board 280 px.
+            # 420 left the thread viewport at 216 px. 432 clears the 220 px floor at 1000×900.
+            panel = max(432, int(page * 0.45))
+            # The board's slot also holds its frame, so 280 leaves its visible part at least 250 px.
+            if page - panel < 280:
+                panel = max(180, page - 280)
+            self.conversation.setMinimumHeight(panel)
+            self.conversation.setMaximumHeight(16777215)
+            sizes = self.board_splitter.sizes()
+            if len(sizes) == 2 and abs(sizes[1] - panel) <= 1:
+                return
+            self._placing_panel = True
+            try:
+                self.board_splitter.setSizes([max(1, page - panel), panel])
+            finally:
+                self._placing_panel = False
+            return
+        self.conversation.setMinimumHeight(180)
+        self.conversation.setMaximumHeight(16777215)
+        total = self.board_splitter.width() or board_width
+        if total <= 0:
+            return
+        half = max(PANEL_MIN_WIDTH, total // 2)
+        self.conversation.setMinimumWidth(PANEL_MIN_WIDTH)
+        self.conversation.setMaximumWidth(half)
+        wanted = CONVERSATION_WIDTH if self._panel_width is None else self._panel_width
+        panel = min(max(wanted, PANEL_MIN_WIDTH), half)
+        sizes = self.board_splitter.sizes()
+        if len(sizes) == 2 and sizes[1] == panel:
+            return
+        self._placing_panel = True
+        try:
+            self.board_splitter.setSizes([max(1, total - panel), panel])
+        finally:
+            self._placing_panel = False
+
+    def _apply_focus_order(self) -> None:
+        """Thread, then the composer, the scope, AI and Send, then the evidence board."""
+        board = (
+            self.new_question_button, self.add_comparison_button, self.candidate_table,
+            self.show_all_button, self.inspect_button, self.compare_button, self.finding_open,
+            self.all_rows_button,
         )
-        shown = [button.sizeHint().width() for button in (self.new_question_button, self.add_comparison_button,
-                                                           self.cancel_button) if not button.isHidden()]
-        secondary = sum(shown) + self._secondary_row.spacing() * max(len(shown) - 1, 0)
-        # Even the two secondary actions side by side can be too wide for the board; then they stack too.
-        side_by_side = secondary <= room
-        self._secondary_row.setDirection(
-            QBoxLayout.Direction.LeftToRight if side_by_side else QBoxLayout.Direction.TopToBottom
-        )
-        for button in (self.new_question_button, self.add_comparison_button, self.cancel_button):
-            self._secondary_row.setAlignment(button, Qt.AlignmentFlag(0) if side_by_side else Qt.AlignmentFlag.AlignRight)
-        ask = self.ask_button.sizeHint().width()
-        actions = secondary + self._actions_row.spacing() + ask
-        one_row = choices + CONTROLS_GAP + actions <= room
-        self._controls_layout.setDirection(
-            QBoxLayout.Direction.LeftToRight if one_row else QBoxLayout.Direction.TopToBottom
-        )
-        self._controls_layout.setSpacing(CONTROLS_GAP if one_row else 10)
-        self._controls_layout.setAlignment(
-            self._actions_row, Qt.AlignmentFlag(0) if one_row else Qt.AlignmentFlag.AlignRight
-        )
-        stacked = not one_row and actions > room
-        self._actions_row.setDirection(
-            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
-        )
-        self._actions_row.setAlignment(self.ask_button, Qt.AlignmentFlag.AlignRight if stacked else Qt.AlignmentFlag(0))
-        self._actions_row.setAlignment(self._secondary_row, Qt.AlignmentFlag.AlignRight if stacked else Qt.AlignmentFlag(0))
+        widgets = [
+            widget for widget in (*self.conversation.tab_widgets(), *board)
+            if widget.focusPolicy() != Qt.FocusPolicy.NoFocus and not widget.isHidden()
+        ]
+        for earlier, later in zip(widgets, widgets[1:], strict=False):
+            QWidget.setTabOrder(earlier, later)
 
     def set_rule_catalog(self, catalog: RuleCatalog | None, *, recorded: bool = True,
                          thresholds_sha256: str | None = None, error: str = "") -> None:
@@ -1052,7 +1161,7 @@ class ResearchWorkspace(QWidget):
         self._apply_board_layout()
 
     def _rules_fallback_focus(self) -> QWidget:
-        return self.question_edit if self.question_edit.isVisible() else self.back_button
+        return self.composer if self.composer.isVisible() else self.back_button
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         # The open rules drawer owns Escape; a second Escape shortcut here would make Qt drop both as ambiguous.
@@ -1095,6 +1204,29 @@ class ResearchWorkspace(QWidget):
         if turn is not None and not self._restoring_board:
             turn.board = self._snapshot_board()
 
+    def _shown_turn(self) -> Turn | None:
+        """The turn whose results are on the board, or None while the board is clear."""
+        turn = self.conversation.turn(self._board_request)
+        if turn is None:
+            return None
+        if self.scope == "Articles":
+            return turn if self.article_result is not None else None
+        return turn if self.result is not None else None
+
+    def _sync_board_heading(self) -> None:
+        """Name the question on the board, and mark that turn's button On board."""
+        turn = self._shown_turn()
+        self.conversation.set_shown_turn(None if turn is None else turn.request_id)
+        if turn is None:
+            self.board_question.set_full("")
+            self.board_question.hide()
+            return
+        number = next(
+            index for index, item in enumerate(self.conversation.turns, 1) if item.request_id == turn.request_id
+        )
+        self.board_question.set_full(f"Question {number} · {turn.question}")
+        self.board_question.show()
+
     def begin_question(self, question: str, request_id: int | None = None) -> None:
         self._save_board()
         self._before_question = self._snapshot_board()
@@ -1106,11 +1238,11 @@ class ResearchWorkspace(QWidget):
         ) + 1
         self._board_request = self._active_turn_request
         self._question = question
-        self.question_edit.setText(question)
         turn = Turn(self._active_turn_request, question, self.selected_model(), scope=self.scope, demo=self.data_is_demo)
         turn.board = self._snapshot_board()
         self.conversation.append_turn(turn)
         self.set_searching(True)
+        self._sync_board_heading()
         self.place_changed.emit()
 
     def _restore_board(self, state: QuestionState) -> None:
@@ -1122,7 +1254,6 @@ class ResearchWorkspace(QWidget):
             if state.article_result is not None:
                 self.set_article_results(state.article_result)
             self._question = state.question
-            self.question_edit.setText(state.question)
             if state.result is not None:
                 self.set_results(state.result)
                 for pid in (state.primary_pid, state.comparison_pid):
@@ -1144,9 +1275,11 @@ class ResearchWorkspace(QWidget):
             self.answer_text.setPlainText(state.answer)
             for label, text in zip(self._board_labels(), state.labels, strict=True):
                 label.setText(text)
+            self.status_label.setVisible(bool(self.status_label.text()))
             self.stack.setCurrentIndex(0)
         finally:
             self._restoring_board = False
+        self._sync_board_heading()
         self.place_changed.emit()
 
     def cancel_question(self) -> None:
@@ -1155,6 +1288,7 @@ class ResearchWorkspace(QWidget):
         if self._status_is_progress:
             # The cancelled turn keeps its board; it must not keep the running step
             self.status_label.setText("Search cancelled.")
+            self.status_label.setVisible(True)
             self._status_is_progress = False
         if turn is not None and self._searching:
             turn.state = "cancelled"
@@ -1210,13 +1344,14 @@ class ResearchWorkspace(QWidget):
             self.conversation.update_turn(turn)
 
     def finish_progress(self) -> None:
-        """Replace a running step left on the status line once its search has ended."""
+        """Drop a running step once the search has ended. The turn shows whether it finished."""
         if self._status_is_progress:
-            self.set_status("Search finished.")
+            self.set_status("")
 
     def set_status(self, message: str) -> None:
         self._status_is_progress = False
         self.status_label.setText(message)
+        self.status_label.setVisible(bool(message))
         announce(self.status_label, message)
         self._save_board()
         if self._cases_overview is not None and self.stack.currentIndex() == CASES_PAGE:
@@ -1224,6 +1359,8 @@ class ResearchWorkspace(QWidget):
 
     def invalidate_case_data(self) -> bool:
         """Drop case views computed from the previous data; True when any were shown."""
+        # Closing the open case stops a minute question. Leaving for the research canvas does not.
+        self._cancel_minute_question(clear_question=True)
         had_cases = bool(self._case_views) or self._current_pid is not None
         running = self.conversation.turn(self._active_turn_request)
         if running is not None and running.state == "running":
@@ -1272,6 +1409,8 @@ class ResearchWorkspace(QWidget):
         self.board_restore_requested.emit()
         self._detach_board()
         self._clear_board()
+        if self.composer.isEnabled():
+            self.composer.setFocus()
 
     def _stop_running_question(self) -> None:
         if self._searching:
@@ -1289,7 +1428,7 @@ class ResearchWorkspace(QWidget):
     def _confirm_reset(self) -> bool:
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Reset")
+        box.setWindowTitle("New thread")
         box.setText("Clear the conversation and the board?")
         clear = box.addButton("Clear", QMessageBox.ButtonRole.DestructiveRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -1299,23 +1438,27 @@ class ResearchWorkspace(QWidget):
         return box.clickedButton() is clear
 
     def _submit_question(self) -> None:
-        question = self.question_edit.text().strip()
-        if question:
-            self.question_submitted.emit(question)
+        if self._answer_running():
+            return
+        question = self.composer.text().strip()
+        if not question:
+            return
+        self.composer.clear()
+        self.question_submitted.emit(question)
 
     def _reset_canvas(self) -> None:
         if self.conversation.turns and not self._confirm_reset():
             return
         if self._searching:
             self.cancel_requested.emit()
+        self._cancel_minute_question()
         self.board_restore_requested.emit()
         self._detach_board()
+        self.composer.clear()
         self.conversation.clear()
         self._clear_board()
 
     def _clear_board(self) -> None:
-        self.question_edit.clear()
-        self.question_edit.setFocus()
         self.result = None
         self.article_result = None
         self.article_list.clear()
@@ -1341,6 +1484,7 @@ class ResearchWorkspace(QWidget):
         self._set_case_actions(False)
         self.set_status("Enter a research question to trace its evidence.")
         self._render_scope()
+        self._sync_board_heading()
 
     def _add_comparison(self) -> None:
         if self.result is None:
@@ -1436,6 +1580,7 @@ class ResearchWorkspace(QWidget):
         if not result.articles:
             self.article_list.addItem(result.message)
         self._save_board()
+        self._sync_board_heading()
 
     def set_results(self, result: RetrievalResult) -> None:
         self.result = result
@@ -1484,6 +1629,7 @@ class ResearchWorkspace(QWidget):
         self._fit_shortlist()
         self._set_case_actions(bool(result.candidates))
         self._save_board()
+        self._sync_board_heading()
 
     def _case_duration(self, pid: str) -> tuple[str, bool]:
         """The case's length as text, and whether it is the analyzed-case table's own figure.
@@ -1533,6 +1679,8 @@ class ResearchWorkspace(QWidget):
     def set_answer(
         self, answer: str, request_id: int | None = None, *,
         state: TurnState = "answered", failure: str = "",
+        backend: str | None = None, trimmed: bool | None = None,
+        sources: tuple[str, ...] | None = None,
     ) -> None:
         if request_id is not None and request_id != self._active_turn_request:
             return
@@ -1540,9 +1688,16 @@ class ResearchWorkspace(QWidget):
         turn = self.conversation.turn(self._active_turn_request)
         if turn is not None:
             turn.answer, turn.state, turn.failure = answer, state, failure
+            if backend is not None:
+                turn.backend = backend
+            if trimmed is not None:
+                turn.trimmed = trimmed
+            if sources is not None:
+                turn.sources = tuple(sources)
             candidates = self.result.candidates if self.result is not None else ()
             turn.cited_pids = tuple(candidate.pid for candidate in candidates
                                     if re.search(r"(?<!\w)" + re.escape(candidate.pid) + r"(?!\w)", answer))
+            turn.remember()
             self._save_board()
             self.conversation.update_turn(turn)
             announce(self.conversation, f"Research answer ready for {turn.question}.")
@@ -1752,7 +1907,7 @@ class ResearchWorkspace(QWidget):
             self.set_status("Source unavailable: this case has no time series to inspect.")
             return
         self._current_pid = pid
-        self._reset_follow_up(clear_question=True)
+        self._cancel_minute_question(clear_question=True)
         self.rules_drawer.set_thresholds_sha256(view.thresholds_sha256)
         self._minute_rows = focused_minute_rows(view.timeseries).reset_index()
         self.selected_rule_id = None
@@ -1899,8 +2054,9 @@ class ResearchWorkspace(QWidget):
             return
         row = self._minute_rows.iloc[index]
         minute = float(row["t_min"])
-        if self._follow_up_key not in (None, (self._current_pid, minute)):
-            self._reset_follow_up()
+        if self._follow_up_key is not None and self._follow_up_key[0] != self._current_pid:
+            self._cancel_minute_question()
+        self._sync_minute_pointer(minute)
         self.minute_slider.setAccessibleDescription(f"{minute:g} minutes relative to incision")
         self.minute_stamp.setText(f"{minute:g}")
         self.follow_up_edit.setPlaceholderText(f"Ask about minute {minute:g}")
@@ -1966,65 +2122,164 @@ class ResearchWorkspace(QWidget):
             episode_label=label, episode_signals=signals, threshold_lines=thresholds,
         )
 
+    def _minute_label(self, minute: float, pid: str) -> str:
+        return f"Minute {minute:g} · {pid}"
+
+    def _on_research_stack(self, index: int) -> None:
+        # The research canvas is where the minute question's turn lives, so opening it keeps the question running.
+        # The cases list still stops it. Changing case, closing the case, and Cancel stop it themselves.
+        if index not in (0, 1):
+            self._cancel_minute_question(clear_question=True)
+
+    def _sync_minute_pointer(self, minute: float) -> None:
+        """The signal page points at the thread. It never shows the answer text."""
+        self.follow_up_answer.hide()
+        if self._follow_up_key == (self._current_pid, minute) and self._minute_pointer:
+            self.follow_up_label.setText(self._minute_pointer)
+            self.follow_up_label.setAccessibleName(self._minute_pointer)
+            self.follow_up_label.show()
+        else:
+            self.follow_up_label.hide()
+
+    def _begin_minute_turn(self, question: str, label: str) -> Turn:
+        # Negative ids stay off the research page's own request numbers.
+        request_id = -self.conversation.allocate_request_id()
+        self._follow_up_active = request_id
+        self._minute_turn_id = request_id
+        turn = Turn(
+            request_id, question, self.selected_model(), scope="Cases", demo=self.data_is_demo, context_label=label,
+        )
+        # The case this minute belongs to: aliased with the answer whenever it later goes out as history.
+        if self._current_pid is not None:
+            turn.cited_pids = (self._current_pid,)
+        self.conversation.append_turn(turn)
+        return turn
+
     def _ask_about_minute(self) -> None:
         question = self.follow_up_edit.text().strip()
         if not question or self._current_pid is None or self._follow_up_active is not None:
             return
         minute = float(self._minute_rows.iloc[self.minute_slider.value()]["t_min"])
-        self._reset_follow_up()
-        self._follow_up_key = (self._current_pid, minute)
-        self.follow_up_label.setText(f"Minute {minute:g} · {self._current_pid}")
-        self.follow_up_label.show()
+        pid = self._current_pid
+        label = self._minute_label(minute, pid)
+        self._follow_up_key = (pid, minute)
         model = self.selected_model()
+        turn = self._begin_minute_turn(question, label)
         if not model:
-            self._show_follow_up(FOLLOW_UP_NO_MODEL)
+            turn.state = "no_model"
+            turn.answer = FOLLOW_UP_NO_MODEL
+            self.conversation.update_turn(turn)
+            self._follow_up_active = None
+            self._minute_pointer = f"Answered in the conversation · {label}"
+            self._sync_minute_pointer(minute)
+            self._apply_composer_state()
             return
-        self._follow_up_request += 1
-        request_id = self._follow_up_active = self._follow_up_request
+        self._minute_pointer = f"Asking in the conversation · {label}"
+        self._sync_minute_pointer(minute)
+        self._set_follow_up_running(True)
         worker = MinuteQuestionWorker(
-            self._case_views[self._current_pid].candidate, self._minute_extract(self._current_pid, minute), question, model,
+            self._case_views[pid].candidate, self._minute_extract(pid, minute), question, model,
             self._rule_catalog.preset if self._rule_catalog is not None else "default", parent=self,
+            cloud=self.cloud, real_data=not self.data_is_demo,
+            history=self.conversation.history_before(turn.request_id),
         )
+        request_id = turn.request_id
         self._follow_up_workers[request_id] = worker
-        worker.answer.connect(lambda response: self._on_follow_up(request_id, str(getattr(response, "answer", "") or "No answer was returned.")))
-        worker.failed.connect(lambda message: self._on_follow_up(request_id, f"The question could not be answered: {message}"))
-        worker.finished.connect(lambda: self._follow_up_workers.pop(request_id, None))
-        self.follow_up_button.setEnabled(False)
-        self.follow_up_cancel.show()
-        self.follow_up_edit.setEnabled(False)
-        self._show_follow_up("Asking the local model…")
+        worker.answer.connect(lambda response, rid=request_id: self._on_minute_answer(rid, response))
+        worker.failed.connect(lambda message, rid=request_id: self._on_minute_failed(rid, str(message)))
+        worker.finished.connect(lambda rid=request_id: self._follow_up_workers.pop(rid, None))
         worker.start()
 
-    def _on_follow_up(self, request_id: int, text: str) -> None:
-        if request_id != self._follow_up_active:
-            return
-        self._follow_up_active = None
-        self._set_follow_up_running(False)
-        self._show_follow_up(text)
+    def _on_minute_answer(self, request_id: int, response: object) -> None:
+        text = str(getattr(response, "answer", "") or "No answer was returned.")
+        self._land_minute_turn(request_id, text, state="answered", response=response)
 
-    def _show_follow_up(self, text: str) -> None:
-        self.follow_up_answer.clear()
-        self.follow_up_answer.append_markdown(text)
-        self.follow_up_answer.show()
+    def _on_minute_failed(self, request_id: int, message: str) -> None:
+        self._land_minute_turn(
+            request_id, f"The question could not be answered: {message}", state="failed", failure=message,
+        )
+
+    def _land_minute_turn(
+        self, request_id: int, text: str, *, state: str, failure: str = "", response: object | None = None,
+    ) -> None:
+        """Put the answer on the turn that was asked, never under whatever minute is selected now."""
+        turn = self.conversation.turn(request_id)
+        if turn is None or turn.state == "cancelled" or request_id in self._minute_dropped:
+            if self._follow_up_active == request_id:
+                self._follow_up_active = None
+                self._set_follow_up_running(False)
+            return
+        turn.answer = text
+        if state == "failed":
+            turn.state = "failed"
+            turn.failure = failure
+        else:
+            turn.state = "answered"
+            turn.failure = ""
+        worker = self._follow_up_workers.get(request_id)
+        if response is not None and worker is not None and state == "answered":
+            cloud = worker.cloud
+            turn.backend = cloud.backend if cloud is not None and cloud.is_cloud else "ollama"
+            turn.trimmed = bool(worker.real_data and cloud is not None and cloud.is_cloud)
+            turn.sources = tuple(getattr(response, "sources", ()) or ())
+        if state == "answered":
+            turn.remember()
+        self.conversation.update_turn(turn)
+        if self._follow_up_active == request_id:
+            self._follow_up_active = None
+            self._set_follow_up_running(False)
+            self._minute_pointer = f"Answered in the conversation · {turn.context_label}"
+            if self._current_pid is not None and not self._minute_rows.empty:
+                minute = float(self._minute_rows.iloc[self.minute_slider.value()]["t_min"])
+                self._sync_minute_pointer(minute)
+        self._apply_composer_state()
+
+    def _on_follow_up(self, request_id: int, text: str) -> None:
+        """Tests and older callers land a finished answer on the turn that was asked."""
+        failed = text.startswith("The question could not be answered:")
+        self._land_minute_turn(request_id, text, state="failed" if failed else "answered", failure=text if failed else "")
+
+    def _open_minute_in_thread(self) -> None:
+        """Leave the signal page for the research canvas, on the minute question's turn."""
+        request_id = self._minute_turn_id
+        self.clear_episode_selection()
+        self.rules_drawer.set_thresholds_sha256(self._thresholds_sha256)
+        self.stack.setCurrentIndex(0)
+        if request_id is not None:
+            self.conversation.focus_turn(request_id)
 
     def _set_follow_up_running(self, running: bool) -> None:
         self.follow_up_edit.setEnabled(not running)
         self.follow_up_button.setEnabled(not running)
         self.follow_up_cancel.setVisible(running)
+        self._apply_composer_state()
 
-    def _reset_follow_up(self, *, clear_question: bool = False) -> None:
-        """Drop the answer and any running question; a late answer for it is then ignored."""
-        worker = self._follow_up_workers.get(self._follow_up_active) if self._follow_up_active is not None else None
+    def _cancel_minute_question(self, *, clear_question: bool = False) -> None:
+        """Stop the running minute question. A late answer is not moved onto another minute."""
+        request_id = self._follow_up_active
+        worker = self._follow_up_workers.get(request_id) if request_id is not None else None
         if worker is not None and worker.isRunning():
             worker.requestInterruption()
+        if request_id is not None:
+            self._minute_dropped.add(request_id)
+            turn = self.conversation.turn(request_id)
+            if turn is not None and turn.state == "running":
+                turn.state = "cancelled"
+                self.conversation.update_turn(turn)
         self._follow_up_active = None
         self._follow_up_key = None
+        self._minute_pointer = ""
+        self._minute_turn_id = None
         self._set_follow_up_running(False)
         self.follow_up_label.hide()
         self.follow_up_answer.clear()
         self.follow_up_answer.hide()
         if clear_question:
             self.follow_up_edit.clear()
+
+    def _reset_follow_up(self, *, clear_question: bool = False) -> None:
+        """Older name for cancelling the signal-page question. The thread turn stays."""
+        self._cancel_minute_question(clear_question=clear_question)
 
     def follow_up_workers(self) -> list[MinuteQuestionWorker]:
         return list(self._follow_up_workers.values())

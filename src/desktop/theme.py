@@ -61,7 +61,7 @@ QMenu::item:selected {{
     color: {ink};
 }}
 QMenu::item:disabled {{
-    color: {rule_strong};
+    color: {ink_3};
 }}
 QMenu::separator {{
     height: 1px;
@@ -407,32 +407,7 @@ QLabel#footerField {{
     padding-left: 18px;
 }}
 
-/* —— research page: question, controls, evidence trail, conversation —— */
-QLineEdit#questionField {{
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid {rule_strong};
-    border-radius: 0;
-    padding: 2px 0 8px 0;
-    min-height: 34px;
-    font-family: {serif};
-    font-size: 28px;
-    color: {ink};
-}}
-QLineEdit#questionField:hover {{
-    border-color: {ink_3};
-}}
-/* the ring is the underline, thickened; padding drops by 1 px so the field keeps its height */
-QLineEdit#questionField:focus {{
-    border: none;
-    border-bottom: 2px solid {accent};
-    padding: 2px 0 7px 0;
-}}
-QLineEdit#questionField:disabled {{
-    background: transparent;
-    color: {ink_3};
-    border-bottom: 1px solid {rule};
-}}
+/* —— research page: evidence trail, conversation thread, composer —— */
 QGroupBox#scopeSwitch {{
     border: none;
     margin: 0;
@@ -540,10 +515,18 @@ QSplitter#boardSplitter::handle {{
 QSplitter#boardSplitter::handle:hover {{
     background: {accent};
 }}
-QScrollArea#conversationPanel {{
+QFrame#conversationPanel {{
     background: {sheet};
     border: none;
     border-left: 1px solid {rule};
+}}
+QFrame#conversationPanel[stacked="true"] {{
+    border-left: none;
+    border-top: 1px solid {rule};
+}}
+QScrollArea#conversationScroll {{
+    background: {sheet};
+    border: none;
 }}
 QWidget#conversationPage {{
     background: {sheet};
@@ -553,17 +536,108 @@ QLabel#conversationTitle {{
     font-size: 20px;
     color: {ink};
 }}
-QLabel#turnQuestion {{
-    font-family: {serif};
-    font-style: italic;
-    font-size: 20px;
+QFrame#turnBubble {{
+    background: {sel};
+    border: 1px solid {rule};
+    border-radius: 10px;
+}}
+QLabel#turnContext {{
+    background: transparent;
+    color: {ink_2};
+    font-size: 12px;
+    font-weight: 600;
+}}
+QTextEdit#turnBubbleText {{
+    background: transparent;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    padding: 0;
+    min-height: 0;
+    font-size: 14px;
     color: {ink};
+    selection-background-color: {accent};
+    selection-color: {on_accent};
+}}
+QTextEdit#turnBubbleText:focus {{
+    border: 2px solid {accent};
+    padding: 0;
 }}
 QFrame#turnRule {{
     background: {rule};
     border: none;
     min-height: 1px;
     max-height: 1px;
+}}
+QPushButton#foldToggle {{
+    background: transparent;
+    color: {ink_2};
+    border: 1px solid {rule};
+    border-radius: 3px;
+    padding: 4px 10px;
+    min-height: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-align: left;
+}}
+QPushButton#foldToggle:hover {{
+    background: {rule_faint};
+    color: {ink};
+}}
+QPushButton#foldToggle:pressed {{
+    background: {rule};
+    color: {ink};
+}}
+QPushButton#foldToggle:focus {{
+    border: 2px solid {accent};
+    padding: 3px 9px;
+}}
+QPushButton#foldToggle[amber="true"] {{
+    background: {warn_bg};
+    color: {warn};
+    border-color: {warn_border};
+}}
+QPushButton#foldToggle[amber="true"]:hover, QPushButton#foldToggle[amber="true"]:pressed {{
+    background: {warn_bg_hover};
+    color: {warn};
+    border-color: {warn_border};
+}}
+QPushButton#foldToggle[amber="true"]:focus {{
+    border: 2px solid {accent};
+    padding: 3px 9px;
+}}
+QLabel#turnCheckNote {{
+    background: {warn_bg};
+    color: {warn};
+    border-left: 3px solid {warn_border};
+    padding: 5px 8px;
+    font-size: 12.5px;
+}}
+QFrame#composerBar {{
+    background: {sheet};
+    border: none;
+    border-top: 1px solid {rule};
+}}
+QPlainTextEdit#threadComposer {{
+    background: {sheet};
+    border: 1px solid {rule_strong};
+    border-radius: 3px;
+    padding: 7px 10px;
+    color: {ink};
+    font-size: 13.5px;
+    selection-background-color: {accent};
+    selection-color: {on_accent};
+}}
+QPlainTextEdit#threadComposer:hover {{
+    border-color: {ink_3};
+}}
+QPlainTextEdit#threadComposer:focus {{
+    border: 2px solid {accent};
+    padding: 6px 9px;
+}}
+QPlainTextEdit#threadComposer:disabled {{
+    background: {paper};
+    color: {rule_strong};
+    border-color: {rule};
 }}
 QTextBrowser#turnAnswer {{
     background: transparent;
@@ -1225,6 +1299,10 @@ _LIGHT = {
     "sel": "#E2E5F4",
     "practice": "#6E4D00",
     "practice_bar": "#A27C12",
+    "warn": "#6E4D00",
+    "warn_bg": "#F5E8C8",
+    "warn_bg_hover": "#EAD8AD",
+    "warn_border": "#A27C12",
     "hatch": "rgba(71, 68, 61, 0.30)",
     "s_pip": "#B0502A",
     "s_etco2": "#1B776B",
@@ -1251,6 +1329,10 @@ _DARK = {
     "sel": "#252B48",
     "practice": "#F0D27A",
     "practice_bar": "#8A7429",
+    "warn": "#F0D27A",
+    "warn_bg": "#2B2313",
+    "warn_bg_hover": "#362C17",
+    "warn_border": "#8A7429",
     "hatch": "rgba(195, 189, 176, 0.24)",
     "s_pip": "#EE8A5E",
     "s_etco2": "#5AC6B6",

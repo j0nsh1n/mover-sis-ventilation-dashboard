@@ -255,7 +255,7 @@ def test_the_palette_is_usable_by_a_screen_reader(window, qapp):
 
 
 # The research page's own commands (and the installed models, when there are any) sit after the places.
-PAGE_GROUPS = ["Go to", "Research", "Question scope", "Local AI", "Data", "Appearance", "App"]
+PAGE_GROUPS = ["Go to", "Research", "Question scope", "AI menu", "Data", "Appearance", "App"]
 
 
 def test_the_list_has_every_command_once_in_group_order_with_no_filter(window, qapp):

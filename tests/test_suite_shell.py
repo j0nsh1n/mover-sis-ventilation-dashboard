@@ -33,7 +33,7 @@ def qapp():
 def reloads(monkeypatch):
     """Calls of the Reload action. The window binds its handlers while it is built, so this patches first."""
     calls: list[bool] = []
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: calls.append(True))
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: calls.append(True))
     return calls
 
 
@@ -829,3 +829,160 @@ def test_escape_from_rules_opened_on_the_rail_returns_focus_to_the_rail_button(w
     qapp.processEvents()
     assert not drawer.is_open
     assert qapp.focusWidget() is rules
+
+
+def test_a_cloud_service_answers_fictional_data_and_stays_off_for_real_cases(window, qapp, password_store):
+    from src.llm import cloud
+    from src.llm.cloud import REAL_DATA_BLOCKED
+    from src.user_settings import update_settings
+
+    cloud.save_api_key("sk-ant-test")
+    update_settings(ai_backend="claude_api")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    assert window.research.selected_model() == "Claude API · claude-opus-5-5"
+    assert window.research.model_menu.state() == "ready"
+    assert window.research.model_status.text().startswith("Answers from Claude API · claude-opus-5-5. Questions")
+    window.research.begin_question("Fictional?", 1)
+    assert window.research.conversation.turn_widgets[1].badge_label.text().startswith("Question 1 · Claude API")
+    window._shown_data_is_demo = False
+    window._show_ai_service()
+    assert window.research.selected_model() is None, "no model: the question gets search results, no answer"
+    assert window.research.model_menu.state() == "blocked"
+    assert window.research.model_status.text() == REAL_DATA_BLOCKED
+    assert "Claude API · claude-opus-5-5" in window.research.model_menu.text(), "the button still names the choice"
+    rows = [action.text() for action in window.research.model_menu.cloud_actions()]
+    assert rows == [cloud.OFF_FOR_REAL_CASES]
+    update_settings(cloud_real_data=True)
+    window._show_ai_service()
+    assert window.research.selected_model() == "Claude API · claude-opus-5-5"
+
+
+def test_a_chosen_cloud_service_without_its_key_or_command_cannot_answer(window, monkeypatch):
+    from src.llm import cloud
+    from src.user_settings import update_settings
+
+    update_settings(ai_backend="claude_api")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    assert window.research.selected_model() is None and window.research.model_menu.state() == "unavailable"
+    assert "not available" in window.research.model_menu.text()
+    assert "No Claude API key" in window.research.model_status.text()
+    monkeypatch.setattr(cloud.shutil, "which", lambda _name: None)
+    update_settings(ai_backend="codex_cli")
+    window._show_ai_service()
+    assert window.research.selected_model() is None
+    assert "'codex' command was not found" in window.research.model_status.text()
+
+
+def test_picking_a_row_in_the_ai_menu_switches_and_is_remembered(window, monkeypatch):
+    from src.llm import cloud
+    from src.user_settings import load_settings
+
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    menu = window.research.model_menu
+    sonnet = next(action for action in menu.cloud_actions() if action.text() == "Sonnet")
+    assert sonnet.isEnabled() and not sonnet.isChecked()
+    sonnet.trigger()
+    saved = load_settings()
+    assert (saved["ai_backend"], saved["cloud_model"]) == ("claude_cli", "sonnet")
+    assert window.research.selected_model() == "Claude Code · sonnet"
+    assert [a.text() for a in menu.cloud_actions() if a.isChecked()] == ["Sonnet"]
+    default = next(action for action in menu.cloud_actions() if action.text() == "Default model")
+    default.trigger()
+    saved = load_settings()
+    assert saved["ai_backend"] == "claude_cli" and "cloud_model" not in saved, "the CLI's own default saves no model"
+    window._on_answer_choice("ollama", "demo:3b")
+    saved = load_settings()
+    assert "ai_backend" not in saved and "cloud_model" not in saved
+    assert window.research.cloud is not None and not window.research.cloud.is_cloud
+
+
+def test_the_claude_api_rows_come_from_the_apis_list_and_a_failed_list_says_why(window, password_store):
+    from src.llm import cloud
+    from src.user_settings import update_settings
+
+    cloud.save_api_key("sk-ant-test")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    menu = window.research.model_menu
+    api_rows = lambda: [a.text() for a in menu.cloud_actions()][:-5]  # noqa: E731 - the CLI rows follow
+    assert api_rows() == ["claude-opus-5-5"], "before the list arrives, the default model is offered"
+    window._api_models = [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-haiku-5-5", "Claude Haiku 5.5")]
+    window._show_ai_service()
+    assert api_rows() == ["Claude Opus 5.5", "Claude Haiku 5.5"]
+    update_settings(ai_backend="claude_api", cloud_model="claude-retired-1")
+    window._api_models_error = "The Claude API could not be reached."
+    window._show_ai_service()
+    rows = api_rows()
+    assert rows[0] == "claude-retired-1", "a saved model the list no longer has stays choosable"
+    assert rows[-1] == "Could not list models: The Claude API could not be reached."
+    assert not [a for a in menu.cloud_actions() if a.text() == rows[-1]][0].isEnabled()
+
+
+def test_an_ollama_failure_leaves_a_chosen_cloud_service_in_place(window, monkeypatch):
+    from src.llm import cloud
+    from src.user_settings import update_settings
+
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
+    update_settings(ai_backend="claude_cli", cloud_model="sonnet")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    menu = window.research.model_menu
+    assert menu.state() == "ready"
+    status = window.research.model_status.text()
+    research_status = window.research.status_label.text()
+    window._on_ollama_failure("probe", "boom")
+    assert menu.state() == "ready"
+    assert "failed" not in menu.state()
+    assert window.research.model_status.text() == status
+    assert window.research.status_label.text() == research_status
+    assert "boom" in window.statusBar().currentMessage()
+    shown = []
+    monkeypatch.setattr("src.desktop.app.show_failure", lambda *_args, **_kwargs: shown.append(True))
+    window._on_ollama_failure("start", "boom")
+    assert shown == [True]
+    assert menu.state() == "ready"
+    assert window.research.model_status.text() == status
+
+
+def test_a_question_on_real_cases_is_routed_as_real_data(window):
+    window._shown_data_is_demo = False
+    assert window._answer_route(articles=False)["real_data"] is True
+    assert window._answer_route(articles=True)["real_data"] is False, "published abstracts are not MOVER data"
+    window._shown_data_is_demo = True
+    assert window._answer_route(articles=False)["real_data"] is False
+
+
+def test_unload_frees_the_ollama_model_even_while_a_cloud_service_answers(window, monkeypatch):
+    from src.user_settings import update_settings
+
+    from src.llm import cloud
+
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
+    freed = []
+    monkeypatch.setattr("src.llm.service.unload_ollama_model", lambda model: freed.append(model) or (True, "ok"))
+    monkeypatch.setattr("src.desktop.app.QMessageBox.information", lambda *a, **k: None)
+    window.research.set_models(["gemma4:latest"], "gemma4:latest")
+    update_settings(ai_backend="claude_cli", cloud_model="sonnet")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    assert window.research.selected_model() == "Claude Code · sonnet"
+    window._ollama_unload()
+    assert freed == ["gemma4:latest"]
+
+
+def test_with_a_cloud_service_chosen_the_page_does_not_report_ollama_as_the_news(window):
+    from src.llm.service import OllamaStatus
+    from src.user_settings import update_settings
+
+    status = OllamaStatus(True, "running", ["gemma4:latest"], "http://127.0.0.1:11434")
+    window._on_ollama_ready("probe", status)
+    assert window.research.status_label.text() == "Local model ready."
+    update_settings(ai_backend="claude_api")
+    window._show_ai_service()
+    window.research.set_status("")
+    window._on_ollama_ready("probe", status)
+    assert "Local model ready" not in window.research.status_label.text()

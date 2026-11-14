@@ -55,6 +55,18 @@ from src.desktop.updates import UpdateController
 from src.guardrails.exceptions import GuardrailError
 from src.guardrails.limits import ALLOWED_PRESETS, MAX_N_CASES, MIN_N_CASES
 from src.__version__ import get_version
+from src.llm.cloud import (
+    CLAUDE_API,
+    DEFAULT_MODELS,
+    OLLAMA,
+    REAL_DATA_BLOCKED,
+    CloudError,
+    cloud_choices,
+    cloud_config,
+    may_send,
+    service_note,
+    service_ready,
+)
 from src.runtime_paths import (
     apply_persisted_settings,
     configure_emr_directory,
@@ -228,6 +240,29 @@ class OllamaWorker(QThread):
                 self.failed.emit(self.action, str(exc))
 
 
+class ApiModelsWorker(QThread):
+    """Asks the Claude API which models it offers; a network call, so it never runs on the window's thread."""
+
+    listed = Signal(object)
+    failed = Signal(str)
+
+    def run(self) -> None:
+        from src.llm.cloud import list_api_models
+
+        try:
+            models = list_api_models()
+        except CloudError as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))
+            return
+        except Exception as exc:  # a library fault must not take the window down; its text may hold request data
+            if not self.isInterruptionRequested():
+                self.failed.emit(f"unexpected error ({type(exc).__name__})")
+            return
+        if not self.isInterruptionRequested():
+            self.listed.emit(models)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -261,6 +296,12 @@ class MainWindow(QMainWindow):
         self._medication_shown: tuple[str, bool] | None | bool = False
         self._worker: QThread | None = None
         self._ollama_worker: OllamaWorker | None = None
+        self._api_models_worker: ApiModelsWorker | None = None
+        # A list asked with a key since replaced: still running, so close waits for it, but its answer is ignored.
+        self._retired_api_workers: list[ApiModelsWorker] = []
+        self._api_models: list[tuple[str, str]] | None = None
+        self._api_models_error = ""
+        self._ollama_status = None
         self._ollama_available = False
         self._ollama_button_label: str | None = None
         self._closing = False
@@ -382,7 +423,7 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+Shift+O", keywords="file choose waveforms")
         add("action-import-articles", "Import articles\u2026", self._import_articles, group=data,
             keywords="file csv jsonl catalog")
-        add("action-reload", "Reload processed data", self._autoload_processed, group=data,
+        add("action-reload", "Reload processed data", lambda: self._autoload_processed(asked=True), group=data,
             shortcut="Ctrl+R", keywords="file refresh cache")
         add("action-run-pipeline", "Run pipeline (50 cases)\u2026", self._run_pipeline_menu, group=data,
             keywords="file analyze rebuild")
@@ -436,10 +477,10 @@ class MainWindow(QMainWindow):
         # An action hidden from view (an update that is not ready) is not offered either
         commands = [command for command in self._commands if command.action.isVisible()]
         # The installed models change with Ollama's state, so their lines are made when the palette opens.
-        models = [Command(action, "Answer model", "ollama local ai choose use")
+        models = [Command(action, "Answer model", "ollama ai choose use")
                   for action in self.research.model_menu.model_actions()]
-        after_local_ai = 1 + max(i for i, command in enumerate(commands) if command.group == "Local AI")
-        commands[after_local_ai:after_local_ai] = models
+        after_ai = 1 + max(i for i, command in enumerate(commands) if command.group == "AI menu")
+        commands[after_ai:after_ai] = models
         palette = CommandPalette(commands, self)
         palette.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         palette.finished.connect(self._palette_closed)
@@ -463,6 +504,7 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self.research = ResearchWorkspace()
         self.research.data_is_demo = self._shown_data_is_demo
+        self.research.cloud = cloud_config(load_settings())
         self._article_catalog = None
         try:
             self._article_catalog = ArticleCatalog(settings_path().parent / "case_embeddings.sqlite3")
@@ -480,6 +522,7 @@ class MainWindow(QMainWindow):
             lambda: self._refresh_ollama_models(start_if_needed=False)
         )
         self.research.model_changed.connect(self._on_ollama_model_changed)
+        self.research.model_menu.choice_made.connect(self._on_answer_choice)
         self.research.model_stop_requested.connect(self._ollama_stop)
         self.research.model_unload_requested.connect(self._ollama_unload)
         # The page's own commands follow the places they belong to, ahead of Data and Appearance.
@@ -618,7 +661,9 @@ class MainWindow(QMainWindow):
         if embed_changed and getattr(self, "_research_engine", None) is not None:
             self._research_engine = None
 
-    def _autoload_processed(self) -> None:
+    def _autoload_processed(self, *, asked: bool = False) -> None:
+        """Load the analysed cases. A missing cache is said quietly unless the person asked for this load:
+        a launch, a Settings save or a finished job must not open a dialog nobody asked for."""
         # Even when a job is running and the reload has to wait, an old scan must go now
         self._bind_data_context()
         self._drop_stale_scan()
@@ -645,7 +690,7 @@ class MainWindow(QMainWindow):
             self.research.set_status("No analyzed case cache. Indexed surgery search is available after setup.")
             self._load_corpus_scan()
             self._push_cases_overview()
-            if not needs_first_run_setup():
+            if asked and not needs_first_run_setup():
                 self._on_load_fail("Missing processed files: cases.parquet")
             return
         self._set_status("Loading data…")
@@ -659,6 +704,7 @@ class MainWindow(QMainWindow):
         # From here on whatever is shown comes from the folders in use now.
         self._shown_data_is_demo = demo_data_in_use()
         self.research.data_is_demo = self._shown_data_is_demo
+        self._show_ai_service()
         # The same case number in another folder is another record, so the Medication page must read it again.
         self._medication_shown = False
         self.cases = self.ts = self.flags = self.episodes = self.events = None
@@ -750,7 +796,8 @@ class MainWindow(QMainWindow):
             self._setup_flow.shutdown()
         running = [w for w in (
             self._worker, self._research_worker,
-            self._case_worker, self._ollama_worker, *self._research_workers.values(),
+            self._case_worker, self._ollama_worker, self._api_models_worker, *self._retired_api_workers,
+            *self._research_workers.values(),
             *self.research.follow_up_workers(),
         ) if w is not None and w.isRunning()]
         if running:
@@ -961,6 +1008,7 @@ class MainWindow(QMainWindow):
             ready = False
         self.research.set_setup_required(not ready)
         self._sync_path_fields_from_runtime()
+        self._show_ai_service()
         self._set_status("Settings saved" if ready else "EMR setup required")
         saved = f"Saved: {', '.join(changed) if changed else 'nothing had changed'}."
         page = self._settings_page()
@@ -1227,13 +1275,67 @@ class MainWindow(QMainWindow):
 
     def _refresh_ollama_models(self, *, start_if_needed: bool = False) -> None:
         self._start_ollama_worker("ensure" if start_if_needed else "probe")
+        self._refresh_api_models()
+
+    def _refresh_api_models(self) -> None:
+        """List the Claude API's models in the background, only when there is a key to ask with."""
+        if self._closing or not service_ready(CLAUDE_API):
+            return
+        if self._api_models_worker is not None and self._api_models_worker.isRunning():
+            return
+        worker = ApiModelsWorker(self)
+        self._api_models_worker = worker
+        worker.listed.connect(self._on_api_models)
+        worker.failed.connect(self._on_api_models_failed)
+        worker.start()
+
+    def _on_api_models(self, models) -> None:
+        if self._closing or self.sender() is not self._api_models_worker:
+            return
+        self._api_models, self._api_models_error = list(models), ""
+        self._show_ai_service()
+
+    def _on_api_models_failed(self, message: str) -> None:
+        if self._closing or self.sender() is not self._api_models_worker:
+            return
+        self._api_models_error = message
+        self._show_ai_service()
+
+    def _on_api_key_changed(self) -> None:
+        """A saved or forgotten key changes what the Claude API rows offer; the old list was asked with the old key."""
+        self._api_models, self._api_models_error = None, ""
+        old = self._api_models_worker
+        if old is not None and old.isRunning():
+            old.requestInterruption()
+            self._retired_api_workers.append(old)
+            old.finished.connect(lambda: self._retired_api_workers.remove(old) if old in self._retired_api_workers else None)
+        self._api_models_worker = None
+        self._show_ai_service()
+        self._refresh_api_models()
+
+    def _on_answer_choice(self, backend: str, model: str) -> None:
+        """A row picked in the AI menu answers from the next question on, and is remembered."""
+        from src.user_settings import update_settings
+
+        if backend == OLLAMA:
+            update_settings(ai_backend=None, cloud_model=None)
+            if self._ollama_status is not None:
+                self._set_ollama_status_ui(self._ollama_status)  # Ollama's own words again; it ends in _show_ai_service
+            else:
+                self._set_model_state("unchecked")
+                self._show_ai_service()
+        else:
+            # The service's own default is left out of the file, as an untouched setting would be.
+            update_settings(ai_backend=backend, cloud_model=None if model in ("", DEFAULT_MODELS.get(backend)) else model)
+            self._show_ai_service()
+        self.statusBar().showMessage(f"Answers now come from {self.research.selected_model() or 'Ollama'}.")
 
     def _apply_ollama_status(self, status) -> None:
         from src.llm.service import ollama_status_summary
 
         prev = self.research.selected_model() or ""
         if not status.available:
-            self.research.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+            self.research.set_models([], placeholder="(Ollama stopped — choose Start Ollama)")
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -1271,6 +1373,7 @@ class MainWindow(QMainWindow):
         self._refresh_footer()
 
     def _set_ollama_status_ui(self, status) -> None:
+        self._ollama_status = status
         self._ollama_available = status.available
         self._set_model_state("ready" if status.available else "stopped")
         busy = self._ollama_worker is not None and self._ollama_worker.isRunning()
@@ -1283,10 +1386,38 @@ class MainWindow(QMainWindow):
             research.stop_action.setEnabled(not busy)
             research.unload_action.setEnabled(not busy)
         else:
-            research.set_model_status("Ollama: <b>stopped</b> — choose Start AI in the Local AI menu", rich=True)
+            research.set_model_status("Ollama: <b>stopped</b> — choose Start Ollama in the AI menu", rich=True)
             research.start_action.setEnabled(not busy)
             research.stop_action.setEnabled(False)
             research.unload_action.setEnabled(False)
+        self._show_ai_service()
+
+    def _answer_route(self, *, articles: bool) -> dict:
+        """Where this question's answer comes from, and whether its data counts as real MOVER cases."""
+        return {"cloud": self.research.cloud, "real_data": not articles and not self._shown_data_is_demo}
+
+    def _show_ai_service(self) -> None:
+        """Offer every cloud service in the AI menu, and show the chosen one, or why it cannot answer now."""
+        config = cloud_config(load_settings())
+        self.research.cloud = config
+        real_data = not self._shown_data_is_demo
+        groups = cloud_choices(config, real_data=real_data, api_models=self._api_models,
+                               api_error=self._api_models_error)
+        menu = self.research.model_menu
+        if not config.is_cloud:
+            menu.set_cloud_groups(groups)
+            return
+        usable = may_send(config, real_data=real_data) and service_ready(config.backend)
+        menu.set_cloud_groups(groups, (config.backend, config.model_id), config.label, usable=usable)
+        if not may_send(config, real_data=real_data):
+            self._set_model_state("blocked")
+            self.research.set_model_status(REAL_DATA_BLOCKED)
+        elif not service_ready(config.backend):
+            self._set_model_state("unavailable")
+            self.research.set_model_status(service_note(config.backend))
+        else:
+            self._set_model_state("ready")
+            self.research.set_model_status(f"Answers from {config.label}. {service_note(config.backend)}")
 
     def _ollama_start(self) -> None:
         self._start_ollama_worker("start")
@@ -1327,7 +1458,9 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._apply_ollama_status(status)
-        self.research.set_status("Local model ready." if status.available else status.message)
+        cloud = self.research.cloud
+        if cloud is None or not cloud.is_cloud:  # with a cloud service chosen, Ollama's state is not the news
+            self.research.set_status("Local model ready." if status.available else status.message)
         if not status.available and action == "start":
             self._on_ollama_failure(action, status.message)
 
@@ -1335,13 +1468,20 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._ollama_available = False
-        self._set_model_state("failed")
-        self.research.set_model_status(f"Local model failed: {message}")
-        self.research.set_status(f"Local model failed: {message}")
-        self.statusBar().showMessage(f"Local model failed: {message}")
+        failure = f"Local model failed: {message}"
+        cloud = self.research.cloud
+        if cloud is not None and cloud.is_cloud:
+            # Ollama's failure is not the answer path while a cloud service is chosen.
+            self.statusBar().showMessage(failure)
+            self._show_ai_service()
+        else:
+            self._set_model_state("failed")
+            self.research.set_model_status(failure)
+            self.research.set_status(failure)
+            self.statusBar().showMessage(failure)
         if action == "start":
             show_failure(self, what="The local model service did not start.", why=message,
-                         next_step="Search still works without it. Check that Ollama is installed, then try Start AI again.",
+                         next_step="Search still works without it. Check that Ollama is installed, then try Start Ollama again.",
                          title="Ollama start", level="warning")
 
     def _ollama_stop(self) -> None:
@@ -1352,13 +1492,13 @@ class MainWindow(QMainWindow):
     def _ollama_unload(self) -> None:
         from src.llm.service import unload_ollama_model
 
-        model = self.research.selected_model() or ""
+        model = self.research.model_menu.ollama_model() or ""
         ok, msg = unload_ollama_model(model)
         self.statusBar().showMessage(msg)
         if ok:
             QMessageBox.information(self, "Model unloaded", msg)
         else:
-            show_failure(self, what="The model could not be unloaded.", why=msg, title="Unload model", level="warning")
+            show_failure(self, what="The model could not be unloaded.", why=msg, title="Unload Ollama model", level="warning")
 
     def _on_ollama_model_changed(self, text: str) -> None:
         text = (text or "").strip()
@@ -1441,6 +1581,7 @@ class MainWindow(QMainWindow):
         from src.guardrails.validate_io import validate_emr_dir
         from src.llm.ollama_client import OllamaEmbedder
 
+        before = self.research.take_reask()
         articles = self.research.scope == "Articles"
         if articles:
             if self._article_catalog is None:
@@ -1468,6 +1609,7 @@ class MainWindow(QMainWindow):
         request_id = self._research_request_id
         self._active_research_request = request_id
         self.research.begin_question(question, request_id)
+        history = self.research.conversation.history_before(before if before is not None else request_id)
         self.research.set_progress("Searching the local article catalog…" if articles else "Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             engine,
@@ -1475,6 +1617,8 @@ class MainWindow(QMainWindow):
             self.research.selected_model(),
             None if articles else self._make_session_snapshot(),
             parent=self,
+            history=history,
+            **self._answer_route(articles=articles),
         )
         self._research_workers[request_id] = self._research_worker
         self._research_worker.progress.connect(
@@ -1483,7 +1627,8 @@ class MainWindow(QMainWindow):
             if request_id == self._active_research_request else None
         )
         self._research_worker.shortlist.connect(lambda result: self._on_research_shortlist(result, request_id))
-        self._research_worker.answer.connect(lambda response: self._on_research_answer(response, request_id))
+        worker = self._research_worker
+        worker.answer.connect(lambda response, w=worker: self._on_research_answer(response, request_id, w))
         self._research_worker.failed.connect(lambda message: self._on_research_fail(message, request_id))
         self._research_worker.finished.connect(lambda: self._on_research_done(request_id))
         self._research_worker.start()
@@ -1564,10 +1709,17 @@ class MainWindow(QMainWindow):
             if other:
                 self._load_research_case(other, True, False)
 
-    def _on_research_answer(self, response, request_id: int | None = None) -> None:
+    def _on_research_answer(self, response, request_id: int | None = None, worker=None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
-        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."), request_id)
+        cloud = getattr(worker, "cloud", None) if worker is not None else None
+        backend = cloud.backend if cloud is not None and cloud.is_cloud else "ollama"
+        trimmed = bool(worker is not None and getattr(worker, "real_data", False) and cloud is not None and cloud.is_cloud)
+        sources = tuple(getattr(response, "sources", ()) or ())
+        self.research.set_answer(
+            str(getattr(response, "answer", "") or "No answer was returned."), request_id,
+            backend=backend, trimmed=trimmed, sources=sources,
+        )
 
     def _on_research_fail(self, message: str, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:
@@ -1863,6 +2015,10 @@ class MainWindow(QMainWindow):
     def _model_field(self) -> tuple[str, str]:
         name = self.research.selected_model()
         state = self._model_state
+        cloud = self.research.cloud
+        if cloud is not None and cloud.is_cloud:
+            word = {"ready": "ready", "blocked": "off for real cases"}.get(state, "not ready")
+            return (f"AI <b>{html.escape(cloud.label)}</b> {word}", f"AI {cloud.label} {word}")
         if state.startswith("busy:"):
             word = state.split(":", 1)[1]
         elif state == "failed":
@@ -1905,6 +2061,7 @@ class MainWindow(QMainWindow):
     def _make_settings_page(self) -> QWidget:
         page = SettingsPage()
         page.settings_applied.connect(self._on_settings_saved)
+        page.api_key_changed.connect(self._on_api_key_changed)
         page.close_requested.connect(self._close_settings)
         page.setup_requested.connect(self._open_setup_wizard)
         page.about_requested.connect(self._about)

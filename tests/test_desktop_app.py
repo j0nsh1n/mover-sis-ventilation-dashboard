@@ -390,7 +390,10 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
-        assert "Missing processed files: cases.parquet" in dialogs[0]
+        assert dialogs == [], "a load nobody asked for (launch, Settings, a finished job) opens no dialog"
+        assert "No analyzed case cache" in win.research.status_label.text()
+        next(a for a in win.actions() if a.text() == "Reload processed data").trigger()
+        assert "Missing processed files: cases.parquet" in dialogs[0], "Reload is asking: it says what is missing"
         assert "choose Run pipeline" in dialogs[0]
         assert str(tmp_path / "missing") not in dialogs[0]
     finally:
@@ -457,7 +460,7 @@ def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
             qapp.processEvents()
         edit = win.research.question_edit
         assert edit.isVisible()
-        assert edit.accessibleName() == "Research question"
+        assert edit.accessibleName() == "Ask a question"
         assert qapp.focusWidget() is edit
         assert edit.hasFocus()
     finally:
@@ -625,7 +628,7 @@ def test_status_and_scope_lines_fit_default_window_with_probe_error(qapp, monkey
     qapp.processEvents()
     try:
         research = win.research
-        research.set_model_status("Ollama: stopped — choose Start AI in the Local AI menu")
+        research.set_model_status("Ollama: stopped — choose Start Ollama in the AI menu")
         research.set_status(_PROBE_FAILURE)
         research.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
         qapp.processEvents()
@@ -642,24 +645,31 @@ def test_status_and_scope_lines_fit_default_window_with_probe_error(qapp, monkey
 
 
 def _assert_lines_readable(win, expected: str) -> None:
-    """The Ollama status, the reason and the scope line are whole and sit on the screen, one under the other."""
+    """The model line sits under the composer. The search status sits under Evidence. The scope line stays in view."""
+    from PySide6.QtWidgets import QLabel
+
     research = win.research
     model = research.model_status
     status = research.status_label
     scope = research.scope_label
     viewport = research.board_scroll.viewport()
+    composer = research.conversation.composer_bar
     assert model.isVisible() and "Ollama" in model.text()
+    assert composer.isAncestorOf(model)
+    controls_bottom = research.ask_button.mapTo(composer, research.ask_button.rect().bottomLeft()).y()
+    model_top = model.mapTo(composer, model.rect().topLeft()).y()
+    assert model_top >= controls_bottom - 2
     assert expected in status.text()
-    for label in (model, status, scope):
-        assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1)), label.text()
-    # Page coordinates: the reason sits under the Ollama line, and both sit above the evidence trail.
     page = research._board_page
-    model_bottom = model.mapTo(page, model.rect().bottomLeft()).y()
+    heading = page.findChild(QLabel, "boardHeading")
+    assert heading is not None and heading.text() == "Evidence"
+    heading_bottom = heading.mapTo(page, heading.rect().bottomLeft()).y()
     status_top = status.mapTo(page, status.rect().topLeft()).y()
     status_bottom = status.mapTo(page, status.rect().bottomLeft()).y()
     scope_top = scope.mapTo(page, scope.rect().topLeft()).y()
-    assert model_bottom <= status_top and status_bottom <= scope_top
-    # And the scope line is in view without scrolling at the default window size.
+    assert status_top >= heading_bottom - 2 and status_bottom <= scope_top
+    for label in (model, status, scope):
+        assert label.height() + 1 >= label.heightForWidth(max(label.width(), 1)), label.text()
     scope_bottom = scope.mapTo(win, scope.rect().bottomLeft()).y()
     view_bottom = viewport.mapTo(win, viewport.rect().bottomLeft()).y()
     assert scope_bottom <= view_bottom
@@ -681,7 +691,7 @@ def test_ollama_state_is_a_word_not_a_color(qapp, monkeypatch, tmp_path, availab
         text = win.research.model_status.text()
         assert ("running" if available else "stopped") in text
         if not available:
-            assert "Start AI" in text and "click Start" not in text, "names the menu item that exists"
+            assert "Start Ollama" in text and "click Start" not in text, "names the menu item that exists"
         assert "color" not in text, "one accent, no red or green state colors"
         assert win._scan_cancel_button.styleSheet() == "", "the focus ring comes from the app stylesheet's accent"
     finally:

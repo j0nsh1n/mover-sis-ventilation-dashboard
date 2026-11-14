@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListView,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.accessibility import announce
+from src.llm.cloud import KEY_FROM_STORE, KeyStoreError, api_key, forget_api_key, key_note, save_api_key
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
     FolderRow,
@@ -57,7 +59,7 @@ from src.user_settings import (
 
 SECTIONS = (
     ("Data sources", "Where MOVER Suite reads its tables. Files are read in place and never uploaded."),
-    ("Local AI", "Optional. Models run on this computer through Ollama; case text does not leave it."),
+    ("AI", "Optional. Ollama runs models on this computer. A cloud service answers only when chosen in the research page's AI menu."),
     ("Appearance", "How the window looks. Charts follow the same choice."),
     ("Keyboard", "Every command is also in the Find box (Ctrl+K)."),
     ("About", "The version of MOVER Suite and where its parts come from."),
@@ -76,6 +78,8 @@ class SettingsPage(QWidget):
     about_requested = Signal()
     section_changed = Signal(str)
     dirty_changed = Signal(bool)
+    # The key goes straight to the password store, never through Save, so it never reaches the settings file.
+    api_key_changed = Signal()
 
     # Below this width the section list moves above the form
     NARROW_BELOW = 760
@@ -287,6 +291,43 @@ class SettingsPage(QWidget):
 
     def _ai_section(self) -> QWidget:
         page, layout = self._section_page(1)
+        self.key_row = SettingRow(
+            "Claude API key", "",
+            "For answers from the Claude API. Choose which AI answers in the research page's AI menu.")
+        self.edit_api_key = QLineEdit()
+        self.edit_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_api_key.setPlaceholderText("Paste a key that starts with sk-ant-")
+        self.edit_api_key.setAccessibleName("Claude API key")
+        self.edit_api_key.returnPressed.connect(self._save_key)
+        self.edit_api_key.textChanged.connect(self._refresh_key_buttons)
+        self.key_row.add_control(self.edit_api_key)
+        key_buttons = QWidget()
+        key_buttons_layout = QHBoxLayout(key_buttons)
+        key_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self.save_key_button = QPushButton("Save key")
+        self.save_key_button.setAccessibleName("Save key for the Claude API")
+        self.save_key_button.clicked.connect(self._save_key)
+        self.forget_key_button = QPushButton("Forget key")
+        self.forget_key_button.setAccessibleName("Forget the saved Claude API key")
+        self.forget_key_button.clicked.connect(self._forget_key)
+        key_buttons_layout.addWidget(self.save_key_button)
+        key_buttons_layout.addWidget(self.forget_key_button)
+        key_buttons_layout.addStretch(1)
+        self.key_row.add_control(key_buttons, left=True)
+        layout.addWidget(self.key_row)
+        self.real_data_row = SettingRow(
+            "Real MOVER cases", "",
+            "Fictional demo and practice data, and questions about published articles, may always use a cloud service chosen in the AI menu.")
+        self.combo_real_data = self._combo("Real MOVER cases")
+        self.combo_real_data.addItem("Not sent to a cloud service", "")
+        self.combo_real_data.addItem("Sent trimmed: case aliases, age bands, minutes from incision", "on")
+        self.combo_real_data.currentIndexChanged.connect(self._edited)
+        self.real_data_row.add_control(self.combo_real_data)
+        self.real_data_row.set_note(
+            "Sent trimmed means the question and the case extracts (procedure, measurements, flags) go to the chosen service, "
+            "with case aliases for case numbers, 5-year age bands for ages and minutes from incision for clock times. "
+            "Check the MOVER data use agreement before sending real cases.")
+        layout.addWidget(self.real_data_row)
         self.row_models = FolderRow(
             "Models directory", "",
             "Models stay on disk, not inside the app. The app sets OLLAMA_MODELS to this folder when it starts Ollama.",
@@ -310,8 +351,41 @@ class SettingsPage(QWidget):
         self.embed_ready = embed
         layout.addWidget(embed)
         layout.addStretch(1)
-        self._tab_stops += [self.row_models.edit, self.row_models.choose_button, self.combo_model, self.edit_embed]
+        self._tab_stops += [self.edit_api_key, self.save_key_button, self.forget_key_button, self.combo_real_data,
+                            self.row_models.edit, self.row_models.choose_button, self.combo_model, self.edit_embed]
+        self._show_key()
         return page
+
+    def _show_key(self, problem: str = "") -> None:
+        """Where the key is found, never the key; a failed save or forget says why instead."""
+        self.key_row.set_note(problem or key_note(), "problem" if problem else "note")
+        self._refresh_key_buttons()
+
+    def _refresh_key_buttons(self) -> None:
+        self.save_key_button.setEnabled(bool(self.edit_api_key.text().strip()))
+        self.forget_key_button.setEnabled(api_key()[1] == KEY_FROM_STORE)
+
+    def _save_key(self) -> None:
+        try:
+            save_api_key(self.edit_api_key.text())
+        except KeyStoreError as exc:
+            self._show_key(str(exc))
+            return
+        self.edit_api_key.clear()
+        self._show_key()
+        announce(self.key_row.note, "Key saved.")
+        self.api_key_changed.emit()
+
+    def _forget_key(self) -> None:
+        try:
+            forget_api_key()
+        except KeyStoreError as exc:
+            self._show_key(str(exc))
+            return
+        self.edit_api_key.clear()
+        self._show_key()
+        announce(self.key_row.note, "Saved key removed.")
+        self.api_key_changed.emit()
 
     def _appearance_section(self) -> QWidget:
         page, layout = self._section_page(2)
@@ -417,6 +491,7 @@ class SettingsPage(QWidget):
             "ollama_models_dir": self.row_models.text(),
             "ollama_model": self.combo_model.currentText().strip(),
             "ollama_embed_model": self.edit_embed.text().strip() or "nomic-embed-text",
+            "cloud_real_data": self.combo_real_data.currentData() or "",
             "theme": theme if theme in (THEME_LIGHT, THEME_DARK, THEME_SYSTEM) else THEME_SYSTEM,
             "preset": self.combo_preset.currentData() or "default",
         }
@@ -434,6 +509,7 @@ class SettingsPage(QWidget):
             theme_index = self.combo_theme.findData(saved["theme"])
             self.combo_theme.setCurrentIndex(theme_index if theme_index >= 0 else self.combo_theme.findData(THEME_SYSTEM))
             self.edit_embed.setText(saved["ollama_embed_model"])
+            self.combo_real_data.setCurrentIndex(max(0, self.combo_real_data.findData(saved["cloud_real_data"])))
             self._load_models(saved["ollama_model"], saved["ollama_embed_model"])
             self.refresh_in_use()
             self._refresh_demo_note()

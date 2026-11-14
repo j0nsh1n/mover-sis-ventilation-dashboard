@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAccessible,
     QAccessibleEvent,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.theme import token_color
+from src.llm.cloud import CLAUDE_API, OLLAMA, Choice, ChoiceGroup, service_note
 
 SCOPES = ("Cases", "Articles")
 _SEMIBOLD = QFont.Weight.DemiBold
@@ -175,13 +177,30 @@ class TraceButton(RunsButton):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("primaryBtn")
-        self.setAccessibleName("Trace the evidence")
-        self.setAccessibleDescription("Shortcut Ctrl+Enter")
-        self.setToolTip("Trace the evidence (Ctrl+Enter)")
-        self.set_runs([
-            Run("Trace the evidence", "on_accent", semibold=True),
-            Run("Ctrl+Enter", "on_accent", pixel_size=12),
-        ])
+        self._running = False
+        self.set_running(False)
+
+    def set_running(self, running: bool) -> None:
+        self._running = bool(running)
+        if self._running:
+            self.setAccessibleName("Stop")
+            self.setAccessibleDescription("Cancel the running question")
+            self.setToolTip("Stop the running question")
+            self.set_runs([
+                Run("Stop", "on_accent", semibold=True),
+            ])
+        else:
+            self.setAccessibleName("Trace the evidence")
+            self.setAccessibleDescription("Shortcut Ctrl+Enter")
+            self.setToolTip("Trace the evidence (Ctrl+Enter)")
+            # The shortcut stays in the tip. Painting it on the face made the button wrap
+            # onto a second row, so Send and Stop changed the composer row's height.
+            self.set_runs([
+                Run("Trace the evidence", "on_accent", semibold=True),
+            ])
+
+    def is_running(self) -> bool:
+        return self._running
 
     def text_label(self) -> str:
         return self._runs[0].text
@@ -195,38 +214,52 @@ _STATE_WORDS = {
     "busy:starting": "starting",
     "busy:checking": "checking",
     "busy:stopping": "stopping",
+    "blocked": "off for real cases",
+    "unavailable": "not available",
 }
 NO_MODEL_PLACEHOLDER = "(AI unavailable · search still works)"
+# The Claude API lists newest first. Four stay in the menu; the rest go under one submenu.
+_API_SHOWN_INLINE = 4
+_MORE_CLAUDE_API = "More Claude API models"
 
 
 class LocalModelButton(RunsButton):
-    """One menu button for the local model: its name and state, with every model action inside.
+    """One menu button for the AI that answers: its name and state, with every model action inside.
 
-    The menu holds the answer-model choices and the Start, Unload, Stop and Refresh actions.
+    The menu groups the choices by service: Ollama's installed models, then the cloud services, each
+    row greyed out with its reason when it cannot be used. Below them are Start, Unload, Stop and Refresh.
     They are real actions, so the command palette lists the same objects. Data setup lives in
     Settings (and Ctrl+K); ``setup_action`` stays only so the research page's ``setup_requested`` keeps its source.
     """
 
     model_chosen = Signal(str)
+    # (backend, model) for any row a person picks, Ollama included.
+    choice_made = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("modelMenuBtn")
-        self.setAccessibleName("Local AI")
+        self.setAccessibleName("AI")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._models: list[str] = []
         self._current: str | None = None
         self._placeholder = NO_MODEL_PLACEHOLDER
         self._state = "unchecked"
         self._model_actions: list[QAction] = []
+        self._cloud_groups: list[ChoiceGroup] = []
+        self._cloud_active: tuple[str, str] | None = None
+        self._cloud_label = ""
+        self._cloud_usable = False
+        self._cloud_rows: list[QAction] = []
+        self._dynamic: list[QAction] = []
         self._model_group = QActionGroup(self)
         self._model_group.setExclusive(True)
 
-        self.start_action = QAction("Start AI", self)
+        self.start_action = QAction("Start Ollama", self)
         self.refresh_action = QAction("Refresh model list", self)
         self.setup_action = QAction("Data setup", self)
-        self.stop_action = QAction("Stop AI", self)
-        self.unload_action = QAction("Unload model", self)
+        self.stop_action = QAction("Stop Ollama", self)
+        self.unload_action = QAction("Unload Ollama model", self)
         self._describe = {
             self.start_action: "Start Ollama and look for installed models.",
             self.refresh_action: "Look for installed models again.",
@@ -245,13 +278,14 @@ class LocalModelButton(RunsButton):
         self.menu_widget = QMenu(self)
         self.menu_widget.setObjectName("modelMenu")
         self.menu_widget.setMinimumWidth(300)
-        self.menu_widget.setAccessibleName("Local AI menu")
+        self.menu_widget.setAccessibleName("AI menu")
+        self.menu_widget.setToolTipsVisible(True)
         self._intro = QLabel()
         self._intro.setObjectName("quietText")
         self._intro.setWordWrap(True)
         self._intro.setMaximumWidth(380)
-        self._intro_action = self._label_action("Local AI", self._intro)
-        self._answer_heading = self._label_action("Answer model")
+        self._intro_action = self._label_action("AI", self._intro)
+        self._answer_heading = self._label_action("On this computer (Ollama)")
         self.menu_widget.addAction(self._intro_action)
         self.menu_widget.addSeparator()
         self.menu_widget.addAction(self._answer_heading)
@@ -296,28 +330,117 @@ class LocalModelButton(RunsButton):
         self._placeholder = placeholder or NO_MODEL_PLACEHOLDER
         wanted = current if current in self._models else previous if previous in self._models else None
         self._current = wanted or (self._models[0] if self._models else None)
-        for action in self._model_actions:
-            self.menu_widget.removeAction(action)
-            self._model_group.removeAction(action)
-            action.deleteLater()
-        self._model_actions = []
+        self._rebuild_rows()
+
+    def set_cloud_groups(self, groups: list[ChoiceGroup], active: tuple[str, str] | None = None,
+                         active_label: str = "", *, usable: bool = True) -> None:
+        """The cloud services' rows below Ollama's; ``active`` is the chosen (backend, model), if any.
+
+        A chosen service that cannot answer now (``usable`` False) stays named on the button, but
+        ``selected_model()`` is None, so a question gets search results and nothing is sent.
+        """
+        self._cloud_groups = list(groups)
+        self._cloud_active = active
+        self._cloud_label = active_label if active is not None else ""
+        self._cloud_usable = active is not None and usable
+        self._rebuild_rows()
+
+    def _rebuild_rows(self) -> None:
+        self._clear_dynamic()
         if self._models:
             for name in self._models:
                 action = QAction(name, self)
                 action.setCheckable(True)
-                action.setChecked(name == self._current)
+                action.setChecked(self._cloud_active is None and name == self._current)
                 action.triggered.connect(lambda _checked=False, model=name: self.choose(model))
                 self._model_group.addAction(action)
-                self.menu_widget.insertAction(self._model_anchor, action)
                 self._model_actions.append(action)
         else:
             action = QAction(self._placeholder, self)
             action.setEnabled(False)
-            self.menu_widget.insertAction(self._model_anchor, action)
             self._model_actions.append(action)
+        rows: list[QAction] = list(self._model_actions)
+        for group in self._cloud_groups:
+            rows.extend(self._cloud_group_actions(group))
+        for action in rows:
+            self.menu_widget.insertAction(self._model_anchor, action)
+        self._dynamic = rows
         self._refresh()
 
+    def _clear_dynamic(self) -> None:
+        for action in self._dynamic:
+            menu = action.menu()
+            if isinstance(menu, QMenu):
+                for child in list(menu.actions()):
+                    self._model_group.removeAction(child)
+                    menu.removeAction(child)
+                    child.deleteLater()
+                action.setMenu(cast(QObject, None))
+                menu.deleteLater()
+            self.menu_widget.removeAction(action)
+            self._model_group.removeAction(action)
+            action.deleteLater()
+        self._dynamic, self._model_actions, self._cloud_rows = [], [], []
+
+    def _cloud_group_actions(self, group: ChoiceGroup) -> list[QAction]:
+        """A separator, the heading, inline rows, and the Claude API overflow submenu at the end of that group."""
+        rows = [self._separator(), self._label_action(group.title)]
+        inline = self._inline_api_indexes(group) if group.backend == CLAUDE_API else None
+        overflow: list[QAction] = []
+        for index, choice in enumerate(group.choices):
+            action = self._cloud_action(choice)
+            # cloud_actions() follows the group's list, including rows that the submenu holds.
+            self._cloud_rows.append(action)
+            if inline is not None and choice.usable and index not in inline:
+                overflow.append(action)
+            else:
+                rows.append(action)
+        if overflow:
+            more = QMenu(_MORE_CLAUDE_API, self)
+            more.setToolTipsVisible(True)
+            for action in overflow:
+                more.addAction(action)
+            opener = QAction(_MORE_CLAUDE_API, self)
+            opener.setMenu(more)
+            rows.append(opener)
+        return rows
+
+    def _inline_api_indexes(self, group: ChoiceGroup) -> set[int]:
+        """The first four usable Claude API rows, plus the chosen model when the list puts it further down."""
+        usable = [index for index, choice in enumerate(group.choices) if choice.usable]
+        inline = set(usable[:_API_SHOWN_INLINE])
+        active = self._cloud_active
+        if active is None:
+            return inline
+        for index in usable[_API_SHOWN_INLINE:]:
+            choice = group.choices[index]
+            if (choice.backend, choice.model) == active:
+                inline.add(index)
+                break
+        return inline
+
+    def _cloud_action(self, choice: Choice) -> QAction:
+        action = QAction(choice.shown, self)
+        action.setEnabled(choice.usable)
+        if choice.usable:
+            action.setCheckable(True)
+            action.setChecked(self._cloud_active == (choice.backend, choice.model))
+            action.setToolTip(service_note(choice.backend))
+            action.triggered.connect(
+                lambda _checked=False, backend=choice.backend, model=choice.model:
+                self.choose_service(backend, model))
+            self._model_group.addAction(action)
+        return action
+
+    def _separator(self) -> QAction:
+        separator = QAction(self)
+        separator.setSeparator(True)
+        return separator
+
     def selected_model(self) -> str | None:
+        """What answers now: the chosen cloud service's label, or None when it cannot answer; else the Ollama model."""
+        if self._cloud_active is not None:
+            return self._cloud_label if self._cloud_usable else None
         return self._current
 
     def models(self) -> list[str]:
@@ -327,19 +450,35 @@ class LocalModelButton(RunsButton):
         """What the model list says when it has no models: the reason, such as Ollama stopped."""
         return "" if self._models else self._placeholder
 
+    def ollama_model(self) -> str | None:
+        """The Ollama model marked in the menu, even while a cloud service answers: the one Unload frees."""
+        return self._current
+
     def model_actions(self) -> list[QAction]:
-        """The answer-model choices (checkable); empty when there is no model to choose."""
+        """Ollama's model choices (checkable); empty when there is no model to choose."""
         return list(self._model_actions) if self._models else []
 
+    def cloud_actions(self) -> list[QAction]:
+        """Every cloud row, inline and in a submenu, greyed-out ones included, in the groups' list order."""
+        return list(self._cloud_rows)
+
     def choose(self, model: str) -> None:
-        """Choose an installed model as a person would; ``model_chosen`` fires when it is a change."""
-        if model not in self._models or model == self._current:
+        """Choose an installed model as a person would; the signals fire when it is a change."""
+        if model not in self._models or (model == self._current and self._cloud_active is None):
             return
         self._current = model
+        self._cloud_active, self._cloud_label, self._cloud_usable = None, "", False
         for action in self._model_actions:
             action.setChecked(action.text() == model)
         self._refresh()
         self.model_chosen.emit(model)
+        self.choice_made.emit(OLLAMA, model)
+
+    def choose_service(self, backend: str, model: str) -> None:
+        """Choose a cloud row as a person would; whoever saves the choice calls ``set_cloud_groups`` back."""
+        if self._cloud_active == (backend, model):
+            return
+        self.choice_made.emit(backend, model)
 
     # ----- state -----
     def set_state(self, state: str) -> None:
@@ -352,25 +491,27 @@ class LocalModelButton(RunsButton):
 
     def _label_runs(self) -> list[Run]:
         word = _STATE_WORDS.get(self._state, self._state)
+        if self._cloud_label:
+            return [Run(self._cloud_label, "ink", semibold=True), Run(word, "ink_3")]
         if self._state == "ready":
             if self._current:
                 return [Run(self._current, "ink", semibold=True), Run(word, "ink_3")]
             return [Run("No model installed", "ink", semibold=True)]
-        return [Run("Local AI", "ink", semibold=True), Run(word, "ink_3")]
+        return [Run("AI", "ink", semibold=True), Run(word, "ink_3")]
 
     def _refresh(self) -> None:
         self.set_runs(self._label_runs(), room_right=0)
         self.setAccessibleDescription(self.text())
-        self.setToolTip("Local AI: model choice, start, stop and unload")
+        self.setToolTip("AI for answers: Ollama or a cloud service, start, stop and unload")
         self._set_hints()
         QAccessible.updateAccessibility(QAccessibleEvent(self, QAccessible.Event.DescriptionChanged))
 
     def _set_hints(self) -> None:
         """Say why an action is off, which is what the command palette shows beside a disabled command."""
         reasons = {
-            self.stop_action: "Local AI is not running.",
-            self.unload_action: "Local AI is not running, so no model is loaded.",
-            self.start_action: "Local AI is working. Try again when it finishes.",
+            self.stop_action: "Ollama is not running.",
+            self.unload_action: "Ollama is not running, so no model is loaded.",
+            self.start_action: "Ollama is working. Try again when it finishes.",
         }
         for action, reason in reasons.items():
             action.setToolTip(self._describe[action] if action.isEnabled() else reason)

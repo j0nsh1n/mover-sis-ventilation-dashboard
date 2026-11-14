@@ -112,7 +112,8 @@ def _research_idle(win: Any) -> bool:
     return (
         worker is not None
         and not worker.isRunning()
-        and win.research.ask_button.isEnabled()
+        # Send stays enabled while it is Stop, so the page's own running flag says when an answer is done.
+        and not win.research._searching
         and win._pending_case is None
         and win._queued_case is None
         and (case_worker is None or not case_worker.isRunning())
@@ -130,8 +131,9 @@ def ask(run: Run) -> dict[str, Any]:
         raise RuntimeError(status)
     if result is None or not result.candidates:
         raise RuntimeError(f"research returned no candidates: {status}")
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
-        "question": research.question_edit.text(),
+        "question": question,
         "candidates": len(result.candidates) if result is not None else 0,
         "rank_method": getattr(result, "rank_method", None),
         "model": research.selected_model(),
@@ -166,7 +168,7 @@ def return_to_question(run: Run) -> dict[str, Any]:
         raise RuntimeError("the signal detail view has no back button")
     back.click()
     run.wait(lambda: research.stack.currentIndex() == 0, "the evidence workspace")
-    question = research.question_edit.text()
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
         "view": "canvas",
         "question": question,
@@ -243,9 +245,10 @@ def cancel_search(run: Run) -> dict[str, Any]:
     research = run.win.research
     QTest.keyClick(research.cancel_button, Qt.Key.Key_Space)
     run.wait(lambda: _research_idle(run.win), "cooperative search cancellation")
-    assert research.question_edit.text() == run.question
+    assert research.conversation.turns[0].question == run.question
+    assert research.conversation.turns[-1].state == "cancelled"
     assert research.result is not None
-    return {"restored_question": research.question_edit.text(), "answer": research.answer_text.toPlainText()}
+    return {"restored_question": research.conversation.turns[0].question, "answer": research.answer_text.toPlainText()}
 
 
 def research_failure(run: Run) -> dict[str, Any]:
@@ -621,19 +624,21 @@ def f_follow_up(run: Run) -> dict[str, Any]:
     research.follow_up_edit.setFocus()
     QTest.keyClicks(research.follow_up_edit, "What do the rows show at this minute?")
     QTest.keyClick(research.follow_up_edit, Qt.Key.Key_Return)
-    run.wait(lambda: research._follow_up_active is None and research.follow_up_answer.isVisible(),
-             "the follow-up answer")
-    answer = research.follow_up_answer.toPlainText()
-    label = research.follow_up_label.text()
+    # The answer lands in the conversation thread as a minute turn; the Signal page points to it.
+    run.wait(lambda: research._follow_up_active is None and len(research.conversation.turns) == turns + 1
+             and research.conversation.turns[-1].state != "running", "the follow-up answer")
+    turn = research.conversation.turns[-1]
+    answer = turn.answer
+    label = turn.context_label
     assert label == f"Minute {minute:g} · {pid}", label
     if research.selected_model():
         assert answer and "Asking" not in answer, answer
     else:
         assert answer == FOLLOW_UP_NO_MODEL, answer
-    assert len(research.conversation.turns) == turns
-    research.signal_scroll.ensureWidgetVisible(research.follow_up_answer)
+    pointer = research.follow_up_label.text()
+    assert pointer == f"Answered in the conversation · {label}", pointer
     run.settle()
-    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer,
+    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer, "follow_up_pointer": pointer,
             "conversation_turns": len(research.conversation.turns)}
 
 
@@ -865,7 +870,9 @@ def conversation_ask(run: Run, *, question: str, narrow: bool = False, expect_em
         assert panel_top >= board_bottom - 2, (panel_top, board_bottom, geometry)
         assert research.conversation.height() >= 180
         assert research.board_scroll.height() >= 250
-        assert widget.show_button.isVisible() and widget.show_button.isEnabled()
+        # The turn just asked is the one on the board, so its button reads On board.
+        assert widget.show_button.isVisible()
+        assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
         assert research.question_edit.isEnabled()
         facts.update(width=run.win.width(), panel_below_board=True, panel_top=panel_top, board_bottom=board_bottom, geometry=list(geometry or ()))
     return facts
@@ -882,7 +889,7 @@ def conversation_restore(run: Run) -> dict[str, Any]:
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == scope
-    assert research.question_edit.text() == first.question
+    assert research.conversation.turn_widgets[first.request_id].question_label.text() == first.question
     return {**facts, "restored_first_shortlist": True}
 
 
@@ -1054,7 +1061,7 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
     research.cancel_button.click()
     run.wait(lambda: _research_idle(run.win), "the cancelled conversation request")
     assert research.conversation.turns[-1].state == "cancelled"
-    assert research.question_edit.text() == previous.question
+    assert previous.question == research.conversation.turns[0].question
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == previous.board.labels[1]
@@ -1337,7 +1344,7 @@ def install_llm(mode: str, drafts: Sequence[str]) -> None:
 
     def refresh_models(self: Any, **_kwargs: Any) -> None:
         self.research.set_model_status(f"Ollama: replaced by the driver (--llm {mode})")
-        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — choose Start AI)")
+        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — choose Start Ollama)")
 
     def client_factory(*_args: Any, **_kwargs: Any) -> ScriptedChatClient:
         return ScriptedChatClient(drafts)
