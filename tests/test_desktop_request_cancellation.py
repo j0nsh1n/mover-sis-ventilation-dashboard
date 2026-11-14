@@ -156,6 +156,8 @@ def test_absent_processed_autoload_names_path_after_setup(window, monkeypatch, t
     monkeypatch.setenv("MOVER_PROCESSED_DIR", str(root))
     monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
     win._autoload_processed()
+    assert dialogs == []
+    win._autoload_processed(asked=True)
     assert len(dialogs) == 1
     assert "Missing processed files: cases.parquet" in dialogs[0]
     assert "choose Run pipeline" in dialogs[0]

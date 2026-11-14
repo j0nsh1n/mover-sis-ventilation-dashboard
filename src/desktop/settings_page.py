@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListView,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.accessibility import announce
-from src.llm.cloud import BACKEND_LABELS, BACKENDS, CLOUD_BACKENDS, DEFAULT_MODELS, OLLAMA, service_note, service_ready
+from src.llm.cloud import KeyStoreError, forget_api_key, key_note, save_api_key
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
     FolderRow,
@@ -58,7 +59,7 @@ from src.user_settings import (
 
 SECTIONS = (
     ("Data sources", "Where MOVER Suite reads its tables. Files are read in place and never uploaded."),
-    ("Local AI", "Optional. Ollama runs models on this computer. A cloud service is used only when chosen here."),
+    ("Local AI", "Optional. Ollama runs models on this computer. A cloud service answers only when chosen in the research page's AI menu."),
     ("Appearance", "How the window looks. Charts follow the same choice."),
     ("Keyboard", "Every command is also in the Find box (Ctrl+K)."),
     ("About", "The version of MOVER Suite and where its parts come from."),
@@ -77,6 +78,8 @@ class SettingsPage(QWidget):
     about_requested = Signal()
     section_changed = Signal(str)
     dirty_changed = Signal(bool)
+    # The key goes straight to the password store, never through Save, so it never reaches the settings file.
+    api_key_changed = Signal()
 
     # Below this width the section list moves above the form
     NARROW_BELOW = 760
@@ -288,23 +291,30 @@ class SettingsPage(QWidget):
 
     def _ai_section(self) -> QWidget:
         page, layout = self._section_page(1)
-        self.service_row = SettingRow(
-            "Answer service", "", "Where research answers come from. Search and case ranking stay on this computer.")
-        self.combo_service = self._combo("Answer service")
-        for backend in BACKENDS:
-            self.combo_service.addItem(BACKEND_LABELS[backend], backend)
-        self.combo_service.currentIndexChanged.connect(self._service_changed)
-        self.service_row.add_control(self.combo_service)
-        layout.addWidget(self.service_row)
-        self.cloud_model_row = SettingRow("Cloud model", "", "Blank uses the service's own default.")
-        self.edit_cloud_model = QLineEdit()
-        self.edit_cloud_model.setAccessibleName("Cloud model")
-        self.edit_cloud_model.textChanged.connect(self._edited)
-        self.cloud_model_row.add_control(self.edit_cloud_model)
-        layout.addWidget(self.cloud_model_row)
+        self.key_row = SettingRow(
+            "Claude API key", "",
+            "For answers from the Claude API. Choose which AI answers in the research page's AI menu.")
+        self.edit_api_key = QLineEdit()
+        self.edit_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_api_key.setPlaceholderText("Paste a key that starts with sk-ant-")
+        self.edit_api_key.setAccessibleName("Claude API key")
+        self.edit_api_key.returnPressed.connect(self._save_key)
+        self.key_row.add_control(self.edit_api_key)
+        key_buttons = QWidget()
+        key_buttons_layout = QHBoxLayout(key_buttons)
+        key_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self.save_key_button = QPushButton("Save key")
+        self.save_key_button.clicked.connect(self._save_key)
+        self.forget_key_button = QPushButton("Forget key")
+        self.forget_key_button.clicked.connect(self._forget_key)
+        key_buttons_layout.addWidget(self.save_key_button)
+        key_buttons_layout.addWidget(self.forget_key_button)
+        key_buttons_layout.addStretch(1)
+        self.key_row.add_control(key_buttons, left=True)
+        layout.addWidget(self.key_row)
         self.real_data_row = SettingRow(
             "Real MOVER cases", "",
-            "Fictional demo and practice data may always use the chosen cloud service.")
+            "Fictional demo and practice data may always use a cloud service chosen in the AI menu.")
         self.combo_real_data = self._combo("Real MOVER cases")
         self.combo_real_data.addItem("Not sent to a cloud service", "")
         self.combo_real_data.addItem("Sent trimmed: case aliases, age bands, minutes from incision", "on")
@@ -335,23 +345,36 @@ class SettingsPage(QWidget):
         self.embed_ready = embed
         layout.addWidget(embed)
         layout.addStretch(1)
-        self._tab_stops += [self.combo_service, self.edit_cloud_model, self.combo_real_data,
+        self._tab_stops += [self.edit_api_key, self.save_key_button, self.forget_key_button, self.combo_real_data,
                             self.row_models.edit, self.row_models.choose_button, self.combo_model, self.edit_embed]
-        self._show_service()
+        self._show_key()
         return page
 
-    def _service_changed(self) -> None:
-        self._show_service()
-        self._edited()
+    def _show_key(self, problem: str = "") -> None:
+        """Where the key is found, never the key; a failed save or forget says why instead."""
+        self.key_row.set_note(problem or key_note(), "problem" if problem else "note")
 
-    def _show_service(self) -> None:
-        """The cloud rows follow the chosen service, and its note says what choosing it means."""
-        backend = self.combo_service.currentData() or OLLAMA
-        cloud = backend in CLOUD_BACKENDS
-        self.cloud_model_row.setEnabled(cloud)
-        self.real_data_row.setEnabled(cloud)
-        self.edit_cloud_model.setPlaceholderText(DEFAULT_MODELS.get(backend) or "the service's default")
-        self.service_row.set_note(service_note(backend), "note" if service_ready(backend) else "problem")
+    def _save_key(self) -> None:
+        try:
+            save_api_key(self.edit_api_key.text())
+        except KeyStoreError as exc:
+            self._show_key(str(exc))
+            return
+        self.edit_api_key.clear()
+        self._show_key()
+        announce(self.key_row.note, "Key saved.")
+        self.api_key_changed.emit()
+
+    def _forget_key(self) -> None:
+        try:
+            forget_api_key()
+        except KeyStoreError as exc:
+            self._show_key(str(exc))
+            return
+        self.edit_api_key.clear()
+        self._show_key()
+        announce(self.key_row.note, "Saved key removed.")
+        self.api_key_changed.emit()
 
     def _appearance_section(self) -> QWidget:
         page, layout = self._section_page(2)
@@ -457,8 +480,6 @@ class SettingsPage(QWidget):
             "ollama_models_dir": self.row_models.text(),
             "ollama_model": self.combo_model.currentText().strip(),
             "ollama_embed_model": self.edit_embed.text().strip() or "nomic-embed-text",
-            "ai_backend": self.combo_service.currentData() or OLLAMA,
-            "cloud_model": self.edit_cloud_model.text().strip(),
             "cloud_real_data": self.combo_real_data.currentData() or "",
             "theme": theme if theme in (THEME_LIGHT, THEME_DARK, THEME_SYSTEM) else THEME_SYSTEM,
             "preset": self.combo_preset.currentData() or "default",
@@ -477,8 +498,6 @@ class SettingsPage(QWidget):
             theme_index = self.combo_theme.findData(saved["theme"])
             self.combo_theme.setCurrentIndex(theme_index if theme_index >= 0 else self.combo_theme.findData(THEME_SYSTEM))
             self.edit_embed.setText(saved["ollama_embed_model"])
-            self.combo_service.setCurrentIndex(max(0, self.combo_service.findData(saved["ai_backend"])))
-            self.edit_cloud_model.setText(saved["cloud_model"])
             self.combo_real_data.setCurrentIndex(max(0, self.combo_real_data.findData(saved["cloud_real_data"])))
             self._load_models(saved["ollama_model"], saved["ollama_embed_model"])
             self.refresh_in_use()

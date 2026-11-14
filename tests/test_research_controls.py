@@ -147,6 +147,78 @@ def test_an_empty_list_says_why_and_offers_no_model(qapp):
     assert button.placeholder_text() == "(AI unavailable · search still works)"
 
 
+def _groups():
+    from src.llm.cloud import ChoiceGroup, Choice
+
+    return [
+        ChoiceGroup("claude_api", "Claude API", (Choice("claude_api", "claude-opus-5-5", "Claude Opus 5.5"),)),
+        ChoiceGroup("claude_cli", "Claude Code (your login)", (Choice("claude_cli", "", "Default model"),
+                                                               Choice("claude_cli", "opus", "Opus"))),
+        ChoiceGroup("codex_cli", "Codex (your login)", (Choice("codex_cli", "", "", "The 'codex' command was not found"),)),
+    ]
+
+
+def _menu_texts(button) -> list[str]:
+    texts = []
+    for action in button.menu_widget.actions():
+        widget = getattr(action, "defaultWidget", lambda: None)()
+        heading = widget.findChild(QLabel, "stepHeading") if widget is not None else None
+        texts.append(f"# {heading.text()}" if heading is not None else action.text())
+    return texts
+
+
+def test_the_menu_groups_every_service_in_order_with_greyed_rows_saying_why(qapp):
+    button = LocalModelButton()
+    button.set_models(["gemma4:latest"], "gemma4:latest")
+    button.set_cloud_groups(_groups())
+    texts = _menu_texts(button)
+    rows = texts[texts.index("# On this computer (Ollama)"):texts.index(button.unload_action.text())]
+    assert [t for t in rows if t] == [
+        "# On this computer (Ollama)", "gemma4:latest",
+        "# Claude API", "Claude Opus 5.5",
+        "# Claude Code (your login)", "Default model", "Opus",
+        "# Codex (your login)", "The 'codex' command was not found",
+    ]
+    codex = button.cloud_actions()[-1]
+    assert not codex.isEnabled() and not codex.isCheckable()
+    button.set_models(["gemma4:latest", "qwen3:14b"], "gemma4:latest")
+    assert _menu_texts(button).index("qwen3:14b") < _menu_texts(button).index("# Claude API"), \
+        "a new Ollama list stays above the cloud rows"
+
+
+def test_a_cloud_pick_is_asked_for_and_an_ollama_pick_takes_it_back(qapp):
+    button = LocalModelButton()
+    button.set_models(["gemma4:latest"], "gemma4:latest")
+    button.set_cloud_groups(_groups())
+    made, chosen = [], []
+    button.choice_made.connect(lambda backend, model: made.append((backend, model)))
+    button.model_chosen.connect(chosen.append)
+    opus = next(action for action in button.cloud_actions() if action.text() == "Opus")
+    opus.trigger()
+    assert made == [("claude_cli", "opus")]
+    button.set_cloud_groups(_groups(), ("claude_cli", "opus"), "Claude Code CLI · opus")
+    assert button.selected_model() == "Claude Code CLI · opus"
+    assert [a.text() for a in button.cloud_actions() if a.isChecked()] == ["Opus"]
+    assert not any(a.isChecked() for a in button.model_actions())
+    assert button.text().startswith("Claude Code CLI · opus")
+    opus.trigger()
+    assert made == [("claude_cli", "opus")], "the row already answering is not a change"
+    button.choose("gemma4:latest")
+    assert made[-1] == ("ollama", "gemma4:latest") and chosen == ["gemma4:latest"], \
+        "the Ollama model already marked still switches back from a cloud service"
+    assert button.selected_model() == "gemma4:latest"
+
+
+def test_a_chosen_service_that_cannot_answer_names_itself_but_offers_no_model(qapp):
+    button = LocalModelButton()
+    button.set_models(["gemma4:latest"], "gemma4:latest")
+    button.set_cloud_groups(_groups(), ("claude_api", "claude-opus-5-5"), "Claude API · claude-opus-5-5",
+                            usable=False)
+    button.set_state("blocked")
+    assert button.selected_model() is None
+    assert button.text().startswith("Claude API · claude-opus-5-5") and "off for real cases" in button.text()
+
+
 def test_a_disabled_action_says_why_and_an_enabled_one_says_what_it_does(qapp):
     button = LocalModelButton()
     assert not button.stop_action.isEnabled()

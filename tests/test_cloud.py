@@ -95,7 +95,7 @@ def test_the_local_model_is_the_default_and_unknown_values_fall_back_to_it():
     assert cloud_config({"ai_backend": "something-else"}).backend == "ollama"
     assert cloud_config({"ai_backend": CLAUDE_API}).model_id == "claude-opus-5-5"
     assert cloud_config({"ai_backend": CLAUDE_CLI, "cloud_model": " sonnet "}).label == "Claude Code CLI · sonnet"
-    assert cloud_config({"ai_backend": CODEX_CLI}).label == "Codex CLI"
+    assert cloud_config({"ai_backend": CODEX_CLI}).label == "Codex CLI · default", "the CLI chooses; the label says so"
 
 
 @pytest.mark.parametrize("value", [None, False, "true", 1, "on"])
@@ -248,7 +248,7 @@ def test_a_refused_key_is_reported_without_the_key(monkeypatch):
     sdk = FakeSdk(error=anthropic.AuthenticationError(f"invalid x-api-key {KEY}", response=response, body=None))
     with pytest.raises(CloudError) as refused:
         ClaudeApiClient(client=sdk).chat_turn("m", [{"role": "user", "content": "Q?"}])
-    assert KEY not in str(refused.value) and cloud.API_KEY_ENV in str(refused.value)
+    assert KEY not in str(refused.value) and "refused the key" in str(refused.value)
 
 
 def test_a_declined_answer_is_an_error_not_an_empty_answer():
@@ -272,7 +272,9 @@ def _fake_command(tmp_path: Path, body: str) -> str:
     script.write_text(
         "import json, os, sys, time\n"
         "stdin = sys.stdin.read()\n"
-        f"json.dump({{'argv': sys.argv[1:], 'cwd': os.getcwd(), 'files': sorted(os.listdir('.')), 'stdin': stdin}},"
+        "env = sorted(name for name in os.environ if name in ('ANTHROPIC_API_KEY', 'PATH', 'HOME'))\n"
+        f"json.dump({{'argv': sys.argv[1:], 'cwd': os.getcwd(), 'files': sorted(os.listdir('.')), 'stdin': stdin,"
+        f" 'env': env}},"
         f" open({str(record)!r}, 'w'))\n" + body,
         encoding="utf-8",
     )
@@ -431,3 +433,165 @@ def test_a_failed_call_is_logged_with_its_error():
         recorder.chat_turn("m", [{"role": "user", "content": "Q?"}])
     assert recorder.calls == [{"messages": [{"role": "user", "content": "Q?"}], "structured": False,
                                "error": "The Claude API could not be reached."}]
+
+
+@pytestmark_posix
+def test_a_cli_answers_with_its_own_login_even_when_an_api_key_is_exported(tmp_path, monkeypatch):
+    monkeypatch.setenv(cloud.API_KEY_ENV, KEY)
+    binary = _fake_command(tmp_path, "print(json.dumps({'type': 'result', 'is_error': False, 'result': 'Done.'}))\n")
+    CliClient(CLAUDE_CLI, tmp_path / "work", binary=binary).chat_turn("", [{"role": "user", "content": "Q?"}])
+    assert _record(tmp_path)["env"] == ["HOME", "PATH"], "the key is withheld; the rest of the environment is not"
+    assert os.environ[cloud.API_KEY_ENV] == KEY, "the app's own environment is left as it was"
+
+
+# ----- the key, the model list and the AI menu's rows -----
+
+def test_the_api_client_uses_the_saved_key_when_none_is_exported(password_store, monkeypatch):
+    import anthropic
+
+    built: list[dict] = []
+
+    def capture(**kwargs):
+        built.append(kwargs)
+        return FakeSdk()
+
+    monkeypatch.setattr(anthropic, "Anthropic", capture)
+    cloud.save_api_key(KEY)
+    ClaudeApiClient().chat_turn("m", [{"role": "user", "content": "Q?"}])
+    assert built and built[0]["api_key"] == KEY
+    monkeypatch.setenv(cloud.API_KEY_ENV, "sk-ant-from-env")
+    built.clear()
+    ClaudeApiClient().chat_turn("m", [{"role": "user", "content": "Q?"}])
+    assert built[0]["api_key"] == "sk-ant-from-env", "an exported key comes before the saved one"
+
+
+def test_a_locked_password_store_reads_as_no_key_and_never_raises(password_store, monkeypatch):
+    cloud.save_api_key(KEY)
+    monkeypatch.setattr(cloud, "_stored", None)  # a new run, with the store locked this time
+    password_store.broken = True
+    assert cloud.api_key() == ("", "") and not cloud.service_ready(CLAUDE_API)
+    with pytest.raises(cloud.KeyStoreError) as refused:
+        cloud.save_api_key(KEY)
+    assert KEY not in str(refused.value)
+    with pytest.raises(cloud.KeyStoreError):
+        cloud.save_api_key("   ")
+
+
+def test_forgetting_a_key_that_was_never_saved_is_not_an_error(password_store):
+    cloud.forget_api_key()
+    assert password_store.secrets == {}
+
+
+class FakeModels:
+    def __init__(self, models=None, error=None):
+        self.models, self.error = models or [], error
+
+    def list(self):
+        if self.error is not None:
+            raise self.error
+        return iter(self.models)
+
+
+def test_the_model_list_is_the_apis_own_in_its_order():
+    listed = [SimpleNamespace(id="claude-opus-5-5", display_name="Claude Opus 5.5"),
+              SimpleNamespace(id="claude-haiku-5-5", display_name="")]
+    sdk = SimpleNamespace(models=FakeModels(listed))
+    assert cloud.list_api_models(client=sdk) == [("claude-opus-5-5", "Claude Opus 5.5"),
+                                                 ("claude-haiku-5-5", "claude-haiku-5-5")]
+
+
+def test_a_failed_model_list_says_why_without_the_key():
+    import anthropic
+    import httpx2
+
+    request = httpx2.Request("GET", "https://api.anthropic.com/v1/models")
+    refused = anthropic.AuthenticationError(f"bad key {KEY}", response=httpx2.Response(401, request=request), body=None)
+    with pytest.raises(CloudError) as error:
+        cloud.list_api_models(client=SimpleNamespace(models=FakeModels(error=refused)))
+    assert str(error.value) == "The Claude API refused the key." and KEY not in str(error.value)
+    offline = anthropic.APIConnectionError(request=request)
+    with pytest.raises(CloudError, match="could not be reached"):
+        cloud.list_api_models(client=SimpleNamespace(models=FakeModels(error=offline)))
+    with pytest.raises(CloudError, match="No Claude API key"):
+        cloud.list_api_models()
+
+
+def _rows(groups) -> dict[str, list[tuple[str, str, bool]]]:
+    return {group.backend: [(c.model, c.shown, c.usable) for c in group.choices] for group in groups}
+
+
+def test_every_cloud_service_is_offered_and_an_unusable_one_says_why(monkeypatch):
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
+    rows = _rows(cloud.cloud_choices(CloudConfig("ollama"), real_data=False))
+    assert list(rows) == [CLAUDE_API, CLAUDE_CLI, CODEX_CLI]
+    assert rows[CLAUDE_API] == [("", "No key: add one in Settings, Local AI", False)]
+    assert rows[CLAUDE_CLI] == [("default", "Default model", True), ("opus", "Opus", True), ("sonnet", "Sonnet", True),
+                                ("haiku", "Haiku", True)]
+    assert rows[CODEX_CLI] == [("", "The 'codex' command was not found", False)]
+
+
+def test_with_real_cases_and_sending_off_every_cloud_row_is_off(monkeypatch, password_store):
+    cloud.save_api_key(KEY)
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
+    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API), real_data=True))
+    assert all(row == [("", cloud.OFF_FOR_REAL_CASES, False)] for row in rows.values())
+    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API, real_data_allowed=True), real_data=True))
+    assert rows[CLAUDE_API] == [("claude-opus-5-5", "claude-opus-5-5", True)]
+    assert all(usable for row in rows.values() for _m, _s, usable in row)
+
+
+def test_the_api_rows_follow_the_list_and_keep_the_saved_model(password_store):
+    cloud.save_api_key(KEY)
+    listed = [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-sonnet-5-5", "Claude Sonnet 5.5")]
+    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API, "claude-sonnet-5-5"), real_data=False,
+                                     api_models=listed))
+    assert rows[CLAUDE_API] == [("claude-opus-5-5", "Claude Opus 5.5", True),
+                                ("claude-sonnet-5-5", "Claude Sonnet 5.5", True)]
+    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API, "claude-old"), real_data=False, api_models=listed,
+                                     api_error="The Claude API could not be reached."))
+    assert rows[CLAUDE_API][0] == ("claude-old", "claude-old", True)
+    assert rows[CLAUDE_API][-1] == ("", "Could not list models: The Claude API could not be reached.", False)
+    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_CLI, "claude-old"), real_data=False, api_models=listed))
+    assert [m for m, _s, _u in rows[CLAUDE_API]] == ["claude-opus-5-5", "claude-sonnet-5-5"], \
+        "another service's saved model is not added to the API's rows"
+
+
+def test_a_key_is_looked_for_in_the_store_only_after_one_was_saved_and_only_once(password_store, monkeypatch):
+    from src.user_settings import load_settings
+
+    reads = []
+    real_get = password_store.get_password
+    monkeypatch.setattr(password_store, "get_password", lambda *a: reads.append(a) or real_get(*a))
+    import keyring
+
+    monkeypatch.setattr(keyring, "get_password", password_store.get_password)
+    password_store.secrets[(cloud.KEYRING_SERVICE, cloud.KEYRING_USER)] = KEY  # put there by something else
+    assert cloud.api_key() == ("", "") and reads == [], "no saved-key note: the store is never asked"
+    cloud.save_api_key(KEY)
+    assert load_settings()[cloud.KEY_SAVED_SETTING] is True and KEY not in json.dumps(load_settings())
+    monkeypatch.setattr(cloud, "_stored", None)  # the next run
+    assert cloud.api_key() == (KEY, cloud.KEY_FROM_STORE) and cloud.api_key()[0] == KEY
+    assert len(reads) == 1, "read once per run"
+    cloud.forget_api_key()
+    assert cloud.KEY_SAVED_SETTING not in load_settings() and cloud.api_key() == ("", "")
+
+
+@pytestmark_posix
+@pytest.mark.parametrize("backend, flag", [(CLAUDE_CLI, "--model"), (CODEX_CLI, "-m")])
+def test_a_cli_default_leaves_the_model_to_the_cli(tmp_path, backend, flag):
+    out = ("print(json.dumps({'type': 'result', 'is_error': False, 'result': 'Done.'}))\n" if backend == CLAUDE_CLI
+           else "open('answer.txt', 'w').write('Done.')\n")
+    binary = _fake_command(tmp_path, out)
+    CliClient(backend, tmp_path / "work", binary=binary).chat_turn(
+        CloudConfig(backend).model_id, [{"role": "user", "content": "Q?"}])
+    assert flag not in _record(tmp_path)["argv"]
+
+
+@pytest.mark.parametrize("backend", [CLAUDE_API, CLAUDE_CLI, CODEX_CLI])
+def test_every_cloud_answer_has_a_model_name_so_the_answer_check_runs(backend):
+    from src.llm.advice_check import NotRun, check_advice
+
+    model = CloudConfig(backend).model_id
+    remote = Remote("unused")
+    assert model and not isinstance(check_advice("MAP fell below 65.", remote, model), NotRun)
+    assert remote.received, "the check asked the service"

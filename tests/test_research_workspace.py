@@ -143,7 +143,7 @@ def test_startup_opens_setup_before_loading_when_emr_invalid(qapp, tmp_path, mon
     calls = []
     monkeypatch.setattr(MainWindow, "_setup_bypassed", lambda self: False)
     monkeypatch.setattr(MainWindow, "_open_setup_wizard", lambda self, first_run=False: calls.append(("setup", first_run)))
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: calls.append(("autoload",)))
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: calls.append(("autoload",)))
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kwargs: calls.append(("models",)))
     win = MainWindow()
     win.show()

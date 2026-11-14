@@ -592,7 +592,7 @@ def _main_window(monkeypatch, tmp_path, preset="default", reloads=None):
         "_refresh_ollama_models",
     ):
         monkeypatch.setattr(MainWindow, method, lambda *a, **k: None)
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: reloads.append(1) if reloads is not None else None)
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: reloads.append(1) if reloads is not None else None)
     return MainWindow()
 
 

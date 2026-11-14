@@ -390,7 +390,10 @@ def test_missing_processed_dialog_names_path(qapp, tmp_path, monkeypatch):
     try:
         monkeypatch.setattr("src.desktop.app.needs_first_run_setup", lambda: False)
         win._autoload_processed()
-        assert "Missing processed files: cases.parquet" in dialogs[0]
+        assert dialogs == [], "a load nobody asked for (launch, Settings, a finished job) opens no dialog"
+        assert "No analyzed case cache" in win.research.status_label.text()
+        next(a for a in win.actions() if a.text() == "Reload processed data").trigger()
+        assert "Missing processed files: cases.parquet" in dialogs[0], "Reload is asking: it says what is missing"
         assert "choose Run pipeline" in dialogs[0]
         assert str(tmp_path / "missing") not in dialogs[0]
     finally:

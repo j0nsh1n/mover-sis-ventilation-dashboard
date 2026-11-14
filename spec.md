@@ -298,6 +298,17 @@ opt-in cloud answer services below.
 - Prefer task branches when committing; default branch should stay green.
 - Update `context.md` (state + handoff) and `CHANGELOG.md` (user-visible history) per `agents.md`.
 - Do not put policy rules in `context.md` or `CHANGELOG.md`.
+- Model lanes (owner decision 2026-11-13). Opus 5.5 leads: it plans, writes the
+  helpers' briefs, checks every diff and decides what lands.
+  - Writing code: Gemini 4 Hydrogen through Antigravity, Grok 4.7 through Cursor at high
+    or xhigh effort with Fast on, and Muse Spark 1.3 through the Muse Code app.
+    The Grok CLI is no longer used.
+  - Reasoning-heavy work (design trade-offs, hard bugs, plans): Muse Wonder 1.0
+    through the Muse Code app.
+  - Visual reviews: Gemini 4 Argon through Antigravity.
+  - Still allowed as before: Haiku 5.5 and Sonnet 5.5 subagents, and
+    GLM-5.3-Flash through OpenCode.
+  - The model that reviews a change is never the one that wrote it.
 
 ## MOVER Suite migration (approved 2026-10-27)
 

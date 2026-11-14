@@ -39,8 +39,10 @@ BACKEND_LABELS = {
     CLAUDE_CLI: "Claude Code CLI",
     CODEX_CLI: "Codex CLI",
 }
-# An empty model means the CLI's own default; the API needs a model id.
-DEFAULT_MODELS = {CLAUDE_API: "claude-opus-5-5", CLAUDE_CLI: "", CODEX_CLI: ""}
+# A CLI's "default" leaves the model to the CLI. It is still a name, so every step that needs a model
+# (the answer check among them) runs; only the CLI's command line leaves it out.
+CLI_DEFAULT = "default"
+DEFAULT_MODELS = {CLAUDE_API: "claude-opus-5-5", CLAUDE_CLI: CLI_DEFAULT, CODEX_CLI: CLI_DEFAULT}
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 REAL_DATA_BLOCKED = (
@@ -85,24 +87,122 @@ def cloud_config(settings: dict[str, Any]) -> CloudConfig:
     return CloudConfig(backend, str(settings.get("cloud_model") or ""), settings.get("cloud_real_data") is True)
 
 
+# ----- the Claude API key -----
+# The environment variable wins, so a key set for one launch never has to touch the password store.
+KEYRING_SERVICE = "MOVER Suite"
+KEYRING_USER = "anthropic-api-key"
+KEY_FROM_ENV = "environment"
+KEY_FROM_STORE = "password store"
+# The settings file only says that a key was saved, so a person who never saved one is never asked to unlock
+# the password store. The key is read once per run: each read may wait on an unlock prompt.
+KEY_SAVED_SETTING = "api_key_saved"
+_stored: str | None = None
+
+
+class KeyStoreError(CloudError):
+    """The system password store could not be used. The message never holds a key."""
+
+
+def _keyring() -> Any:
+    import keyring
+    from keyring.backends.fail import Keyring as NoBackend
+
+    if isinstance(keyring.get_keyring(), NoBackend):
+        raise KeyStoreError("No system password store was found on this computer.")
+    return keyring
+
+
+def _stored_key() -> str:
+    global _stored
+    from keyring.errors import KeyringError
+
+    from src.user_settings import load_settings
+
+    if _stored is None:
+        if load_settings().get(KEY_SAVED_SETTING) is not True:
+            return ""
+        try:
+            _stored = (_keyring().get_password(KEYRING_SERVICE, KEYRING_USER) or "").strip()
+        except (KeyringError, KeyStoreError):
+            _stored = ""  # a locked or missing store is asked once per run, not on every menu refresh
+    return _stored
+
+
+def api_key() -> tuple[str, str]:
+    """The Claude API key and where it came from, or two empty strings."""
+    key = os.environ.get(API_KEY_ENV, "").strip()
+    if key:
+        return key, KEY_FROM_ENV
+    key = _stored_key()
+    return (key, KEY_FROM_STORE) if key else ("", "")
+
+
+def save_api_key(key: str) -> None:
+    from keyring.errors import KeyringError
+
+    key = key.strip()
+    if not key:
+        raise KeyStoreError("Paste a key first.")
+    global _stored
+    from src.user_settings import update_settings
+
+    try:
+        _keyring().set_password(KEYRING_SERVICE, KEYRING_USER, key)
+    except KeyringError as exc:
+        raise KeyStoreError("The system password store refused to save the key (it may be locked).") from exc
+    _stored = key
+    update_settings(**{KEY_SAVED_SETTING: True})
+
+
+def forget_api_key() -> None:
+    global _stored
+    from keyring.errors import KeyringError, PasswordDeleteError
+
+    from src.user_settings import update_settings
+
+    try:
+        _keyring().delete_password(KEYRING_SERVICE, KEYRING_USER)
+    except PasswordDeleteError:
+        pass
+    except KeyringError as exc:
+        raise KeyStoreError("The system password store refused to remove the key (it may be locked).") from exc
+    _stored = ""
+    update_settings(**{KEY_SAVED_SETTING: None})
+
+
+def key_note() -> str:
+    """Where the app finds the Claude API key, for Settings. Never the key itself."""
+    _key, source = api_key()
+    if source == KEY_FROM_ENV:
+        return (f"Using the key in {API_KEY_ENV}. It comes before a saved key and is never written anywhere "
+                "by the app.")
+    if source == KEY_FROM_STORE:
+        return "Using the key saved in the system password store. It is never written to the settings file."
+    try:
+        _keyring()
+    except KeyStoreError as exc:
+        return f"No key. {exc} Set {API_KEY_ENV} before starting the app instead."
+    return "No key yet. Paste one and choose Save key; it goes to the system password store."
+
+
 def service_ready(backend: str) -> bool:
-    """Whether the service can be asked at all: a key in the environment, or the command installed."""
+    """Whether the service can be asked at all: a key found, or the command installed."""
     if backend == CLAUDE_API:
-        return bool(os.environ.get(API_KEY_ENV))
+        return bool(api_key()[0])
     if backend in (CLAUDE_CLI, CODEX_CLI):
         return shutil.which("claude" if backend == CLAUDE_CLI else "codex") is not None
     return True
 
 
 def service_note(backend: str) -> str:
-    """What choosing ``backend`` means, in a sentence or two, for the Settings page."""
+    """What answering from ``backend`` means, in a sentence or two, or why it cannot answer now."""
     if backend == OLLAMA:
         return "Answers come from Ollama on this computer."
     logged = f"Each answer is logged on this computer for training, in {training_log_dir()}."
     if backend == CLAUDE_API:
         if not service_ready(backend):
-            return f"No key found: set {API_KEY_ENV} before starting the app. The key is never saved."
-        return f"Uses the key in {API_KEY_ENV}; it is never saved. Questions and their extracts go to Anthropic. {logged}"
+            return f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}."
+        return f"Questions and their extracts go to Anthropic. {logged}"
     command = "claude" if backend == CLAUDE_CLI else "codex"
     if not service_ready(backend):
         return f"The '{command}' command was not found on this computer."
@@ -116,6 +216,77 @@ def service_note(backend: str) -> str:
 def may_send(config: CloudConfig, *, real_data: bool) -> bool:
     """Whether this question may go to the configured cloud service at all."""
     return config.is_cloud and (not real_data or config.real_data_allowed)
+
+
+# ----- what the AI menu offers -----
+GROUP_TITLES = {
+    CLAUDE_API: "Claude API",
+    CLAUDE_CLI: "Claude Code (your login)",
+    CODEX_CLI: "Codex (your login)",
+}
+# The CLIs take these short names; "" leaves the choice to the CLI's own default.
+CLI_MODELS = {
+    CLAUDE_CLI: ((CLI_DEFAULT, "Default model"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")),
+    CODEX_CLI: ((CLI_DEFAULT, "Default model"),),
+}
+OFF_FOR_REAL_CASES = "Off for real MOVER cases: see Settings, Local AI"
+
+
+@dataclass(frozen=True)
+class Choice:
+    """One row of the AI menu. A row with a reason is shown greyed out, with the reason as its text."""
+
+    backend: str
+    model: str
+    text: str
+    reason: str = ""
+
+    @property
+    def usable(self) -> bool:
+        return not self.reason
+
+    @property
+    def shown(self) -> str:
+        return self.reason if self.reason and not self.text else (
+            f"{self.text} ({self.reason})" if self.reason else self.text)
+
+
+@dataclass(frozen=True)
+class ChoiceGroup:
+    backend: str
+    title: str
+    choices: tuple[Choice, ...]
+
+
+def cloud_choices(config: CloudConfig, *, real_data: bool, api_models: Sequence[tuple[str, str]] | None = None,
+                  api_error: str = "") -> list[ChoiceGroup]:
+    """The cloud groups of the AI menu.
+
+    ``api_models`` is the Claude API's own list, or None before it has been fetched; the saved model is always
+    offered so a choice never disappears while the list is loading or failing.
+    """
+    blocked = real_data and not config.real_data_allowed
+    groups: list[ChoiceGroup] = []
+    for backend in CLOUD_BACKENDS:
+        title = GROUP_TITLES[backend]
+        if blocked:
+            rows: tuple[Choice, ...] = (Choice(backend, "", "", OFF_FOR_REAL_CASES),)
+        elif not service_ready(backend):
+            reason = ("No key: add one in Settings, Local AI" if backend == CLAUDE_API else
+                      f"The '{'claude' if backend == CLAUDE_CLI else 'codex'}' command was not found")
+            rows = (Choice(backend, "", "", reason),)
+        elif backend == CLAUDE_API:
+            listed = list(api_models) if api_models else [(DEFAULT_MODELS[CLAUDE_API], DEFAULT_MODELS[CLAUDE_API])]
+            saved = config.model_id if config.backend == CLAUDE_API else ""
+            if saved and saved not in {model_id for model_id, _name in listed}:
+                listed.insert(0, (saved, saved))
+            rows = tuple(Choice(backend, model_id, name) for model_id, name in listed)
+            if api_error:
+                rows += (Choice(backend, "", "", f"Could not list models: {api_error}"),)
+        else:
+            rows = tuple(Choice(backend, model, text) for model, text in CLI_MODELS[backend])
+        groups.append(ChoiceGroup(backend, title, rows))
+    return groups
 
 
 # ----- the clients -----
@@ -151,7 +322,7 @@ def _strict(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 class ClaudeApiClient:
-    """The Anthropic API through the official SDK. The key comes from the environment and is never stored."""
+    """The Anthropic API through the official SDK, with the key from ``api_key()``."""
 
     def __init__(self, *, timeout_s: float = 300.0, client: Any = None):
         self.timeout_s = timeout_s
@@ -159,11 +330,12 @@ class ClaudeApiClient:
 
     def _sdk(self) -> Any:
         if self._client is None:
-            if not os.environ.get(API_KEY_ENV):
-                raise CloudError(f"No Claude API key: set {API_KEY_ENV} before starting the app.")
+            key, _source = api_key()
+            if not key:
+                raise CloudError(f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}.")
             import anthropic
 
-            self._client = anthropic.Anthropic(timeout=self.timeout_s, max_retries=2)
+            self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout_s, max_retries=2)
         return self._client
 
     def chat_turn(self, model: str, messages: Sequence[dict[str, Any]], *, tools: Any = None,
@@ -193,7 +365,7 @@ class ClaudeApiClient:
         try:
             response = sdk.beta.messages.create(**request)
         except anthropic.AuthenticationError as exc:
-            raise CloudError(f"The Claude API refused the key in {API_KEY_ENV}.") from exc
+            raise CloudError("The Claude API refused the key.") from exc
         except anthropic.RateLimitError as exc:
             raise CloudError("The Claude API is rate limited; try again shortly.") from exc
         except anthropic.APIStatusError as exc:
@@ -212,6 +384,30 @@ def _transcript(turns: list[dict[str, str]]) -> str:
         return turns[0]["content"]
     names = {"user": "Request", "assistant": "Your earlier draft"}
     return "\n\n".join(f"## {names[turn['role']]}\n{turn['content']}" for turn in turns)
+
+
+def _cli_env() -> dict[str, str]:
+    """A CLI answers with its own login; an exported API key would quietly bill that key instead."""
+    return {name: value for name, value in os.environ.items() if name != API_KEY_ENV}
+
+
+def list_api_models(*, timeout_s: float = 20.0, client: Any = None) -> list[tuple[str, str]]:
+    """The Claude API's models as (id, display name), newest first, as the API lists them."""
+    import anthropic
+
+    if client is None:
+        key, _source = api_key()
+        if not key:
+            raise CloudError(f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}.")
+        client = anthropic.Anthropic(api_key=key, timeout=timeout_s, max_retries=1)
+    try:
+        return [(str(model.id), str(model.display_name or model.id)) for model in client.models.list()]
+    except anthropic.AuthenticationError as exc:
+        raise CloudError("The Claude API refused the key.") from exc
+    except anthropic.APIStatusError as exc:
+        raise CloudError(f"The Claude API returned an error ({exc.status_code}).") from exc
+    except anthropic.APIConnectionError as exc:
+        raise CloudError("The Claude API could not be reached.") from exc
 
 
 def _stop_group(proc: subprocess.Popen) -> None:
@@ -256,7 +452,7 @@ class CliClient:
             if schema is not None:
                 (call_dir / "schema.json").write_text(json.dumps(schema), encoding="utf-8")
                 command += ["--output-schema", str(call_dir / "schema.json")]
-        if model:
+        if model and model != CLI_DEFAULT:
             command += ["--model" if self.backend == CLAUDE_CLI else "-m", model]
         if self.backend == CODEX_CLI:
             command.append("-")
@@ -283,7 +479,7 @@ class CliClient:
                     open(call_dir / "err.txt", "wb") as stderr:
                 proc = subprocess.Popen(
                     self._command(model, system, call_dir, schema), stdin=stdin, stdout=stdout, stderr=stderr,
-                    cwd=call_dir, start_new_session=sys.platform != "win32",
+                    cwd=call_dir, start_new_session=sys.platform != "win32", env=_cli_env(),
                 )
                 deadline = time.monotonic() + (timeout_s or self.timeout_s)
                 while proc.poll() is None:

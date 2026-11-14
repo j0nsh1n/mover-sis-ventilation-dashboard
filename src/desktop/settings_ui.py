@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.guardrails.exceptions import GuardrailError
-from src.llm.cloud import OLLAMA, cloud_config
 from src.guardrails.limits import ALLOWED_PRESETS, REQUIRED_EMR_FILES
 from src.runtime_paths import (
     clear_session_path_overrides,
@@ -67,8 +66,6 @@ CHANGE_LABELS = {
     "ollama_models_dir": "models folder",
     "ollama_model": "preferred model",
     "ollama_embed_model": "embedding model",
-    "ai_backend": "answer service",
-    "cloud_model": "cloud model",
     "cloud_real_data": "real-data sending",
     "theme": "theme",
 }
@@ -119,8 +116,6 @@ def saved_values() -> dict[str, str]:
         "ollama_models_dir": cfg.get("ollama_models_dir") or detect_default_ollama_models_dir() or "",
         "ollama_model": str(cfg.get("ollama_model") or ""),
         "ollama_embed_model": str(cfg.get("ollama_embed_model") or "nomic-embed-text"),
-        "ai_backend": cloud_config(cfg).backend,
-        "cloud_model": str(cfg.get("cloud_model") or ""),
         "cloud_real_data": "on" if cfg.get("cloud_real_data") is True else "",
         "theme": theme if theme in THEME_CHOICES else THEME_SYSTEM,
         "preset": preset if preset in ALLOWED_PRESETS else "default",
@@ -218,12 +213,10 @@ def _write_values(vals: dict[str, str]) -> None:
     apply_ollama_env_from_settings()
     update_settings(ollama_model=vals["ollama_model"] or None)
     update_settings(ollama_embed_model=vals["ollama_embed_model"] or "nomic-embed-text")
-    if "ai_backend" in vals:
-        # Defaults are left out of the file, so a local-only setup saves the keys it always did.
-        backend = vals["ai_backend"] or OLLAMA
-        update_settings(ai_backend=None if backend == OLLAMA else backend,
-                        cloud_model=vals.get("cloud_model") or None,
-                        cloud_real_data=True if vals.get("cloud_real_data") == "on" else None)
+    if "cloud_real_data" in vals:
+        # Off is left out of the file, so a local-only setup saves the keys it always did. The answer
+        # service itself is chosen in the research page's AI menu, which saves it at once.
+        update_settings(cloud_real_data=True if vals["cloud_real_data"] == "on" else None)
     update_settings(theme=vals["theme"])
     update_settings(preset=vals["preset"])
 

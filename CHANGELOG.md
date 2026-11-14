@@ -9,10 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Cloud answers, while the local model is worked on: Settings, Local AI, Answer
-  service offers Claude API (key read from `ANTHROPIC_API_KEY`, never saved),
-  Claude Code CLI or Codex CLI next to the local Ollama model. Each answer names
-  the service and passes the same answer check. Real MOVER cases are not sent
+- Cloud answers, while the local model is worked on: the research page's AI menu
+  lists Ollama's models, the Claude API's models (asked from the API), Claude Code
+  and Codex, grouped by service; a pick answers from the next question on and is
+  remembered. Rows that cannot answer now are greyed out with the reason (no key,
+  command not found, off for real cases). The Claude API key is pasted in Settings,
+  Local AI and kept in the system password store (KWallet / Secret Service, Windows
+  Credential Manager), never in the settings file; an exported `ANTHROPIC_API_KEY`
+  comes first. The CLIs answer with their own logins: an exported API key is not
+  passed to them. Each answer names the service and passes the same answer check. Real MOVER cases are not sent
   unless real-data sending is switched on in Settings; then they go trimmed (case
   aliases, 5-year age bands, minutes from incision, no clock times). Every cloud
   answer is logged on this computer for training a local model, in the settings
@@ -177,6 +182,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- No dialog at launch, after a Settings save or after a finished job when the
+  analysed cases have not been built yet: the research page says so quietly. The
+  dialog still opens when you choose Reload processed data, or when a load fails.
+- Claude Code and Codex on their own default model now get the same answer check
+  as every other answer; the empty model name had skipped it.
 - Handoff practice draws arterial and noninvasive MAP in the same colours as
   the Medication and Signal pages; they were swapped.
 - Handoff practice: a wrong value for a missing MAP or SpO2 series now counts

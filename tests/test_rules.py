@@ -585,7 +585,7 @@ def test_desktop_reference_switches_preset(monkeypatch, tmp_path):
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: None)
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda *a, **k: None)
     monkeypatch.setattr("src.desktop.app.load_settings", lambda: {"preset": "default"})
     window = MainWindow()

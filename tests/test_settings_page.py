@@ -72,7 +72,7 @@ def test_a_settings_file_in_todays_format_loads_into_every_field_unchanged(page,
         "emr_dir": str(env.emr), "wave_dir": "", "processed_dir": str(env.processed),
         "ollama_models_dir": str(env.models), "ollama_model": "demo:3b",
         "ollama_embed_model": "nomic-embed-text", "theme": "dark", "preset": "strict",
-        "ai_backend": "ollama", "cloud_model": "", "cloud_real_data": "",
+        "cloud_real_data": "",
     }
     assert not page.is_dirty()
     assert page.save_button.isEnabled() is False
@@ -357,7 +357,7 @@ def setup_calls(monkeypatch):
 @pytest.fixture
 def window(qapp, monkeypatch, setup_calls, dispose):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_autoload_processed", lambda self, **_kwargs: None)
     monkeypatch.setattr(MainWindow, "_refresh_ollama_models", lambda self, **kw: None)
     win = dispose(MainWindow())
     win.resize(1380, 860)
@@ -597,32 +597,75 @@ def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_
     apply_theme(qapp, "dark")
 
 
-def test_the_answer_service_is_local_by_default_and_saves_only_what_was_chosen(page, env):
-    assert page.combo_service.currentData() == "ollama"
-    assert not page.cloud_model_row.isEnabled() and not page.real_data_row.isEnabled()
+def test_real_cases_stay_local_by_default_and_saving_keeps_the_ai_menus_choice(page, env):
+    from src.user_settings import update_settings
+
     assert page.combo_real_data.currentData() == "", "real cases are not sent unless the owner chooses it"
-    page.combo_service.setCurrentIndex(page.combo_service.findData("claude_cli"))
-    assert page.cloud_model_row.isEnabled() and page.real_data_row.isEnabled()
-    assert page.changes() == ["answer service"]
-    page.edit_cloud_model.setText("sonnet")
-    assert page.save() is True
-    saved = json.loads(settings_path().read_text(encoding="utf-8"))
-    assert (saved["ai_backend"], saved["cloud_model"]) == ("claude_cli", "sonnet") and "cloud_real_data" not in saved
+    assert not hasattr(page, "combo_service"), "the answer service is chosen in the research page's AI menu"
+    update_settings(ai_backend="claude_cli", cloud_model="sonnet")
     page.combo_real_data.setCurrentIndex(page.combo_real_data.findData("on"))
-    assert page.save() is True and json.loads(settings_path().read_text(encoding="utf-8"))["cloud_real_data"] is True
-    page.combo_service.setCurrentIndex(page.combo_service.findData("ollama"))
-    page.combo_real_data.setCurrentIndex(page.combo_real_data.findData(""))
-    page.edit_cloud_model.setText("")
+    assert page.changes() == ["real-data sending"]
     assert page.save() is True
     saved = json.loads(settings_path().read_text(encoding="utf-8"))
-    assert not {"ai_backend", "cloud_model", "cloud_real_data"} & set(saved), "back to local saves no cloud keys"
+    assert saved["cloud_real_data"] is True
+    assert (saved["ai_backend"], saved["cloud_model"]) == ("claude_cli", "sonnet"), "Save leaves the menu's choice"
+    page.combo_real_data.setCurrentIndex(page.combo_real_data.findData(""))
+    assert page.save() is True
+    assert "cloud_real_data" not in json.loads(settings_path().read_text(encoding="utf-8"))
 
 
-def test_the_page_never_asks_for_a_key_and_says_where_one_is_read(page, env, monkeypatch):
+KEY = "sk-ant-test-0000-not-a-real-key"
+
+
+def test_a_pasted_key_goes_to_the_password_store_and_nowhere_else(page, env, password_store):
     from PySide6.QtWidgets import QLineEdit
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    page.combo_service.setCurrentIndex(page.combo_service.findData("claude_api"))
-    assert "ANTHROPIC_API_KEY" in page.service_row.note.text() and page.service_row.note.property("state") == "problem"
-    names = [edit.accessibleName().lower() for edit in page.findChildren(QLineEdit)]
-    assert not any("key" in name for name in names)
+    from src.llm import cloud
+
+    assert page.edit_api_key.echoMode() == QLineEdit.EchoMode.Password
+    assert page.key_row.note.text().startswith("No key yet") and page.key_row.note.property("state") == "note"
+    changed = []
+    page.api_key_changed.connect(lambda: changed.append(True))
+    page.edit_api_key.setText(KEY)
+    QTest.mouseClick(page.save_key_button, Qt.MouseButton.LeftButton)
+    assert password_store.secrets == {(cloud.KEYRING_SERVICE, cloud.KEYRING_USER): KEY}
+    assert page.edit_api_key.text() == "" and changed == [True]
+    assert "password store" in page.key_row.note.text() and KEY not in page.key_row.note.text()
+    assert cloud.api_key() == (KEY, cloud.KEY_FROM_STORE)
+    assert not page.is_dirty(), "a saved key is not a pending Settings change"
+    page.combo_theme.setCurrentIndex(page.combo_theme.findData("light"))
+    assert page.save() is True
+    assert KEY not in settings_path().read_text(encoding="utf-8")
+    QTest.mouseClick(page.forget_key_button, Qt.MouseButton.LeftButton)
+    assert password_store.secrets == {} and changed == [True, True]
+    assert cloud.api_key() == ("", "") and page.key_row.note.text().startswith("No key yet")
+
+
+def test_the_environment_key_comes_first_and_is_named_not_shown(page, env, password_store, monkeypatch):
+    from src.llm import cloud
+
+    cloud.save_api_key("sk-ant-stored")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    page._show_key()
+    assert "ANTHROPIC_API_KEY" in page.key_row.note.text() and KEY not in page.key_row.note.text()
+    assert cloud.api_key() == (KEY, cloud.KEY_FROM_ENV)
+
+
+def test_a_locked_or_missing_password_store_says_so_and_keeps_nothing(page, env, password_store, monkeypatch):
+    import keyring
+    from keyring.backends.fail import Keyring as NoBackend
+
+    from src.llm import cloud
+
+    password_store.broken = True
+    page.edit_api_key.setText(KEY)
+    QTest.mouseClick(page.save_key_button, Qt.MouseButton.LeftButton)
+    note = page.key_row.note
+    assert "refused" in note.text() and note.property("state") == "problem" and KEY not in note.text()
+    assert cloud.api_key() == ("", "")
+    password_store.broken = False
+    monkeypatch.setattr(keyring, "get_keyring", lambda: NoBackend())
+    page._show_key()
+    assert "No system password store" in note.text() and "ANTHROPIC_API_KEY" in note.text()
+    QTest.mouseClick(page.save_key_button, Qt.MouseButton.LeftButton)
+    assert password_store.secrets == {} and note.property("state") == "problem"
