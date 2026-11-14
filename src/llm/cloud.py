@@ -562,6 +562,7 @@ _AGE_FORM = re.compile(
     r"(?P<label>Age:\s*|aged\s+|age\s+of\s+|age\s+)(?P<nlabel>\d{1,3}(?:\.\d+)?)"
     r"|(?P<n>\d{1,3}(?:\.\d+)?)(?P<tail>"
     r"-year[- ]old"
+    r"|-yrs?-old"
     r"|\s+years?\s+old"
     r"|\s+year-old"
     r"|\s+yrs?\s+old"
@@ -569,12 +570,20 @@ _AGE_FORM = re.compile(
     r"|\s+y/o"
     r"|\s+yo"
     r"|yo"
+    r"|y(?![A-Za-z/.])"
     r"|(?P<gap>[ \t]?)(?P<sex>[FM])(?![A-Za-z])"
     r"))",
     re.IGNORECASE,
 )
 # A date with no clock time. Datetimes are already "[time not sent]" by then.
-_DATE_ONLY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+_MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
+_DATE_ONLY = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
+    r"|\b\d{1,2}\s+" + _MONTH + r"\s+\d{4}\b|\b" + _MONTH + r"\s+\d{1,2},?\s+\d{4}\b",
+    re.IGNORECASE,
+)
+# A military-style clock time such as "0815h".
+_CLOCK_H = re.compile(r"\b(?:[01]\d|2[0-3])[0-5]\dh\b", re.IGNORECASE)
 # The waveform section is presence of a local folder. Its body is a path.
 _WAVE_SECTION = re.compile(r"## Waveform data\n(?:- .*\n?)*")
 # Absolute paths: POSIX with at least two segments, and Windows "C:\...".
@@ -646,6 +655,7 @@ class Trimmer:
         text = _CLOCK.sub("[time not sent]", text)
         text = _band_ages(text)
         text = _DATE_ONLY.sub("[date not sent]", text)
+        text = _CLOCK_H.sub("[time not sent]", text)
         text = _WAVE_SECTION.sub("## Waveform data\nWaveform data: not sent\n", text)
         text = _ABS_PATH.sub("[path not sent]", text)
         lines = text.split("\n")

@@ -1155,3 +1155,20 @@ def test_workers_filter_demo_cloud_history_and_pass_cancellation(monkeypatch, co
     papers = ResearchWorker(Catalog(), "papers?", "m", session, cloud=chosen, real_data=False)
     papers.run()
     assert seen["articles"] == papers.isInterruptionRequested
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("a 47-yr-old", "a 45–49-yr-old"),
+    ("47y woman", "45–49y woman"),
+    ("seen at 0815h", "seen at [time not sent]"),
+    ("on 4 March 2021", "on [date not sent]"),
+    ("March 4, 2021", "[date not sent]"),
+    ("4 Mar 2021", "[date not sent]"),
+])
+def test_more_typed_ages_dates_and_clock_times_are_trimmed(text, expected):
+    assert cloud.Trimmer([]).outbound(text) == expected
+
+
+@pytest.mark.parametrize("text", ["58 mmHg", "58 min", "PIP 58", "1:2", "y-axis 47", "2021 cases", "the 2400h total"])
+def test_the_wider_masks_leave_values_alone(text):
+    assert cloud.Trimmer([]).outbound(text) == text
