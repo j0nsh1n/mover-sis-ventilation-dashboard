@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from typing import cast
 from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
 from src.llm.cloud import CloudConfig, CloudError, CloudSession, open_cloud_session
+from src.llm.history import PriorTurn, cited_then_ranked, follow_up_query, turns_to_send
 from src.llm.intent import Intent, classify
 from src.llm.ollama_client import ChatClient, OllamaClient
 from src.llm.retrieve import answer_from_articles, answer_from_minute, answer_from_retrieval
@@ -27,12 +29,16 @@ ANSWER_TIMEOUT_S = 300.0
 
 
 def _answer_client(cloud: CloudConfig | None, *, real_data: bool, pids: list[str],
-                   should_stop) -> tuple[ChatClient, CloudSession | None]:
-    """The local client, or a cloud session that refuses before building anything when the data may not go."""
+                   should_stop, history: Sequence[PriorTurn] = ()) -> tuple[ChatClient, CloudSession | None]:
+    """The local client, or a cloud session that refuses before building anything when the data may not go.
+
+    ``history`` adds the prior turns' case numbers to the trimmer. It is not
+    written into a refusal.
+    """
     if cloud is None or not cloud.is_cloud:
         return OllamaClient(timeout_s=ANSWER_TIMEOUT_S), None
-    session = open_cloud_session(cloud, real_data=real_data, pids=pids, timeout_s=ANSWER_TIMEOUT_S,
-                                 should_stop=should_stop)
+    session = open_cloud_session(cloud, real_data=real_data, pids=pids, history=history,
+                                 timeout_s=ANSWER_TIMEOUT_S, should_stop=should_stop)
     return session.client, session
 
 
@@ -124,7 +130,8 @@ class ResearchWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, engine: RetrievalEngine | ArticleCatalog, question: str, model: str | None, session, parent=None,
-                 *, cloud: CloudConfig | None = None, real_data: bool = True):
+                 *, cloud: CloudConfig | None = None, real_data: bool = True,
+                 history: Sequence[PriorTurn] = ()):
         super().__init__(parent)
         self.engine = engine
         self.question = question
@@ -133,13 +140,61 @@ class ResearchWorker(QThread):
         self.cloud = cloud
         # Unless told otherwise, case data counts as real: the cloud then stays shut without the owner's switch.
         self.real_data = real_data
+        self.history = tuple(history)
+
+    def _sent_history(self) -> tuple[PriorTurn, ...]:
+        """Turns this question may be shown. Article text is never trimmed."""
+        articles = isinstance(self.engine, ArticleCatalog)
+        real = self.real_data and not articles
+        cloud = self.cloud is not None and self.cloud.is_cloud
+        return turns_to_send(
+            self.history,
+            scope="articles" if articles else "cases",
+            real_data=real,
+            to_cloud=real and cloud,
+        )
 
     def _model_id(self) -> str | None:
         return self.cloud.model_id if self.cloud is not None and self.cloud.is_cloud else self.model
 
+    def _fetch_follow_up(self, ranked: Sequence[SearchCandidate], sent: Sequence[PriorTurn], progress):
+        """Cited cases of the newest prior turn first, then older, then the new ranking.
+
+        With no prior turn the fetch list is the ranking cut at the extract limit,
+        as it was before follow-ups. A cited case the fetch cannot load is skipped
+        by the engine; the rest still fill the limit.
+        """
+        # Case search only. A test engine stands in for RetrievalEngine.
+        engine = cast(RetrievalEngine, self.engine)
+        ranked_pids = [candidate.pid for candidate in ranked]
+        if sent:
+            ordered = cited_then_ranked(sent, ranked_pids)
+        else:
+            ordered = ranked_pids[: engine.extract_limit]
+        frames = {
+            "cases": self.session.cases,
+            "timeseries": self.session.timeseries,
+            "flags": self.session.flags,
+            "episodes": self.session.episodes,
+            "events": self.session.events,
+        }
+        extracts, fetched = engine.fetch_extracts(ordered, on_progress=progress, session_frames=frames)
+        fetched_pids = [str(pid) for pid in fetched]
+        by_pid = {candidate.pid: candidate for candidate in ranked}
+        missing = [pid for pid in fetched_pids if pid not in by_pid]
+        finder = getattr(self.engine, "candidates_for", None)
+        if missing and finder is not None:
+            for candidate in finder(missing):
+                by_pid[candidate.pid] = candidate
+        extract_for = dict(zip(fetched_pids, extracts, strict=True))
+        candidates = [by_pid[pid] for pid in fetched_pids if pid in by_pid]
+        return candidates, [extract_for[candidate.pid] for candidate in candidates]
+
     def run(self) -> None:
         try:
+            sent = self._sent_history()
             if isinstance(self.engine, ArticleCatalog):
+                # The board shows what this question finds; earlier turns ride along as history only.
                 article_result = self.engine.search(self.question)
                 if self.isInterruptionRequested():
                     return
@@ -147,10 +202,10 @@ class ResearchWorker(QThread):
                 if self.model and article_result.articles:
                     # Article abstracts are published text, not MOVER data.
                     client, cloud = _answer_client(self.cloud, real_data=False, pids=[],
-                                                   should_stop=self.isInterruptionRequested)
+                                                   should_stop=self.isInterruptionRequested, history=sent)
                     response = answer_from_articles(
                         question=self.question, model=self._model_id() or "", articles=article_result.articles,
-                        client=client,
+                        client=client, history=sent,
                     )
                     if cloud is not None:
                         cloud.log(question=self.question, kind="articles", answer=response.answer,
@@ -164,34 +219,37 @@ class ResearchWorker(QThread):
                     raise InterruptedError("Search was cancelled.")
                 self.progress.emit(item)
 
+            # The board always shows what the new question finds. For a follow-up, the
+            # extracts the model reads are ranked again with the earlier questions too,
+            # so "what was given then?" reaches the case they named.
             intent = classify(self.question)
             if intent.kind == "scenario":
                 result, chosen = _scenario_search(self.engine, intent, self.question, progress)
+                ranked = list(result.candidates)
             elif intent.kind == "compare":
                 result, chosen = _compare_search(self.engine, intent, self.question, progress)
+                ranked = list(chosen)
             else:
                 result = self.engine.search(self.question, on_progress=progress)
                 chosen = list(result.candidates[: self.engine.extract_limit])
+                ranked = list(result.candidates)
             self.shortlist.emit(result)
-            if not self.model or not chosen:
+            if sent and intent.kind == "question":
+                ranked = list(self.engine.search(follow_up_query(self.question, sent), on_progress=progress).candidates)
+            if not self.model or not (chosen or sent):
                 return
-            pids = [candidate.pid for candidate in chosen]
-            frames = {
-                "cases": self.session.cases,
-                "timeseries": self.session.timeseries,
-                "flags": self.session.flags,
-                "episodes": self.session.episodes,
-                "events": self.session.events,
-            }
-            extracts, fetched = self.engine.fetch_extracts(
-                pids, on_progress=progress, session_frames=frames
+            if sent and intent.kind != "compare":
+                pool = ranked
+            else:
+                pool = list(chosen)
+            candidates, extracts = self._fetch_follow_up(pool if sent else list(chosen), sent, progress)
+            if not candidates:
+                return
+            pids = [candidate.pid for candidate in candidates]
+            client, cloud = _answer_client(
+                self.cloud, real_data=self.real_data, pids=pids,
+                should_stop=self.isInterruptionRequested, history=sent,
             )
-            candidates = [
-                next(candidate for candidate in chosen if candidate.pid == pid)
-                for pid in fetched
-            ]
-            client, cloud = _answer_client(self.cloud, real_data=self.real_data, pids=pids,
-                                           should_stop=self.isInterruptionRequested)
             response = answer_from_retrieval(
                 question=self.question,
                 model=self._model_id() or "",
@@ -201,6 +259,7 @@ class ResearchWorker(QThread):
                 preset=self.engine.preset,
                 kind=intent.kind,
                 on_progress=progress,
+                history=sent,
             )
             if cloud is not None:
                 cloud.log(question=self.question, kind=intent.kind, answer=response.answer, trace=response.tool_trace)
@@ -239,7 +298,8 @@ class MinuteQuestionWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, candidate: SearchCandidate, extract: str, question: str, model: str,
-                 preset: str = "default", parent=None, *, cloud: CloudConfig | None = None, real_data: bool = True):
+                 preset: str = "default", parent=None, *, cloud: CloudConfig | None = None, real_data: bool = True,
+                 history: Sequence[PriorTurn] = ()):
         super().__init__(parent)
         self.candidate = candidate
         self.extract = extract
@@ -248,17 +308,25 @@ class MinuteQuestionWorker(QThread):
         self.preset = preset
         self.cloud = cloud
         self.real_data = real_data
+        self.history = tuple(history)
 
     def run(self) -> None:
         try:
             going_out = self.cloud is not None and self.cloud.is_cloud
-            client, cloud = _answer_client(self.cloud, real_data=self.real_data,
-                                           pids=[self.candidate.pid] if going_out else [],
-                                           should_stop=self.isInterruptionRequested)
+            sent = turns_to_send(
+                self.history, scope="cases", real_data=self.real_data, to_cloud=self.real_data and going_out,
+            )
+            # The extract stays this minute's window. Earlier extracts are not resent;
+            # only the earlier answers travel, as history.
+            client, cloud = _answer_client(
+                self.cloud, real_data=self.real_data,
+                pids=[self.candidate.pid] if going_out else [],
+                should_stop=self.isInterruptionRequested, history=sent,
+            )
             model = self.cloud.model_id if cloud is not None and self.cloud is not None else self.model
             response = answer_from_minute(
                 question=self.question, model=model, candidate=self.candidate,
-                extract=self.extract, client=client, preset=self.preset,
+                extract=self.extract, client=client, preset=self.preset, history=sent,
             )
             if cloud is not None:
                 cloud.log(question=self.question, kind="minute", answer=response.answer, trace=response.tool_trace)

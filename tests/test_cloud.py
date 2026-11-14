@@ -401,8 +401,9 @@ def test_each_answer_is_logged_with_what_went_out_and_never_the_key(monkeypatch,
     text = path.read_text(encoding="utf-8")
     record = json.loads(text)
     assert KEY not in text
-    assert set(record) == {"time", "backend", "model", "kind", "data", "trimmed", "question", "calls", "answer",
-                           "trace", "withheld"}
+    assert set(record) == {"time", "backend", "model", "kind", "data", "trimmed", "question", "history", "calls",
+                           "answer", "trace", "withheld"}
+    assert record["history"] == []
     assert (record["backend"], record["model"], record["data"], record["trimmed"]) == (
         CLAUDE_API, "claude-opus-5-5", "real", True)
     assert record["calls"][0]["messages"] == remote.received[0], "exactly what went out"

@@ -521,14 +521,39 @@ class CliClient:
 # ----- trimming real data -----
 
 _DATE_TIME = re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?\b")
+_CLOCK = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b")
 _EVENT_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?): (.+)$")
-_AGE_LABEL = re.compile(r"\b(Age:\s*|age\s+)(\d{1,3}(?:\.\d+)?)\b")
+# Age phrases the extract and an earlier answer may use. "98.6F" can match the
+# sex-letter form and be over-banded; that is harmless (a temperature is not an
+# identifier, and a wider band only hides more) and is covered by a test.
+_AGE_FORM = re.compile(
+    r"(?<![\w.\u2013-])(?:"
+    r"(?P<label>Age:\s*|aged\s+|age\s+)(?P<nlabel>\d{1,3}(?:\.\d+)?)"
+    r"|(?P<n>\d{1,3}(?:\.\d+)?)(?P<tail>"
+    r"-year-old"
+    r"|\s+years?\s+old"
+    r"|\s+y/o"
+    r"|\s+yo"
+    r"|(?P<gap>[ \t]?)(?P<sex>[FM])(?![A-Za-z])"
+    r"))",
+    re.IGNORECASE,
+)
 LINE_CAP = 400
+_EARLIER = "Earlier question: "
 
 
 def age_band(age: float) -> str:
     low = int(age) // 5 * 5
     return f"{low}–{low + 4}"
+
+
+def _band_ages(text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        if match.group("label"):
+            return match.group("label") + age_band(float(match.group("nlabel")))
+        return age_band(float(match.group("n"))) + match.group("tail")
+
+    return _AGE_FORM.sub(repl, text)
 
 
 def _events_from_incision(section: str) -> str:
@@ -564,7 +589,8 @@ class Trimmer:
         text = re.sub(r"(## Procedure events\n)((?:- .*\n?)*)",
                       lambda m: m.group(1) + _events_from_incision(m.group(2)), text)
         text = _DATE_TIME.sub("[time not sent]", text)
-        text = _AGE_LABEL.sub(lambda m: m.group(1) + age_band(float(m.group(2))), text)
+        text = _CLOCK.sub("[time not sent]", text)
+        text = _band_ages(text)
         lines = text.split("\n")
         if len(lines) > LINE_CAP:
             lines = lines[:LINE_CAP] + [f"[{len(lines) - LINE_CAP} more lines not sent]"]
@@ -576,6 +602,13 @@ class Trimmer:
 
 
 class TrimmingClient:
+    """Wraps a client so every message is trimmed. ``sends_trimmed`` tells the agent
+    that this call is real data leaving the computer, so only trimmed cloud turns
+    may be included as history.
+    """
+
+    sends_trimmed = True
+
     def __init__(self, inner: ChatClient, trimmer: Trimmer):
         self.inner = inner
         self.trimmer = trimmer
@@ -642,6 +675,29 @@ class CloudSession:
         except OSError:
             return None
 
+    def history_sent(self) -> list[dict[str, str]]:
+        """The earlier turns on the first call, as that call actually sent them.
+
+        Trimming has already happened: the question and answer here are the
+        trimmed text, equal to what the far end received. A call that failed
+        is not logged, so a cancelled or failed turn writes no history.
+        """
+        if not self.recorder.calls:
+            return []
+        messages = self.recorder.calls[0].get("messages") or []
+        found: list[dict[str, str]] = []
+        index = 1
+        while index + 1 < len(messages):
+            user, assistant = messages[index], messages[index + 1]
+            content = str(user.get("content") or "")
+            if user.get("role") != "user" or not content.startswith(_EARLIER):
+                break
+            if assistant.get("role") != "assistant":
+                break
+            found.append({"question": content[len(_EARLIER):], "answer": str(assistant.get("content") or "")})
+            index += 2
+        return found
+
     def _write(self, *, question: str, kind: str, answer: str, trace: Sequence[str]) -> Path:
         return write_training_record({
             "backend": self.config.backend,
@@ -650,6 +706,7 @@ class CloudSession:
             "data": "real" if self.real_data else "fictional",
             "trimmed": self.real_data,
             "question": question,
+            "history": self.history_sent(),
             "calls": self.recorder.calls,
             "answer": answer,
             "trace": list(trace),
@@ -657,10 +714,28 @@ class CloudSession:
         })
 
 
+def _alias_pids(pids: Sequence[str], history: Sequence[Any]) -> list[str]:
+    """Current candidates, then every prior turn's cases not already included."""
+    ordered = [str(pid) for pid in pids if pid]
+    seen = set(ordered)
+    for turn in history:
+        for pid in getattr(turn, "pids", ()):
+            pid = str(pid)
+            if pid and pid not in seen:
+                seen.add(pid)
+                ordered.append(pid)
+    return ordered
+
+
 def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[str] = (),
+                       history: Sequence[Any] = (),
                        timeout_s: float = 300.0, should_stop: Callable[[], bool] | None = None,
                        workdir: Path | None = None) -> CloudSession:
-    """Refuses before anything is built when this question may not be sent."""
+    """Refuses before anything is built when this question may not be sent.
+
+    ``history`` is read only after the question is allowed out, and only for
+    its case numbers. A refusal names the block and nothing from the history.
+    """
     if not config.is_cloud:
         raise ValueError("not a cloud service")
     if not may_send(config, real_data=real_data):
@@ -672,5 +747,6 @@ def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[s
         inner = CliClient(config.backend, workdir or training_log_dir().parent / "cloud-cli",
                           timeout_s=timeout_s, should_stop=should_stop)
     recorder = RecordingClient(inner)
-    client: ChatClient = TrimmingClient(recorder, Trimmer(pids)) if real_data else recorder
+    alias = _alias_pids(pids, history) if real_data else [str(pid) for pid in pids]
+    client: ChatClient = TrimmingClient(recorder, Trimmer(alias)) if real_data else recorder
     return CloudSession(config, real_data, client, recorder)

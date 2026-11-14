@@ -346,7 +346,7 @@ def test_ask_selection_never_enters_the_research_answer(synthetic_emr_dir):
      ("compare these two cases on PIP", "Contrast the cases")],
     ids=["question", "scenario", "compare"],
 )
-def test_prior_research_turn_never_enters_the_next_questions_messages(
+def test_a_follow_up_is_shown_the_prior_research_turn(
     tmp_path, monkeypatch, question, task,
 ):
     import time
@@ -396,9 +396,12 @@ def test_prior_research_turn_never_enters_the_next_questions_messages(
         assert len(win.research.conversation.turns) == 2
         assert "PRIOR_ANSWER_SENTINEL" in win.research.conversation.turns[0].answer
         assert len(clients) == 2
-        assert "PRIOR_QUESTION_SENTINEL" not in str(clients[1].sent)
-        assert "PRIOR_ANSWER_SENTINEL" not in str(clients[1].sent)
-        assert question in str(clients[1].sent) and task in str(clients[1].sent)
+        # A follow-up is shown the earlier question and answer. The new question
+        # still sets the task (a scenario or a comparison is not inherited).
+        sent = str(clients[1].sent)
+        assert "Earlier question: PRIOR_QUESTION_SENTINEL" in sent
+        assert "PRIOR_ANSWER_SENTINEL" in sent
+        assert question in sent and task in sent
     finally:
         win.close()
         app.processEvents()

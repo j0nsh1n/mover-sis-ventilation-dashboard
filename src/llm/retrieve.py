@@ -14,6 +14,7 @@ import pandas as pd
 
 from src.guardrails.exceptions import PipelineError
 from src.llm.agent import AgentResult, ProgressCb, run_agent
+from src.llm.history import PriorTurn
 from src.llm.case_context import load_medications
 from src.llm.ollama_client import ChatClient
 from src.llm.prompts import MODE_ANALYZE
@@ -31,6 +32,7 @@ RetrieveProgressCb = Callable[[RetrievalProgress], None]
 def answer_from_articles(
     *, question: str, model: str, articles: Sequence[Article], client: ChatClient,
     on_status: ProgressCb | None = None,
+    history: Sequence[PriorTurn] = (),
 ) -> AgentResult:
     cited = articles[:ABSTRACT_LIMIT]
     if not cited:
@@ -45,6 +47,7 @@ def answer_from_articles(
         model=model, question=question, session=SessionState(), client=client,
         mode=MODE_ANALYZE, skip_prefetch=True, extra_prefetched=extracts,
         allow_tools=False, source_scope="articles", sources=blocks, on_status=on_status,
+        history=history,
     )
 
 
@@ -114,6 +117,7 @@ def answer_from_retrieval(
     kind: Literal["question", "scenario", "compare"] = "question",
     on_status: ProgressCb | None = None,
     on_progress: RetrieveProgressCb | None = None,
+    history: Sequence[PriorTurn] = (),
 ) -> AgentResult:
     """Answer from at most three source extracts without corpus tools."""
     prefetched = format_grounded_extracts(
@@ -159,6 +163,7 @@ def answer_from_retrieval(
         allow_tools=False,
         sources=sources,
         answer_kind=kind,
+        history=history,
     )
 
 
@@ -171,6 +176,7 @@ def answer_from_minute(
     client: ChatClient,
     preset: str = "default",
     on_status: ProgressCb | None = None,
+    history: Sequence[PriorTurn] = (),
 ) -> AgentResult:
     """Answer a question about one minute of one case from that minute's extract alone."""
     return run_agent(
@@ -184,4 +190,5 @@ def answer_from_minute(
         extra_prefetched=format_grounded_extracts(candidates=[candidate], extracts=[extract]),
         allow_tools=False,
         sources=[f"{extract}\n{_case_facts(candidate)}"],
+        history=history,
     )

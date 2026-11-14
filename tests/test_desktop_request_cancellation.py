@@ -49,7 +49,7 @@ class ControlledSearch(QThread):
     failed = Signal(str)
     gates: dict[str, threading.Event] = {}
 
-    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True):
+    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True, history=()):
         super().__init__(parent)
         self.question = question
 
@@ -179,7 +179,7 @@ class ProgressThenAnswer(QThread):
     release = threading.Event()
     answers = True
 
-    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True):
+    def __init__(self, engine, question, model, session, parent=None, *, cloud=None, real_data=True, history=()):
         super().__init__(parent)
 
     def run(self):

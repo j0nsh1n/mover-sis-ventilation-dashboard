@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming.
+
 - Cloud answers, while the local model is worked on: the research page's AI menu
   lists Ollama's models, the Claude API's models (asked from the API), Claude Code
   and Codex, grouped by service; a pick answers from the next question on and is

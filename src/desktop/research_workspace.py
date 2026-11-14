@@ -256,6 +256,7 @@ class ResearchWorkspace(QWidget):
         # The status line shows a running step ("Model round 1/8…") that must not outlive its search
         self._status_is_progress = False
         self._active_turn_request: int | None = None
+        self._reask_before: int | None = None
         self._board_request: int | None = None
         self._before_board_request: int | None = None
         self._restoring_board = False
@@ -874,9 +875,16 @@ class ResearchWorkspace(QWidget):
         if self.scope == "Articles":
             self._render_scope()
 
-    def _ask_again(self, question: str, scope: str) -> None:
+    def _ask_again(self, question: str, scope: str, request_id: int) -> None:
+        # History for this ask is the turns before this one, not the turn itself.
+        self._reask_before = request_id
         self.scope_switch.set_scope(scope)
         self.question_submitted.emit(question)
+
+    def take_reask(self) -> int | None:
+        before = getattr(self, "_reask_before", None)
+        self._reask_before = None
+        return before
 
     def _change_scope(self, scope: str) -> None:
         self._stop_running_question()
@@ -1536,6 +1544,8 @@ class ResearchWorkspace(QWidget):
     def set_answer(
         self, answer: str, request_id: int | None = None, *,
         state: TurnState = "answered", failure: str = "",
+        backend: str | None = None, trimmed: bool | None = None,
+        sources: tuple[str, ...] | None = None,
     ) -> None:
         if request_id is not None and request_id != self._active_turn_request:
             return
@@ -1543,9 +1553,16 @@ class ResearchWorkspace(QWidget):
         turn = self.conversation.turn(self._active_turn_request)
         if turn is not None:
             turn.answer, turn.state, turn.failure = answer, state, failure
+            if backend is not None:
+                turn.backend = backend
+            if trimmed is not None:
+                turn.trimmed = trimmed
+            if sources is not None:
+                turn.sources = tuple(sources)
             candidates = self.result.candidates if self.result is not None else ()
             turn.cited_pids = tuple(candidate.pid for candidate in candidates
                                     if re.search(r"(?<!\w)" + re.escape(candidate.pid) + r"(?!\w)", answer))
+            turn.remember()
             self._save_board()
             self.conversation.update_turn(turn)
             announce(self.conversation, f"Research answer ready for {turn.question}.")
@@ -1988,6 +2005,7 @@ class ResearchWorkspace(QWidget):
             self._case_views[self._current_pid].candidate, self._minute_extract(self._current_pid, minute), question, model,
             self._rule_catalog.preset if self._rule_catalog is not None else "default", parent=self,
             cloud=self.cloud, real_data=not self.data_is_demo,
+            history=self.conversation.history_before(),
         )
         self._follow_up_workers[request_id] = worker
         worker.answer.connect(lambda response: self._on_follow_up(request_id, str(getattr(response, "answer", "") or "No answer was returned.")))

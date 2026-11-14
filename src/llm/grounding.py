@@ -96,9 +96,19 @@ _COUNT_NOUN = re.compile(
 )
 # A heading's number ("## 2. What the extract shows") is a label like a list item's.
 _LIST_PREFIX = re.compile(r"(?m)^[ \t>]*(?:#{1,6}[ \t]+)?(?:[-*•]\s+)?\**(\d{1,3})[.)]\**(?=\s)")
-# "age 55-59": a five-year band, as real-data sending gives a cloud service instead of the age.
-_AGE_BAND = re.compile(r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)", re.IGNORECASE)
-_SOURCE_AGE = re.compile(r"\bage[d]?\s*[:=]?\s*(\d{1,3})(?![\d\u2013-])", re.IGNORECASE)
+# "age 55-59" and a restated band: "55–59-year-old", "55–59 yo", "55–59F".
+_AGE_BAND = re.compile(
+    r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)"
+    r"|(?<![\w.\u2013-])(\d{1,3})\s*(?:-|\u2013)\s*(\d{1,3})(?!\d)"
+    r"\s*(?:-year-old|years?\s+old|y/o\b|yo\b|[FM]\b)",
+    re.IGNORECASE,
+)
+# An exact age in a source: "Age: 58", "aged 58", "58-year-old", "58 yo", "58F".
+_SOURCE_AGE = re.compile(
+    r"\bage[d]?\s*[:=]?\s*(\d{1,3})(?![\d\u2013-])"
+    r"|(?<![\w.\u2013-])(\d{1,3}(?:\.\d+)?)(?:-year-old|\s+years?\s+old|\s+y/o\b|\s+yo\b|\s*[FM]\b)",
+    re.IGNORECASE,
+)
 _ORDINAL = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)
 # A year is a citation detail only in author-year form: "et al. 2019", "(Smith, 2019)".
 _CITED_YEAR = re.compile(
@@ -616,14 +626,27 @@ def _ungrounded(
     return bad
 
 
+def _source_ages(sources: Sequence[str]) -> set[int]:
+    ages: set[int] = set()
+    for text in sources:
+        for match in _SOURCE_AGE.finditer(text):
+            raw = match.group(1) or match.group(2)
+            if raw:
+                ages.add(int(float(raw)))
+    return ages
+
+
 def _true_age_bands(answer: str, sources: Sequence[str]) -> list[tuple[int, int]]:
     """Spans of five-year age bands in ``answer`` that hold an age stated in the sources."""
-    ages = {int(m.group(1)) for text in sources for m in _SOURCE_AGE.finditer(text)}
+    ages = _source_ages(sources)
     spans = []
-    for m in _AGE_BAND.finditer(answer):
-        low, high = int(m.group(1)), int(m.group(2))
+    for match in _AGE_BAND.finditer(answer):
+        low_s, high_s = (match.group(1), match.group(2)) if match.group(1) else (match.group(3), match.group(4))
+        low, high = int(low_s), int(high_s)
         if low % 5 == 0 and high == low + 4 and any(low <= age <= high for age in ages):
-            spans.append((m.start(1), m.end(2)))
+            start = match.start(1) if match.group(1) else match.start(3)
+            end = match.end(2) if match.group(1) else match.end(4)
+            spans.append((start, end))
     return spans
 
 

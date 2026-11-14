@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.answer_markdown import MarkdownAnswer, plain_text
 from src.desktop.shell import DEMO_STAMP, RESEARCH_STAMP
+from src.llm.history import PriorTurn
 
 if TYPE_CHECKING:
     from src.desktop.research_workspace import QuestionState
@@ -39,6 +40,12 @@ class Turn:
     # Whether the question was asked on the fictional demo data. The turn keeps this after the folders change,
     # so an answer never takes the name of data it was not read from.
     demo: bool = False
+    # Recorded when the answer arrives. Switching the AI menu later does not rewrite them.
+    backend: str = ""
+    trimmed: bool = False
+    sources: tuple[str, ...] = ()
+    # Frozen copy of what a follow-up is shown. Editing the turn afterwards leaves it.
+    sent: PriorTurn | None = None
     # How many source extracts or abstracts this question's answer was read from; 0 until known
     extracts: int = 0
     # Named steps of a running question: the finished ones, the one in progress, and a 0-1 bar position
@@ -68,6 +75,21 @@ class Turn:
     @property
     def finished_steps(self) -> list[str]:
         return [step.rstrip("…").rstrip(".") for step in self.steps]
+
+    def remember(self) -> None:
+        """Copy this answer into the history a follow-up reads. Once only."""
+        if self.sent is not None or self.state != "answered":
+            return
+        self.sent = PriorTurn(
+            question=self.question,
+            answer=self.answer,
+            sources=self.sources,
+            pids=self.cited_pids,
+            backend=self.backend,
+            trimmed=self.trimmed,
+            scope=self.scope,
+            state=self.state,
+        )
 
 
 class AnswerText(MarkdownAnswer):
@@ -296,7 +318,7 @@ class ConversationPanel(QScrollArea):
     case_requested = Signal(int, str)
     show_requested = Signal(int)
     ask_requested = Signal(str)
-    ask_scoped_requested = Signal(str, str)
+    ask_scoped_requested = Signal(str, str, int)
     cancel_requested = Signal()
     reset_requested = Signal()
 
@@ -353,7 +375,9 @@ class ConversationPanel(QScrollArea):
         widget.case_requested.connect(self.case_requested)
         widget.show_requested.connect(self.show_requested)
         widget.ask_requested.connect(self.ask_requested)
-        widget.ask_requested.connect(lambda question: self.ask_scoped_requested.emit(question, turn.scope))
+        widget.ask_requested.connect(
+            lambda question, rid=turn.request_id, scope=turn.scope: self.ask_scoped_requested.emit(question, scope, rid)
+        )
         widget.cancel_requested.connect(self.cancel_requested)
         self._layout.insertWidget(self._layout.count() - 1, widget)
         self._refresh_header()
@@ -366,6 +390,20 @@ class ConversationPanel(QScrollArea):
 
     def turn(self, request_id: int | None) -> Turn | None:
         return self._turns.get(request_id) if request_id is not None else None
+
+    def history_before(self, request_id: int | None = None) -> tuple[PriorTurn, ...]:
+        """Answered turns before ``request_id``, oldest first.
+
+        The turn itself is not included, so Ask again on turn k sends the turns
+        before k. Turns that were never answered have no frozen copy and are skipped.
+        """
+        found: list[PriorTurn] = []
+        for turn in self.turns:
+            if request_id is not None and turn.request_id == request_id:
+                break
+            if turn.sent is not None:
+                found.append(turn.sent)
+        return tuple(found)
 
     def update_turn(self, turn: Turn) -> None:
         self.turn_widgets[turn.request_id].update_turn(turn)

@@ -1581,6 +1581,7 @@ class MainWindow(QMainWindow):
         from src.guardrails.validate_io import validate_emr_dir
         from src.llm.ollama_client import OllamaEmbedder
 
+        before = self.research.take_reask()
         articles = self.research.scope == "Articles"
         if articles:
             if self._article_catalog is None:
@@ -1608,6 +1609,7 @@ class MainWindow(QMainWindow):
         request_id = self._research_request_id
         self._active_research_request = request_id
         self.research.begin_question(question, request_id)
+        history = self.research.conversation.history_before(before if before is not None else request_id)
         self.research.set_progress("Searching the local article catalog…" if articles else "Preparing indexed surgery search…")
         self._research_worker = ResearchWorker(
             engine,
@@ -1615,6 +1617,7 @@ class MainWindow(QMainWindow):
             self.research.selected_model(),
             None if articles else self._make_session_snapshot(),
             parent=self,
+            history=history,
             **self._answer_route(articles=articles),
         )
         self._research_workers[request_id] = self._research_worker
@@ -1624,7 +1627,8 @@ class MainWindow(QMainWindow):
             if request_id == self._active_research_request else None
         )
         self._research_worker.shortlist.connect(lambda result: self._on_research_shortlist(result, request_id))
-        self._research_worker.answer.connect(lambda response: self._on_research_answer(response, request_id))
+        worker = self._research_worker
+        worker.answer.connect(lambda response, w=worker: self._on_research_answer(response, request_id, w))
         self._research_worker.failed.connect(lambda message: self._on_research_fail(message, request_id))
         self._research_worker.finished.connect(lambda: self._on_research_done(request_id))
         self._research_worker.start()
@@ -1705,10 +1709,17 @@ class MainWindow(QMainWindow):
             if other:
                 self._load_research_case(other, True, False)
 
-    def _on_research_answer(self, response, request_id: int | None = None) -> None:
+    def _on_research_answer(self, response, request_id: int | None = None, worker=None) -> None:
         if request_id is not None and request_id != self._active_research_request:
             return
-        self.research.set_answer(str(getattr(response, "answer", "") or "No answer was returned."), request_id)
+        cloud = getattr(worker, "cloud", None) if worker is not None else None
+        backend = cloud.backend if cloud is not None and cloud.is_cloud else "ollama"
+        trimmed = bool(worker is not None and getattr(worker, "real_data", False) and cloud is not None and cloud.is_cloud)
+        sources = tuple(getattr(response, "sources", ()) or ())
+        self.research.set_answer(
+            str(getattr(response, "answer", "") or "No answer was returned."), request_id,
+            backend=backend, trimmed=trimmed, sources=sources,
+        )
 
     def _on_research_fail(self, message: str, request_id: int | None = None) -> None:
         if request_id is not None and request_id != self._active_research_request:

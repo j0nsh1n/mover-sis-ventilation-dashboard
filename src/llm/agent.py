@@ -30,6 +30,7 @@ from src.llm.grounding import (
     find_ungrounded_numbers,
     remove_ungrounded_numbers,
 )
+from src.llm.history import PriorTurn, earlier_bodies, history_messages, turns_to_send
 from src.llm.ollama_client import ChatClient, ChatResult, OllamaClient, OllamaError
 from src.llm.prompts import (
     ARTICLE_SYSTEM_PROMPT,
@@ -292,7 +293,7 @@ def _claimed_ages(text: str) -> set[int]:
         for m in re.finditer(
             r"(?<!\w)(\d{1,3})\s*(?:-|\s)?\s*(?:years?[- ]?old|years?\s+of\s+age|y/?o\b|yr[s]?\b|[FM]\b)"
             r"|(?:\bage[d]?\s*[:=]?\s*)(\d{1,3})(?!\d)",
-            text or "",
+            _without_age_bands(text or ""),
             re.IGNORECASE,
         )
         for g in [m.group(1) or m.group(2)]
@@ -300,14 +301,40 @@ def _claimed_ages(text: str) -> set[int]:
     }
 
 
+# "age 55-59" and the forms a trimmed answer restates: "55–59-year-old", "55–59 yo".
+_AGE_BAND_CLAIM = re.compile(
+    r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)"
+    r"|(?<![\w.\u2013-])(\d{1,3})\s*(?:-|\u2013)\s*(\d{1,3})(?!\d)"
+    r"\s*(?:-year-old|years?\s+old|y/o\b|yo\b|[FM]\b)",
+    re.IGNORECASE,
+)
+
+
+def _band_ends(match: re.Match[str]) -> tuple[int, int] | None:
+    low = int(match.group(1) or match.group(3))
+    high = int(match.group(2) or match.group(4))
+    if low % 5 == 0 and high == low + 4:
+        return low, high
+    return None
+
+
 def _claimed_bands(text: str) -> set[tuple[int, int]]:
-    """Five-year age bands asserted for a case: "age 55-59", "aged 55–59"."""
+    """Five-year age bands asserted for a case: "age 55-59", "55–59-year-old"."""
     bands = set()
-    for m in re.finditer(r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)", text or "", re.IGNORECASE):
-        low, high = int(m.group(1)), int(m.group(2))
-        if low % 5 == 0 and high == low + 4:
-            bands.add((low, high))
+    for match in _AGE_BAND_CLAIM.finditer(text or ""):
+        ends = _band_ends(match)
+        if ends is not None:
+            bands.add(ends)
     return bands
+
+
+def _without_age_bands(text: str) -> str:
+    """Drop five-year bands so their endpoints are not read as exact ages."""
+
+    def blank(match: re.Match[str]) -> str:
+        return " " if _band_ends(match) is not None else match.group(0)
+
+    return _AGE_BAND_CLAIM.sub(blank, text or "")
 
 
 # Ages that describe a group, not a person: a statistic, a bound, or a range.
@@ -392,6 +419,8 @@ class AgentResult:
     focus_pids: list[str] = field(default_factory=list)
     rounds: int = 0
     mode: str = MODE_CHAT
+    # The extracts this answer was written from, without earlier turns' bodies.
+    sources: tuple[str, ...] = ()
 
 
 def _normalize_native_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -784,6 +813,7 @@ def run_agent(
     sources: Sequence[str] | None = None,
     source_scope: Literal["cases", "articles"] = "cases",
     answer_kind: Literal["question", "scenario", "compare"] = "question",
+    history: Sequence[PriorTurn] = (),
 ) -> AgentResult:
     if client is None:
         client = OllamaClient()
@@ -824,22 +854,36 @@ def run_agent(
         mode=mode,
     )
     prefetched = "\n\n".join(auto_traces) if auto_traces else ""
-
+    # A trimming client is real data leaving the computer. Only turns that were
+    # themselves answered under trimming may ride along. Anything else, including
+    # history=(), keeps today's single user message byte for byte.
+    to_cloud = bool(getattr(client, "sends_trimmed", False))
+    sent_history = turns_to_send(
+        history, scope=source_scope, real_data=to_cloud, to_cloud=to_cloud,
+    )
+    own_sources = tuple(sources) if sources is not None else ()
+    if sources is not None and sent_history:
+        sources = [*sources, *earlier_bodies(sent_history)]
+    user_content = (
+        f"Question: {question}\n\n{prefetched}" if source_scope == "articles" else extract_user_message(
+            question, kind=answer_kind, extracts=prefetched,
+        ) if extract_only else user_message(
+            question,
+            session_header=header,
+            active_briefing=active_brief if session.active_pid else "",
+            mode=mode,
+            prefetched=prefetched,
+        )
+    )
+    # History pairs sit between the system message and the new question.
+    # The advice check builds its own two messages and never sees them. The
+    # rewrite below drops them too: it repairs this draft, not the thread.
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
-        {
-            "role": "user",
-            "content": (f"Question: {question}\n\n{prefetched}" if source_scope == "articles" else extract_user_message(
-                question, kind=answer_kind, extracts=prefetched,
-            ) if extract_only else user_message(
-                question,
-                session_header=header,
-                active_briefing=active_brief if session.active_pid else "",
-                mode=mode,
-                prefetched=prefetched,
-            )),
-        },
+        *history_messages(sent_history),
+        {"role": "user", "content": user_content},
     ]
+    history_pairs = len(sent_history) * 2
 
     trace: list[str] = list(auto_traces)
     final_text = ""
@@ -952,8 +996,11 @@ def run_agent(
         trace.append("reject:" + ";".join(p.strip("- ") for p in problems)[:300])
         if on_status:
             on_status("Rewriting the draft to pass the answer check…")
-        messages.append({"role": "assistant", "content": final_text})
-        messages.append(
+        # The repair call carries this turn's draft and the instruction, not the
+        # earlier questions. The current turn's tool results stay.
+        repair: list[dict[str, Any]] = [messages[0], *messages[1 + history_pairs:]]
+        repair.append({"role": "assistant", "content": final_text})
+        repair.append(
             {
                 "role": "user",
                 "content": (
@@ -969,7 +1016,7 @@ def run_agent(
         )
         try:
             retry = client.chat_turn(
-                model, messages, temperature=0.0, stream=False, tools=None
+                model, repair, temperature=0.0, stream=False, tools=None
             )
             rewritten = strip_think(retry.content or "").strip()
             if rewritten:
@@ -1015,6 +1062,7 @@ def run_agent(
         focus_pids=list(session.focus_pids),
         rounds=rounds_done,
         mode=mode,
+        sources=own_sources,
     )
 
 
