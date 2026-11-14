@@ -246,7 +246,9 @@ class ThreadComposer(QPlainTextEdit):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setPlaceholderText(EMPTY_PLACEHOLDER)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._fitting = False
         self.textChanged.connect(self._fit_height)
+        self.document().documentLayout().documentSizeChanged.connect(lambda *_args: self._fit_height())
         self._fit_height()
 
     def text(self) -> str:
@@ -258,15 +260,36 @@ class ThreadComposer(QPlainTextEdit):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.setTextCursor(cursor)
 
+    def _wrapped_lines(self) -> int:
+        """Visual lines, including soft wraps. A paragraph is one block and may be several lines."""
+        total = 0
+        block = self.document().firstBlock()
+        while block.isValid():
+            layout = block.layout()
+            count = 0 if layout is None else layout.lineCount()
+            total += count if count > 0 else 1
+            block = block.next()
+        return max(total, 1)
+
     def _fit_height(self) -> None:
-        self.ensurePolished()
-        line_h = max(18, self.fontMetrics().lineSpacing())
-        lines = max(2, min(4, self.document().blockCount()))
-        margins = self.contentsMargins()
-        target = lines * line_h + margins.top() + margins.bottom() + 18
-        clamped = max(56, min(116, target))
-        if self.height() != clamped:
-            self.setFixedHeight(clamped)
+        if self._fitting:
+            return
+        self._fitting = True
+        try:
+            self.ensurePolished()
+            line_h = max(18, self.fontMetrics().lineSpacing())
+            lines = max(2, min(4, self._wrapped_lines()))
+            margins = self.contentsMargins()
+            target = lines * line_h + margins.top() + margins.bottom() + 18
+            clamped = max(56, min(116, target))
+            if self.height() != clamped:
+                self.setFixedHeight(clamped)
+        finally:
+            self._fitting = False
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_height()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -436,22 +459,23 @@ class TurnWidget(QFrame):
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(10)
         self._current_turn = turn
+        self._on_board = False
         self.show_button = QPushButton("Show on board")
         self.show_button.setObjectName("linkBtn")
         self.show_button.setAutoDefault(True)
-        self.show_button.setAccessibleName("Show on board")
+        self.show_button.setAccessibleName(f"Show on board for question {number}")
         self.show_button.clicked.connect(lambda: self.show_requested.emit(self._request_id))
         actions.addWidget(self.show_button)
         self.copy_button = QPushButton("Copy with sources")
         self.copy_button.setObjectName("linkBtn")
         self.copy_button.setAutoDefault(True)
-        self.copy_button.setAccessibleName("Copy with sources")
+        self.copy_button.setAccessibleName(f"Copy with sources for question {number}")
         self.copy_button.clicked.connect(lambda: self._copy(self._current_turn))
         actions.addWidget(self.copy_button)
         self.ask_button = QPushButton("Ask again")
         self.ask_button.setObjectName("linkBtn")
         self.ask_button.setAutoDefault(True)
-        self.ask_button.setAccessibleName("Ask again")
+        self.ask_button.setAccessibleName(f"Ask again for question {number}")
         self.ask_button.clicked.connect(lambda: self.ask_requested.emit(self._current_turn.question))
         actions.addWidget(self.ask_button)
         actions.addStretch(1)
@@ -467,6 +491,7 @@ class TurnWidget(QFrame):
             self.sources_toggle,
             *self.citation_buttons,
             self.checks_toggle,
+            *self.check_note_labels,
             self.show_button,
             self.copy_button,
             self.ask_button,
@@ -525,7 +550,7 @@ class TurnWidget(QFrame):
         state_word = "expanded" if self._sources_open else "collapsed"
         label = f"Sources ({count})"
         self.sources_toggle.setText(label)
-        self.sources_toggle.setAccessibleName(f"{label}, {state_word}")
+        self.sources_toggle.setAccessibleName(f"{label} for question {self._number}")
         self.sources_toggle.setAccessibleDescription(f"Sources, {count}, {state_word}")
         self.sources_toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.sources_toggle.show()
@@ -551,7 +576,7 @@ class TurnWidget(QFrame):
         noun = "note" if count == 1 else "notes"
         label = f"Checks: {count} {noun}"
         self.checks_toggle.setText(label)
-        self.checks_toggle.setAccessibleName(f"{label}, {state_word}")
+        self.checks_toggle.setAccessibleName(f"{label} for question {self._number}")
         self.checks_toggle.setAccessibleDescription(f"Verification checks, {count} {noun}, {state_word}")
         self.checks_toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.checks_toggle.show()
@@ -646,7 +671,10 @@ class TurnWidget(QFrame):
                     note_label.setObjectName("turnCheckNote")
                     note_label.setTextFormat(Qt.TextFormat.PlainText)
                     note_label.setWordWrap(True)
-                    note_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                    note_label.setTextInteractionFlags(
+                        Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+                    )
+                    note_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
                     self.checks_layout.addWidget(note_label)
                     self.check_note_labels.append(note_label)
                 self._check_notes = notes
@@ -656,9 +684,9 @@ class TurnWidget(QFrame):
 
         self.note_label.setText(turn.note)
         self.note_label.setVisible(bool(turn.note))
-        self.show_button.setEnabled(turn.board is not None and turn.state != "running")
+        self._sync_show_button()
         self.copy_button.setEnabled(bool(turn.answer) and not running)
-        self.ask_button.setEnabled(turn.state != "running")
+        self.ask_button.setEnabled(not running)
 
         if turn.cited_pids != self._cited_pids:
             self.citation_buttons.clear()
@@ -695,6 +723,21 @@ class TurnWidget(QFrame):
             self._sync_sources_ui()
         self.tab_order_changed.emit()
 
+    def set_on_board(self, on_board: bool) -> None:
+        self._on_board = on_board
+        self._sync_show_button()
+
+    def _sync_show_button(self) -> None:
+        turn = self._current_turn
+        if self._on_board:
+            self.show_button.setText("On board")
+            self.show_button.setEnabled(False)
+            self.show_button.setAccessibleName(f"On board for question {self._number}")
+            return
+        self.show_button.setText("Show on board")
+        self.show_button.setEnabled(turn.board is not None and turn.state != "running")
+        self.show_button.setAccessibleName(f"Show on board for question {self._number}")
+
 
 class ConversationPanel(QFrame):
     case_requested = Signal(int, str)
@@ -712,6 +755,7 @@ class ConversationPanel(QFrame):
         self.setMinimumSize(360, 180)
         self.turns: list[Turn] = []
         self.turn_widgets: dict[int, TurnWidget] = {}
+        self._shown_request: int | None = None
         self._turns: dict[int, Turn] = {}
         self._next_request_id = 0
 
@@ -722,6 +766,7 @@ class ConversationPanel(QFrame):
         # Panel header: title + New thread
         header_host = QWidget()
         head = QHBoxLayout(header_host)
+        self._header_layout = head
         head.setContentsMargins(20, 16, 20, 10)
         head.setSpacing(8)
         self.title = QLabel("Conversation")
@@ -815,6 +860,16 @@ class ConversationPanel(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
         self.setMinimumWidth(0 if stacked else 360)
+        # A stacked page is short. Tighter header and composer margins leave the thread more of the panel.
+        bar = self.composer_bar.layout()
+        if stacked:
+            self._header_layout.setContentsMargins(16, 8, 16, 6)
+            if bar is not None:
+                bar.setContentsMargins(12, 6, 12, 8)
+        else:
+            self._header_layout.setContentsMargins(20, 16, 20, 10)
+            if bar is not None:
+                bar.setContentsMargins(16, 10, 16, 12)
 
     def fit_composer(self) -> None:
         margins = self.composer_bar.layout().contentsMargins()
@@ -856,6 +911,20 @@ class ConversationPanel(QFrame):
         super().showEvent(event)
         self.fit_composer()
 
+    def set_shown_turn(self, request_id: int | None) -> None:
+        """The turn whose results are on the board. Its button reads On board and does nothing."""
+        self._shown_request = request_id
+        for rid, widget in self.turn_widgets.items():
+            widget.set_on_board(rid == request_id)
+
+    def focus_turn(self, request_id: int) -> None:
+        """Scroll the thread so this turn is in view and focus its answer."""
+        widget = self.turn_widgets.get(request_id)
+        if widget is None:
+            return
+        self._scroll_to_turn(request_id)
+        widget.answer_text.setFocus()
+
     def allocate_request_id(self) -> int:
         self._next_request_id += 1
         return self._next_request_id
@@ -894,6 +963,7 @@ class ConversationPanel(QFrame):
         self.turns.append(turn)
         self._turns[turn.request_id] = turn
         widget = TurnWidget(turn, len(self.turns))
+        widget.set_on_board(turn.request_id == self._shown_request)
         if len(self.turns) == 1:
             widget.hide_rule()
         self.turn_widgets[turn.request_id] = widget

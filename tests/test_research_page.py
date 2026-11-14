@@ -107,7 +107,9 @@ def test_only_the_trace_button_is_filled(view, qapp):
     view.set_searching(False)
     qapp.processEvents()
     assert view.ask_button.accessibleName() == "Trace the evidence"
-    assert "Ctrl+Enter" in view.ask_button.text() and "Ctrl+Enter" in view.ask_button.accessibleDescription()
+    assert view.ask_button.text() == "Trace the evidence"
+    assert "Ctrl+Enter" not in view.ask_button.text()
+    assert "Ctrl+Enter" in view.ask_button.accessibleDescription() and "Ctrl+Enter" in view.ask_button.toolTip()
 
 
 def test_new_question_and_add_comparison_are_quiet_text_buttons(view):
@@ -155,6 +157,36 @@ def test_changing_the_scope_clears_the_board_once_and_a_silent_set_does_not(view
     view.scope_switch.set_scope("Cases")
     assert changes == ["Cases"]
     assert view.scope == "Cases"
+
+
+def _composer_row_span(view) -> int:
+    bar = view.conversation.composer_bar
+    tops, bottoms = [], []
+    for control in (view.scope_switch, view.model_menu, view.ask_button):
+        origin = control.mapTo(bar, control.rect().topLeft())
+        tops.append(origin.y())
+        bottoms.append(origin.y() + control.height())
+    return max(bottoms) - min(tops)
+
+
+def test_trace_and_stop_keep_the_composer_row_height(view, qapp):
+    """At the default panel width the button stays on one row, idle and running, at the same height."""
+    view.resize(1400, 800)
+    qapp.processEvents()
+    assert view.conversation.width() <= 520
+    assert view.ask_button.text() == "Trace the evidence"
+    idle = _composer_row_span(view)
+    idle_y = view.ask_button.mapTo(view.conversation, view.ask_button.rect().topLeft()).y()
+    scope_y = view.scope_switch.mapTo(view.conversation, view.scope_switch.rect().topLeft()).y()
+    assert abs(idle_y - scope_y) < 8
+    view.set_searching(True)
+    qapp.processEvents()
+    assert view.ask_button.accessibleName() == "Stop"
+    running = _composer_row_span(view)
+    running_y = view.ask_button.mapTo(view.conversation, view.ask_button.rect().topLeft()).y()
+    scope_y = view.scope_switch.mapTo(view.conversation, view.scope_switch.rect().topLeft()).y()
+    assert running == idle
+    assert abs(running_y - scope_y) < 8
 
 
 def test_the_controls_wrap_inside_a_narrow_board(view, qapp):
@@ -210,9 +242,11 @@ def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_th
         QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
         order.append(view.focusWidget())
     widget = view.conversation.turn_widgets[1]
+    # The turn on the board reads On board and is disabled, so Tab skips it.
+    assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
     wanted = [
         view.conversation.reset_button, widget.question_label, widget.answer_text,
-        widget.show_button, widget.copy_button, widget.ask_button,
+        widget.copy_button, widget.ask_button,
         view.composer, view.scope_switch.option("Cases"), view.model_menu, view.ask_button,
         view.new_question_button, view.add_comparison_button,
     ]
@@ -346,6 +380,80 @@ def test_the_model_menu_button_opens_on_down_and_its_items_are_reachable_by_arro
 
 
 # ----- evidence trail -----
+
+
+def test_source_row_columns_fit_the_table(view, qapp):
+    """Min, PIP, ETCO2 and HR all end inside the table at 900, 1400 and 1920."""
+    board_with_case(view)
+    for width in (900, 1400, 1920):
+        view.resize(width, 800)
+        qapp.processEvents()
+        table = view.source_table
+        assert table.isVisible()
+        viewport = table.viewport().width()
+        header = table.horizontalHeader()
+        for column in range(table.columnCount()):
+            right = header.sectionViewportPosition(column) + header.sectionSize(column)
+            name = table.horizontalHeaderItem(column).text()
+            assert right <= viewport + 1, (width, name, right, viewport)
+
+
+def test_nothing_sits_above_the_evidence_heading(view, qapp):
+    view.resize(1400, 800)
+    qapp.processEvents()
+    page = view._board_page
+    heading = page.findChild(QLabel, "boardHeading")
+    assert heading is not None and heading.text() == "Evidence"
+    heading_top = heading.mapTo(page, heading.rect().topLeft()).y()
+    for label in page.findChildren(QLabel):
+        if not label.isVisible() or label is heading:
+            continue
+        top = label.mapTo(page, label.rect().topLeft()).y()
+        assert top >= heading_top - 1, label.text()
+    assert view.conversation.composer_bar.isAncestorOf(view.model_status)
+    assert view.status_label.mapTo(page, view.status_label.rect().topLeft()).y() > heading_top
+
+
+def test_the_board_names_the_question_it_shows(view, qapp):
+    assert not view.board_question.isVisible()
+    view.begin_question("Where does pressure peak?", 1)
+    qapp.processEvents()
+    assert not view.board_question.isVisible(), "a clear board names no question"
+    view.set_results(RetrievalResult(candidates=(candidate("SYN-000"),)))
+    view.set_answer("SYN-000 peaks.", 1)
+    view.set_searching(False)
+    qapp.processEvents()
+    assert view.board_question.full_text() == "Question 1 · Where does pressure peak?"
+    assert view.board_question.isVisible()
+    assert view.board_question.height() <= view.board_question.fontMetrics().lineSpacing() + 8
+    first = view.conversation.turn_widgets[1]
+    assert first.show_button.text() == "On board"
+    assert not first.show_button.isEnabled()
+    assert first.show_button.accessibleName() == "On board for question 1"
+    long = "pressure " * 80
+    view.begin_question(long, 2)
+    view.set_results(RetrievalResult(candidates=(candidate("SYN-000"),)))
+    view.set_answer("SYN-000 again.", 2)
+    view.set_searching(False)
+    qapp.processEvents()
+    assert view.board_question.full_text() == f"Question 2 · {long}"
+    assert view.board_question.text().endswith("…")
+    assert len(view.board_question.text()) < len(view.board_question.full_text())
+    assert first.show_button.text() == "Show on board" and first.show_button.isEnabled()
+    second = view.conversation.turn_widgets[2]
+    assert second.show_button.text() == "On board" and not second.show_button.isEnabled()
+    view.new_question_button.click()
+    qapp.processEvents()
+    assert not view.board_question.isVisible()
+
+
+def test_the_narrow_thread_viewport_shows_more_than_one_turn(view, qapp):
+    view.resize(1000, 900)
+    view.show()
+    qapp.processEvents()
+    assert view.board_splitter.orientation() == Qt.Orientation.Vertical
+    assert view.conversation.height() >= 432
+    assert view.conversation.viewport().height() >= 220
 
 
 def test_the_trail_shows_the_observation_its_rows_and_where_they_sit(view, qapp):

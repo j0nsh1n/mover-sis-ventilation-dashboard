@@ -82,15 +82,19 @@ def test_only_the_chosen_option_takes_tab_and_the_arrows_move_between_options(qa
 # ----- buttons -----
 
 
-def test_the_trace_button_carries_its_shortcut_in_the_same_button(qapp):
+def test_the_trace_button_keeps_its_name_and_leaves_the_shortcut_in_the_tip(qapp):
+    """The face says Trace the evidence. Ctrl+Enter stays in the tip so Send and Stop are the same height."""
     button = TraceButton()
     assert button.objectName() == "primaryBtn"
-    assert button.text() == "Trace the evidence Ctrl+Enter"
+    assert button.text() == "Trace the evidence"
+    assert "Ctrl+Enter" not in button.text()
     assert button.accessibleName() == "Trace the evidence"
     assert button.accessibleDescription() == "Shortcut Ctrl+Enter"
-    plain = TraceButton()
-    plain.set_runs([plain.runs()[0]])
-    assert button.sizeHint().width() > plain.sizeHint().width(), "the hint takes room of its own"
+    assert "Ctrl+Enter" in button.toolTip()
+    idle = button.sizeHint().height()
+    button.set_running(True)
+    assert button.text() == "Stop"
+    assert button.sizeHint().height() == idle
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

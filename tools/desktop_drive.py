@@ -870,7 +870,9 @@ def conversation_ask(run: Run, *, question: str, narrow: bool = False, expect_em
         assert panel_top >= board_bottom - 2, (panel_top, board_bottom, geometry)
         assert research.conversation.height() >= 180
         assert research.board_scroll.height() >= 250
-        assert widget.show_button.isVisible() and widget.show_button.isEnabled()
+        # The turn just asked is the one on the board, so its button reads On board.
+        assert widget.show_button.isVisible()
+        assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
         assert research.question_edit.isEnabled()
         facts.update(width=run.win.width(), panel_below_board=True, panel_top=panel_top, board_bottom=board_bottom, geometry=list(geometry or ()))
     return facts

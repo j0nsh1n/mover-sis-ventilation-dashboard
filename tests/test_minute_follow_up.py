@@ -414,6 +414,79 @@ def test_follow_up_and_conversation_questions_never_reach_each_other(workspace, 
     assert _minute_turn(workspace).context_label == "Minute 2 · caseA"
 
 
+@pytest.mark.parametrize("leave", ["show_canvas", "return_to_canvas"])
+def test_leaving_for_the_research_canvas_keeps_a_running_minute_question(workspace, qapp, monkeypatch, leave):
+    gate = threading.Event()
+    client = Describing("The extract lists **PIP 22** at the selected minute.", gate=gate)
+    use_client(monkeypatch, client)
+    workspace.set_models(["fake"])
+    workspace.minute_slider.setValue(2)
+    workspace.follow_up_edit.setText("What happened here?")
+    workspace.follow_up_button.click()
+    pump(qapp, lambda: bool(client.sent), "the request to reach the model")
+    turn = _minute_turn(workspace)
+    assert turn.state == "running"
+    if leave == "show_canvas":
+        workspace.show_canvas()
+    else:
+        workspace.return_to_canvas()
+    qapp.processEvents()
+    assert workspace.stack.currentIndex() == 0
+    assert turn.state == "running"
+    assert workspace._follow_up_active == turn.request_id
+    assert any(worker.isRunning() for worker in workspace.follow_up_workers())
+    gate.set()
+    pump(qapp, lambda: turn.state == "answered", "the answer to land in the thread")
+    assert "PIP 22" in _minute_text(workspace)
+
+
+@pytest.mark.parametrize("stop", ["case", "close", "cancel"])
+def test_changing_case_closing_the_case_or_cancel_stops_a_running_minute_question(workspace, qapp, monkeypatch, stop):
+    gate = threading.Event()
+    client = Describing("Late answer.", gate=gate)
+    use_client(monkeypatch, client)
+    workspace.set_models(["fake"])
+    workspace.minute_slider.setValue(2)
+    workspace.follow_up_edit.setText("What happened here?")
+    workspace.follow_up_button.click()
+    pump(qapp, lambda: bool(client.sent), "the request to reach the model")
+    turn = _minute_turn(workspace)
+    try:
+        if stop == "case":
+            workspace.open_detail("caseB")
+        elif stop == "close":
+            workspace.invalidate_case_data()
+        else:
+            workspace.follow_up_cancel.click()
+        qapp.processEvents()
+        assert turn.state == "cancelled"
+        assert workspace._follow_up_active is None
+    finally:
+        gate.set()
+        pump(qapp, lambda: not workspace._follow_up_workers, "the worker to finish")
+    assert turn.state == "cancelled"
+    assert "Late answer." not in _minute_text(workspace)
+
+
+def test_the_minute_pointer_opens_that_turn_in_the_thread(workspace, qapp, monkeypatch):
+    use_client(monkeypatch, Describing("The extract lists **PIP 22** at the selected minute."))
+    workspace.minute_slider.setValue(2)
+    ask(workspace, qapp)
+    button = workspace.follow_up_label
+    assert button.objectName() == "linkBtn"
+    assert button.text() == "Answered in the conversation · Minute 2 · caseA"
+    button.click()
+    qapp.processEvents()
+    assert workspace.stack.currentIndex() == 0
+    turn = _minute_turn(workspace)
+    widget = workspace.conversation.turn_widgets[turn.request_id]
+    assert widget.answer_text.hasFocus()
+    viewport = workspace.conversation.viewport()
+    top = widget.mapTo(viewport, widget.rect().topLeft()).y()
+    bottom = widget.mapTo(viewport, widget.rect().bottomLeft()).y()
+    assert top < viewport.height() and bottom > 0
+
+
 @pytest.mark.parametrize("demo", [True, False])
 def test_a_minute_question_goes_to_the_cloud_only_for_fictional_data(workspace, qapp, monkeypatch, demo):
     from src.llm import cloud

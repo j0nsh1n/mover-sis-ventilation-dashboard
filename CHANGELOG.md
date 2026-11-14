@@ -187,6 +187,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The research thread keeps a minute question running when you leave the signal page for the conversation, and that page's "Answered in the conversation" line opens the turn. Source-row columns fit the board. The Evidence heading names the question on the board, and that turn's button reads On board. Trace the evidence no longer prints Ctrl+Enter on the button (the shortcut stays in the tip), so Send and Stop stay the same height. The model line sits under the composer and the search line sits under Evidence. A narrow window gives the thread more room, and each turn's buttons name their question.
+
 - A follow-up on fictional data no longer sends an earlier real-data answer to a cloud
   service, and a real trimmed send no longer includes waveform paths or other absolute
   paths. A wrong age or a wrong age band is still caught when the answer also states a

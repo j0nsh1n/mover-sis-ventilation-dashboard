@@ -205,7 +205,9 @@ def test_progress_line_clears_when_the_search_ends(window, monkeypatch, syntheti
     pump(app, lambda: not worker.isRunning() and not win.research._searching)
     status = win.research.status_label.text()
     assert "Rewriting" not in status and "Model round" not in status
-    assert status == "Search finished."
+    # The turn already says whether the search finished, so the board does not repeat "Search finished."
+    assert "Search finished." not in status
+    assert status == ""
     # The turn's saved board does not bring the running step back either
     turn = win.research.conversation.turns[-1]
     assert "Rewriting" not in " ".join(turn.board.labels)

@@ -301,12 +301,15 @@ def test_turn_controls_are_keyboard_reachable_with_contrasting_text(view, qapp, 
     view.activateWindow()
     qapp.processEvents()
     widget = view.conversation.turn_widgets[1]
-    controls = [widget.show_button, widget.ask_button, widget.sources_toggle]
+    # On board is disabled, so Tab skips it. The other turn controls stay reachable.
+    assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
+    controls = [widget.copy_button, widget.ask_button, widget.sources_toggle]
     reached = set()
     view.composer.setFocus()
     for _ in range(100):
         QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
         reached.add(view.focusWidget())
+    assert widget.show_button not in reached
     assert all(control in reached for control in controls)
     assert widget.citation_buttons[0] not in reached, "a folded source is not in the tab order"
     widget.sources_toggle.click()
@@ -333,7 +336,7 @@ def test_turn_controls_are_keyboard_reachable_with_contrasting_text(view, qapp, 
     # Read what is drawn: the text colour is the pixel furthest from the background colour.
     panel = view.conversation
     frame = panel.grab().toImage().convertToFormat(QImage.Format.Format_RGB32)
-    for control in (widget.question_label, widget.answer_text, widget.show_button, widget.citation_buttons[0]):
+    for control in (widget.question_label, widget.answer_text, widget.copy_button, widget.citation_buttons[0]):
         origin = control.mapTo(panel, control.rect().topLeft())
         crop = frame.copy(QRect(origin, control.size()))
         pixels = Counter(memoryview(bytes(crop.constBits())).cast("I"))
@@ -386,7 +389,9 @@ def test_reload_during_a_running_question_fails_it_and_frees_the_buttons(view):
     assert turn.state == "failed"
     assert turn.failure == "Processed data was reloaded during this question."
     assert turn.failure in widget.state_label.text()
-    assert widget.show_button.isEnabled() and widget.ask_button.isEnabled()
+    # The failed turn's shortlist is still the board, so Show stays On board. Ask is free again.
+    assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
+    assert widget.ask_button.isEnabled()
     assert cancelled == [True]
     assert not view._searching
     view.set_answer("late answer", 1)

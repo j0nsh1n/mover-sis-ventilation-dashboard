@@ -88,6 +88,21 @@ def test_verification_notes_leave_the_body_and_the_footer(view, qapp):
     assert widget.checks_container.isVisible()
     assert [label.text() for label in widget.check_note_labels] == list(notes)
     assert "expanded" in widget.checks_toggle.accessibleDescription()
+    assert widget.checks_toggle.accessibleName() == "Checks: 2 notes for question 1"
+    note = widget.check_note_labels[0]
+    assert note.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByKeyboard
+    assert note.focusPolicy() != Qt.FocusPolicy.NoFocus
+    view.activateWindow()
+    view.conversation.reset_button.setFocus()
+    qapp.processEvents()
+    reached = set()
+    for _ in range(40):
+        focused = view.focusWidget()
+        if focused is None:
+            break
+        QTest.keyClick(focused, Qt.Key.Key_Tab)
+        reached.add(view.focusWidget())
+    assert note in reached
     copied = widget.copy_text(view.conversation.turn(1))
     assert "first check found a problem." in copied and "not for clinical care" in copied
 
@@ -102,6 +117,42 @@ def test_one_note_and_no_notes(view):
     view.set_answer("Fine, with no check.", 2)
     view.set_searching(False)
     assert not view.conversation.turn_widgets[2].checks_toggle.isVisible()
+
+
+def test_turn_buttons_name_their_question(view):
+    for number in range(1, 4):
+        view.begin_question(f"Question {number}?", number)
+        view.set_results(RetrievalResult(candidates=(_candidate("SYN-000"), _candidate("SYN-001"))))
+        view.set_answer(
+            f"SYN-000 and SYN-001.\n\n**Verification note:** check {number}.",
+            number,
+        )
+        view.set_searching(False)
+    widget = view.conversation.turn_widgets[3]
+    assert widget.sources_toggle.accessibleName() == "Sources (2) for question 3"
+    assert widget.checks_toggle.accessibleName() == "Checks: 1 note for question 3"
+    assert widget.show_button.accessibleName() == "On board for question 3"
+    assert widget.copy_button.accessibleName() == "Copy with sources for question 3"
+    assert widget.ask_button.accessibleName() == "Ask again for question 3"
+    assert widget.sources_toggle.accessibleName().startswith(widget.sources_toggle.text())
+    assert widget.checks_toggle.accessibleName().startswith(widget.checks_toggle.text())
+    view.new_question_button.click()
+    assert widget.show_button.text() == "Show on board"
+    assert widget.show_button.accessibleName() == "Show on board for question 3"
+
+
+def test_a_wrapped_paragraph_grows_the_composer(view, qapp):
+    composer = view.composer
+    composer.setPlainText("short")
+    qapp.processEvents()
+    short = composer.height()
+    composer.setPlainText("word " * 80)
+    qapp.processEvents()
+    composer._fit_height()
+    assert composer.document().blockCount() == 1
+    assert composer._wrapped_lines() > 2
+    assert composer.height() > short
+    assert composer.height() <= 116
 
 
 def test_sources_start_folded(view, qapp):

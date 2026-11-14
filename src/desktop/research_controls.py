@@ -193,9 +193,10 @@ class TraceButton(RunsButton):
             self.setAccessibleName("Trace the evidence")
             self.setAccessibleDescription("Shortcut Ctrl+Enter")
             self.setToolTip("Trace the evidence (Ctrl+Enter)")
+            # The shortcut stays in the tip. Painting it on the face made the button wrap
+            # onto a second row, so Send and Stop changed the composer row's height.
             self.set_runs([
                 Run("Trace the evidence", "on_accent", semibold=True),
-                Run("Ctrl+Enter", "on_accent", pixel_size=12),
             ])
 
     def is_running(self) -> bool:
