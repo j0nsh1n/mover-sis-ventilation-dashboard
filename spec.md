@@ -88,12 +88,15 @@ opt-in cloud answer services below.
   env override is set for remote).
 - Cloud answer services (owner decision 2026-11-13, while the local model is worked on).
   Local AI stays the default. A cloud AI (Claude API, Claude Code CLI, Codex CLI) is used
-  only when chosen in Settings, and every answer from it says so. With real MOVER data,
+  only when chosen in the research page's AI menu, and every answer from it says so. With real MOVER data,
   nothing goes to a cloud AI unless the owner has switched on real-data sending; then only
   trimmed extracts go: case aliases, age bands, minutes from incision, flagged minutes, no
   free text. Cloud answers pass the same answer check as local ones. Each one is logged on
   this computer for training a local model. Code: `src/llm/cloud.py`; tests:
-  `tests/test_cloud.py`. The Claude API key is read from `ANTHROPIC_API_KEY` and never saved.
+  `tests/test_cloud.py`. The Claude API key comes from `ANTHROPIC_API_KEY` or, when pasted in
+  Settings, from the system password store (`keyring`). It is never written to the settings
+  file, the training log or an error message. Claude Code and Codex answer with their own
+  logins and never receive the API key.
 - Answer gate rejects prescriptive clinical directives and unstated case facts where
   implemented in `src/llm/agent.py` / `prompts.py`. A value, minute or flag stated for a
   case must be in that case's own extract (`src/llm/attribution.py`); a cut-off or

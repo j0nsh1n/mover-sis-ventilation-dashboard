@@ -477,10 +477,10 @@ class MainWindow(QMainWindow):
         # An action hidden from view (an update that is not ready) is not offered either
         commands = [command for command in self._commands if command.action.isVisible()]
         # The installed models change with Ollama's state, so their lines are made when the palette opens.
-        models = [Command(action, "Answer model", "ollama local ai choose use")
+        models = [Command(action, "Answer model", "ollama ai choose use")
                   for action in self.research.model_menu.model_actions()]
-        after_local_ai = 1 + max(i for i, command in enumerate(commands) if command.group == "Local AI")
-        commands[after_local_ai:after_local_ai] = models
+        after_ai = 1 + max(i for i, command in enumerate(commands) if command.group == "AI menu")
+        commands[after_ai:after_ai] = models
         palette = CommandPalette(commands, self)
         palette.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         palette.finished.connect(self._palette_closed)
@@ -1335,7 +1335,7 @@ class MainWindow(QMainWindow):
 
         prev = self.research.selected_model() or ""
         if not status.available:
-            self.research.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+            self.research.set_models([], placeholder="(Ollama stopped — choose Start Ollama)")
             self._set_ollama_status_ui(status)
             if self.statusBar().currentMessage() in ("Checking local model…", "Starting local model…", "Stopping local model…"):
                 self.statusBar().showMessage(status.message)
@@ -1386,7 +1386,7 @@ class MainWindow(QMainWindow):
             research.stop_action.setEnabled(not busy)
             research.unload_action.setEnabled(not busy)
         else:
-            research.set_model_status("Ollama: <b>stopped</b> — choose Start AI in the Local AI menu", rich=True)
+            research.set_model_status("Ollama: <b>stopped</b> — choose Start Ollama in the AI menu", rich=True)
             research.start_action.setEnabled(not busy)
             research.stop_action.setEnabled(False)
             research.unload_action.setEnabled(False)
@@ -1468,13 +1468,20 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self._ollama_available = False
-        self._set_model_state("failed")
-        self.research.set_model_status(f"Local model failed: {message}")
-        self.research.set_status(f"Local model failed: {message}")
-        self.statusBar().showMessage(f"Local model failed: {message}")
+        failure = f"Local model failed: {message}"
+        cloud = self.research.cloud
+        if cloud is not None and cloud.is_cloud:
+            # Ollama's failure is not the answer path while a cloud service is chosen.
+            self.statusBar().showMessage(failure)
+            self._show_ai_service()
+        else:
+            self._set_model_state("failed")
+            self.research.set_model_status(failure)
+            self.research.set_status(failure)
+            self.statusBar().showMessage(failure)
         if action == "start":
             show_failure(self, what="The local model service did not start.", why=message,
-                         next_step="Search still works without it. Check that Ollama is installed, then try Start AI again.",
+                         next_step="Search still works without it. Check that Ollama is installed, then try Start Ollama again.",
                          title="Ollama start", level="warning")
 
     def _ollama_stop(self) -> None:
@@ -1491,7 +1498,7 @@ class MainWindow(QMainWindow):
         if ok:
             QMessageBox.information(self, "Model unloaded", msg)
         else:
-            show_failure(self, what="The model could not be unloaded.", why=msg, title="Unload model", level="warning")
+            show_failure(self, what="The model could not be unloaded.", why=msg, title="Unload Ollama model", level="warning")
 
     def _on_ollama_model_changed(self, text: str) -> None:
         text = (text or "").strip()

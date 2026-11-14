@@ -852,7 +852,7 @@ def test_a_cloud_service_answers_fictional_data_and_stays_off_for_real_cases(win
     assert window.research.model_status.text() == REAL_DATA_BLOCKED
     assert "Claude API · claude-opus-5-5" in window.research.model_menu.text(), "the button still names the choice"
     rows = [action.text() for action in window.research.model_menu.cloud_actions()]
-    assert rows == [cloud.OFF_FOR_REAL_CASES] * 3
+    assert rows == [cloud.OFF_FOR_REAL_CASES]
     update_settings(cloud_real_data=True)
     window._show_ai_service()
     assert window.research.selected_model() == "Claude API · claude-opus-5-5"
@@ -888,7 +888,7 @@ def test_picking_a_row_in_the_ai_menu_switches_and_is_remembered(window, monkeyp
     sonnet.trigger()
     saved = load_settings()
     assert (saved["ai_backend"], saved["cloud_model"]) == ("claude_cli", "sonnet")
-    assert window.research.selected_model() == "Claude Code CLI · sonnet"
+    assert window.research.selected_model() == "Claude Code · sonnet"
     assert [a.text() for a in menu.cloud_actions() if a.isChecked()] == ["Sonnet"]
     default = next(action for action in menu.cloud_actions() if action.text() == "Default model")
     default.trigger()
@@ -922,6 +922,32 @@ def test_the_claude_api_rows_come_from_the_apis_list_and_a_failed_list_says_why(
     assert not [a for a in menu.cloud_actions() if a.text() == rows[-1]][0].isEnabled()
 
 
+def test_an_ollama_failure_leaves_a_chosen_cloud_service_in_place(window, monkeypatch):
+    from src.llm import cloud
+    from src.user_settings import update_settings
+
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
+    update_settings(ai_backend="claude_cli", cloud_model="sonnet")
+    window._shown_data_is_demo = True
+    window._show_ai_service()
+    menu = window.research.model_menu
+    assert menu.state() == "ready"
+    status = window.research.model_status.text()
+    research_status = window.research.status_label.text()
+    window._on_ollama_failure("probe", "boom")
+    assert menu.state() == "ready"
+    assert "failed" not in menu.state()
+    assert window.research.model_status.text() == status
+    assert window.research.status_label.text() == research_status
+    assert "boom" in window.statusBar().currentMessage()
+    shown = []
+    monkeypatch.setattr("src.desktop.app.show_failure", lambda *_args, **_kwargs: shown.append(True))
+    window._on_ollama_failure("start", "boom")
+    assert shown == [True]
+    assert menu.state() == "ready"
+    assert window.research.model_status.text() == status
+
+
 def test_a_question_on_real_cases_is_routed_as_real_data(window):
     window._shown_data_is_demo = False
     assert window._answer_route(articles=False)["real_data"] is True
@@ -943,7 +969,7 @@ def test_unload_frees_the_ollama_model_even_while_a_cloud_service_answers(window
     update_settings(ai_backend="claude_cli", cloud_model="sonnet")
     window._shown_data_is_demo = True
     window._show_ai_service()
-    assert window.research.selected_model() == "Claude Code CLI · sonnet"
+    assert window.research.selected_model() == "Claude Code · sonnet"
     window._ollama_unload()
     assert freed == ["gemma4:latest"]
 

@@ -158,7 +158,7 @@ fn fields_and_actions_expose_meaningful_accessible_names() {
         "Settings",
         "New question",
         "Reset",
-        "Local AI",
+        "AI",
         "Trace the evidence",
     ] {
         let key = label.replace(' ', "_").to_lowercase();
@@ -294,7 +294,7 @@ fn startup_at_double_scale_fits_screen_and_keeps_board_usable() {
         names.lines().collect::<Vec<_>>(),
         [
             "Question scope",
-            "Local AI",
+            "AI",
             "New question",
             "Add comparison",
             "Trace the evidence"

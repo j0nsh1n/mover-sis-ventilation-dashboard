@@ -1159,12 +1159,12 @@ def test_scope_switch_and_model_menu_publish_their_purpose_and_state(qapp):
         view.scope_switch.set_scope("Articles")
         assert articles.state().checked and not cases.state().checked and view.scope == "Articles"
         model = QAccessible.queryAccessibleInterface(view.model_menu)
-        assert model.text(QAccessible.Text.Name) == "Local AI"
-        assert model.text(QAccessible.Text.Description) == "Local AI not checked"
+        assert model.text(QAccessible.Text.Name) == "AI"
+        assert model.text(QAccessible.Text.Description) == "AI not checked"
         view.set_models(["qwen3:14b"])
         view.set_model_state("ready")
         assert model.text(QAccessible.Text.Description) == "qwen3:14b ready"
-        assert model.text(QAccessible.Text.Name) == "Local AI"
+        assert model.text(QAccessible.Text.Name) == "AI"
         assert view.selected_model() == "qwen3:14b"
     finally:
         view.close()
@@ -1188,7 +1188,7 @@ def test_model_menu_announces_a_new_state_and_a_choice_but_a_refresh_is_not_a_ch
         assert (QAccessible.Event.DescriptionChanged, view.model_menu) in seen
         assert chosen == ["second"] and view.selected_model() == "second"
         view.set_models(["first", "second", "third"], "first")
-        view.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+        view.set_models([], placeholder="(Ollama stopped — choose Start Ollama)")
         assert chosen == ["second"], "only a person's choice is a choice"
         assert view.selected_model() is None
     finally:
@@ -1217,8 +1217,8 @@ def test_apply_ollama_status_updates_the_menu_without_counting_as_a_choice(qapp,
         win._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
         assert chosen == []
         assert win.research.selected_model() is None
-        assert menu.text() == "Local AI stopped"
-        assert menu.placeholder_text() == "(Ollama stopped — choose Start AI)"
+        assert menu.text() == "AI stopped"
+        assert menu.placeholder_text() == "(Ollama stopped — choose Start Ollama)"
         assert menu.model_actions() == []
     finally:
         win.close()

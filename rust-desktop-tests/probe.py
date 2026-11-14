@@ -242,7 +242,7 @@ def announcements(root):
 
     def record(event):
         # Only an announcement has a message; building the window also sends property-change events,
-        # such as the Local AI button's new description, which are cleared below and checked by type after.
+        # such as the AI button's new description, which are cleared below and checked by type after.
         message = event.message() if isinstance(event, QAccessibleAnnouncementEvent) else None
         events.append((event.type().name, message))
 
@@ -283,9 +283,9 @@ def names(root):
         ("models", form.row_models.edit), ("question", win.research.question_edit)]}
     actions = {button.text(): button for button in win.findChildren(QPushButton)}
     actions.update({button.text(): button for button in win.rail.findChildren(RailButton)})
-    actions.update({"Local AI": win.research.model_menu, "Trace the evidence": win.research.ask_button})
+    actions.update({"AI": win.research.model_menu, "Trace the evidence": win.research.ask_button})
     for label in ["Research", "Cases", "Signal", "Practice", "Rules", "Settings", "New question", "Reset",
-                  "Local AI", "Trace the evidence"]:
+                  "AI", "Trace the evidence"]:
         result[label.replace(" ", "_").lower()] = accessible_name(actions[label]) if label in actions else ""
     result["tables"] = "\n".join(accessible_name(table) for table in win.findChildren(QTableWidget))
     form.close()
@@ -473,8 +473,8 @@ def startup_layout(root):
                       board_height=win.research.board_scroll.viewport().height())
         viewport = win.research.board_scroll.viewport()
         research = win.research
-        # The controls row under the question: scope, Local AI, the secondary actions and the one filled button.
-        header = [("Question scope", research.scope_switch), ("Local AI", research.model_menu),
+        # The controls row under the question: scope, AI, the secondary actions and the one filled button.
+        header = [("Question scope", research.scope_switch), ("AI", research.model_menu),
                   ("New question", research.new_question_button), ("Add comparison", research.add_comparison_button),
                   ("Trace the evidence", research.ask_button)]
         result["header_action_names"] = "\n".join(name for name, widget in header if widget.isVisible())

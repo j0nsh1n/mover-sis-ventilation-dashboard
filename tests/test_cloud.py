@@ -94,8 +94,8 @@ def test_the_local_model_is_the_default_and_unknown_values_fall_back_to_it():
     assert cloud_config({}).backend == "ollama" and not cloud_config({}).is_cloud
     assert cloud_config({"ai_backend": "something-else"}).backend == "ollama"
     assert cloud_config({"ai_backend": CLAUDE_API}).model_id == "claude-opus-5-5"
-    assert cloud_config({"ai_backend": CLAUDE_CLI, "cloud_model": " sonnet "}).label == "Claude Code CLI · sonnet"
-    assert cloud_config({"ai_backend": CODEX_CLI}).label == "Codex CLI · default", "the CLI chooses; the label says so"
+    assert cloud_config({"ai_backend": CLAUDE_CLI, "cloud_model": " sonnet "}).label == "Claude Code · sonnet"
+    assert cloud_config({"ai_backend": CODEX_CLI}).label == "Codex · default", "the CLI chooses; the label says so"
 
 
 @pytest.mark.parametrize("value", [None, False, "true", 1, "on"])
@@ -524,7 +524,7 @@ def test_every_cloud_service_is_offered_and_an_unusable_one_says_why(monkeypatch
     monkeypatch.setattr(cloud.shutil, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
     rows = _rows(cloud.cloud_choices(CloudConfig("ollama"), real_data=False))
     assert list(rows) == [CLAUDE_API, CLAUDE_CLI, CODEX_CLI]
-    assert rows[CLAUDE_API] == [("", "No key: add one in Settings, Local AI", False)]
+    assert rows[CLAUDE_API] == [("", "No key: add one in Settings, AI", False)]
     assert rows[CLAUDE_CLI] == [("default", "Default model", True), ("opus", "Opus", True), ("sonnet", "Sonnet", True),
                                 ("haiku", "Haiku", True)]
     assert rows[CODEX_CLI] == [("", "The 'codex' command was not found", False)]
@@ -533,8 +533,9 @@ def test_every_cloud_service_is_offered_and_an_unusable_one_says_why(monkeypatch
 def test_with_real_cases_and_sending_off_every_cloud_row_is_off(monkeypatch, password_store):
     cloud.save_api_key(KEY)
     monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
-    rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API), real_data=True))
-    assert all(row == [("", cloud.OFF_FOR_REAL_CASES, False)] for row in rows.values())
+    groups = cloud.cloud_choices(CloudConfig(CLAUDE_API), real_data=True)
+    assert [(group.backend, group.title) for group in groups] == [("cloud", "Cloud services")]
+    assert _rows(groups) == {"cloud": [("", cloud.OFF_FOR_REAL_CASES, False)]}
     rows = _rows(cloud.cloud_choices(CloudConfig(CLAUDE_API, real_data_allowed=True), real_data=True))
     assert rows[CLAUDE_API] == [("claude-opus-5-5", "claude-opus-5-5", True)]
     assert all(usable for row in rows.values() for _m, _s, usable in row)

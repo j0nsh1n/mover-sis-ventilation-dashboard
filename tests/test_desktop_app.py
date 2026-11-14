@@ -628,7 +628,7 @@ def test_status_and_scope_lines_fit_default_window_with_probe_error(qapp, monkey
     qapp.processEvents()
     try:
         research = win.research
-        research.set_model_status("Ollama: stopped — choose Start AI in the Local AI menu")
+        research.set_model_status("Ollama: stopped — choose Start Ollama in the AI menu")
         research.set_status(_PROBE_FAILURE)
         research.scope_label.setText("Indexed surgeries: — · analyzed cases: —")
         qapp.processEvents()
@@ -684,7 +684,7 @@ def test_ollama_state_is_a_word_not_a_color(qapp, monkeypatch, tmp_path, availab
         text = win.research.model_status.text()
         assert ("running" if available else "stopped") in text
         if not available:
-            assert "Start AI" in text and "click Start" not in text, "names the menu item that exists"
+            assert "Start Ollama" in text and "click Start" not in text, "names the menu item that exists"
         assert "color" not in text, "one accent, no red or green state colors"
         assert win._scan_cancel_button.styleSheet() == "", "the focus ring comes from the app stylesheet's accent"
     finally:

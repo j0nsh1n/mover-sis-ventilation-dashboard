@@ -61,7 +61,7 @@ QMenu::item:selected {{
     color: {ink};
 }}
 QMenu::item:disabled {{
-    color: {rule_strong};
+    color: {ink_3};
 }}
 QMenu::separator {{
     height: 1px;

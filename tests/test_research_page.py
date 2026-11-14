@@ -199,13 +199,13 @@ def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_th
 
 def test_the_model_menu_button_names_the_model_and_its_state(view):
     view.set_models(["qwen3:14b", "gemma4:latest"], "qwen3:14b")
-    assert view.model_menu.text() == "Local AI not checked"
+    assert view.model_menu.text() == "AI not checked"
     view.set_model_state("ready")
     assert view.model_menu.text() == "qwen3:14b ready"
     view.set_model_state("busy:starting")
-    assert view.model_menu.text() == "Local AI starting"
+    assert view.model_menu.text() == "AI starting"
     view.set_model_state("failed")
-    assert view.model_menu.text() == "Local AI failed"
+    assert view.model_menu.text() == "AI failed"
     view.set_models([])
     view.set_model_state("ready")
     assert view.model_menu.text() == "No model installed"
@@ -214,7 +214,7 @@ def test_the_model_menu_button_names_the_model_and_its_state(view):
 def test_the_menu_holds_every_former_model_control(view):
     view.set_models(["qwen3:14b", "gemma4:latest"], "qwen3:14b")
     texts = [action.text() for action in view.model_menu.menu_widget.actions() if action.text()]
-    for expected in ("qwen3:14b", "gemma4:latest", "Unload model", "Stop AI", "Start AI",
+    for expected in ("qwen3:14b", "gemma4:latest", "Unload Ollama model", "Stop Ollama", "Start Ollama",
                      "Refresh model list"):
         assert expected in texts, expected
     # Data setup moved to Settings and Ctrl+K
@@ -253,7 +253,7 @@ def test_stop_and_unload_stay_off_until_the_model_service_runs_and_all_three_pau
     window._apply_ollama_status(OllamaStatus(False, "stopped", [], "http://127.0.0.1:11434"))
     assert not research.stop_action.isEnabled() and not research.unload_action.isEnabled()
     assert "stopped" in research.model_menu.text()
-    assert research.stop_action.toolTip() == "Local AI is not running."
+    assert research.stop_action.toolTip() == "Ollama is not running."
 
 
 def test_the_ollama_reason_stays_visible_when_the_model_is_not_ready_and_hides_when_it_is(window):
@@ -276,7 +276,7 @@ def test_ctrl_k_lists_the_model_actions_and_the_page_actions(window, qapp):
         palette = window._palette
         rows = {palette.results.item(row).text(): palette.results.item(row).data(ACTION_ROLE)
                 for row in range(palette.results.count())}
-        for title in ("Start AI", "Stop AI", "Unload model", "Refresh model list", "Trace the evidence",
+        for title in ("Start Ollama", "Stop Ollama", "Unload Ollama model", "Refresh model list", "Trace the evidence",
                       "New question", "Add comparison", "Reset conversation and board",
                       "Ask about cases", "Ask about articles", "a", "b"):
             assert title in rows, title
@@ -294,9 +294,9 @@ def test_a_disabled_action_still_shows_in_ctrl_k_with_its_reason(window, qapp):
         palette.search.setText("unload")
         qapp.processEvents()
         item = palette.results.item(0)
-        assert item.text() == "Unload model"
+        assert item.text() == "Unload Ollama model"
         assert not item.flags() & Qt.ItemFlag.ItemIsEnabled
-        assert item.data(HINT_ROLE) == "Local AI is not running, so no model is loaded."
+        assert item.data(HINT_ROLE) == "Ollama is not running, so no model is loaded."
     finally:
         palette.close()
         qapp.processEvents()

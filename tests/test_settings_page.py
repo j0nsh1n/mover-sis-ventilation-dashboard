@@ -306,7 +306,7 @@ def test_escape_asks_the_window_to_go_back(page, qapp):
 
 def test_sections_and_tab_order_follow_the_screen(page, qapp):
     assert [page.sections.item(i).text() for i in range(page.sections.count())] == [
-        "Data sources", "Local AI", "Appearance", "Keyboard", "About"]
+        "Data sources", "AI", "Appearance", "Keyboard", "About"]
     seen = []
     page.sections.setFocus()
     for _ in range(12):
@@ -322,7 +322,7 @@ def test_sections_and_tab_order_follow_the_screen(page, qapp):
 
 
 def test_every_setting_the_dialog_had_is_on_the_page(page):
-    page.show_section("Local AI")
+    page.show_section("AI")
     assert page.row_models.edit.accessibleName() == "Models directory"
     assert page.combo_model.isEditable() and page.combo_model.currentText() == "demo:3b"
     assert page.edit_embed.text() == "nomic-embed-text"
@@ -601,6 +601,13 @@ def test_real_cases_stay_local_by_default_and_saving_keeps_the_ai_menus_choice(p
     from src.user_settings import update_settings
 
     assert page.combo_real_data.currentData() == "", "real cases are not sent unless the owner chooses it"
+    assert page.real_data_row.purpose.text() == (
+        "Fictional demo and practice data, and questions about published articles, "
+        "may always use a cloud service chosen in the AI menu.")
+    assert page.real_data_row.note.text() == (
+        "Sent trimmed means the question and the case extracts (procedure, measurements, flags) go to the chosen service, "
+        "with case aliases for case numbers, 5-year age bands for ages and minutes from incision for clock times. "
+        "Check the MOVER data use agreement before sending real cases.")
     assert not hasattr(page, "combo_service"), "the answer service is chosen in the research page's AI menu"
     update_settings(ai_backend="claude_cli", cloud_model="sonnet")
     page.combo_real_data.setCurrentIndex(page.combo_real_data.findData("on"))
@@ -639,6 +646,25 @@ def test_a_pasted_key_goes_to_the_password_store_and_nowhere_else(page, env, pas
     QTest.mouseClick(page.forget_key_button, Qt.MouseButton.LeftButton)
     assert password_store.secrets == {} and changed == [True, True]
     assert cloud.api_key() == ("", "") and page.key_row.note.text().startswith("No key yet")
+
+
+def test_save_and_forget_follow_the_field_and_the_stored_key(page):
+    from src.llm import cloud
+
+    assert page.save_key_button.accessibleName() == "Save key for the Claude API"
+    assert page.forget_key_button.accessibleName() == "Forget the saved Claude API key"
+    assert not page.save_key_button.isEnabled() and not page.forget_key_button.isEnabled()
+    assert "never written to the settings file" in page.key_row.note.text()
+    page.edit_api_key.setText("   ")
+    assert not page.save_key_button.isEnabled()
+    page.edit_api_key.setText("sk-ant-test")
+    assert page.save_key_button.isEnabled()
+    page.save_key_button.click()
+    assert cloud.api_key()[1] == cloud.KEY_FROM_STORE
+    assert page.forget_key_button.isEnabled() and not page.save_key_button.isEnabled()
+    page.forget_key_button.click()
+    assert not page.forget_key_button.isEnabled()
+    assert "never written to the settings file" in page.key_row.note.text()
 
 
 def test_the_environment_key_comes_first_and_is_named_not_shown(page, env, password_store, monkeypatch):

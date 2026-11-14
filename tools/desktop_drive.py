@@ -1337,7 +1337,7 @@ def install_llm(mode: str, drafts: Sequence[str]) -> None:
 
     def refresh_models(self: Any, **_kwargs: Any) -> None:
         self.research.set_model_status(f"Ollama: replaced by the driver (--llm {mode})")
-        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — choose Start AI)")
+        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — choose Start Ollama)")
 
     def client_factory(*_args: Any, **_kwargs: Any) -> ScriptedChatClient:
         return ScriptedChatClient(drafts)

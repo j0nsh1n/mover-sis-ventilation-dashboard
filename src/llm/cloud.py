@@ -36,8 +36,8 @@ CLOUD_BACKENDS = (CLAUDE_API, CLAUDE_CLI, CODEX_CLI)
 BACKEND_LABELS = {
     OLLAMA: "Local (Ollama)",
     CLAUDE_API: "Claude API",
-    CLAUDE_CLI: "Claude Code CLI",
-    CODEX_CLI: "Codex CLI",
+    CLAUDE_CLI: "Claude Code",
+    CODEX_CLI: "Codex",
 }
 # A CLI's "default" leaves the model to the CLI. It is still a name, so every step that needs a model
 # (the answer check among them) runs; only the CLI's command line leaves it out.
@@ -47,7 +47,7 @@ API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 REAL_DATA_BLOCKED = (
     "Real MOVER cases are not sent to a cloud service. Switch on real-data sending in Settings, "
-    "Local AI, after checking the MOVER data use agreement."
+    "AI, after checking the MOVER data use agreement."
 )
 
 
@@ -182,7 +182,8 @@ def key_note() -> str:
         _keyring()
     except KeyStoreError as exc:
         return f"No key. {exc} Set {API_KEY_ENV} before starting the app instead."
-    return "No key yet. Paste one and choose Save key; it goes to the system password store."
+    return ("No key yet. Paste one and choose Save key; it goes to the system password store. "
+            "It is never written to the settings file.")
 
 
 def service_ready(backend: str) -> bool:
@@ -201,7 +202,7 @@ def service_note(backend: str) -> str:
     logged = f"Each answer is logged on this computer for training, in {training_log_dir()}."
     if backend == CLAUDE_API:
         if not service_ready(backend):
-            return f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}."
+            return f"No Claude API key: save one in Settings, AI, or set {API_KEY_ENV}."
         return f"Questions and their extracts go to Anthropic. {logged}"
     command = "claude" if backend == CLAUDE_CLI else "codex"
     if not service_ready(backend):
@@ -229,7 +230,7 @@ CLI_MODELS = {
     CLAUDE_CLI: ((CLI_DEFAULT, "Default model"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")),
     CODEX_CLI: ((CLI_DEFAULT, "Default model"),),
 }
-OFF_FOR_REAL_CASES = "Off for real MOVER cases: see Settings, Local AI"
+OFF_FOR_REAL_CASES = "Off for real MOVER cases: see Settings, AI"
 
 
 @dataclass(frozen=True)
@@ -266,13 +267,14 @@ def cloud_choices(config: CloudConfig, *, real_data: bool, api_models: Sequence[
     offered so a choice never disappears while the list is loading or failing.
     """
     blocked = real_data and not config.real_data_allowed
+    if blocked:
+        return [ChoiceGroup("cloud", "Cloud services", (Choice("cloud", "", "", OFF_FOR_REAL_CASES),))]
     groups: list[ChoiceGroup] = []
     for backend in CLOUD_BACKENDS:
         title = GROUP_TITLES[backend]
-        if blocked:
-            rows: tuple[Choice, ...] = (Choice(backend, "", "", OFF_FOR_REAL_CASES),)
-        elif not service_ready(backend):
-            reason = ("No key: add one in Settings, Local AI" if backend == CLAUDE_API else
+        rows: tuple[Choice, ...]
+        if not service_ready(backend):
+            reason = ("No key: add one in Settings, AI" if backend == CLAUDE_API else
                       f"The '{'claude' if backend == CLAUDE_CLI else 'codex'}' command was not found")
             rows = (Choice(backend, "", "", reason),)
         elif backend == CLAUDE_API:
@@ -332,7 +334,7 @@ class ClaudeApiClient:
         if self._client is None:
             key, _source = api_key()
             if not key:
-                raise CloudError(f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}.")
+                raise CloudError(f"No Claude API key: save one in Settings, AI, or set {API_KEY_ENV}.")
             import anthropic
 
             self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout_s, max_retries=2)
@@ -398,7 +400,7 @@ def list_api_models(*, timeout_s: float = 20.0, client: Any = None) -> list[tupl
     if client is None:
         key, _source = api_key()
         if not key:
-            raise CloudError(f"No Claude API key: save one in Settings, Local AI, or set {API_KEY_ENV}.")
+            raise CloudError(f"No Claude API key: save one in Settings, AI, or set {API_KEY_ENV}.")
         client = anthropic.Anthropic(api_key=key, timeout=timeout_s, max_retries=1)
     try:
         return [(str(model.id), str(model.display_name or model.id)) for model in client.models.list()]

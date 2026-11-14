@@ -112,8 +112,8 @@ PAGE_MARGINS = (32, 24, 32, 32)
 CONVERSATION_WIDTH = 380
 CASES_PLACEHOLDER = "Try: Where does pressure peak in laparoscopic cases?"
 ARTICLES_PLACEHOLDER = "Search titles and abstracts in the local catalog"
-CASES_EXTRACTS = "The local model reads at most three retrieved source extracts."
-ARTICLES_EXTRACTS = "The local model reads at most five article abstracts."
+CASES_EXTRACTS = "The AI reads at most three retrieved source extracts."
+ARTICLES_EXTRACTS = "The AI reads at most five article abstracts."
 SPARK_WAITING = "PIP / source samples load on demand"
 # The observation's signal column: its label on the sparkline and its colour token.
 _SPARK_SIGNALS = {"PIP": ("PIP", "s_pip"), "ETCO2": ("ETCO₂", "s_etco2")}
@@ -382,7 +382,7 @@ class ResearchWorkspace(QWidget):
         layout.addSpacing(14)
         layout.addLayout(controls)
 
-        self.model_status = _wrap("Local AI has not been checked. Search remains available.")
+        self.model_status = _wrap("AI has not been checked. Search remains available.")
         self.model_status.setObjectName("quietText")
         self.status_label = _wrap("Set up an EMR folder to search indexed surgeries.")
         self.status_label.setObjectName("quietText")
@@ -605,7 +605,7 @@ class ResearchWorkspace(QWidget):
     def command_entries(self) -> list[tuple[QAction, str, str]]:
         """Palette lines for the research page: the action, its group and extra search words."""
         research = "Research"
-        local = "Local AI"
+        local = "AI menu"
         menu = self.model_menu
         return [
             (self.trace_action, research, "search ask question evidence"),

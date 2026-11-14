@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.accessibility import announce
-from src.llm.cloud import KeyStoreError, forget_api_key, key_note, save_api_key
+from src.llm.cloud import KEY_FROM_STORE, KeyStoreError, api_key, forget_api_key, key_note, save_api_key
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
     FolderRow,
@@ -59,7 +59,7 @@ from src.user_settings import (
 
 SECTIONS = (
     ("Data sources", "Where MOVER Suite reads its tables. Files are read in place and never uploaded."),
-    ("Local AI", "Optional. Ollama runs models on this computer. A cloud service answers only when chosen in the research page's AI menu."),
+    ("AI", "Optional. Ollama runs models on this computer. A cloud service answers only when chosen in the research page's AI menu."),
     ("Appearance", "How the window looks. Charts follow the same choice."),
     ("Keyboard", "Every command is also in the Find box (Ctrl+K)."),
     ("About", "The version of MOVER Suite and where its parts come from."),
@@ -299,13 +299,16 @@ class SettingsPage(QWidget):
         self.edit_api_key.setPlaceholderText("Paste a key that starts with sk-ant-")
         self.edit_api_key.setAccessibleName("Claude API key")
         self.edit_api_key.returnPressed.connect(self._save_key)
+        self.edit_api_key.textChanged.connect(self._refresh_key_buttons)
         self.key_row.add_control(self.edit_api_key)
         key_buttons = QWidget()
         key_buttons_layout = QHBoxLayout(key_buttons)
         key_buttons_layout.setContentsMargins(0, 0, 0, 0)
         self.save_key_button = QPushButton("Save key")
+        self.save_key_button.setAccessibleName("Save key for the Claude API")
         self.save_key_button.clicked.connect(self._save_key)
         self.forget_key_button = QPushButton("Forget key")
+        self.forget_key_button.setAccessibleName("Forget the saved Claude API key")
         self.forget_key_button.clicked.connect(self._forget_key)
         key_buttons_layout.addWidget(self.save_key_button)
         key_buttons_layout.addWidget(self.forget_key_button)
@@ -314,13 +317,16 @@ class SettingsPage(QWidget):
         layout.addWidget(self.key_row)
         self.real_data_row = SettingRow(
             "Real MOVER cases", "",
-            "Fictional demo and practice data may always use a cloud service chosen in the AI menu.")
+            "Fictional demo and practice data, and questions about published articles, may always use a cloud service chosen in the AI menu.")
         self.combo_real_data = self._combo("Real MOVER cases")
         self.combo_real_data.addItem("Not sent to a cloud service", "")
         self.combo_real_data.addItem("Sent trimmed: case aliases, age bands, minutes from incision", "on")
         self.combo_real_data.currentIndexChanged.connect(self._edited)
         self.real_data_row.add_control(self.combo_real_data)
-        self.real_data_row.set_note("Check the MOVER data use agreement before sending real cases.")
+        self.real_data_row.set_note(
+            "Sent trimmed means the question and the case extracts (procedure, measurements, flags) go to the chosen service, "
+            "with case aliases for case numbers, 5-year age bands for ages and minutes from incision for clock times. "
+            "Check the MOVER data use agreement before sending real cases.")
         layout.addWidget(self.real_data_row)
         self.row_models = FolderRow(
             "Models directory", "",
@@ -353,6 +359,11 @@ class SettingsPage(QWidget):
     def _show_key(self, problem: str = "") -> None:
         """Where the key is found, never the key; a failed save or forget says why instead."""
         self.key_row.set_note(problem or key_note(), "problem" if problem else "note")
+        self._refresh_key_buttons()
+
+    def _refresh_key_buttons(self) -> None:
+        self.save_key_button.setEnabled(bool(self.edit_api_key.text().strip()))
+        self.forget_key_button.setEnabled(api_key()[1] == KEY_FROM_STORE)
 
     def _save_key(self) -> None:
         try:

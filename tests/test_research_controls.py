@@ -138,10 +138,10 @@ def test_set_models_keeps_the_choice_and_never_counts_as_a_choice(qapp):
 
 def test_an_empty_list_says_why_and_offers_no_model(qapp):
     button = LocalModelButton()
-    button.set_models([], placeholder="(Ollama stopped — choose Start AI)")
+    button.set_models([], placeholder="(Ollama stopped — choose Start Ollama)")
     assert button.selected_model() is None and button.model_actions() == []
-    assert button.placeholder_text() == "(Ollama stopped — choose Start AI)"
-    shown = [action for action in button.menu_widget.actions() if action.text() == "(Ollama stopped — choose Start AI)"]
+    assert button.placeholder_text() == "(Ollama stopped — choose Start Ollama)"
+    shown = [action for action in button.menu_widget.actions() if action.text() == "(Ollama stopped — choose Start Ollama)"]
     assert len(shown) == 1 and not shown[0].isEnabled()
     button.set_models([])
     assert button.placeholder_text() == "(AI unavailable · search still works)"
@@ -196,11 +196,11 @@ def test_a_cloud_pick_is_asked_for_and_an_ollama_pick_takes_it_back(qapp):
     opus = next(action for action in button.cloud_actions() if action.text() == "Opus")
     opus.trigger()
     assert made == [("claude_cli", "opus")]
-    button.set_cloud_groups(_groups(), ("claude_cli", "opus"), "Claude Code CLI · opus")
-    assert button.selected_model() == "Claude Code CLI · opus"
+    button.set_cloud_groups(_groups(), ("claude_cli", "opus"), "Claude Code · opus")
+    assert button.selected_model() == "Claude Code · opus"
     assert [a.text() for a in button.cloud_actions() if a.isChecked()] == ["Opus"]
     assert not any(a.isChecked() for a in button.model_actions())
-    assert button.text().startswith("Claude Code CLI · opus")
+    assert button.text().startswith("Claude Code · opus")
     opus.trigger()
     assert made == [("claude_cli", "opus")], "the row already answering is not a change"
     button.choose("gemma4:latest")
@@ -222,21 +222,82 @@ def test_a_chosen_service_that_cannot_answer_names_itself_but_offers_no_model(qa
 def test_a_disabled_action_says_why_and_an_enabled_one_says_what_it_does(qapp):
     button = LocalModelButton()
     assert not button.stop_action.isEnabled()
-    assert button.stop_action.toolTip() == "Local AI is not running."
+    assert button.stop_action.toolTip() == "Ollama is not running."
     button.stop_action.setEnabled(True)
     assert button.stop_action.toolTip() == "Stop Ollama and release its model memory."
     button.start_action.setEnabled(False)
-    assert button.start_action.toolTip() == "Local AI is working. Try again when it finishes."
+    assert button.start_action.toolTip() == "Ollama is working. Try again when it finishes."
 
 
 def test_the_menu_button_is_accessible_by_name_and_describes_its_state(qapp):
     button = LocalModelButton()
     button.set_models(["qwen3:14b"])
     button.set_state("ready")
-    assert button.accessibleName() == "Local AI"
+    assert button.accessibleName() == "AI"
+    assert button.menu_widget.accessibleName() == "AI menu"
     assert button.accessibleDescription() == "qwen3:14b ready"
     button.set_state("stopped")
-    assert button.accessibleDescription() == "Local AI stopped"
+    assert button.accessibleDescription() == "AI stopped"
+
+
+def _heading(action) -> str:
+    default = getattr(action, "defaultWidget", None)
+    widget = default() if default is not None else None
+    if widget is None:
+        return ""
+    heading = widget.findChild(QLabel, "stepHeading")
+    return heading.text() if heading is not None else ""
+
+
+def _long_api(names: list[str]):
+    from src.llm.cloud import Choice, ChoiceGroup
+
+    api = tuple(Choice("claude_api", f"id-{index}", name) for index, name in enumerate(names, start=1))
+    reason = Choice("claude_api", "", "", "Could not list models: boom")
+    return [
+        ChoiceGroup("claude_api", "Claude API", api + (reason,)),
+        ChoiceGroup("claude_cli", "Claude Code (your login)", (Choice("claude_cli", "sonnet", "Sonnet"),)),
+    ]
+
+
+def test_a_long_claude_api_list_keeps_four_inline_and_the_rest_in_a_submenu(qapp):
+    from src.llm.cloud import service_note
+
+    names = [f"Model {index}" for index in range(1, 7)]
+    button = LocalModelButton()
+    button.set_cloud_groups(_long_api(names))
+    assert button.menu_widget.toolTipsVisible()
+    more = next(action for action in button.menu_widget.actions() if action.menu() is not None)
+    assert more.text() == "More Claude API models"
+    assert [action.text() for action in more.menu().actions()] == ["Model 5", "Model 6"]
+    inline = [action.text() for action in button.menu_widget.actions() if action.text().startswith("Model ")]
+    assert inline == ["Model 1", "Model 2", "Model 3", "Model 4"]
+    main_texts = [action.text() for action in button.menu_widget.actions()]
+    assert "Could not list models: boom" in main_texts
+    assert "Could not list models: boom" not in [action.text() for action in more.menu().actions()]
+    assert [action.text() for action in button.cloud_actions() if action.text().startswith("Model ")] == names
+    inline_row = next(action for action in button.menu_widget.actions() if action.text() == "Model 1")
+    submenu_row = more.menu().actions()[0]
+    assert submenu_row.isCheckable() and submenu_row.actionGroup() is inline_row.actionGroup()
+    made = []
+    button.choice_made.connect(lambda backend, model: made.append((backend, model)))
+    more.menu().actions()[1].trigger()
+    assert made == [("claude_api", "id-6")]
+
+    button.set_cloud_groups(_long_api(names), ("claude_api", "id-6"), "Claude API · id-6")
+    more = next(action for action in button.menu_widget.actions() if action.menu() is not None)
+    assert [action.text() for action in more.menu().actions()] == ["Model 5"]
+    inline = [action.text() for action in button.menu_widget.actions() if action.text().startswith("Model ")]
+    assert inline == ["Model 1", "Model 2", "Model 3", "Model 4", "Model 6"]
+    actions = list(button.menu_widget.actions())
+    headings = [_heading(action) for action in actions]
+    for title in ("Claude API", "Claude Code (your login)"):
+        index = headings.index(title)
+        assert actions[index - 1].isSeparator(), title
+    assert next(a for a in button.cloud_actions() if a.text() == "Model 1").toolTip() == service_note("claude_api")
+    assert next(a for a in button.cloud_actions() if a.text() == "Sonnet").toolTip() == service_note("claude_cli")
+    greyed = next(a for a in button.cloud_actions() if a.text() == "Could not list models: boom")
+    assert not greyed.isEnabled()
 
 
 # ----- trail pieces -----

@@ -269,7 +269,7 @@ def test_choosing_a_model_is_remembered_and_restored(window):
     assert load_settings()["ollama_model"] == "synthetic:b"
     window._apply_ollama_status(OllamaStatus(True, "ready", ["synthetic:a", "synthetic:b"], url))
     assert window.research.selected_model() == "synthetic:b"
-    for placeholder in ("(Ollama stopped — choose Start AI)", "  ", ""):
+    for placeholder in ("(Ollama stopped — choose Start Ollama)", "  ", ""):
         window._on_ollama_model_changed(placeholder)
     assert load_settings()["ollama_model"] == "synthetic:b"
 

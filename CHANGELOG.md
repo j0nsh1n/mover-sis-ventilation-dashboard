@@ -14,14 +14,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   and Codex, grouped by service; a pick answers from the next question on and is
   remembered. Rows that cannot answer now are greyed out with the reason (no key,
   command not found, off for real cases). The Claude API key is pasted in Settings,
-  Local AI and kept in the system password store (KWallet / Secret Service, Windows
+  AI and kept in the system password store (KWallet / Secret Service, Windows
   Credential Manager), never in the settings file; an exported `ANTHROPIC_API_KEY`
   comes first. The CLIs answer with their own logins: an exported API key is not
   passed to them. Each answer names the service and passes the same answer check. Real MOVER cases are not sent
   unless real-data sending is switched on in Settings; then they go trimmed (case
   aliases, 5-year age bands, minutes from incision, no clock times). Every cloud
   answer is logged on this computer for training a local model, in the settings
-  folder's `ai-log`.
+  folder's `ai-log`. The menu, the Settings section and the strings that point
+  there are named AI; Start, Stop and Unload name Ollama. A long Claude API list
+  keeps the first four models inline and puts the rest under More Claude API models.
+  When real MOVER cases are not sent, the menu shows one line instead of one per service.
 
 - Fictional demo data: setup (on first run, or "Run data setup…" in Settings)
   offers "Try with fictional demo data", which builds a small invented dataset on this computer so the app
