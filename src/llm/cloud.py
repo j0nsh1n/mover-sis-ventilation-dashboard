@@ -563,6 +563,9 @@ _AGE_FORM = re.compile(
     r"|(?P<n>\d{1,3}(?:\.\d+)?)(?P<tail>"
     r"-year[- ]old"
     r"|-yrs?-old"
+    r"|-y-o\b"
+    r"|y/o\b"
+    r"|yrs?\b"
     r"|\s+years?\s+old"
     r"|\s+year-old"
     r"|\s+yrs?\s+old"
@@ -570,7 +573,7 @@ _AGE_FORM = re.compile(
     r"|\s+y/o"
     r"|\s+yo"
     r"|yo"
-    r"|y(?![A-Za-z/.])"
+    r"|y(?![A-Za-z/]|\.\w)"
     r"|(?P<gap>[ \t]?)(?P<sex>[FM])(?![A-Za-z])"
     r"))",
     re.IGNORECASE,
@@ -579,7 +582,8 @@ _AGE_FORM = re.compile(
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
 _DATE_ONLY = re.compile(
     r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
-    r"|\b\d{1,2}\s+" + _MONTH + r"\s+\d{4}\b|\b" + _MONTH + r"\s+\d{1,2},?\s+\d{4}\b",
+    r"|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH + r"\s+\d{4}\b"
+    r"|\b" + _MONTH + r"\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b",
     re.IGNORECASE,
 )
 # A military-style clock time such as "0815h".

@@ -1164,6 +1164,12 @@ def test_workers_filter_demo_cloud_history_and_pass_cancellation(monkeypatch, co
     ("on 4 March 2021", "on [date not sent]"),
     ("March 4, 2021", "[date not sent]"),
     ("4 Mar 2021", "[date not sent]"),
+    ("she was 47y.", "she was 45–49y."),
+    ("a 47y/o man", "a 45–49y/o man"),
+    ("47yr female", "45–49yr female"),
+    ("a 47-y-o", "a 45–49-y-o"),
+    ("on 4th March 2021", "on [date not sent]"),
+    ("March 4th, 2021", "[date not sent]"),
 ])
 def test_more_typed_ages_dates_and_clock_times_are_trimmed(text, expected):
     assert cloud.Trimmer([]).outbound(text) == expected
