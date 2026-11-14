@@ -300,6 +300,16 @@ def _claimed_ages(text: str) -> set[int]:
     }
 
 
+def _claimed_bands(text: str) -> set[tuple[int, int]]:
+    """Five-year age bands asserted for a case: "age 55-59", "aged 55–59"."""
+    bands = set()
+    for m in re.finditer(r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)", text or "", re.IGNORECASE):
+        low, high = int(m.group(1)), int(m.group(2))
+        if low % 5 == 0 and high == low + 4:
+            bands.add((low, high))
+    return bands
+
+
 # Ages that describe a group, not a person: a statistic, a bound, or a range.
 # "mean age 56" or "aged 80 or older" must not read as a claimed age of 56 or 80.
 _POPULATION_AGE = re.compile(
@@ -330,6 +340,11 @@ def find_unstated_case_facts(text: str, session: SessionState) -> list[str]:
         if case.age is None:
             continue
         claimed = _claimed_ages(parts.by_case[case.pid])
+        bands = _claimed_bands(parts.by_case[case.pid])
+        # A five-year band holding the real age is true; real-data sending gives a cloud service only the band.
+        if any(low <= case.age <= high for low, high in bands):
+            continue
+        claimed -= {low for low, _high in bands}
         if not claimed:
             if case.age_required:
                 problems.append(

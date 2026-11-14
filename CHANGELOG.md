@@ -185,6 +185,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Answers no longer strike valid numbers as "[number not in sources]": a minute such as
+  -45 at the start of a source-table row kept its minus sign; a negative minute next to a
+  signal ("38 at -45") is checked as a minute; a heading number ("## 2.") is a label; an
+  age band holding the real age ("age 55-59") counts as true in both the number and age
+  checks. Tables in answers render as tables (and copy as rows), not raw "|" text.
 - No dialog at launch, after a Settings save or after a finished job when the
   analysed cases have not been built yet: the research page says so quietly. The
   dialog still opens when you choose Reload processed data, or when a load fails.

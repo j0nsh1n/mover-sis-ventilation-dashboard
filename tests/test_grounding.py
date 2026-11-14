@@ -659,3 +659,49 @@ def test_tying_numbers_to_signals_grows_linearly_with_source_length():
 
     # Four times the events: linear work takes about four times as long, quadratic sixteen
     assert best_time(1200) < 8 * best_time(300)
+
+
+
+# ----- a minute extract, as the Signal page sends it (invented values) -----
+
+_MINUTE_SOURCE = "\n".join([
+    "SOURCE EXTRACT (MOVER SIS) PID=SYN0000000001",
+    "Age: 58 · Sex: F",
+    "SELECTED MINUTE: -40 min relative to incision",
+    "SOURCE ROWS from -44 to -39 min (the minutes this case has within 10 of the cursor)",
+    "t_min | PIP (cmH2O) | ETCO2 (mmHg) | HR (bpm)",
+    "-44 | 39 | 31.79 | 66",
+    "-43 | missing | 37.85 | 62",
+    "-42 | 1 | 0 | 68",
+    "-41 | 41 | missing | 73",
+    "-40 | 45 | 35.58 | 66",
+    "-39 | 44 | 35 | 65",
+])
+
+
+def test_a_minute_that_starts_a_table_row_keeps_its_minus_sign():
+    answer = "| t_min | PIP (cmH2O) |\n|---|---|\n| -44 | 39 |\n| -42 | 1 |\n| -41 | 41 |"
+    assert find_ungrounded_numbers(answer, [_MINUTE_SOURCE]) == []
+    # The row after a row ending in a digit: "66\n-43" is a new row's minus, not a subtraction
+    assert find_ungrounded_numbers("At -43 ETCO2 was 37.85.", [_MINUTE_SOURCE]) == []
+    assert find_ungrounded_numbers("| -47 | 39 |", [_MINUTE_SOURCE]) == ["-47"], "a minute the rows lack"
+
+
+def test_a_negative_minute_beside_a_signal_is_checked_as_a_minute():
+    answer = "PIP was 39 and 41 at -44 and -41, and 1 at -42."
+    assert find_ungrounded_numbers(answer, [_MINUTE_SOURCE]) == []
+    assert find_ungrounded_numbers("PIP was 39 at -48.", [_MINUTE_SOURCE]) == ["-48"]
+    assert find_ungrounded_numbers("PIP reached 52 at -41.", [_MINUTE_SOURCE]) == ["52"], "readings still checked"
+
+
+def test_a_heading_number_is_a_label():
+    answer = "## 1. Cases used\nSYN0000000001\n\n## 2. What the extract shows\nPIP 45 at -40."
+    assert find_ungrounded_numbers(answer, [_MINUTE_SOURCE]) == []
+    assert find_ungrounded_numbers("## 2. PIP reached 77", [_MINUTE_SOURCE]) == ["77"]
+
+
+def test_an_age_band_holding_the_stated_age_is_grounded_and_one_missing_it_is_not():
+    assert find_ungrounded_numbers("SYN0000000001: age 55-59, sex F.", [_MINUTE_SOURCE]) == []
+    assert find_ungrounded_numbers("SYN0000000001: age 55\u201359.", [_MINUTE_SOURCE]) == []
+    assert find_ungrounded_numbers("SYN0000000001: age 60-64.", [_MINUTE_SOURCE]) == ["60", "64"]
+    assert find_ungrounded_numbers("SYN0000000001: age 56-60.", [_MINUTE_SOURCE]) == ["56", "60"], "not a band"

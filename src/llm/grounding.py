@@ -94,7 +94,11 @@ _COUNT_NOUN = re.compile(
     r"|articles?|patients?|papers?|studies)\b",
     re.IGNORECASE,
 )
-_LIST_PREFIX = re.compile(r"(?m)^[ \t>]*(?:[-*•]\s+)?\**(\d{1,3})[.)]\**(?=\s)")
+# A heading's number ("## 2. What the extract shows") is a label like a list item's.
+_LIST_PREFIX = re.compile(r"(?m)^[ \t>]*(?:#{1,6}[ \t]+)?(?:[-*•]\s+)?\**(\d{1,3})[.)]\**(?=\s)")
+# "age 55-59": a five-year band, as real-data sending gives a cloud service instead of the age.
+_AGE_BAND = re.compile(r"\bage[sd]?\s*[:=]?\s*(\d{1,3})\s*(?:-|\u2013|to)\s*(\d{1,3})(?!\d)", re.IGNORECASE)
+_SOURCE_AGE = re.compile(r"\bage[d]?\s*[:=]?\s*(\d{1,3})(?![\d\u2013-])", re.IGNORECASE)
 _ORDINAL = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)
 # A year is a citation detail only in author-year form: "et al. 2019", "(Smith, 2019)".
 _CITED_YEAR = re.compile(
@@ -311,7 +315,12 @@ def _sign_at(text: str, start: int) -> bool:
         return not before.isdigit()
     if before == "" or before in _SIGN_LEAD:
         if before.isspace():
-            return not text[: start - 1].rstrip()[-1:].isdigit()
+            gap = text[: start - 1]
+            # A minus that starts a line (a table row's first cell) is a sign whatever the line above ends with;
+            # within a line, "5 - 3" after a digit is a subtraction.
+            if "\n" in gap[len(gap.rstrip()):]:
+                return True
+            return not gap.rstrip()[-1:].isdigit()
         return True
     return False
 
@@ -581,10 +590,16 @@ def _ungrounded(
     index = _SourceValues(sources, question)
     numbers = _scan(masked)
     attributed = _attribute(answer, numbers, answer=True)
+    bands = _true_age_bands(answer, sources)
     bad = []
     for number in numbers:
+        if any(start <= number.start < end for start, end in bands):
+            continue
         unit = _kind(answer, number)
-        pool = index.pool(attributed.get(number.start), unit)
+        # No signal reads below zero, so a negative number beside one ("38 at -45") is a minute
+        # relative to incision, checked against every source value.
+        keys = None if number.value < 0 else attributed.get(number.start)
+        pool = index.pool(keys, unit)
         if pool is None:
             if index.has(number) or index.derived(number, answer):
                 continue
@@ -599,6 +614,17 @@ def _ungrounded(
             continue
         bad.append(number)
     return bad
+
+
+def _true_age_bands(answer: str, sources: Sequence[str]) -> list[tuple[int, int]]:
+    """Spans of five-year age bands in ``answer`` that hold an age stated in the sources."""
+    ages = {int(m.group(1)) for text in sources for m in _SOURCE_AGE.finditer(text)}
+    spans = []
+    for m in _AGE_BAND.finditer(answer):
+        low, high = int(m.group(1)), int(m.group(2))
+        if low % 5 == 0 and high == low + 4 and any(low <= age <= high for age in ages):
+            spans.append((m.start(1), m.end(2)))
+    return spans
 
 
 def find_ungrounded_numbers(
