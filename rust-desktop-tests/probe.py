@@ -284,7 +284,7 @@ def names(root):
     actions = {button.text(): button for button in win.findChildren(QPushButton)}
     actions.update({button.text(): button for button in win.rail.findChildren(RailButton)})
     actions.update({"AI": win.research.model_menu, "Trace the evidence": win.research.ask_button})
-    for label in ["Research", "Cases", "Signal", "Practice", "Rules", "Settings", "New question", "Reset",
+    for label in ["Research", "Cases", "Signal", "Practice", "Rules", "Settings", "Clear board", "New thread",
                   "AI", "Trace the evidence"]:
         result[label.replace(" ", "_").lower()] = accessible_name(actions[label]) if label in actions else ""
     result["tables"] = "\n".join(accessible_name(table) for table in win.findChildren(QTableWidget))
@@ -432,10 +432,10 @@ def layout(root):
 
     wizard_buttons = [wizard.back_button, wizard.continue_button, wizard.not_now_data]
     settings_buttons = [settings.discard_button, settings.save_button]
-    card = win.research.question_edit.parentWidget()
+    card = win.research.composer
     result = {"wizard_navigation": "\n".join(geometry(wizard, button) for button in wizard_buttons),
               "settings_navigation": "\n".join(geometry(settings, button) for button in settings_buttons),
-              "question_card": geometry(win.research.board_scroll.viewport(), card),
+              "question_card": geometry(win.research.conversation, card),
               "screen_geometry": str(app.primaryScreen().availableGeometry().getRect()),
               "window_geometry": str(win.geometry().getRect())}
     for label, widget in [("main", win), ("settings", settings), ("wizard", wizard)]:
@@ -473,19 +473,32 @@ def startup_layout(root):
                       board_height=win.research.board_scroll.viewport().height())
         viewport = win.research.board_scroll.viewport()
         research = win.research
-        # The controls row under the question: scope, AI, the secondary actions and the one filled button.
-        header = [("Question scope", research.scope_switch), ("AI", research.model_menu),
-                  ("New question", research.new_question_button), ("Add comparison", research.add_comparison_button),
-                  ("Trace the evidence", research.ask_button)]
+        # Clear board and Add comparison sit in the Evidence header. Scope, AI and Send sit on the composer.
+        header = [("Clear board", research.new_question_button), ("Add comparison", research.add_comparison_button)]
         result["header_action_names"] = "\n".join(name for name, widget in header if widget.isVisible())
         result["header_actions"] = "\n".join(
             f"{widget.mapTo(viewport, QPoint(0, 0)).x()},{widget.width()},{viewport.width()}"
             for _name, widget in header if widget.isVisible()
         )
         conversation = win.research.conversation
+        composer_bar = research.composer.parentWidget()
+        composer_row = [("Question scope", research.scope_switch), ("AI", research.model_menu),
+                        ("Trace the evidence", research.ask_button)]
+        result["composer_action_names"] = "\n".join(name for name, widget in composer_row if widget.isVisible())
+        result["composer_actions"] = "\n".join(
+            f"{widget.mapTo(composer_bar, QPoint(0, 0)).x()},{widget.width()},{composer_bar.width()}"
+            for _name, widget in composer_row if widget.isVisible()
+        )
+        result["thread_names"] = "\n".join((
+            research.composer.objectName(),
+            research.composer.accessibleName(),
+            "turnBubble",
+            "foldToggle",
+            conversation.reset_button.accessibleName(),
+        ))
         reset = conversation.reset_button
-        result["reset_action"] = (f"{reset.mapTo(conversation.viewport(), QPoint(0, 0)).x()},{reset.width()},"
-                                  f"{conversation.viewport().width()},{int(reset.isVisible())}")
+        result["reset_action"] = (f"{reset.mapTo(conversation, QPoint(0, 0)).x()},{reset.width()},"
+                                  f"{conversation.width()},{int(reset.isVisible())}")
         # A sideways scroll bar under the board means something is wider than the board.
         result["board_sideways_scrollbar"] = win.research.board_scroll.horizontalScrollBar().isVisible()
         result["research_line"] = win.head.stamp.text()

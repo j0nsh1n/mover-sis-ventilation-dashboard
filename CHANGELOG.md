@@ -9,7 +9,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming.
+- Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming. Research answers are a chat thread: the ask box sits at the bottom, with Cases/Articles and the AI menu beside it. Each turn folds Sources and Checks (amber when a check found a problem). Clear board empties the evidence and keeps the thread; New thread clears both. A minute question from the Signal page is a turn in that thread.
 
 - Cloud answers, while the local model is worked on: the research page's AI menu
   lists Ollama's models, the Claude API's models (asked from the API), Claude Code

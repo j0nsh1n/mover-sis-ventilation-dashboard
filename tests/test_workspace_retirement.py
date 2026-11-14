@@ -74,7 +74,7 @@ def test_research_is_central_and_lifecycle_uses_its_controls(window, monkeypatch
     monkeypatch.setattr(window, "_start_ollama_worker", calls.append)
     research.stop_action.trigger()
     assert calls == ["stop"]
-    assert research.question_edit.text() == "Keep this completed question"
+    assert research.conversation.turns[0].question == "Keep this completed question"
     assert research._board_request == 1
     unloaded = []
     monkeypatch.setattr("src.llm.service.unload_ollama_model", lambda model: (unloaded.append(model) or True, "unloaded"))

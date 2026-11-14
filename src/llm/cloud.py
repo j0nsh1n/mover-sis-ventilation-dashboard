@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.llm.grounding import PID_TOKEN
 from src.llm.ollama_client import ChatClient, ChatResult, OllamaError
 
 OLLAMA = "ollama"
@@ -583,9 +584,21 @@ class Trimmer:
                                ) if self.aliases else None
         self._alias = re.compile(r"\bCase-([A-Z])\b")
 
+    def _alias_for(self, pid: str) -> str:
+        """An alias for a case number nobody listed: the safety net for history or text that names one."""
+        alias = self.aliases.get(pid)
+        if alias is None:
+            if len(self.aliases) >= 26:
+                return "[case number not sent]"
+            alias = f"Case-{chr(ord('A') + len(self.aliases))}"
+            self.aliases[pid] = alias
+        return alias
+
     def outbound(self, text: str) -> str:
         if self._pid is not None:
             text = self._pid.sub(lambda m: self.aliases[m.group(0)], text)
+        # Anything still shaped like a case number goes out aliased too, listed or not.
+        text = PID_TOKEN.sub(lambda m: self._alias_for(m.group(0)), text)
         text = re.sub(r"(## Procedure events\n)((?:- .*\n?)*)",
                       lambda m: m.group(1) + _events_from_incision(m.group(2)), text)
         text = _DATE_TIME.sub("[time not sent]", text)

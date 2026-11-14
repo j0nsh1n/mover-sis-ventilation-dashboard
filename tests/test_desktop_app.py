@@ -460,7 +460,7 @@ def test_load_warning_dismiss_focuses_the_research_question(qapp, monkeypatch):
             qapp.processEvents()
         edit = win.research.question_edit
         assert edit.isVisible()
-        assert edit.accessibleName() == "Research question"
+        assert edit.accessibleName() == "Ask a question"
         assert qapp.focusWidget() is edit
         assert edit.hasFocus()
     finally:

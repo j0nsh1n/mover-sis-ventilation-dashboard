@@ -46,6 +46,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view.question_submitted.connect(asked.append)
     view.ask_button.click()
     assert asked == ["Where is peak pressure?"]
+    assert view.composer.text() == ""
 
     view.set_results(RetrievalResult(candidates=(_candidate("caseA"), _candidate("caseB"))))
     requests = []
@@ -79,7 +80,7 @@ def test_question_case_source_and_return_preserve_context(qapp, monkeypatch):
     view._show_current_source()
     view.return_to_canvas()
     assert view.stack.currentIndex() == 0
-    assert view.question_edit.text() == "Where is peak pressure?"
+    assert view.composer.text() == ""
     assert "caseB" in view.comparison_label.text()
     view.conversation.reset_button.click()
     assert view.question_edit.text() == ""
@@ -123,7 +124,8 @@ def test_mainwindow_retrieval_keyword_fallback(qapp, synthetic_emr, tmp_path, mo
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         qapp.processEvents()
-        if win.research.ask_button.isEnabled() and not win.research.result.candidates:
+        if (not win.research._searching and win.research.result is not None
+                and not win.research.result.candidates):
             break
         time.sleep(0.01)
     assert win.research.result.candidates == ()
@@ -225,7 +227,8 @@ def test_cancel_search_restores_board_and_ignores_late_results(qapp, monkeypatch
         qapp.processEvents()
         assert stopped
         assert win.research.result is original
-        assert win.research.question_edit.text() == "Previous question"
+        assert win.research._question == "Previous question"
+        assert win.research.composer.text() == ""
         assert win.research.answer_text.toPlainText() == "Previous answer"
         assert win.research.ask_button.isEnabled()
     finally:

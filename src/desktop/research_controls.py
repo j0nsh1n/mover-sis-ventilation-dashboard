@@ -177,13 +177,29 @@ class TraceButton(RunsButton):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("primaryBtn")
-        self.setAccessibleName("Trace the evidence")
-        self.setAccessibleDescription("Shortcut Ctrl+Enter")
-        self.setToolTip("Trace the evidence (Ctrl+Enter)")
-        self.set_runs([
-            Run("Trace the evidence", "on_accent", semibold=True),
-            Run("Ctrl+Enter", "on_accent", pixel_size=12),
-        ])
+        self._running = False
+        self.set_running(False)
+
+    def set_running(self, running: bool) -> None:
+        self._running = bool(running)
+        if self._running:
+            self.setAccessibleName("Stop")
+            self.setAccessibleDescription("Cancel the running question")
+            self.setToolTip("Stop the running question")
+            self.set_runs([
+                Run("Stop", "on_accent", semibold=True),
+            ])
+        else:
+            self.setAccessibleName("Trace the evidence")
+            self.setAccessibleDescription("Shortcut Ctrl+Enter")
+            self.setToolTip("Trace the evidence (Ctrl+Enter)")
+            self.set_runs([
+                Run("Trace the evidence", "on_accent", semibold=True),
+                Run("Ctrl+Enter", "on_accent", pixel_size=12),
+            ])
+
+    def is_running(self) -> bool:
+        return self._running
 
     def text_label(self) -> str:
         return self._runs[0].text

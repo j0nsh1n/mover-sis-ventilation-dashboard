@@ -211,7 +211,8 @@ def test_cancel_keeps_turn_and_restores_previous_board(window):
     win._on_research_shortlist(result("caseB"), win._active_research_request)
     win._cancel_research()
     assert [turn.state for turn in win.research.conversation.turns] == ["answered", "cancelled"]
-    assert win.research.question_edit.text() == "first"
+    assert win.research.conversation.turns[0].question == "first"
+    assert win.research.composer.text() == ""
     assert win.research.result.candidates[0].pid == "caseA"
     assert win.research.scope_label.text() == scope
 
@@ -245,7 +246,7 @@ def test_splitter_stacks_below_board_under_1100(view, qapp, width, orientation):
         panel_left = view.conversation.mapTo(view, QPoint(0, 0)).x()
         board_right = view.board_scroll.mapTo(view, QPoint(0, 0)).x() + view.board_scroll.width()
         assert panel_left >= board_right - 2
-        assert 300 <= view.conversation.width() <= 380
+        assert 460 <= view.conversation.width() <= 500
 
 
 def test_reset_clears_thread_and_board_and_drops_late_answers(window, monkeypatch):
@@ -300,13 +301,22 @@ def test_turn_controls_are_keyboard_reachable_with_contrasting_text(view, qapp, 
     view.activateWindow()
     qapp.processEvents()
     widget = view.conversation.turn_widgets[1]
-    controls = [widget.show_button, widget.ask_button, *widget.citation_buttons]
+    controls = [widget.show_button, widget.ask_button, widget.sources_toggle]
     reached = set()
-    view.question_edit.setFocus()
+    view.composer.setFocus()
     for _ in range(100):
         QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
         reached.add(view.focusWidget())
     assert all(control in reached for control in controls)
+    assert widget.citation_buttons[0] not in reached, "a folded source is not in the tab order"
+    widget.sources_toggle.click()
+    qapp.processEvents()
+    opened = set()
+    view.composer.setFocus()
+    for _ in range(100):
+        QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
+        opened.add(view.focusWidget())
+    assert widget.citation_buttons[0] in opened
     # The focus rings come from the app stylesheet's tokens, not from a per-page copy.
     for rule in ("QPushButton#citationLink:focus", "QPushButton#linkBtn:focus", "QTextBrowser#turnAnswer:focus"):
         assert rule in qapp.styleSheet(), rule

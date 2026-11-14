@@ -921,3 +921,28 @@ def test_a_follow_up_board_and_article_results_come_from_the_new_question_alone(
     worker.shortlist.connect(boards.append)
     worker.run()
     assert len(boards) == 1 and boards[0].candidates == ()
+
+
+
+def test_a_case_number_nobody_listed_still_goes_out_aliased_and_comes_back(monkeypatch, config_dir):
+    """The safety net: a prior answer naming a case its turn did not record is still aliased."""
+    from src.llm.cloud import Trimmer
+
+    unlisted, listed = "SYN0123456789", "0123456789abcdef"
+    trimmer = Trimmer([listed])
+    out = trimmer.outbound(f"{listed} and {unlisted} both rose; {unlisted} again.")
+    assert unlisted not in out and listed not in out
+    assert out == "Case-A and Case-B both rose; Case-B again."
+    assert trimmer.inbound("Case-B was higher than Case-A.") == f"{unlisted} was higher than {listed}."
+    crowded = Trimmer([f"SYN{index:010x}" for index in range(26)])
+    assert crowded.outbound("SYN00000000ff") == "[case number not sent]"
+
+    prior = PriorTurn(question="What happened?", answer=f"{unlisted} had a PIP episode.", pids=(),
+                      backend="claude_api", trimmed=True)
+    remote = Recorder()
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kwargs: remote)
+    session = cloud.open_cloud_session(CloudConfig("claude_api", real_data_allowed=True), real_data=True,
+                                       pids=[listed], history=(prior,))
+    run_agent(model="m", question="And then?", session=SessionState(), client=session.client,
+              allow_tools=False, sources=[f"PID {listed}."], history=(prior,))
+    assert remote.received and all(unlisted not in str(messages) for messages in remote.received)

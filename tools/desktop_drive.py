@@ -112,7 +112,8 @@ def _research_idle(win: Any) -> bool:
     return (
         worker is not None
         and not worker.isRunning()
-        and win.research.ask_button.isEnabled()
+        # Send stays enabled while it is Stop, so the page's own running flag says when an answer is done.
+        and not win.research._searching
         and win._pending_case is None
         and win._queued_case is None
         and (case_worker is None or not case_worker.isRunning())
@@ -130,8 +131,9 @@ def ask(run: Run) -> dict[str, Any]:
         raise RuntimeError(status)
     if result is None or not result.candidates:
         raise RuntimeError(f"research returned no candidates: {status}")
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
-        "question": research.question_edit.text(),
+        "question": question,
         "candidates": len(result.candidates) if result is not None else 0,
         "rank_method": getattr(result, "rank_method", None),
         "model": research.selected_model(),
@@ -166,7 +168,7 @@ def return_to_question(run: Run) -> dict[str, Any]:
         raise RuntimeError("the signal detail view has no back button")
     back.click()
     run.wait(lambda: research.stack.currentIndex() == 0, "the evidence workspace")
-    question = research.question_edit.text()
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
         "view": "canvas",
         "question": question,
@@ -243,9 +245,10 @@ def cancel_search(run: Run) -> dict[str, Any]:
     research = run.win.research
     QTest.keyClick(research.cancel_button, Qt.Key.Key_Space)
     run.wait(lambda: _research_idle(run.win), "cooperative search cancellation")
-    assert research.question_edit.text() == run.question
+    assert research.conversation.turns[0].question == run.question
+    assert research.conversation.turns[-1].state == "cancelled"
     assert research.result is not None
-    return {"restored_question": research.question_edit.text(), "answer": research.answer_text.toPlainText()}
+    return {"restored_question": research.conversation.turns[0].question, "answer": research.answer_text.toPlainText()}
 
 
 def research_failure(run: Run) -> dict[str, Any]:
@@ -882,7 +885,7 @@ def conversation_restore(run: Run) -> dict[str, Any]:
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == scope
-    assert research.question_edit.text() == first.question
+    assert research.conversation.turn_widgets[first.request_id].question_label.text() == first.question
     return {**facts, "restored_first_shortlist": True}
 
 
@@ -1054,7 +1057,7 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
     research.cancel_button.click()
     run.wait(lambda: _research_idle(run.win), "the cancelled conversation request")
     assert research.conversation.turns[-1].state == "cancelled"
-    assert research.question_edit.text() == previous.question
+    assert previous.question == research.conversation.turns[0].question
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == previous.board.labels[1]

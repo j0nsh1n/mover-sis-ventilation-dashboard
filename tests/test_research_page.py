@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
 
 from src.desktop.app import MainWindow
 from src.desktop.command_palette import ACTION_ROLE, HINT_ROLE
@@ -85,13 +85,14 @@ def board_with_case(view, count: int = 5) -> None:
 
 
 def test_the_question_is_the_largest_text_and_set_in_the_serif_face(view, qapp):
-    view.question_edit.setFocus()
+    """The top question field is gone. The ask box is the composer under the thread."""
     qapp.processEvents()
-    font = view.question_edit.font()
-    assert font.pixelSize() == 28 and font.family() == "Charter"
-    board_sizes = [label.font().pixelSize() for label in view._board_page.findChildren(QLabel) if label.isVisible()]
-    assert board_sizes and max(board_sizes) < font.pixelSize()
-    assert view.question_edit.accessibleName() == "Research question"
+    assert view.findChildren(QLineEdit, "questionField") == []
+    assert [edit for edit in view.findChildren(QLineEdit) if edit.accessibleName() == "Research question"] == []
+    assert view.composer.objectName() == "threadComposer"
+    assert view.composer.accessibleName() == "Ask a question"
+    assert view.composer.placeholderText().startswith("Ask a question")
+    assert view.composer.isVisible()
 
 
 def test_only_the_trace_button_is_filled(view, qapp):
@@ -101,6 +102,10 @@ def test_only_the_trace_button_is_filled(view, qapp):
     # One filled button per view: the research page has the Trace button; the case page has its own Ask button.
     filled = [button for button in view.canvas_scroll.findChildren(QPushButton) if button.objectName() == "primaryBtn"]
     assert filled == [view.ask_button]
+    # A running question turns Send into Stop. Idle, it is Trace the evidence again.
+    assert view.ask_button.accessibleName() == "Stop"
+    view.set_searching(False)
+    qapp.processEvents()
     assert view.ask_button.accessibleName() == "Trace the evidence"
     assert "Ctrl+Enter" in view.ask_button.text() and "Ctrl+Enter" in view.ask_button.accessibleDescription()
 
@@ -108,27 +113,36 @@ def test_only_the_trace_button_is_filled(view, qapp):
 def test_new_question_and_add_comparison_are_quiet_text_buttons(view):
     assert view.new_question_button.objectName() == "textBtn"
     assert view.add_comparison_button.objectName() == "textBtn"
-    assert view.new_question_button.accessibleName() == "New question"
+    assert view.new_question_button.text() == "Clear board"
+    assert view.new_question_button.accessibleName() == "Clear board"
     assert view.add_comparison_button.accessibleName() == "Add comparison"
 
 
 def test_ctrl_enter_traces_from_anywhere_on_the_board_and_not_while_searching(view, qapp):
     asked = []
     view.question_submitted.connect(asked.append)
-    view.question_edit.setText("Where is peak pressure?")
+    view.composer.setText("Where is peak pressure?")
     view.scope_switch.option("Cases").setFocus()
     qapp.processEvents()
     QTest.keyClick(view.scope_switch.option("Cases"), Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     assert asked == ["Where is peak pressure?"]
-    # Plain Enter in the field still submits, as before.
-    view.question_edit.setFocus()
-    QTest.keyClick(view.question_edit, Qt.Key.Key_Return)
+    assert view.composer.text() == ""
+    view.composer.setText("Where is peak pressure?")
+    view.composer.setFocus()
+    QTest.keyClick(view.composer, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+    assert view.composer.toPlainText().endswith("\n")
+    assert asked == ["Where is peak pressure?"]
+    QTest.keyClick(view.composer, Qt.Key.Key_Return)
     assert asked == ["Where is peak pressure?"] * 2
+    assert view.composer.text() == ""
+    view.composer.setText("kept draft")
     view.set_searching(True)
     view.scope_switch.option("Cases").setFocus()
     QTest.keyClick(view.scope_switch.option("Cases"), Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     assert len(asked) == 2, "a running search blocks a second one"
     assert not view.trace_action.isEnabled()
+    assert view.ask_button.accessibleName() == "Stop"
+    assert not view.composer.isEnabled() and view.composer.text() == "kept draft"
 
 
 def test_changing_the_scope_clears_the_board_once_and_a_silent_set_does_not(view):
@@ -144,54 +158,67 @@ def test_changing_the_scope_clears_the_board_once_and_a_silent_set_does_not(view
 
 
 def test_the_controls_wrap_inside_a_narrow_board(view, qapp):
-    """Scope and the model menu stack when they are too wide together; nothing is cut off at the board's edge."""
+    """Evidence actions stay on the board. Scope, AI and Send stay inside the thread panel."""
     view.resize(336, 700)
     qapp.processEvents()
     viewport = view.board_scroll.viewport()
-    controls = [view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
-                view.ask_button]
-    for control in controls:
+    for control in (view.new_question_button, view.add_comparison_button):
         left = control.mapTo(viewport, control.rect().topLeft()).x()
         assert control.isVisible() and left >= 0 and left + control.width() <= viewport.width(), control.accessibleName()
-    assert view.model_menu.y() > view.scope_switch.y()  # stacked: the menu is under the switch, not clipped beside it
-    view.resize(1316, 800)
+    panel = view.conversation
+    for control in (view.scope_switch, view.model_menu, view.ask_button, view.composer):
+        left = control.mapTo(panel, control.rect().topLeft()).x()
+        assert control.isVisible() and 0 <= left and left + control.width() <= panel.width(), control.accessibleName()
+    view.resize(1400, 800)
     qapp.processEvents()
     assert abs(view.model_menu.y() - view.scope_switch.y()) < 8  # one row again when it fits
 
 
 def test_the_board_never_scrolls_sideways_while_it_scrolls_down(view, qapp):
-    """A short window gives the board a vertical scroll bar, which narrows its room; the controls must fit beside it."""
-    bar = view.board_scroll.horizontalScrollBar()
-    controls = [view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
-                view.ask_button]
+    """The board and the thread never scroll sideways, including at 900, 1400 and 1920."""
+    board_bar = view.board_scroll.horizontalScrollBar()
+    panel_bar = view.conversation.horizontalScrollBar()
     shown_bar = False
-    for width in range(336, 760, 8):
+    for width in (*range(336, 760, 8), 900, 1400, 1920):
         view.resize(width, 400)
         qapp.processEvents()
         viewport = view.board_scroll.viewport()
         shown_bar |= view.board_scroll.verticalScrollBar().isVisible()
-        assert not bar.isVisible(), f"the board scrolls sideways at {width} px"
-        for control in controls:
+        assert not board_bar.isVisible(), f"the board scrolls sideways at {width} px"
+        assert not panel_bar.isVisible(), f"the thread scrolls sideways at {width} px"
+        for control in (view.new_question_button, view.add_comparison_button):
             left = control.mapTo(viewport, control.rect().topLeft()).x()
             assert left >= 0 and left + control.width() <= viewport.width(), (width, control.accessibleName())
+        panel = view.conversation
+        for control in (view.composer, view.scope_switch, view.ask_button):
+            left = control.mapTo(panel, control.rect().topLeft()).x()
+            assert left >= 0 and left + control.width() <= panel.width(), (width, control.accessibleName())
     assert shown_bar, "the test never gave the board a vertical scroll bar"
 
 
 def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_then_the_trail(view, qapp):
     board_with_case(view)
+    view.begin_question("Where?", 1)
+    view.set_results(RetrievalResult(candidates=(candidate("SYN-000"),)))
+    view.set_answer("SYN-000 is on the board.", 1)
+    view.set_searching(False)
     view.activateWindow()
-    view.question_edit.setFocus()
+    view.conversation.reset_button.setFocus()
     qapp.processEvents()
-    order = []
-    for _ in range(14):
+    order = [view.focusWidget()]
+    for _ in range(24):
         QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
         order.append(view.focusWidget())
-    names = [widget for widget in order if widget in (
-        view.scope_switch.option("Cases"), view.model_menu, view.new_question_button,
-        view.add_comparison_button, view.ask_button, view.candidate_table, view.inspect_button)]
-    assert names[:5] == [view.scope_switch.option("Cases"), view.model_menu, view.new_question_button,
-                         view.add_comparison_button, view.ask_button]
-    assert names.index(view.candidate_table) > names.index(view.ask_button)
+    widget = view.conversation.turn_widgets[1]
+    wanted = [
+        view.conversation.reset_button, widget.question_label, widget.answer_text,
+        widget.show_button, widget.copy_button, widget.ask_button,
+        view.composer, view.scope_switch.option("Cases"), view.model_menu, view.ask_button,
+        view.new_question_button, view.add_comparison_button,
+    ]
+    positions = [order.index(item) for item in wanted]
+    assert positions == sorted(positions)
+    assert view.candidate_table in order and order.index(view.candidate_table) > order.index(view.ask_button)
 
 
 # ----- local model menu -----
@@ -277,7 +304,7 @@ def test_ctrl_k_lists_the_model_actions_and_the_page_actions(window, qapp):
         rows = {palette.results.item(row).text(): palette.results.item(row).data(ACTION_ROLE)
                 for row in range(palette.results.count())}
         for title in ("Start Ollama", "Stop Ollama", "Unload Ollama model", "Refresh model list", "Trace the evidence",
-                      "New question", "Add comparison", "Reset conversation and board",
+                      "Clear board", "Add comparison", "New thread",
                       "Ask about cases", "Ask about articles", "a", "b"):
             assert title in rows, title
         assert rows["Trace the evidence"].shortcut == "Ctrl+Enter"

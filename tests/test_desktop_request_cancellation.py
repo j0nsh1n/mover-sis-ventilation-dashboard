@@ -79,7 +79,7 @@ def test_cancel_then_new_question_runs_and_ignores_old_results(window, monkeypat
     new = win._research_worker
     try:
         assert new is not old
-        assert win.research.question_edit.text() == "new"
+        assert win.research.conversation.turns[-1].question == "new"
         ControlledSearch.gates["new"].set()
         pump(app, lambda: not new.isRunning())
         answer = win.research.answer_text.toPlainText()

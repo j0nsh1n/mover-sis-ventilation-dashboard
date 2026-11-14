@@ -341,9 +341,12 @@ def test_drawer_fits_at_900_px_and_the_board_stays_usable(view, qapp):
     assert view.question_edit.text() == "pressure"
 
 
-def _controls(view):
-    return (view.scope_switch, view.model_menu, view.new_question_button, view.add_comparison_button,
-            view.ask_button)
+def _board_controls(view):
+    return (view.new_question_button, view.add_comparison_button)
+
+
+def _composer_controls(view):
+    return (view.scope_switch, view.model_menu, view.ask_button)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="900 px layout is tuned for Linux font and style metrics; the Windows native style needs about 1,060 px (follow-up)")
@@ -351,28 +354,46 @@ def test_controls_wrap_beside_the_drawer_at_900_px(view, qapp):
     view.resize(900, 900)
     view.open_rules(view.question_edit)
     qapp.processEvents()
-    viewport = view.board_splitter.widget(0).viewport()
-    for control in _controls(view):
-        origin = control.mapTo(viewport, control.rect().topLeft())
-        assert origin.x() >= 0 and origin.x() + control.width() <= viewport.width(), control.accessibleName()
-    # The actions drop under the choices instead of squeezing them.
-    assert view.ask_button.y() > view.scope_switch.y()
+    board = view.board_splitter.widget(0).viewport()
+    panel = view.conversation
+    for control in _board_controls(view):
+        origin = control.mapTo(board, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= board.width(), control.accessibleName()
+    for control in _composer_controls(view):
+        origin = control.mapTo(panel, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= panel.width(), control.accessibleName()
     view.rules_drawer.close_drawer()
     qapp.processEvents()
     view.resize(1400, 900)
     qapp.processEvents()
-    assert len({control.y() + control.height() // 2 for control in _controls(view)}) == 1
+    # The board's buttons share a line. The composer's Send sits under the box's right edge; it moves to its
+    # own line when Cases/Articles and a long AI label (a cloud model name) leave no room beside them.
+    assert len({control.y() + control.height() // 2 for control in _board_controls(view)}) == 1
+    scope, menu, send = _composer_controls(view)
+    assert scope.y() == menu.y() or abs((scope.y() + scope.height() // 2) - (menu.y() + menu.height() // 2)) <= 2
+    box = view.composer
+    send_right = send.mapTo(panel, send.rect().topRight()).x()
+    box_right = box.mapTo(panel, box.rect().topRight()).x()
+    assert abs(send_right - box_right) <= 2, (send_right, box_right)
+    for control in _composer_controls(view):
+        origin = control.mapTo(panel, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= panel.width(), control.accessibleName()
 
 
 def test_controls_keep_their_full_labels_on_a_small_screen(view, qapp):
     # 700 logical px is a 1400 px screen at double scale; the buttons used to shrink to "d a compar".
     view.resize(700, 450)
     qapp.processEvents()
-    viewport = view.board_splitter.widget(0).viewport()
-    for control in _controls(view):
+    board = view.board_splitter.widget(0).viewport()
+    panel = view.conversation
+    for control in _board_controls(view):
         assert control.width() >= control.sizeHint().width(), control.accessibleName()
-        origin = control.mapTo(viewport, control.rect().topLeft())
-        assert origin.x() >= 0 and origin.x() + control.width() <= viewport.width(), control.accessibleName()
+        origin = control.mapTo(board, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= board.width(), control.accessibleName()
+    for control in _composer_controls(view):
+        assert control.width() >= control.sizeHint().width(), control.accessibleName()
+        origin = control.mapTo(panel, control.rect().topLeft())
+        assert origin.x() >= 0 and origin.x() + control.width() <= panel.width(), control.accessibleName()
 
 
 def _wheel(widget, steps: int) -> QWheelEvent:
