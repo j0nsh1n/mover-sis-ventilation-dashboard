@@ -136,6 +136,44 @@ jobs:
           PYTHONPATH: .
         run: pytest -q --ignore=tests/test_desktop_app.py --ignore=tests/test_desktop_paths_ui.py
 
+  windows-layout-probe:
+    # TEMPORARY (2026-11-15): a fast run of the four Windows-only layout failures with their measurements.
+    # Remove this job and tests/windows_layout_probe.py once they pass on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Measurements
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: pytest -q -s -p no:cacheprovider tests/windows_layout_probe.py
+
+      - name: The four layout tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: >-
+          pytest -q -p no:cacheprovider
+          "tests/test_cases_page.py::test_the_table_never_scrolls_sideways_and_shows_all_nine_columns_at_every_width"
+          "tests/test_cases_page.py::test_below_the_least_width_the_page_scrolls_and_the_list_does_not"
+          "tests/test_cases_page.py::test_the_scan_scope_lists_only_the_moved_fields_its_cases_have"
+          "tests/test_handoff_panel.py::test_the_box_fits_its_lines_at_other_text_sizes"
+          "tests/test_handoff_panel.py::test_the_table_needs_no_sideways_scroll_where_the_page_is_wide_enough_for_it"
+          "tests/test_marks.py::test_the_text_of_a_missing_cell_has_a_clear_backing_so_the_hatch_never_crosses_the_letters"
+
   updater-windows:
     runs-on: windows-latest
     steps:
