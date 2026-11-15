@@ -1065,9 +1065,15 @@ class CasesOverview(QWidget):
         if not self._full or available <= 0:
             return
         widths = plan_column_widths(available, self._tiers, _FLEXIBLE)
+        changed = False
         for column, width in enumerate(widths):
             if self.table.columnWidth(column) != width:
                 self.table.setColumnWidth(column, width)
+                changed = True
+        if changed:
+            # Qt refreshes the scroll range on a zero-delay timer; until it runs the bar keeps the old columns'
+            # range and offers a pixel or two of sideways scroll (seen on Windows).
+            self.table.updateGeometries()
         wrapped = any(width < whole for width, whole in zip(widths, self._full, strict=True))
         height = HEADER_HEIGHT_WRAPPED if wrapped else HEADER_HEIGHT
         header = self.table.horizontalHeader()

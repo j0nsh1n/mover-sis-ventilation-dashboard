@@ -721,6 +721,21 @@ def test_a_ninth_line_scrolls_and_the_box_stops_growing(panel, qapp):
     assert box.verticalScrollBar().maximum() > 0
 
 
+@pytest.mark.parametrize(("height", "leading", "line"), [
+    (19.359, 0.0, 20),  # Inter 16 px on Linux
+    (20.0, -1.0, 20),  # Inter 16 px on Windows: line spacing 19, laid out at 20
+    (21.0, 1.0, 22),  # Inter 18 px on Windows
+    (15.719, 0.0, 16),
+])
+def test_a_line_is_as_tall_as_the_document_lays_it_out(height, leading, line):
+    from types import SimpleNamespace
+
+    from src.modules.handoff_trainer.panel import laid_out_line_height
+
+    metrics = SimpleNamespace(height=lambda: height, leading=lambda: leading)
+    assert laid_out_line_height(metrics) == line  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("pixels", [13, 14, 16, 18, 22])
 def test_the_box_fits_its_lines_at_other_text_sizes(panel, qapp, pixels):
     """The document lays a line out at the font's line spacing rounded up; a size that rounds the other way

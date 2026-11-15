@@ -76,6 +76,15 @@ def _link_button(text: str) -> QPushButton:
     return button
 
 
+def laid_out_line_height(metrics: QFontMetricsF) -> int:
+    """The height the document gives one line: the font's height plus any positive leading, rounded up.
+
+    A negative leading is not taken off, so this is not the line spacing: on Windows a 16 px Inter has a
+    line spacing of 19 but lays its lines out 20 apart.
+    """
+    return math.ceil(metrics.height() + max(metrics.leading(), 0.0))
+
+
 class GrowingText(QPlainTextEdit):
     """A text box that is as tall as its text, between two bounds, and lets Tab leave it."""
 
@@ -92,8 +101,7 @@ class GrowingText(QPlainTextEdit):
         # A plain-text document's height is its number of lines, wrapped lines included.
         lines = min(max(math.ceil(self.document().size().height()), low), high)
         margin = round(self.document().documentMargin())
-        # The document lays lines out at the font's line spacing rounded up, not to the nearest pixel.
-        line = math.ceil(QFontMetricsF(self.document().defaultFont()).lineSpacing())
+        line = laid_out_line_height(QFontMetricsF(self.document().defaultFont()))
         self.setFixedHeight(lines * line + 2 * margin + _BOX_CHROME + _BOX_SLACK)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
