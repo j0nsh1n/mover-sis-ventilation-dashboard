@@ -581,13 +581,16 @@ def test_a_windows_path_in_a_folder_note_wraps_and_copies_back_whole(qapp):
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_scrolling(
-        window, qapp, theme, tmp_path):
+        window, qapp, theme, tmp_path, monkeypatch):
+    import src.runtime_paths as runtime_paths
     from src.desktop.settings_page import SECTIONS
     from src.desktop.theme import apply_theme
 
     apply_theme(qapp, theme)
     # a Windows-style path, so this machine sees what Windows does: backslashes give Qt no place to wrap
     tmp_path = tmp_path / "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-of-runneradmin\\pytest-0\\settings_l0"
+    # "In use now" shows the folders in use in full: one of them as a Windows path too
+    monkeypatch.setattr(runtime_paths, "_session_processed_dir", tmp_path / "processed")
     window._open_settings()
     page = window._suite_pages["settings"]
     window.resize(100, 700)  # the window refuses to go below its least width

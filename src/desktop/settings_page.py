@@ -31,6 +31,7 @@ from src.llm.cloud import KEY_FROM_STORE, KeyStoreError, api_key, forget_api_key
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
     FolderRow,
+    NoteLabel,
     SettingRow,
     apply_values,
     changed_labels,
@@ -279,7 +280,7 @@ class SettingsPage(QWidget):
             "In use now", "",
             "The saved folders, in full. They change when you save.",
         )
-        self.in_use_paths = QLabel()
+        self.in_use_paths = NoteLabel()
         self.in_use_paths.setObjectName("bodyText")
         self.in_use_paths.setWordWrap(True)
         self.in_use_paths.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

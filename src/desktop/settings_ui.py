@@ -422,7 +422,7 @@ def breakable_path_text(text: str) -> str:
 
 
 class NoteLabel(QLabel):
-    """A selectable note whose Windows paths wrap, and copy without the break characters."""
+    """A selectable label showing paths: Windows paths wrap, and copy without the break characters."""
 
     def setText(self, text: str) -> None:  # noqa: N802
         super().setText(breakable_path_text(text))
