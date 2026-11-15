@@ -266,10 +266,14 @@ def resolve_wave_directory(path: Path | str) -> Path:
 
 def default_processed_for_emr(emr: Path) -> Path:
     if emr.name == "EMR" and emr.parent.name == "raw":
-        return (emr.parent.parent / "processed").resolve()
-    if emr.name == "EMR":
-        return (emr.parent / "processed").resolve()
-    return (emr.parent / "processed").resolve()
+        processed = (emr.parent.parent / "processed").resolve()
+    else:
+        processed = (emr.parent / "processed").resolve()
+    # A real EMR folder put inside a demo folder must not take the demo's processed folder: its cases would be
+    # labelled fictional, and the real-data lock on cloud answers would not apply to them.
+    if demo_root_of(processed, "processed") is not None and demo_root_of(emr, "EMR") is None:
+        return (emr.parent / f"{emr.name}-processed").resolve()
+    return processed
 
 
 def validate_output_location(path: Path | str, *, source_emr: Path | str | None = None) -> Path:

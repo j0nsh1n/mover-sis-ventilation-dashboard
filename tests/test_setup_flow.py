@@ -198,6 +198,22 @@ def test_a_real_folder_never_gets_the_label_even_where_the_demo_would_live(tmp_p
     assert not demo_data_in_use()
 
 
+def test_a_real_folder_inside_a_demo_folder_gets_its_own_processed_folder_on_any_machine(tmp_path, synthetic_emr):
+    from src.runtime_paths import set_session_paths
+
+    # No analyzed cases in the folder in use, as on a fresh machine, so the app picks a processed folder itself.
+    set_session_paths(processed_dir=tmp_path / "nothing-analyzed-yet")
+    (synthetic_emr.parent / DEMO_MARKER).write_text(json.dumps({"made_by": "MOVER Suite"}), encoding="utf-8")
+    real = synthetic_emr.parent / "tables"
+    shutil.copytree(synthetic_emr, real)
+    assert default_processed_for_emr(real) != (synthetic_emr.parent / "processed").resolve()
+    configure_emr_directory(real, persist=False)
+    assert processed_dir() == (synthetic_emr.parent / "tables-processed").resolve()
+    assert not demo_data_in_use(), "real cases analyzed there must not be called fictional"
+    # The demo's own EMR folder still uses the demo's processed folder.
+    assert default_processed_for_emr(synthetic_emr) == (synthetic_emr.parent / "processed").resolve()
+
+
 def test_demo_cases_are_named_fictional_even_when_the_emr_in_use_is_real(tmp_path, monkeypatch, synthetic_emr):
     root = tmp_path / "demo-data"
     build_demo_data(root)
