@@ -121,8 +121,9 @@ opt-in cloud answer services below.
   training a local model, in owner-only files, with the model that answered. For real data
   the log keeps only what crossed the wire: the question as sent, the messages as sent, the
   replies as received, and no local trace. An article question asked while real data is on
-  screen is logged the same way, under real data: it carries no case text and is not trimmed,
-  but case numbers typed into it are replaced before it goes out. Code: `src/llm/cloud.py`; tests:
+  screen carries no case text: its abstracts go out as published, but the typed question and
+  the earlier turns sent with it have case numbers replaced and follow the same age, date,
+  time and procedure rules as a case question. It is logged the same way, under real data. Code: `src/llm/cloud.py`; tests:
   `tests/test_cloud.py`. The Claude API key comes from `ANTHROPIC_API_KEY` or, when pasted in
   Settings, from the system password store (`keyring`). It is never written to the settings
   file, the training log or an error message. Claude Code and Codex answer with their own
