@@ -1120,14 +1120,15 @@ class ResearchWorkspace(QWidget):
             self._placing_panel = False
 
     def _apply_focus_order(self) -> None:
-        """Thread, then the composer, the scope, AI and Send, then the evidence board."""
+        """As the page reads: the evidence board (left, or on top when stacked), then the thread, the composer,
+        the scope, AI and Send."""
         board = (
             self.new_question_button, self.add_comparison_button, self.candidate_table,
             self.show_all_button, self.inspect_button, self.compare_button, self.finding_open,
             self.all_rows_button,
         )
         widgets = [
-            widget for widget in (*self.conversation.tab_widgets(), *board)
+            widget for widget in (*board, *self.conversation.tab_widgets())
             if widget.focusPolicy() != Qt.FocusPolicy.NoFocus and not widget.isHidden()
         ]
         for earlier, later in zip(widgets, widgets[1:], strict=False):
@@ -1449,6 +1450,11 @@ class ResearchWorkspace(QWidget):
     def _reset_canvas(self) -> None:
         if self.conversation.turns and not self._confirm_reset():
             return
+        self.clear_thread()
+
+    def clear_thread(self) -> None:
+        """New thread without asking: also what a switch to another data folder does, so no answer about the
+        old folder's cases stays beside, or is sent as history with, a question about the new one."""
         if self._searching:
             self.cancel_requested.emit()
         self._cancel_minute_question()

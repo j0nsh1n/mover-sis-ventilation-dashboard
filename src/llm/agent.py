@@ -28,6 +28,7 @@ from src.llm.grounding import (
     PID_TOKEN,
     REMOVED_NOTE,
     find_ungrounded_numbers,
+    mask_case_numbers,
     remove_ungrounded_numbers,
 )
 from src.llm.history import PriorTurn, earlier_bodies, history_messages, turns_to_send
@@ -879,13 +880,9 @@ def run_agent(
     shown_question = question
     shown_history = sent_history
     if source_scope == "articles" and to_cloud:
-        shown_question = _PID_TOKEN.sub("[case number not sent]", question)
+        shown_question = mask_case_numbers(question)
         shown_history = tuple(
-            replace(
-                turn,
-                question=_PID_TOKEN.sub("[case number not sent]", turn.question),
-                answer=_PID_TOKEN.sub("[case number not sent]", turn.answer),
-            )
+            replace(turn, question=mask_case_numbers(turn.question), answer=mask_case_numbers(turn.answer))
             for turn in sent_history
         )
     user_content = (

@@ -50,6 +50,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Cloud answers on real cases send less. The procedure goes as a category from a fixed list (for example Spine or Urology), never its text. More typed ages go as five-year bands ("he is 47", "60 yr-old", "47/F", "47 years of age"); weights, percentages and degrees next to them are left alone. For real cases the training log keeps only what went out and came back, not the question and answer as shown. Codex runs with its shell, file, browser, app, plugin and web-search tools switched off by name, in a fresh private folder outside the settings folder, and its answer is used only when its run shows a finished turn of text alone. An article question asked on real data is logged as it was sent, with typed case numbers replaced. The Claude API's note in the AI menu says another Claude model may answer a question the chosen one declines.
+- Research thread: each answer's number, service, state and data name share one quiet line. In a narrow window, Sources, Checks and the turn's buttons sit above the answer so they show without scrolling. Tab goes through the evidence board before the thread. Switching to another data folder starts a new thread; reloading the same folder keeps it.
+
 - New look, Settings and setup: Settings is a page of the window (left
   navigation, Ctrl+, or Ctrl+K) instead of a dialog. Nothing is written until
   Save; leaving with unsaved changes asks whether to save, discard or stay; a

@@ -146,6 +146,59 @@ def test_trimmed_text_has_aliases_age_bands_and_minutes_from_incision_only():
     assert "t=28–37 min" in sent, "minutes from incision are what the analysis needs"
 
 
+def test_a_real_send_names_the_procedure_category_and_no_word_of_the_procedure_text():
+    text = ("Procedure: Smithson Knee Arthroplasty. Age: 47. Sex: F. Ventilator rows: yes.\n"
+            "## Demographics & procedure\n- Procedure: Smithson Knee Arthroplasty\n- Sex: F\n"
+            "Procedure: unspecified. Age: unknown.\n")
+    sent = Trimmer([PID]).outbound(text)
+    assert "Smithson" not in sent and "Arthroplasty" not in sent and "Knee" not in sent
+    assert sent.splitlines() == [
+        "Procedure category: Orthopedic. Age: 45–49. Sex: F. Ventilator rows: yes.",
+        "## Demographics & procedure", "- Procedure category: Orthopedic", "- Sex: F",
+        "Procedure category: Other or not classified. Age: unknown.",
+    ]
+    assert "## Procedure events" in Trimmer([]).outbound("## Procedure events\n"), "the events heading is kept"
+
+
+def test_the_claude_api_note_says_another_model_may_answer(monkeypatch):
+    monkeypatch.setenv(cloud.API_KEY_ENV, KEY)
+    assert "may answer it with another Claude model" in cloud.service_note(CLAUDE_API)
+    assert "another" not in cloud.service_note(CLAUDE_CLI), "only the API falls back"
+
+
+def test_a_fallback_answer_is_logged_under_the_model_that_gave_it(monkeypatch, config_dir):
+    class Fallback(Remote):
+        def chat_turn(self, model, messages, **kwargs):
+            result = super().chat_turn(model, messages, **kwargs)
+            return ChatResult(content=result.content, raw={"model": "claude-other-model"})
+
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kw: Fallback("An invented answer."))
+    session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False)
+    session.client.chat_turn("claude-opus-5-5", [{"role": "user", "content": "q"}])
+    record = json.loads(session.log(question="q", kind="question", answer="a", trace=[]).read_text("utf-8"))
+    assert record["model"] == "claude-opus-5-5" and record["calls"][0]["served_by"] == "claude-other-model"
+
+
+@pytest.mark.parametrize("procedure, category", [
+    ("Laparoscopic Cholecystectomy", "General and abdominal"),
+    ("Robotic Prostatectomy", "Urology"),
+    ("Lumbar Laminectomy", "Spine"),
+    ("Open Reduction Internal Fixation Radius", "Orthopedic"),
+    ("Hysterectomy Abdominal", "Gynecology and obstetrics"),
+    ("Thyroidectomy", "Head and neck"),
+    ("Craniotomy", "Neurosurgery"),
+    ("CABG x3", "Cardiac"),
+    ("Kidney transplant", "Transplant"),
+    ("Mr Jones's operation", "Other or not classified"),
+    ("Breast reduction", "Breast and plastic"),
+    ("ACL reconstruction", "Orthopedic"),
+    ("Closed reduction of the wrist", "Orthopedic"),
+])
+def test_a_procedure_maps_to_one_category_from_a_fixed_list(procedure, category):
+    assert cloud.procedure_category(procedure) == category
+    assert category in {name for name, _pattern in cloud.PROCEDURE_CATEGORIES} | {cloud.PROCEDURE_OTHER}
+
+
 def test_event_times_do_not_go_out_without_an_incision_to_count_from():
     sent = Trimmer([PID]).outbound("## Procedure events\n- 2016-03-01 09:04:00: Intubation\n")
     assert sent == "## Procedure events\n- time not sent: Intubation\n"
@@ -332,6 +385,14 @@ def _fake_command(tmp_path: Path, body: str) -> str:
     return str(launcher)
 
 
+# What a real 'codex exec --json' prints for a turn that only wrote text.
+_CODEX_TEXT_ONLY = ("print(json.dumps({'type': 'thread.started'}))\n"
+                    "print(json.dumps({'type': 'item.completed', 'item': {'type': 'reasoning'}}))\n"
+                    "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message'}}))\n"
+                    "print(json.dumps({'type': 'turn.completed'}))\n")
+_CODEX_ANSWER = "out = sys.argv[sys.argv.index('-o') + 1]\nopen(out, 'w').write('From codex.')\n"
+
+
 def _record(tmp_path: Path) -> dict:
     return json.loads((tmp_path / "record.json").read_text(encoding="utf-8"))
 
@@ -369,15 +430,64 @@ def test_claude_code_returns_structured_output_for_a_schema(tmp_path):
 
 @pytestmark_posix
 def test_codex_runs_read_only_in_an_empty_folder_and_answers_through_its_output_file(tmp_path):
-    body = ("out = sys.argv[sys.argv.index('-o') + 1]\n"
-            "open(out, 'w').write('From codex.')\n")
-    binary = _fake_command(tmp_path, body)
-    result = CliClient(CODEX_CLI, tmp_path / "w", binary=binary).chat_turn(
+    binary = _fake_command(tmp_path, _CODEX_TEXT_ONLY + _CODEX_ANSWER)
+    work = tmp_path / "w"
+    result = CliClient(CODEX_CLI, work, binary=binary).chat_turn(
         "", [{"role": "system", "content": "Rules."}, {"role": "user", "content": "Q?"}])
-    argv = _record(tmp_path)["argv"]
+    seen = _record(tmp_path)
+    argv = seen["argv"]
     assert result.content == "From codex."
     assert argv[:1] == ["exec"] and argv[argv.index("--sandbox") + 1] == "read-only" and argv[-1] == "-"
-    assert "--ephemeral" in argv and _record(tmp_path)["stdin"] == "Rules.\n\nQ?"
+    assert "--ephemeral" in argv and seen["stdin"] == "Rules.\n\nQ?"
+    assert Path(seen["cwd"]).parent == work and seen["files"] == ["err.txt", "out.txt", "prompt.txt"]
+    assert list(work.iterdir()) == [], "the call's folder is removed afterwards"
+
+
+@pytestmark_posix
+def test_codex_runs_with_every_tool_that_could_read_this_computer_switched_off(tmp_path):
+    binary = _fake_command(tmp_path, _CODEX_TEXT_ONLY + _CODEX_ANSWER)
+    CliClient(CODEX_CLI, tmp_path / "w", binary=binary).chat_turn("", [{"role": "user", "content": "Q?"}])
+    argv = _record(tmp_path)["argv"]
+    settings = {argv[i + 1] for i, flag in enumerate(argv) if flag == "-c"}
+    for tool in ("shell_tool", "unified_exec", "view_image", "apps", "plugins", "browser_use", "in_app_browser"):
+        assert f"features.{tool}=false" in settings, tool
+    assert 'web_search="disabled"' in settings
+    for flag in ("--json", "--ignore-user-config", "--ignore-rules"):
+        assert flag in argv, flag
+
+
+@pytestmark_posix
+@pytest.mark.parametrize("events", [
+    pytest.param(_CODEX_TEXT_ONLY.replace("'reasoning'", "'command_execution'"), id="ran a command"),
+    pytest.param(_CODEX_TEXT_ONLY.replace("'reasoning'", "'mcp_tool_call'"), id="called an MCP tool"),
+    pytest.param(_CODEX_TEXT_ONLY.replace("'reasoning'", "'web_search'"), id="searched the web"),
+    pytest.param(_CODEX_TEXT_ONLY.replace("'reasoning'", "'some_new_tool'"), id="an item type it never had"),
+    pytest.param(_CODEX_TEXT_ONLY.replace("turn.completed", "turn.failed"), id="no finished turn"),
+    pytest.param("", id="no events at all"),
+    pytest.param("print(json.dumps({'type': 'exec_command_begin'}))\n" + _CODEX_TEXT_ONLY, id="an unknown event type"),
+    pytest.param("print(json.dumps({'type': 'turn.failed'}))\n" + _CODEX_TEXT_ONLY, id="a failed turn, then another"),
+    pytest.param("print(json.dumps({'type': 'error', 'message': 'x'}))\n" + _CODEX_TEXT_ONLY, id="an error event"),
+    pytest.param(_CODEX_TEXT_ONLY.replace("'reasoning'", "'error'"), id="an error item"),
+    pytest.param("print(json.dumps(['item.completed']))\n" + _CODEX_TEXT_ONLY, id="an event that is not an object"),
+])
+def test_a_codex_answer_is_not_used_unless_its_events_show_a_finished_turn_with_no_tool(tmp_path, events):
+    binary = _fake_command(tmp_path, events + _CODEX_ANSWER)
+    with pytest.raises(CloudError, match="its answer was not used"):
+        CliClient(CODEX_CLI, tmp_path / "w", binary=binary).chat_turn("", [{"role": "user", "content": "Q?"}])
+
+
+@pytestmark_posix
+def test_a_cli_session_works_outside_the_settings_folder_that_holds_the_training_log(tmp_path, monkeypatch,
+                                                                                      config_dir):
+    monkeypatch.setattr(cloud.tempfile, "tempdir", str(tmp_path / "system-temp"))
+    (tmp_path / "system-temp").mkdir()
+    binary = _fake_command(tmp_path, _CODEX_TEXT_ONLY + _CODEX_ANSWER)
+    monkeypatch.setattr(cloud.shutil, "which", lambda _name: binary)
+    session = open_cloud_session(CloudConfig(CODEX_CLI), real_data=False)
+    session.client.chat_turn("", [{"role": "user", "content": "Q?"}])
+    cwd = Path(_record(tmp_path)["cwd"])
+    assert cwd.parent == tmp_path / "system-temp" and cwd.name.startswith("mover-cli-")
+    assert not cwd.is_relative_to(cloud.training_log_dir().parent)
 
 
 @pytestmark_posix
@@ -462,8 +572,7 @@ def test_the_training_log_and_cli_work_files_are_private(tmp_path, monkeypatch):
         original_rmtree(target, **kwargs)
 
     monkeypatch.setattr(cloud.shutil, "rmtree", spy)
-    body = "out = sys.argv[sys.argv.index('-o') + 1]\nopen(out, 'w').write('From codex.')\n"
-    binary = _fake_command(tmp_path, body)
+    binary = _fake_command(tmp_path, _CODEX_TEXT_ONLY + _CODEX_ANSWER)
     CliClient(CODEX_CLI, tmp_path / "cloud-cli", binary=binary).chat_turn(
         "", [{"role": "user", "content": "invented question"}],
     )
@@ -499,10 +608,51 @@ def test_each_answer_is_logged_with_what_went_out_and_never_the_key(monkeypatch,
     assert (record["backend"], record["model"], record["data"], record["trimmed"]) == (
         CLAUDE_API, "claude-opus-5-5", "real", True)
     assert record["calls"][0]["messages"] == remote.received[0], "exactly what went out"
-    assert record["calls"][0]["served_by"] == "served-model" and record["answer"] == result.answer
-    session.log(question="Again?", kind="question", answer="b", trace=["withheld:x"])
+    # Real data: the log holds what crossed the wire, never the answer as shown (which carries the real case
+    # number restored) nor the local trace (whose checks read the untrimmed case).
+    assert record["calls"][0]["served_by"] == "served-model"
+    assert record["answer"] == "Case-A had a critical episode at t=28–37 min." == remote.reply
+    assert PID in result.answer and PID not in text
+    assert record["trace"] == []
+    session.log(question=f"Again for {PID}, 47 years old?", kind="question", answer=f"{PID} b", trace=["withheld:x"])
     lines = path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 2 and json.loads(lines[1])["withheld"] is True
+    second = json.loads(lines[1])
+    assert len(lines) == 2 and second["withheld"] is True and second["trace"] == []
+    assert second["question"] == "Again for Case-A, 45–49 years old?", "the question as the trimmer sends it"
+    assert PID not in lines[1]
+
+
+def test_an_article_question_asked_on_real_data_is_logged_as_it_was_sent(monkeypatch, config_dir):
+    from src.llm.retrieve import answer_from_articles
+    from src.services.articles import Article
+
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kw: Remote("Article A1 reports PEEP of 5."))
+    article = Article(id="a1", title="Fictional ventilation", year=2019, authors="Smith et al.",
+                      abstract="PEEP of 5 cmH2O was used.", doi_or_url="https://example.org/a1", source="synthetic",
+                      rights_note="fictional test article", imported_at="2026-10-17")
+    session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False, articles_on_real_data=True)
+    case = "ab0123456789cdef"
+    question = f"Evidence on PEEP for {case}?"
+    result = answer_from_articles(question=question, model="claude-opus-5-5", articles=[article],
+                                  client=session.client)
+    text = session.log(question=question, kind="articles", answer=result.answer,
+                       trace=result.tool_trace).read_text(encoding="utf-8")
+    record = json.loads(text)
+    assert case not in text
+    assert record["question"] == "Evidence on PEEP for [case number not sent]?"
+    assert record["question"] in record["calls"][0]["messages"][-1]["content"], "the question as it went out"
+    assert (record["data"], record["trimmed"], record["trace"]) == ("real", False, [])
+    assert record["answer"] == "Article A1 reports PEEP of 5."
+
+
+def test_a_fictional_answer_is_logged_as_shown_with_its_trace(monkeypatch, config_dir):
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kw: Remote("An invented answer."))
+    session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False)
+    session.client.chat_turn("m", [{"role": "user", "content": "q"}])
+    path = session.log(question="Demo question?", kind="question", answer="Shown answer.", trace=["search: x"])
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert (record["question"], record["answer"], record["trace"]) == ("Demo question?", "Shown answer.",
+                                                                        ["search: x"])
 
 
 def test_a_log_that_cannot_be_written_does_not_cost_the_answer(monkeypatch):
@@ -674,7 +824,7 @@ def test_a_key_is_looked_for_in_the_store_only_after_one_was_saved_and_only_once
 @pytest.mark.parametrize("backend, flag", [(CLAUDE_CLI, "--model"), (CODEX_CLI, "-m")])
 def test_a_cli_default_leaves_the_model_to_the_cli(tmp_path, backend, flag):
     out = ("print(json.dumps({'type': 'result', 'is_error': False, 'result': 'Done.'}))\n" if backend == CLAUDE_CLI
-           else "open('answer.txt', 'w').write('Done.')\n")
+           else _CODEX_TEXT_ONLY + "open('answer.txt', 'w').write('Done.')\n")
     binary = _fake_command(tmp_path, out)
     CliClient(backend, tmp_path / "work", binary=binary).chat_turn(
         CloudConfig(backend).model_id, [{"role": "user", "content": "Q?"}])

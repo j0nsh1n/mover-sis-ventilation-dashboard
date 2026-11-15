@@ -2,24 +2,27 @@
 
 ## Current State
 
-- **Cloud answers and the chat thread (2026-11-14, `feat/cloud-ai`, PR #41
-  into `feat/visual-overhaul`, draft, not merged):** answers can come from the
+- **Cloud answers and the chat thread (2026-11-14):** PR #41 (`feat/cloud-ai`)
+  is merged into `feat/visual-overhaul` (`6fa4e2e`). Answers can come from the
   Claude API (key in the system password store), Claude Code or Codex next to
-  Ollama, chosen in the research page's grouped AI menu; real MOVER cases go
-  to a cloud service only when the owner switches on trimmed sending.
-  Research answers are a chat thread with the ask box at the bottom;
-  follow-ups are shown earlier answers (`src/llm/history.py`): on a cloud
-  service, demo questions get demo turns only and real questions trimmed
-  cloud turns only. Answer-check fixes: minus signs at a table row's start,
-  heading numbers, true age bands, GitHub tables. Last full offscreen gate on
-  `d3c8f43`'s tree before a one-line narrow-height change: 2690 passed, 7
-  skipped (narrow files rerun green after it); desktop contracts 10/10; PR CI
-  (one check) green. Reviews: Sonnet 5.5 FAIL on `6b535b2`, fixed, PASS on
-  `75b687c`, `e583b83` and `d3c8f43`; Gemini 4 Argon visual PASS on
-  `d3c8f43` from pictures. Open for the owner: merge, the review's judgement
-  calls (Codex on real data, free-text procedure line, raw real data in the
-  training log, the thread across a data switch, server-side fallback, spec
-  text), and installing `anthropic` and `keyring` in the AppImage builder.
+  Ollama; research answers are a chat thread whose follow-ups are shown
+  earlier answers (`src/llm/history.py`).
+- **Cloud follow-up (2026-11-14, `feat/cloud-ai-followup` into
+  `feat/visual-overhaul`):** the owner's calls on the PR #41 review. Codex may
+  answer on real data, masked like the others, with its tools switched off by
+  name and its answer used only when its event stream shows text alone. Real
+  sends carry a procedure category, not the procedure text. For real data the
+  training log keeps only what went out and came back. A switch to another
+  data folder starts a new thread. The AI menu note names the Claude API's
+  model fallback. One meta line per turn; in the stacked layout Sources,
+  Checks and actions sit above the answer; Tab goes board first. More typed
+  age forms are banded. The spec.md text for the thread, follow-ups and known
+  limits awaits the owner's approval before merge. `anthropic` 2.8.0 and
+  `keyring` 25.7.0 are installed in the AppImage builder venv
+  (`_work/appimage-fix-first/venv`). Open: whether an article question asked
+  on real data should be trimmed like a case question, and the
+  machine-dependent `test_setup_flow.py` demo-label test (fails on CI before
+  and after PR #41).
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
   offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
   failure marks; wall clock from the start file to the log mtime is 6105 s.

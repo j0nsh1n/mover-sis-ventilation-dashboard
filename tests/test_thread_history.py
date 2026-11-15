@@ -1170,11 +1170,67 @@ def test_workers_filter_demo_cloud_history_and_pass_cancellation(monkeypatch, co
     ("a 47-y-o", "a 45–49-y-o"),
     ("on 4th March 2021", "on [date not sent]"),
     ("March 4th, 2021", "[date not sent]"),
+    ("a 60 yr-old", "a 60–64 yr-old"),
+    ("a 60 y-o man", "a 60–64 y-o man"),
+    ("a 60 year-old", "a 60–64 year-old"),
+    ("he is 47", "he is 45–49"),
+    ("She was 47 at the time", "She was 45–49 at the time"),
+    ("the patient is 47.", "the patient is 45–49."),
+    ("he's 47", "he's 45–49"),
+    ("47 years of age", "45–49 years of age"),
+    ("a 47/F with", "a 45–49/F with"),
+    ("47 / M", "45–49 / M"),
+    ("47 y o", "45–49 y o"),
+    ("47 yr. old", "45–49 yr. old"),
+    ("the man is 47", "the man is 45–49"),
+    ("a woman of 47", "a woman of 45–49"),
+    ("he turned 47 that year", "he turned 45–49 that year"),
+    ("her age is 47", "her age is 45–49"),
+    ("47 yr F", "45–49 yr F"),
+    ("a 47 y.o man", "a 45–49 y.o man"),
+    ("a 47-F with", "a 45–49-F with"),
+    ("47/Female", "45–49/Female"),
+    ("age 47-52", "age 45–54"),
+    ("patients aged 52–47", "patients aged 45–54"),
+    ("she is 47, and", "she is 45–49, and"),
 ])
 def test_more_typed_ages_dates_and_clock_times_are_trimmed(text, expected):
     assert cloud.Trimmer([]).outbound(text) == expected
 
 
-@pytest.mark.parametrize("text", ["58 mmHg", "58 min", "PIP 58", "1:2", "y-axis 47", "2021 cases", "the 2400h total"])
+@pytest.mark.parametrize("text", ["58 mmHg", "58 min", "PIP 58", "1:2", "y-axis 47", "2021 cases", "the 2400h total",
+                                  "he is 70 kg", "she was 94% on air", "the patient is 165 cm", "SpO2 is 94",
+                                  "turned 90 degrees", "1/2", "PEEP 5 / FiO2 40", "woman of 70 kg",
+                                  "the patient was 120/80", "patient was 100 on room air",
+                                  "he is 3 days post-op", "the patient is 5 minutes late", "patient was 7.5 ETT",
+                                  "he was 47 mmol"])
 def test_the_wider_masks_leave_values_alone(text):
     assert cloud.Trimmer([]).outbound(text) == text
+
+
+def test_the_articles_worker_on_real_data_logs_the_question_as_sent_under_real_data(monkeypatch, config_dir):
+    from src.desktop.research_workers import ResearchWorker
+
+    case = "ab0123456789cdef"
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kwargs: Recorder("Article A1 reports PEEP of 5."))
+    article = Article(
+        id="ventilation", title="Fictional ventilation", year=2019, authors="Smith et al.",
+        abstract="PEEP of 5 cmH2O was used.", doi_or_url="https://example.org/ventilation",
+        source="synthetic", rights_note="fictional test article", imported_at="2026-10-17",
+    )
+
+    class Catalog(ArticleCatalog):
+        def __init__(self):
+            pass
+
+        def search(self, query, **kwargs):
+            return ArticleSearchResult(articles=(article,), catalog_count=1)
+
+    worker = ResearchWorker(Catalog(), f"PEEP evidence for {case}?", "m", None,
+                            cloud=CloudConfig(CLAUDE_API, real_data_allowed=False), real_data=True)
+    worker.run()
+    logs = list(cloud.training_log_dir().glob("*.jsonl"))
+    record = json.loads(logs[0].read_text(encoding="utf-8"))
+    assert record["data"] == "real" and record["trace"] == [], "an article question on real data is real"
+    assert record["question"] == "PEEP evidence for [case number not sent]?"
+    assert case not in logs[0].read_text(encoding="utf-8")

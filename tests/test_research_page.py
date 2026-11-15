@@ -228,14 +228,14 @@ def test_the_board_never_scrolls_sideways_while_it_scrolls_down(view, qapp):
     assert shown_bar, "the test never gave the board a vertical scroll bar"
 
 
-def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_then_the_trail(view, qapp):
+def test_the_tab_order_follows_the_screen_evidence_board_then_the_thread_and_its_composer(view, qapp):
     board_with_case(view)
     view.begin_question("Where?", 1)
     view.set_results(RetrievalResult(candidates=(candidate("SYN-000"),)))
     view.set_answer("SYN-000 is on the board.", 1)
     view.set_searching(False)
     view.activateWindow()
-    view.conversation.reset_button.setFocus()
+    view.new_question_button.setFocus()
     qapp.processEvents()
     order = [view.focusWidget()]
     for _ in range(24):
@@ -244,15 +244,15 @@ def test_the_tab_order_follows_the_screen_question_switch_model_menu_controls_th
     widget = view.conversation.turn_widgets[1]
     # The turn on the board reads On board and is disabled, so Tab skips it.
     assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
+    # The page reads left to right (top to bottom when stacked): the evidence board, then the thread.
     wanted = [
+        view.new_question_button, view.add_comparison_button, view.candidate_table,
         view.conversation.reset_button, widget.question_label, widget.answer_text,
         widget.copy_button, widget.ask_button,
         view.composer, view.scope_switch.option("Cases"), view.model_menu, view.ask_button,
-        view.new_question_button, view.add_comparison_button,
     ]
     positions = [order.index(item) for item in wanted]
-    assert positions == sorted(positions)
-    assert view.candidate_table in order and order.index(view.candidate_table) > order.index(view.ask_button)
+    assert positions == sorted(positions), [w.accessibleName() or w.objectName() for w in order]
 
 
 # ----- local model menu -----
@@ -599,17 +599,21 @@ def test_open_at_minute_opens_the_case(view):
 # ----- conversation -----
 
 
-def test_each_question_shows_its_number_model_and_extract_count(view):
+def test_each_question_shows_its_number_model_extract_count_state_and_data_on_one_line(view):
+    from src.desktop.shell import RESEARCH_STAMP
+
     view.set_models(["m1"], "m1")
     view.begin_question("First?", 1)
     view.set_progress("Loading 3 case extract(s)…", "fetching", 3)
     view.set_answer("An answer.", 1)
     view.set_searching(False)
     widget = view.conversation.turn_widgets[1]
-    assert widget.badge_label.text() == "Question 1 · m1 · 3 extracts"
+    assert widget.badge_label.text() == f"Question 1 · m1 · 3 extracts · Answered · {RESEARCH_STAMP}"
+    assert widget.state_label.isHidden(), "Answered is on the meta line, not a line of its own"
     assert "1 question, each answered from its own extracts" in view.conversation.empty_label.text()
     view.begin_question("Second?", 2)
-    assert view.conversation.turn_widgets[2].badge_label.text() == "Question 2 · m1"
+    second = view.conversation.turn_widgets[2]
+    assert second.badge_label.text() == f"Question 2 · m1 · {RESEARCH_STAMP}", "running says so on its own line"
     assert "2 questions" in view.conversation.empty_label.text()
 
 
@@ -621,14 +625,14 @@ def test_each_answer_keeps_the_name_of_the_data_it_was_asked_on(view):
     view.set_answer("An answer.", 1)
     view.set_searching(False)
     first = view.conversation.turn_widgets[1]
-    assert first.data_label.text() == DEMO_STAMP
+    assert first.badge_label.text().endswith(DEMO_STAMP)
     assert first.copy_text(view.conversation.turn(1)).endswith(DEMO_STAMP), "the label goes with copied text"
     view.data_is_demo = False
     view.begin_question("Asked on real data?", 2)
     second = view.conversation.turn_widgets[2]
-    assert second.data_label.text() == RESEARCH_STAMP
+    assert second.badge_label.text().endswith(RESEARCH_STAMP)
     assert second.copy_text(view.conversation.turn(2)).endswith(RESEARCH_STAMP)
-    assert first.data_label.text() == DEMO_STAMP, "an earlier answer keeps the name of its own data"
+    assert first.badge_label.text().endswith(DEMO_STAMP), "an earlier answer keeps the name of its own data"
 
 
 def test_a_running_question_shows_named_steps_a_bar_and_a_cancel_that_cancels(view):

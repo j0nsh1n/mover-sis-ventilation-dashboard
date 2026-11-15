@@ -17,15 +17,15 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
-import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.llm.grounding import PID_TOKEN
+from src.llm.grounding import CASE_NUMBER_NOT_SENT, PID_TOKEN, mask_case_numbers
 from src.llm.ollama_client import ChatClient, ChatResult, OllamaError
 
 OLLAMA = "ollama"
@@ -204,15 +204,16 @@ def service_note(backend: str) -> str:
     if backend == CLAUDE_API:
         if not service_ready(backend):
             return f"No Claude API key: save one in Settings, AI, or set {API_KEY_ENV}."
-        return f"Questions and their extracts go to Anthropic. {logged}"
+        return (f"Questions and their extracts go to Anthropic. If the chosen model declines a question, the API "
+                f"may answer it with another Claude model; the log names the model that answered. {logged}")
     command = "claude" if backend == CLAUDE_CLI else "codex"
     if not service_ready(backend):
         return f"The '{command}' command was not found on this computer."
     if backend == CLAUDE_CLI:
         return (f"Runs '{command}' with its tools off, in an empty folder, with its own login. "
                 f"Questions and their extracts go to Anthropic. {logged}")
-    return (f"Runs '{command}' in a read-only sandbox, with its own login; its commands can still read files on "
-            f"this computer. Questions and their extracts go to OpenAI. {logged}")
+    return (f"Runs '{command}' with its tools off, in an empty folder, with its own login; an answer that used a "
+            f"tool is not used. Questions and their extracts go to OpenAI. {logged}")
 
 
 def may_send(config: CloudConfig, *, real_data: bool) -> bool:
@@ -456,10 +457,47 @@ def _create_private(path: Path):
     return os.fdopen(fd, "wb")
 
 
-class CliClient:
-    """Claude Code or Codex on this computer, run once per answer in an empty folder with its tools off."""
+# Codex has no single "tools off" switch, so each tool it could use to read this computer is switched off by
+# name, and an answer is used only if its event stream shows no tool ran (``_codex_used_no_tool``).
+_CODEX_TOOLS_OFF = (
+    "features.shell_tool=false", "features.unified_exec=false", "features.view_image=false",
+    "features.apps=false", "features.plugins=false", "features.browser_use=false",
+    "features.in_app_browser=false", 'web_search="disabled"',
+)
+_CODEX_EVENTS = {"thread.started", "turn.started", "turn.completed", "item.started", "item.updated",
+                 "item.completed"}
+_CODEX_ITEMS_WITHOUT_A_TOOL = {"agent_message", "reasoning", "todo_list"}
 
-    def __init__(self, backend: str, workdir: Path, *, timeout_s: float = 300.0,
+
+def _codex_used_no_tool(events: str) -> bool:
+    """True only for a finished turn whose every event and item is a known text-only one.
+
+    Fails closed: an event or item type this list does not know, a failed turn or an error counts as a tool.
+    """
+    finished = False
+    for line in events.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") not in _CODEX_EVENTS:
+            return False
+        if event["type"].startswith("item."):
+            item = event.get("item")
+            if not isinstance(item, dict) or item.get("type") not in _CODEX_ITEMS_WITHOUT_A_TOOL:
+                return False
+        finished = finished or event["type"] == "turn.completed"
+    return finished
+
+
+class CliClient:
+    """Claude Code or Codex on this computer, run once per answer in a new private folder with its tools off.
+
+    The folder is made fresh under ``workdir`` (the system's temporary folder by default), never inside the
+    app's settings folder, which holds the training log.
+    """
+
+    def __init__(self, backend: str, workdir: Path | None = None, *, timeout_s: float = 300.0,
                  should_stop: Callable[[], bool] | None = None, binary: str | None = None):
         if backend not in (CLAUDE_CLI, CODEX_CLI):
             raise ValueError(backend)
@@ -478,7 +516,10 @@ class CliClient:
                 command += ["--json-schema", json.dumps(schema)]
         else:
             command = [self.binary, "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-                       "--color", "never", "-C", str(call_dir), "-o", str(call_dir / "answer.txt")]
+                       "--ignore-user-config", "--ignore-rules", "--json", "--color", "never",
+                       "-C", str(call_dir), "-o", str(call_dir / "answer.txt")]
+            for setting in _CODEX_TOOLS_OFF:
+                command += ["-c", setting]
             if schema is not None:
                 _write_private(call_dir / "schema.json", json.dumps(schema))
                 command += ["--output-schema", str(call_dir / "schema.json")]
@@ -501,8 +542,9 @@ class CliClient:
         prompt = _transcript(turns)
         if self.backend == CODEX_CLI and system:
             prompt = f"{system}\n\n{prompt}"
-        call_dir = self.workdir / uuid.uuid4().hex
-        _mkdir_private(call_dir)
+        if self.workdir is not None:
+            _mkdir_private(self.workdir)
+        call_dir = Path(tempfile.mkdtemp(prefix="mover-cli-", dir=self.workdir))
         try:
             _write_private(call_dir / "prompt.txt", prompt)
             with open(call_dir / "prompt.txt", "rb") as stdin, _create_private(call_dir / "out.txt") as stdout, \
@@ -536,6 +578,8 @@ class CliClient:
     def _answer(self, out: str, call_dir: Path, structured: bool) -> str:
         name = BACKEND_LABELS[self.backend]
         if self.backend == CODEX_CLI:
+            if not _codex_used_no_tool(out):
+                raise CloudError(f"{name} used a tool or did not finish its turn, so its answer was not used.")
             answer = call_dir / "answer.txt"
             return answer.read_text(encoding="utf-8", errors="replace") if answer.is_file() else ""
         try:
@@ -559,7 +603,15 @@ _EVENT_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?): (.+
 # identifier, and a wider band only hides more) and is covered by a test.
 _AGE_FORM = re.compile(
     r"(?<![\w.\u2013-])(?:"
-    r"(?P<label>Age:\s*|aged\s+|age\s+of\s+|age\s+)(?P<nlabel>\d{1,3}(?:\.\d+)?)"
+    r"(?P<label>Age:\s*|aged\s+|age\s+of\s+|age\s+(?:is\s+|was\s+)?)"
+    r"(?P<nlabel>\d{1,3}(?:\.\d+)?)(?:\s*[-\u2013]\s*(?P<nhigh>\d{1,3}))?"
+    r"(?!\d|\.\d|\s*(?:%|\u00b0|(?:kg|g|lbs?|cm|mm|ml|mg|mcg|bpm|min|mmhg|cmh2o|l|degrees?|deg)\b))"
+    # "he is 47": the number counts as an age only when nothing measurement-like follows it, so
+    # "he was 120/80", "patient was 100 on room air" and "he is 3 days post-op" stay as they are.
+    r"|(?P<subject>(?:he|she|they|who|patient|pt\.?|man|woman|male|female|boy|girl)\s+(?:is|was|are|were)\s+"
+    r"|(?:he|she)'s\s+|(?:man|woman|male|female|boy|girl)\s+of\s+|turned\s+)"
+    r"(?P<nsubject>\d{1,3})"
+    r"(?=[.,;!?)](?!\d)|\s*$|\s+(?:years?|yrs?|y\.?o\.?|old|and|at|that|when|with|but|so|now|today)\b)"
     r"|(?P<n>\d{1,3}(?:\.\d+)?)(?P<tail>"
     r"-year[- ]old"
     r"|-yrs?-old"
@@ -569,7 +621,16 @@ _AGE_FORM = re.compile(
     r"|\s+years?\s+old"
     r"|\s+year-old"
     r"|\s+yrs?\s+old"
-    r"|\s+y\.o\."
+    r"|\s+y\.o\.?"
+    r"|\s+yrs?-old"
+    r"|\s+y-o\b"
+    r"|\s+years?-old"
+    r"|\s+years?\s+of\s+age"
+    r"|\s+y\s+o\b"
+    r"|\s+yrs?\.\s+old"
+    r"|\s*/\s*(?:female|male|[FM])(?![A-Za-z])"
+    r"|-[FM](?![A-Za-z])"
+    r"|\s+yrs?\s+(?=[FM](?![A-Za-z]))"
     r"|\s+y/o"
     r"|\s+yo"
     r"|yo"
@@ -594,6 +655,40 @@ _WAVE_SECTION = re.compile(r"## Waveform data\n(?:- .*\n?)*")
 # A slash after a scheme or another slash is a URL, not a filesystem path.
 _ABS_PATH = re.compile(r"(?<![\w:/])/(?:[^/\s]+/){1,}[^/\s]+|[A-Za-z]:\\[^\s]+")
 LINE_CAP = 400
+# The procedure is free text and may hold a name, so only its category leaves the computer. First match wins:
+# the more specific services come before the general ones that share words with them ("laparoscopic").
+PROCEDURE_CATEGORIES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (category, re.compile(r"\b(?:" + words + r")", re.IGNORECASE)) for category, words in (
+        ("Transplant", r"transplant"),
+        ("Cardiac", r"cabg|coronary|cardiac|heart|valve|mitral|sternotomy"),
+        ("Thoracic", r"lobectomy|thoracoscop|thoracotomy|vats\b|lung|pneumonectomy|esophagectomy|mediastin"),
+        ("Neurosurgery", r"craniotomy|craniectomy|ventriculo|burr hole|brain|intracranial"),
+        ("Spine", r"laminectomy|laminotomy|discectomy|spin|vertebr|kyphoplasty|lumbar|foraminotomy"),
+        ("Vascular", r"endarterectomy|aneurysm|evar\b|fistula|carotid|vascular|bypass graft|embolectomy"),
+        ("Urology", r"prostat|cystoscop|cystectomy|nephr|ureter|bladder|kidney|turp\b|urethr|orchi"),
+        ("Gynecology and obstetrics", r"hysterect|cesarean|caesarean|c-section|ovar|uter|myomect|salping"
+                                      r"|dilation and curettage|d&c\b"),
+        ("Head and neck", r"thyroid|parathyroid|tonsil|adenoid|sinus|laryn|tracheost|mastoid|septo|parotid"
+                          r"|neck dissection|tympan"),
+        ("Eye", r"cataract|vitrect|retin|ocular|strabism|cornea"),
+        ("Orthopedic", r"arthroplast|arthroscop|orif\b|fractur|fixation|knee|hip\b|shoulder|joint|tendon"
+                       r"|ligament|osteotomy|amputation|open reduction|closed reduction|acl\b|menisc|rotator cuff"),
+        ("Breast and plastic", r"breast|mastectomy|mammoplast|flap|skin graft|plastic|reconstruct"),
+        ("Endoscopy", r"endoscop|colonoscop|egd\b|bronchoscop|ercp\b"),
+        ("General and abdominal", r"cholecyst|append|hernia|colectomy|bowel|gastr|whipple|pancrea|hepat|liver"
+                                  r"|splen|laparotom|laparoscop|bariatric|colon|rect|abdom"),
+    ))
+PROCEDURE_OTHER = "Other or not classified"
+# The extract states the procedure in its heading ("Procedure: X. Age: ...") and as a list item ("- Procedure: X").
+_PROCEDURE_FIELD = re.compile(r"^(- )?Procedure: (.*?)(?=\. Age: |$)", re.MULTILINE)
+
+
+def procedure_category(procedure: str) -> str:
+    """The service a procedure belongs to, from a fixed list, so no word of the procedure text is passed on."""
+    for category, pattern in PROCEDURE_CATEGORIES:
+        if pattern.search(procedure):
+            return category
+    return PROCEDURE_OTHER
 _EARLIER = "Earlier question: "
 
 
@@ -605,7 +700,15 @@ def age_band(age: float) -> str:
 def _band_ages(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
         if match.group("label"):
-            return match.group("label") + age_band(float(match.group("nlabel")))
+            low = float(match.group("nlabel"))
+            if match.group("nhigh"):
+                # "age 47-52": one band from the lower one's start to the upper one's end.
+                high = float(match.group("nhigh"))
+                low, high = min(low, high), max(low, high)
+                return match.group("label") + f"{age_band(low).split('–')[0]}–{age_band(high).split('–')[1]}"
+            return match.group("label") + age_band(low)
+        if match.group("subject"):
+            return match.group("subject") + age_band(float(match.group("nsubject")))
         return age_band(float(match.group("n"))) + match.group("tail")
 
     return _AGE_FORM.sub(repl, text)
@@ -629,7 +732,8 @@ def _events_from_incision(section: str) -> str:
 
 
 class Trimmer:
-    """What real-data sending lets out: case aliases, 5-year age bands, minutes from incision, a line cap."""
+    """What real-data sending lets out: case aliases, 5-year age bands, minutes from incision, procedure
+    categories, a line cap."""
 
     def __init__(self, pids: Sequence[str]):
         letters = [chr(ord("A") + i) for i in range(26)]
@@ -643,12 +747,14 @@ class Trimmer:
         alias = self.aliases.get(pid)
         if alias is None:
             if len(self.aliases) >= 26:
-                return "[case number not sent]"
+                return CASE_NUMBER_NOT_SENT
             alias = f"Case-{chr(ord('A') + len(self.aliases))}"
             self.aliases[pid] = alias
         return alias
 
     def outbound(self, text: str) -> str:
+        text = _PROCEDURE_FIELD.sub(
+            lambda m: f"{m.group(1) or ''}Procedure category: {procedure_category(m.group(2))}", text)
         if self._pid is not None:
             text = self._pid.sub(lambda m: self.aliases[m.group(0)], text)
         # Anything still shaped like a case number goes out aliased too, listed or not.
@@ -739,6 +845,10 @@ class CloudSession:
     real_data: bool
     client: ChatClient
     recorder: RecordingClient
+    trimmer: Trimmer | None = None
+    # The data on screen when asked. Article questions go out untrimmed (published text is not MOVER data) but
+    # are still logged under the data they were asked on.
+    data_is_real: bool = False
 
     def log(self, *, question: str, kind: str, answer: str, trace: Sequence[str]) -> Path | None:
         """Keep this answer for training. A log that cannot be written never costs the user the answer."""
@@ -771,19 +881,33 @@ class CloudSession:
         return found
 
     def _write(self, *, question: str, kind: str, answer: str, trace: Sequence[str]) -> Path:
+        withheld = any(str(step).startswith("withheld:") for step in trace)
+        if self.data_is_real:
+            # Real data: keep only text that crossed the wire. The question as it was sent, the service's own
+            # last answer as it came back, and no local trace, whose checks read the untrimmed case.
+            question = self.trimmer.outbound(question) if self.trimmer is not None else mask_case_numbers(question)
+            answer = self._last_reply()
+            trace = []
         return write_training_record({
             "backend": self.config.backend,
             "model": self.config.model_id or "default",
             "kind": kind,
-            "data": "real" if self.real_data else "fictional",
-            "trimmed": self.real_data,
+            "data": "real" if self.data_is_real else "fictional",
+            "trimmed": self.trimmer is not None,
             "question": question,
             "history": self.history_sent(),
             "calls": self.recorder.calls,
             "answer": answer,
             "trace": list(trace),
-            "withheld": any(str(step).startswith("withheld:") for step in trace),
+            "withheld": withheld,
         })
+
+    def _last_reply(self) -> str:
+        """The last free-text reply as received: the answer or its repair, never the structured advice check."""
+        for call in reversed(self.recorder.calls):
+            if not call.get("structured") and "reply" in call:
+                return str(call["reply"])
+        return ""
 
 
 def _alias_pids(pids: Sequence[str], history: Sequence[Any]) -> list[str]:
@@ -802,8 +926,12 @@ def _alias_pids(pids: Sequence[str], history: Sequence[Any]) -> list[str]:
 def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[str] = (),
                        history: Sequence[Any] = (),
                        timeout_s: float = 300.0, should_stop: Callable[[], bool] | None = None,
-                       workdir: Path | None = None) -> CloudSession:
+                       workdir: Path | None = None, articles_on_real_data: bool = False) -> CloudSession:
     """Refuses before anything is built when this question may not be sent.
+
+    ``real_data`` is whether MOVER case text goes out, which needs real-data sending and trimming.
+    ``articles_on_real_data`` marks an article question asked while real data is on screen: it sends no case
+    text, so it is not trimmed, but its log keeps only what was sent.
 
     ``history`` is read only after the question is allowed out, and only for
     its case numbers. A refusal names the block and nothing from the history.
@@ -816,9 +944,9 @@ def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[s
     if config.backend == CLAUDE_API:
         inner = ClaudeApiClient(timeout_s=timeout_s)
     else:
-        inner = CliClient(config.backend, workdir or training_log_dir().parent / "cloud-cli",
-                          timeout_s=timeout_s, should_stop=should_stop)
+        inner = CliClient(config.backend, workdir, timeout_s=timeout_s, should_stop=should_stop)
     recorder = RecordingClient(inner)
-    alias = _alias_pids(pids, history) if real_data else [str(pid) for pid in pids]
-    client: ChatClient = TrimmingClient(recorder, Trimmer(alias)) if real_data else recorder
-    return CloudSession(config, real_data, client, recorder)
+    if not real_data:
+        return CloudSession(config, real_data, recorder, recorder, data_is_real=articles_on_real_data)
+    trimmer = Trimmer(_alias_pids(pids, history))
+    return CloudSession(config, real_data, TrimmingClient(recorder, trimmer), recorder, trimmer, data_is_real=True)
