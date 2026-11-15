@@ -379,6 +379,23 @@ def test_signal_is_disabled_with_a_reason_until_a_case_is_open(window, qapp):
     assert not button.isEnabled() and window.research.stack.currentIndex() == 0
 
 
+def test_a_switch_to_another_data_folder_starts_a_new_thread_and_a_reload_of_the_same_one_does_not(
+        window, qapp, monkeypatch, tmp_path):
+    research = window.research
+    research.begin_question("About the old folder", 1)
+    research.set_answer("An answer about the old folder's cases.", 1)
+    window._clear_loaded_sample()
+    assert [turn.question for turn in research.conversation.turns] == ["About the old folder"], "same folder"
+    monkeypatch.setenv("MOVER_EMR_DIR", str(tmp_path / "Other-EMR"))
+    window._clear_loaded_sample()
+    qapp.processEvents()
+    assert research.conversation.turns == [] and research.conversation.turn_widgets == {}
+    assert research.result is None, "the board goes with the thread"
+    research.begin_question("About the new folder", 2)
+    window._clear_loaded_sample()
+    assert [turn.question for turn in research.conversation.turns] == ["About the new folder"]
+
+
 def test_breadcrumb_names_the_question_the_case_and_the_minute(window, qapp):
     research = window.research
     assert window.head.crumb_text() == "Research"
@@ -900,10 +917,13 @@ def test_picking_a_row_in_the_ai_menu_switches_and_is_remembered(window, monkeyp
     assert window.research.cloud is not None and not window.research.cloud.is_cloud
 
 
-def test_the_claude_api_rows_come_from_the_apis_list_and_a_failed_list_says_why(window, password_store):
+def test_the_claude_api_rows_come_from_the_apis_list_and_a_failed_list_says_why(window, password_store,
+                                                                               monkeypatch):
     from src.llm import cloud
     from src.user_settings import update_settings
 
+    # The slice below drops the CLI rows; with both CLIs installed they are always five, here and in CI.
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/usr/bin/{name}")
     cloud.save_api_key("sk-ant-test")
     window._shown_data_is_demo = True
     window._show_ai_service()

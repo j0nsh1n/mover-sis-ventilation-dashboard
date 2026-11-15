@@ -29,7 +29,8 @@ ANSWER_TIMEOUT_S = 300.0
 
 
 def _answer_client(cloud: CloudConfig | None, *, real_data: bool, pids: list[str],
-                   should_stop, history: Sequence[PriorTurn] = ()) -> tuple[ChatClient, CloudSession | None]:
+                   should_stop, history: Sequence[PriorTurn] = (),
+                   articles_on_real_data: bool = False) -> tuple[ChatClient, CloudSession | None]:
     """The local client, or a cloud session that refuses before building anything when the data may not go.
 
     ``history`` adds the prior turns' case numbers to the trimmer. It is not
@@ -38,7 +39,8 @@ def _answer_client(cloud: CloudConfig | None, *, real_data: bool, pids: list[str
     if cloud is None or not cloud.is_cloud:
         return OllamaClient(timeout_s=ANSWER_TIMEOUT_S), None
     session = open_cloud_session(cloud, real_data=real_data, pids=pids, history=history,
-                                 timeout_s=ANSWER_TIMEOUT_S, should_stop=should_stop)
+                                 timeout_s=ANSWER_TIMEOUT_S, should_stop=should_stop,
+                                 articles_on_real_data=articles_on_real_data)
     return session.client, session
 
 
@@ -205,7 +207,8 @@ class ResearchWorker(QThread):
                 if self.model and article_result.articles:
                     # Article abstracts are published text, not MOVER data.
                     client, cloud = _answer_client(self.cloud, real_data=False, pids=[],
-                                                   should_stop=self.isInterruptionRequested, history=sent)
+                                                   should_stop=self.isInterruptionRequested, history=sent,
+                                                   articles_on_real_data=self.real_data)
                     response = answer_from_articles(
                         question=self.question, model=self._model_id() or "", articles=article_result.articles,
                         client=client, history=sent, should_stop=self.isInterruptionRequested,

@@ -292,6 +292,8 @@ class MainWindow(QMainWindow):
         # reload, not read from the folder setting each time: between a folder change and the end of its reload
         # the old data is still on screen and must keep its own name.
         self._shown_data_is_demo = demo_data_in_use()
+        # The folders the research thread's answers were about; a switch to others starts a new thread.
+        self._thread_folders = (emr_dir(), processed_dir())
         # What the Medication page was last given: (case, demo) for an open case, None for its invented record.
         self._medication_shown: tuple[str, bool] | None | bool = False
         self._worker: QThread | None = None
@@ -704,6 +706,10 @@ class MainWindow(QMainWindow):
         # From here on whatever is shown comes from the folders in use now.
         self._shown_data_is_demo = demo_data_in_use()
         self.research.data_is_demo = self._shown_data_is_demo
+        folders = (emr_dir(), processed_dir())
+        if folders != self._thread_folders:
+            self._thread_folders = folders
+            self.research.clear_thread()
         self._show_ai_service()
         # The same case number in another folder is another record, so the Medication page must read it again.
         self._medication_shown = False

@@ -78,11 +78,27 @@ opt-in cloud answer services below.
   does not change the question's evidence board.
 - Reloading processed data, or loading data with a different preset, closes any open
   case, cancels pending searches and case fetches, and discards a late research answer
-  with a note. The question and the conversation stay; saved cases must be reopened for
-  current data.
+  with a note. The conversation stays; saved cases must be reopened for current data.
+  Switching to another data folder starts a new thread instead (see the research thread below).
 - Research workspace (G) case and scenario questions: the user describes a patient or
   scenario; a local model answers from at most three retrieved, **grounded** source
   extracts. The answer path skips heuristic prefetch and disables corpus tools.
+- Research thread (owner decisions 2026-11-14). Research answers form a thread in a panel
+  beside the evidence board, or under it when the research page (less an open Rules drawer)
+  is narrower than 1100 px. Each turn shows
+  the question, one quiet line (question number, AI service, extract count, state, and the
+  data the question was asked on), the answer, folded Sources and Checks (verification
+  notes, amber when there are any), and Show on board, Copy with sources and Ask again. In
+  the narrow layout, Sources, Checks and the actions sit above the answer. The ask box is at
+  the bottom of the thread, and Send becomes Stop while an answer runs. Clear board empties
+  the board and keeps the thread; New thread clears both. Minute questions asked on F land
+  in the same thread. Tab goes through the evidence board first, then the thread and its ask
+  box.
+- Follow-ups. A question is sent with the last three answered turns of the same scope (Cases
+  or Articles) as history. On a cloud service, a demo-data question gets demo turns only,
+  and a real-data question gets trimmed cloud turns only; a local model's answer on real
+  data never leaves the computer. Switching to another data folder starts a new thread, so
+  no answer about one folder's cases is sent with a question about another.
 - Ollama lifecycle: Start / Stop / Unload / Refresh; models dir via settings → `OLLAMA_MODELS`.
 - Ollama HTTP must default to **loopback only** (case text stays local unless an explicit
   env override is set for remote).
@@ -90,13 +106,35 @@ opt-in cloud answer services below.
   Local AI stays the default. A cloud AI (Claude API, Claude Code CLI, Codex CLI) is used
   only when chosen in the research page's AI menu, and every answer from it says so. With real MOVER data,
   nothing goes to a cloud AI unless the owner has switched on real-data sending; then only
-  trimmed extracts go: case aliases, age bands, minutes from incision, flagged minutes, no
-  free text. Cloud answers pass the same answer check as local ones. Each one is logged on
-  this computer for training a local model. Code: `src/llm/cloud.py`; tests:
+  trimmed extracts go: case aliases, five-year age bands (also for typed forms such as
+  "47-yr-old" or "he is 47"), the procedure as a category from a fixed list instead of its
+  text, minutes from incision instead of clock times and dates, flagged minutes, no file
+  paths, a line cap. All three services get the same trimmed text. Claude Code runs with its
+  tools off. Codex has no single switch for that: its shell, file, browser, app, plugin and
+  web-search tools are switched off by name and its own config and rules are ignored, it runs
+  in a new private folder outside the settings folder, and an answer is used only when its
+  event stream shows a finished turn of known text-only events. The event check runs after
+  the fact, so a tool that a future Codex adds under a new name could run before its answer is
+  discarded. Cloud answers pass the same answer check as local ones. If the
+  chosen Claude API model declines a question, the API may answer it with another Claude
+  model; the AI menu's note says so. Each cloud answer is logged on this computer for
+  training a local model, in owner-only files, with the model that answered. For real data
+  the log keeps only what crossed the wire: the question as sent, the messages as sent, the
+  replies as received, and no local trace. An article question asked while real data is on
+  screen carries no case text: its abstracts go out as published, but the typed question and
+  the earlier turns sent with it have case numbers replaced and follow the same age, date,
+  time and procedure rules as a case question. It is logged the same way, under real data. Code: `src/llm/cloud.py`; tests:
   `tests/test_cloud.py`. The Claude API key comes from `ANTHROPIC_API_KEY` or, when pasted in
   Settings, from the system password store (`keyring`). It is never written to the settings
   file, the training log or an error message. Claude Code and Codex answer with their own
   logins and never receive the API key.
+- Known limits of cloud answers. Trimming finds ages, dates and times in free text by
+  pattern, so some typed forms still go out unchanged: ages in words ("forty-seven"),
+  decades ("in his late forties"), a bare "47 years", "47 Male", a sentence whose subject is a
+  name ("Mrs Lee is 47"), and "he is 47" followed by words other than a few age-like ones
+  (left alone so that "he was 120/80" or "patient was 100 on room air" keep their values). Names or other identifiers typed into a question go out as typed. Stop
+  ends every later call of an answer but cannot cut short a Claude API request already being
+  answered; that reply still arrives (and is billed) and is not shown.
 - Answer gate rejects prescriptive clinical directives and unstated case facts where
   implemented in `src/llm/agent.py` / `prompts.py`. A value, minute or flag stated for a
   case must be in that case's own extract (`src/llm/attribution.py`); a cut-off or

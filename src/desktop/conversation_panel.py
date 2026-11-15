@@ -311,6 +311,9 @@ class ThreadComposer(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+_STATE_WORDS = {"answered": "Answered", "no_model": "Search complete", "cancelled": "Cancelled"}
+
+
 class TurnWidget(QFrame):
     case_requested = Signal(int, str)
     show_requested = Signal(int)
@@ -364,7 +367,7 @@ class TurnWidget(QFrame):
         bubble_row.addWidget(self.bubble)
         layout.addLayout(bubble_row)
 
-        # 2. Quiet meta line: service, data stamp, and progress while running
+        # 2. One quiet meta line: question number, service, extracts, state and the data it was asked on
         meta = QHBoxLayout()
         meta.setContentsMargins(0, 0, 0, 0)
         meta.setSpacing(8)
@@ -373,12 +376,6 @@ class TurnWidget(QFrame):
         self.badge_label.setTextFormat(Qt.TextFormat.PlainText)
         self.badge_label.setWordWrap(True)
         meta.addWidget(self.badge_label, 1)
-        # Set once: the data a question was asked on does not change after it is asked
-        self.data_label = QLabel(turn.data_stamp)
-        self.data_label.setObjectName("quietText")
-        self.data_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.data_label.setWordWrap(True)
-        meta.addWidget(self.data_label)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("linkBtn")
         self.cancel_button.setAutoDefault(True)
@@ -418,6 +415,17 @@ class TurnWidget(QFrame):
         self._answer_source = ""
         self.answer_text.setAccessibleName(f"Answer to {turn.question}")
         layout.addWidget(self.answer_text)
+
+        # 4-6. Sources, Checks and the actions. A short stacked panel shows them above the answer, so they are in
+        # view without scrolling past it.
+        self._compact = False
+        self._layout = layout
+        self.footer = QWidget()
+        footer = QVBoxLayout(self.footer)
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        layout.addWidget(self.footer)
+        layout = footer
 
         # 4. Folded Sources (n)
         self.sources_toggle = QPushButton("Sources (0)")
@@ -483,11 +491,18 @@ class TurnWidget(QFrame):
 
         self.update_turn(turn)
 
+    def set_compact(self, compact: bool) -> None:
+        """Put Sources, Checks and the actions above the answer (compact) or below it."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._layout.removeWidget(self.footer)
+        answer_at = self._layout.indexOf(self.answer_text)
+        self._layout.insertWidget(answer_at if compact else answer_at + 1, self.footer)
+        self.tab_order_changed.emit()
+
     def tab_widgets(self) -> list[QWidget]:
-        widgets: list[QWidget] = [
-            self.question_label,
-            self.cancel_button,
-            self.answer_text,
+        footer: list[QWidget] = [
             self.sources_toggle,
             *self.citation_buttons,
             self.checks_toggle,
@@ -496,6 +511,8 @@ class TurnWidget(QFrame):
             self.copy_button,
             self.ask_button,
         ]
+        widgets: list[QWidget] = [self.question_label, self.cancel_button]
+        widgets += [*footer, self.answer_text] if self._compact else [self.answer_text, *footer]
         return [
             widget for widget in widgets
             if not widget.isHidden() and widget.focusPolicy() != Qt.FocusPolicy.NoFocus
@@ -632,9 +649,13 @@ class TurnWidget(QFrame):
             self.answer_text.setAccessibleName(f"Answer to {turn.question}")
         self._fit_bubble()
 
-        extracts = f" \u00b7 {turn.extracts} {'extract' if turn.extracts == 1 else 'extracts'}" if turn.extracts else ""
-        self.badge_label.setText(f"Question {self._number} \u00b7 {turn.badge}{extracts}")
         running = turn.state == "running"
+        meta = [f"Question {self._number}", turn.badge]
+        if turn.extracts:
+            meta.append(f"{turn.extracts} {'extract' if turn.extracts == 1 else 'extracts'}")
+        # A running or failed turn says so on its own line, with the step or the reason.
+        meta += [_STATE_WORDS.get(turn.state, ""), turn.data_stamp]
+        self.badge_label.setText(" \u00b7 ".join(part for part in meta if part))
         self.cancel_button.setVisible(running)
         self.progress_bar.setVisible(running)
         self.progress_bar.setValue(round(turn.progress * 100))
@@ -643,14 +664,13 @@ class TurnWidget(QFrame):
             lines.append(turn.current_step)
         self.steps_label.setText("\n".join(lines))
         self.steps_label.setVisible(running and bool(lines))
-        self.state_label.setText({
-            "running": "Searching and reading sources\u2026",
-            "answered": "Answered",
-            "no_model": "Search complete",
-            "cancelled": "Cancelled",
-            "failed": f"Failed: {turn.failure}",
-        }[turn.state])
-        self.state_label.setVisible(not (running and bool(lines)))
+        if running:
+            self.state_label.setText("Searching and reading sources\u2026")
+        elif turn.state == "failed":
+            self.state_label.setText(f"Failed: {turn.failure}")
+        else:
+            self.state_label.setText("")
+        self.state_label.setVisible(bool(self.state_label.text()) and not (running and bool(lines)))
 
         if self._answer_source != turn.answer:
             body, notes = split_verification_notes(turn.answer)
@@ -758,6 +778,7 @@ class ConversationPanel(QFrame):
         self._shown_request: int | None = None
         self._turns: dict[int, Turn] = {}
         self._next_request_id = 0
+        self._stacked = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -860,6 +881,9 @@ class ConversationPanel(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
         self.setMinimumWidth(0 if stacked else 360)
+        self._stacked = stacked
+        for widget in self.turn_widgets.values():
+            widget.set_compact(stacked)
         # A stacked page is short. Tighter header and composer margins leave the thread more of the panel.
         bar = self.composer_bar.layout()
         if stacked:
@@ -964,6 +988,7 @@ class ConversationPanel(QFrame):
         self._turns[turn.request_id] = turn
         widget = TurnWidget(turn, len(self.turns))
         widget.set_on_board(turn.request_id == self._shown_request)
+        widget.set_compact(self._stacked)
         if len(self.turns) == 1:
             widget.hide_rule()
         self.turn_widgets[turn.request_id] = widget

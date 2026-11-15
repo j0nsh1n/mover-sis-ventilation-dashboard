@@ -30,6 +30,12 @@ from functools import lru_cache
 # MOVER PIDs are 16 hex characters; synthetic ones are SYN + 10 (src/pipeline/synthetic.py).
 # Anything looser reads counts and timestamps as PIDs.
 PID_TOKEN = re.compile(r"\b(SYN[0-9a-f]{10}|[0-9a-f]{16})\b", re.IGNORECASE)
+CASE_NUMBER_NOT_SENT = "[case number not sent]"
+
+
+def mask_case_numbers(text: str) -> str:
+    """Every case-number-shaped token replaced, for text sent where no case is cited (article answers)."""
+    return PID_TOKEN.sub(CASE_NUMBER_NOT_SENT, text)
 
 REMOVED_MARK = "[number not in sources]"
 REMOVED_NOTE = "Removed a number not found in the sources."

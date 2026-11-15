@@ -296,3 +296,45 @@ def test_keyboard_order_goes_backwards_too(view, qapp):
     assert view.focusWidget() is view.scope_switch.option("Cases")
     QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
     assert view.focusWidget() is view.composer
+
+
+def test_narrow_turns_put_checks_and_actions_above_the_answer_so_they_show_without_scrolling(view, qapp):
+    long_answer = "\n\n".join(f"Paragraph {n} of a long answer about the extracts." for n in range(12))
+    view.begin_question("Long?", 1)
+    view.set_answer(f"{long_answer}\n\n**Verification note:** one check.\n", 1)
+    view.set_searching(False)
+    qapp.processEvents()
+    widget = view.conversation.turn_widgets[1]
+    assert widget.footer.y() > widget.answer_text.y(), "wide: the actions follow the answer"
+    view.resize(1000, 900)
+    qapp.processEvents()
+    assert view.conversation.property("stacked") == "true"
+    assert widget.footer.y() < widget.answer_text.y()
+    view.conversation._scroll_to_turn(1)
+    qapp.processEvents()
+    viewport = view.conversation.viewport()
+    for control in (widget.checks_toggle, widget.copy_button, widget.ask_button):
+        bottom = control.mapTo(viewport, control.rect().bottomLeft()).y()
+        assert 0 <= bottom <= viewport.height(), (control.text(), bottom, viewport.height())
+    tab = widget.tab_widgets()
+    assert tab.index(widget.checks_toggle) < tab.index(widget.answer_text), "Tab follows the stacked order"
+    view.begin_question("Second?", 2)
+    view.set_answer("A short second answer.", 2)
+    view.set_searching(False)
+    qapp.processEvents()
+    second = view.conversation.turn_widgets[2]
+    assert second.footer.y() < second.answer_text.y(), "a turn added while stacked starts stacked"
+    view.resize(1400, 900)
+    qapp.processEvents()
+    assert widget.footer.y() > widget.answer_text.y() and second.footer.y() > second.answer_text.y()
+
+
+def test_a_turn_added_to_a_stacked_panel_starts_stacked(qapp):
+    from src.desktop.conversation_panel import ConversationPanel, Turn
+
+    panel = ConversationPanel()
+    panel.set_stacked(True)
+    panel.append_turn(Turn(1, "Where?", "m", state="answered", answer="An answer."))
+    tab = panel.turn_widgets[1].tab_widgets()
+    assert tab.index(panel.turn_widgets[1].copy_button) < tab.index(panel.turn_widgets[1].answer_text)
+    panel.deleteLater()
