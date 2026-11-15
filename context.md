@@ -19,10 +19,10 @@
   age forms are banded. The spec.md text for the thread, follow-ups and known
   limits awaits the owner's approval before merge. `anthropic` 2.8.0 and
   `keyring` 25.7.0 are installed in the AppImage builder venv
-  (`_work/appimage-fix-first/venv`). Open: whether an article question asked
-  on real data should be trimmed like a case question, and the
-  machine-dependent `test_setup_flow.py` demo-label test (fails on CI before
-  and after PR #41).
+  (`_work/appimage-fix-first/venv`). An article question asked on real data
+  has its typed text and earlier turns trimmed like a case question (owner's
+  call, 2026-11-14). Open: the machine-dependent `test_setup_flow.py`
+  demo-label test (fails on CI before and after PR #41).
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
   offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
   failure marks; wall clock from the start file to the log mtime is 6105 s.

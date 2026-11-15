@@ -778,6 +778,29 @@ class Trimmer:
         return self._alias.sub(lambda m: back.get(m.group(0), m.group(0)), text)
 
 
+def trim_typed_text(text: str) -> str:
+    """Typed text that goes out beside article abstracts while real data is on screen: case numbers masked,
+    then the rules a case question follows (age bands, no times or dates, procedure categories)."""
+    return Trimmer(()).outbound(mask_case_numbers(text))
+
+
+class ArticleOnRealDataClient:
+    """An article question asked while real data is on screen. The abstracts are published text and go out as
+    they are; the agent passes the typed question and the earlier turns through ``mask_typed`` first."""
+
+    leaves_computer = True
+
+    def __init__(self, inner: ChatClient):
+        self.inner = inner
+
+    @staticmethod
+    def mask_typed(text: str) -> str:
+        return trim_typed_text(text)
+
+    def chat_turn(self, model: str, messages: Sequence[dict[str, Any]], **kwargs: Any) -> ChatResult:
+        return self.inner.chat_turn(model, messages, **kwargs)
+
+
 class TrimmingClient:
     """Wraps a client so every message is trimmed. ``sends_trimmed`` tells the agent
     that this call is real data leaving the computer, so only trimmed cloud turns
@@ -846,8 +869,8 @@ class CloudSession:
     client: ChatClient
     recorder: RecordingClient
     trimmer: Trimmer | None = None
-    # The data on screen when asked. Article questions go out untrimmed (published text is not MOVER data) but
-    # are still logged under the data they were asked on.
+    # The data on screen when asked. On real data an article question's abstracts go out as they are (published
+    # text is not MOVER data), its typed text is trimmed, and it is logged under the data it was asked on.
     data_is_real: bool = False
 
     def log(self, *, question: str, kind: str, answer: str, trace: Sequence[str]) -> Path | None:
@@ -885,7 +908,7 @@ class CloudSession:
         if self.data_is_real:
             # Real data: keep only text that crossed the wire. The question as it was sent, the service's own
             # last answer as it came back, and no local trace, whose checks read the untrimmed case.
-            question = self.trimmer.outbound(question) if self.trimmer is not None else mask_case_numbers(question)
+            question = self.trimmer.outbound(question) if self.trimmer is not None else trim_typed_text(question)
             answer = self._last_reply()
             trace = []
         return write_training_record({
@@ -931,7 +954,7 @@ def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[s
 
     ``real_data`` is whether MOVER case text goes out, which needs real-data sending and trimming.
     ``articles_on_real_data`` marks an article question asked while real data is on screen: it sends no case
-    text, so it is not trimmed, but its log keeps only what was sent.
+    text, but its typed question and earlier turns are trimmed, and its log keeps only what was sent.
 
     ``history`` is read only after the question is allowed out, and only for
     its case numbers. A refusal names the block and nothing from the history.
@@ -946,7 +969,9 @@ def open_cloud_session(config: CloudConfig, *, real_data: bool, pids: Sequence[s
     else:
         inner = CliClient(config.backend, workdir, timeout_s=timeout_s, should_stop=should_stop)
     recorder = RecordingClient(inner)
+    if articles_on_real_data and not real_data:
+        return CloudSession(config, real_data, ArticleOnRealDataClient(recorder), recorder, data_is_real=True)
     if not real_data:
-        return CloudSession(config, real_data, recorder, recorder, data_is_real=articles_on_real_data)
+        return CloudSession(config, real_data, recorder, recorder)
     trimmer = Trimmer(_alias_pids(pids, history))
     return CloudSession(config, real_data, TrimmingClient(recorder, trimmer), recorder, trimmer, data_is_real=True)

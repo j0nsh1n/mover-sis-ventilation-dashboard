@@ -632,17 +632,57 @@ def test_an_article_question_asked_on_real_data_is_logged_as_it_was_sent(monkeyp
                       rights_note="fictional test article", imported_at="2026-10-17")
     session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False, articles_on_real_data=True)
     case = "ab0123456789cdef"
-    question = f"Evidence on PEEP for {case}?"
+    question = f"Evidence on PEEP for {case}, 47 years old?"
     result = answer_from_articles(question=question, model="claude-opus-5-5", articles=[article],
                                   client=session.client)
     text = session.log(question=question, kind="articles", answer=result.answer,
                        trace=result.tool_trace).read_text(encoding="utf-8")
     record = json.loads(text)
     assert case not in text
-    assert record["question"] == "Evidence on PEEP for [case number not sent]?"
+    assert record["question"] == "Evidence on PEEP for [case number not sent], 45–49 years old?"
     assert record["question"] in record["calls"][0]["messages"][-1]["content"], "the question as it went out"
     assert (record["data"], record["trimmed"], record["trace"]) == ("real", False, [])
     assert record["answer"] == "Article A1 reports PEEP of 5."
+
+
+def _article_question_sent(monkeypatch, *, articles_on_real_data: bool) -> list[dict]:
+    from src.llm.history import PriorTurn
+    from src.llm.retrieve import answer_from_articles
+    from src.services.articles import Article
+
+    remote = Remote("Article A1 reports PEEP of 5.")
+    monkeypatch.setattr(cloud, "ClaudeApiClient", lambda **kw: remote)
+    article = Article(id="a1", title="Fictional ventilation", year=2019, authors="Smith et al.",
+                      abstract="Patients aged 47 years were ventilated at 14:30 with PEEP of 5 cmH2O.",
+                      doi_or_url="https://example.org/a1", source="synthetic",
+                      rights_note="fictional test article", imported_at="2026-10-17")
+    earlier = PriorTurn(question="Same for a 52 year old at 09:15?", answer="He is 52 and was weaned on 2024-03-02.",
+                        scope="articles")
+    session = open_cloud_session(CloudConfig(CLAUDE_API), real_data=False,
+                                 articles_on_real_data=articles_on_real_data)
+    answer_from_articles(question="Evidence for ab0123456789cdef, 47 years old, extubated at 14:30?",
+                         model="claude-opus-5-5", articles=[article], client=session.client, history=[earlier])
+    return remote.received[0]
+
+
+def test_an_article_question_on_real_data_sends_its_typed_text_trimmed_and_the_abstracts_as_published(
+        monkeypatch, config_dir):
+    sent = _article_question_sent(monkeypatch, articles_on_real_data=True)
+    question = sent[-1]["content"]
+    assert question.startswith(
+        "Question: Evidence for [case number not sent], 45–49 years old, extubated at [time not sent]?")
+    assert "Patients aged 47 years were ventilated at 14:30" in question, "published text goes out as it is"
+    earlier = " ".join(message["content"] for message in sent[1:-1])
+    assert "Same for a 50–54 year old at [time not sent]?" in earlier
+    assert "He is 50–54 and was weaned on [date not sent]." in earlier
+    assert "52" not in earlier and "09:15" not in earlier and "2024-03-02" not in earlier
+
+
+def test_an_article_question_on_fictional_data_masks_only_case_numbers(monkeypatch, config_dir):
+    sent = _article_question_sent(monkeypatch, articles_on_real_data=False)
+    assert sent[-1]["content"].startswith(
+        "Question: Evidence for [case number not sent], 47 years old, extubated at 14:30?")
+    assert "Same for a 52 year old at 09:15?" in " ".join(message["content"] for message in sent[1:-1])
 
 
 def test_a_fictional_answer_is_logged_as_shown_with_its_trace(monkeypatch, config_dir):

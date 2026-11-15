@@ -880,9 +880,11 @@ def run_agent(
     shown_question = question
     shown_history = sent_history
     if source_scope == "articles" and to_cloud:
-        shown_question = mask_case_numbers(question)
+        # A client sent while real data is on screen trims the typed text further than case numbers.
+        mask: Callable[[str], str] = getattr(client, "mask_typed", mask_case_numbers)
+        shown_question = mask(question)
         shown_history = tuple(
-            replace(turn, question=mask_case_numbers(turn.question), answer=mask_case_numbers(turn.answer))
+            replace(turn, question=mask(turn.question), answer=mask(turn.answer))
             for turn in sent_history
         )
     user_content = (
