@@ -7,22 +7,29 @@
   Claude API (key in the system password store), Claude Code or Codex next to
   Ollama; research answers are a chat thread whose follow-ups are shown
   earlier answers (`src/llm/history.py`).
-- **Cloud follow-up (2026-11-14, `feat/cloud-ai-followup` into
-  `feat/visual-overhaul`):** the owner's calls on the PR #41 review. Codex may
-  answer on real data, masked like the others, with its tools switched off by
-  name and its answer used only when its event stream shows text alone. Real
-  sends carry a procedure category, not the procedure text. For real data the
-  training log keeps only what went out and came back. A switch to another
-  data folder starts a new thread. The AI menu note names the Claude API's
-  model fallback. One meta line per turn; in the stacked layout Sources,
-  Checks and actions sit above the answer; Tab goes board first. More typed
-  age forms are banded. The spec.md text for the thread, follow-ups and known
-  limits awaits the owner's approval before merge. `anthropic` 2.8.0 and
-  `keyring` 25.7.0 are installed in the AppImage builder venv
-  (`_work/appimage-fix-first/venv`). An article question asked on real data
-  has its typed text and earlier turns trimmed like a case question (owner's
-  call, 2026-11-14). Open: the machine-dependent `test_setup_flow.py`
-  demo-label test (fails on CI before and after PR #41).
+- **Cloud follow-up (2026-11-14, PR #42, merged into `feat/visual-overhaul`
+  as `31cd28a`):** the owner's calls on the PR #41 review. Codex may answer on
+  real data, masked like the others, with its tools switched off by name and
+  its answer used only when its event stream shows text alone; one real Codex
+  call with invented text worked (2026-11-15). Real sends carry a procedure
+  category, not the procedure text. For real data the training log keeps only
+  what went out and came back. An article question asked on real data has its
+  typed text and earlier turns trimmed like a case question. A switch to
+  another data folder starts a new thread. The AI menu note names the Claude
+  API's model fallback. One meta line per turn; in the stacked layout Sources,
+  Checks and actions sit above the answer; Tab goes board first. The owner
+  approved the spec.md text before merge.
+- **PR #40 toward `main` (2026-11-15):** a real EMR folder inside the demo
+  folder gets its own processed folder and is never labelled demo
+  (`eadb5c9`). A Windows path in a Settings folder note now wraps (zero-width
+  break after each backslash, removed on copy). AppImage candidate
+  `_work/appimage-fix-first/candidate-suite-cloud-r1` from `eadb5c9` bundles
+  `anthropic` 2.8.0 and `keyring` 25.7.0; only the build's own smoke test ran.
+  Open: four Windows-only layout tests (Cases table 1-2 px sideways scroll,
+  Handoff table and text box 1 px, missing-cell hatch) that do not reproduce
+  on Linux; the temporary `_DIAGNOSE_WINDOWS_CI` report stays until they are
+  settled. The system Ollama service listens on `0.0.0.0:11434` (owner's
+  machine setup, raised with the owner).
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
   offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
   failure marks; wall clock from the start file to the log mtime is 6105 s.

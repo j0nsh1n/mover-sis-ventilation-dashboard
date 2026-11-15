@@ -548,6 +548,30 @@ def _check_no_cut_text_and_no_sideways_reach(window, page, qapp):
     return problems
 
 
+def test_a_windows_path_in_a_folder_note_wraps_and_copies_back_whole(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel
+
+    from src.desktop.settings_ui import NoteLabel
+
+    path = "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-of-runneradmin\\pytest-0\\an-emr-folder"
+    note = NoteLabel()
+    note.setWordWrap(True)
+    note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    note.setText(f"No folder at {path}")
+    assert note.text() == f"No folder at {path}"
+    assert note.minimumSizeHint().width() < note.fontMetrics().horizontalAdvance(path) / 2, "the path wraps"
+    note.show()
+    note.setSelection(0, len(QLabel.text(note)))
+    assert note.hasSelectedText()
+    note.setFocus()
+    QTest.keySequence(note, QKeySequence.StandardKey.Copy)
+    assert QGuiApplication.clipboard().text() == f"No folder at {path}", "a copied path has no hidden characters"
+    note.close()
+
+
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_scrolling(
         window, qapp, theme, tmp_path):
@@ -555,6 +579,8 @@ def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_
     from src.desktop.theme import apply_theme
 
     apply_theme(qapp, theme)
+    # a Windows-style path, so this machine sees what Windows does: backslashes give Qt no place to wrap
+    tmp_path = tmp_path / "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\pytest-of-runneradmin\\pytest-0\\settings_l0"
     window._open_settings()
     page = window._suite_pages["settings"]
     window.resize(100, 700)  # the window refuses to go below its least width

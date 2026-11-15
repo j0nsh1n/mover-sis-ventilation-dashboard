@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QResizeEvent
+from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QKeyEvent, QKeySequence, QResizeEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -411,6 +412,43 @@ def check_wave_folder(text: str) -> FolderCheck:
     return FolderCheck("ok", f"Waveform data found · checked {_now()}")
 
 
+# Qt's line breaking gives no break after a backslash, so a Windows path in a note is one unbreakable word that
+# widens the whole page. A zero-width space after each backslash lets it wrap; copying takes the space out again.
+_PATH_BREAK = "\u200b"
+
+
+def breakable_path_text(text: str) -> str:
+    return text.replace("\\", "\\" + _PATH_BREAK)
+
+
+class NoteLabel(QLabel):
+    """A selectable note whose Windows paths wrap, and copy without the break characters."""
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(breakable_path_text(text))
+
+    def text(self) -> str:
+        return super().text().replace(_PATH_BREAK, "")
+
+    def _copy(self) -> None:
+        QGuiApplication.clipboard().setText(self.selectedText().replace(_PATH_BREAK, ""))
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        if event.matches(QKeySequence.StandardKey.Copy) and self.hasSelectedText():
+            self._copy()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802
+        menu = QMenu(self)
+        copy = menu.addAction("Copy", self._copy)
+        copy.setEnabled(self.hasSelectedText())
+        select_all = menu.addAction("Select All", lambda: self.setSelection(0, len(super(NoteLabel, self).text())))
+        select_all.setEnabled(bool(self.text()))
+        menu.exec(event.globalPos())
+
+
 class SettingRow(QWidget):
     """One setting: its name and what it is for on the left, the control and a note on the right.
 
@@ -438,7 +476,7 @@ class SettingRow(QWidget):
         self.purpose = QLabel(purpose)
         self.purpose.setObjectName("quietText")
         self.purpose.setWordWrap(True)
-        self.note = QLabel()
+        self.note = NoteLabel()
         self.note.setObjectName("folderCheck")
         self.note.setWordWrap(True)
         self.note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
