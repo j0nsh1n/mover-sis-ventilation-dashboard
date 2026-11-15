@@ -545,6 +545,13 @@ def _check_no_cut_text_and_no_sideways_reach(window, page, qapp):
                 problems.append(f"label cut: {widget.text()[:40]!r} ({widget.width()} < {widget.sizeHint().width()})")
         if isinstance(widget, QPushButton) and widget.width() < widget.sizeHint().width():
             problems.append(f"button cut: {widget.text()!r}")
+    if problems:
+        # name what forces the width: the widest least widths on the section, which differ by platform and font
+        shown = [w for w in scroll.widget().findChildren(QWidget) if w.isVisibleTo(scroll.widget())]
+        widest = sorted(shown, key=lambda w: -w.minimumSizeHint().width())[:6]
+        problems.append("widest least widths: " + "; ".join(
+            f"{type(w).__name__} {w.objectName()!r} {w.minimumSizeHint().width()}"
+            f" {(w.text()[:50] if isinstance(w, (QLabel, QPushButton)) else '')!r}" for w in widest))
     return problems
 
 
@@ -613,7 +620,10 @@ def test_settings_at_the_windows_least_width_cuts_no_text_and_needs_no_sideways_
         page.show_section(name)
         for _ in range(3):
             qapp.processEvents()
-        assert not _check_no_cut_text_and_no_sideways_reach(window, page, qapp), name
+        problems = _check_no_cut_text_and_no_sideways_reach(window, page, qapp)
+        if problems:
+            print(name, *problems, sep="\n")  # shown in full under "Captured stdout" when the test fails
+        assert not problems, name
     # wide again: the list is back at the left and the bar is one row
     window.resize(1380, 860)
     qapp.processEvents()
