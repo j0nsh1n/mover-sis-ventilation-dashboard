@@ -40,6 +40,19 @@ class Debrief:
     lines: tuple[str, ...]
 
 
+# The lines of a card, in the order its briefing writes them, and the line each check item reads aloud.
+CARD_FIELDS: tuple[str, ...] = (
+    "Site", "Procedure", "Consent", "Oximeter", "Allergy", "Airway", "Blood loss", "People", "Antibiotic",
+    "Imaging", "Counts", "Specimen", "Equipment", "Recovery",
+)
+ITEM_CARD_FIELD: dict[str, str] = {
+    "identity": "Site", "consent": "Consent", "oximeter": "Oximeter", "allergy": "Allergy", "airway": "Airway",
+    "blood": "Blood loss", "team": "People", "confirm": "Procedure", "antibiotic": "Antibiotic",
+    "concerns": "People", "imaging": "Imaging", "procedure": "Procedure", "counts": "Counts",
+    "specimen": "Specimen", "equipment": "Equipment", "recovery": "Recovery",
+}
+
+
 def scenarios() -> tuple[Scenario, ...]:
     return (
         Scenario(
@@ -62,6 +75,23 @@ def scenarios() -> tuple[Scenario, ...]:
             _items(imaging_required=False, specimen_required=True),
         ),
     )
+
+
+def card_lines(scenario: Scenario) -> tuple[tuple[str, str], ...]:
+    """The card as (line, what it says) pairs, read from the briefing; empty when the briefing is not in that shape."""
+    _, found, rest = scenario.briefing.partition(" says: ")
+    values = [part.strip() for part in rest.rstrip(".").split(", ")] if found else []
+    return tuple(zip(CARD_FIELDS, values, strict=True)) if len(values) == len(CARD_FIELDS) else ()
+
+
+def stage_progress(scenario: Scenario, marks: dict[str, str]) -> tuple[tuple[str, int, int], ...]:
+    """For each stage: its name, how many of its items are marked, and how many it has."""
+    progress = []
+    for stage in STAGES:
+        items = [item for item in scenario.items if item.stage == stage]
+        done = sum(1 for item in items if marks.get(item.item_id) == _expected_mark(item))
+        progress.append((stage, done, len(items)))
+    return tuple(progress)
 
 
 def open_stage(scenario: Scenario, marks: dict[str, str]) -> str | None:
@@ -139,6 +169,10 @@ def _items(*, imaging_required: bool, specimen_required: bool) -> tuple[CheckIte
         CheckItem("equipment", "Sign out", "State the equipment note on the card.", True),
         CheckItem("recovery", "Sign out", "State the recovery note on the card.", True),
     )
+
+
+def _expected_mark(item: CheckItem) -> str:
+    return MARK_DONE if item.required else MARK_NOT_ON_CARD
 
 
 def _stage_complete(scenario: Scenario, stage: str, marks: dict[str, str]) -> bool:

@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from collections.abc import Sequence
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol
 
 
 class OllamaError(RuntimeError):
@@ -63,6 +63,24 @@ class ChatResult:
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] | None = None
+
+
+class ChatClient(Protocol):
+    """What the answer path needs from a model: ``OllamaClient`` and the cloud clients in ``src.llm.cloud``."""
+
+    def chat_turn(
+        self,
+        model: str,
+        messages: Any,
+        *,
+        temperature: float = ...,
+        stream: bool = ...,
+        tools: list[dict[str, Any]] | None = ...,
+        format: dict[str, Any] | None = ...,
+        think: bool | None = ...,
+        max_tokens: int | None = ...,
+        timeout_s: float | None = ...,
+    ) -> ChatResult: ...
 
 
 ALLOW_REMOTE_ENV = "MOVER_ALLOW_REMOTE_OLLAMA"

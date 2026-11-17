@@ -57,7 +57,7 @@ def _isolate_paths(tmp_path, monkeypatch):
     clear_session_path_overrides()
 
 
-def test_apply_data_folder_updates_runtime_and_status(qapp, tmp_path):
+def test_apply_data_folder_updates_runtime_and_the_source_tooltip(qapp, tmp_path):
     from src.desktop.app import MainWindow
     from src.runtime_paths import emr_dir, processed_dir
 
@@ -76,8 +76,9 @@ def test_apply_data_folder_updates_runtime_and_status(qapp, tmp_path):
     assert emr_dir() == emr.resolve()
     assert processed_dir().name == "processed"
     status = win.statusBar().currentMessage()
-    assert str(emr.resolve()) in status
-    assert "EMR" in status
+    assert str(emr.resolve()) not in status
+    assert "EMR folder set" in status
+    assert str(emr.resolve()) in win._footer.source.toolTip()
     win.close()
     qapp.processEvents()
 
@@ -88,15 +89,11 @@ def test_apply_invalid_folder_keeps_status_paths(qapp, tmp_path, monkeypatch):
 
     # Avoid modal dialogs blocking tests
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
-        lambda *a, **k: None,
+        "src.desktop.error_card.ErrorCard.exec",
+        lambda *a, **k: 0,
     )
     monkeypatch.setattr(
         "src.desktop.app.QMessageBox.information",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.warning",
         lambda *a, **k: None,
     )
 
@@ -125,8 +122,8 @@ def test_pipeline_uses_selected_emr(qapp, synthetic_emr, tmp_path, monkeypatch):
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
-        lambda *a, **k: None,
+        "src.desktop.error_card.ErrorCard.exec",
+        lambda *a, **k: 0,
     )
 
     win = MainWindow()
@@ -161,7 +158,7 @@ def test_main_window_has_no_data_locations_sidebar(qapp):
 
 
 def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch):
-    """File > Open Wave folder saves the folder and refreshes the status bar (no crash)."""
+    """Open Wave folder saves the folder and refreshes the status bar (no crash)."""
     from src.desktop.app import MainWindow
     from src.runtime_paths import wave_dir
     from src.user_settings import load_settings
@@ -173,7 +170,7 @@ def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch
         lambda *a, **k: str(wave_root),
     )
     monkeypatch.setattr(
-        "src.desktop.app.QMessageBox.critical",
+        "src.desktop.error_card.ErrorCard.exec",
         lambda *a, **k: pytest.fail("unexpected error dialog"),
     )
 
@@ -187,6 +184,7 @@ def test_browse_wave_folder_sets_wave_dir_and_status(qapp, tmp_path, monkeypatch
     assert load_settings().get("wave_dir") == str(wave_root.resolve())
     status = win.statusBar().currentMessage()
     assert "Wave folder set" in status
-    assert str(wave_root.resolve()) in status
+    assert str(wave_root.resolve()) not in status
+    assert str(wave_root.resolve()) in win._footer.source.toolTip()
     win.close()
     qapp.processEvents()

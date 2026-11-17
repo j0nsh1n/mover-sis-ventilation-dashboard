@@ -112,7 +112,8 @@ def _research_idle(win: Any) -> bool:
     return (
         worker is not None
         and not worker.isRunning()
-        and win.research.ask_button.isEnabled()
+        # Send stays enabled while it is Stop, so the page's own running flag says when an answer is done.
+        and not win.research._searching
         and win._pending_case is None
         and win._queued_case is None
         and (case_worker is None or not case_worker.isRunning())
@@ -130,8 +131,9 @@ def ask(run: Run) -> dict[str, Any]:
         raise RuntimeError(status)
     if result is None or not result.candidates:
         raise RuntimeError(f"research returned no candidates: {status}")
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
-        "question": research.question_edit.text(),
+        "question": question,
         "candidates": len(result.candidates) if result is not None else 0,
         "rank_method": getattr(result, "rank_method", None),
         "model": research.selected_model(),
@@ -149,8 +151,8 @@ def open_case(run: Run) -> dict[str, Any]:
     run.wait(lambda: research.stack.currentIndex() == 1, "the signal detail view")
     return {
         "view": "detail",
-        "case": research.detail_title.text(),
-        "sample": research.sample_label.text(),
+        "case": f"{research.detail_context.text()} · {research.detail_title.text()}",
+        "sample": research.detail_chart.cursor_summary(),
     }
 
 
@@ -166,7 +168,7 @@ def return_to_question(run: Run) -> dict[str, Any]:
         raise RuntimeError("the signal detail view has no back button")
     back.click()
     run.wait(lambda: research.stack.currentIndex() == 0, "the evidence workspace")
-    question = research.question_edit.text()
+    question = research.conversation.turns[-1].question if research.conversation.turns else ""
     return {
         "view": "canvas",
         "question": question,
@@ -202,17 +204,17 @@ def slow_ollama_start(run: Run) -> dict[str, Any]:
     ticks: list[float] = []
     QTimer.singleShot(10, lambda: ticks.append(time.monotonic()))
     started = time.monotonic()
-    run.win.research.start_button.click()
+    run.win.research.start_action.trigger()
     run.win._ollama_start()
     run.wait(lambda: bool(ticks), "a GUI timer tick", timeout_s=0.1)
     assert ticks[0] - started < 0.1
-    assert not run.win.research.start_button.isEnabled()
+    assert not run.win.research.start_action.isEnabled()
     return {"timer_ms": round((ticks[0] - started) * 1000), "status": run.win.research.status_label.text()}
 
 
 def ollama_ready(run: Run) -> dict[str, Any]:
     run.wait(lambda: not run.win._ollama_worker.isRunning(), "the fake Ollama start")
-    assert run.win.research.start_button.isEnabled()
+    assert run.win.research.start_action.isEnabled()
     return {"status": run.win.research.status_label.text()}
 
 
@@ -231,7 +233,7 @@ def start_slow_search(run: Run) -> dict[str, Any]:
     run.win.research.ask_button.click()
     run.win.research.cancel_button.setFocus()
     run.wait(lambda: "Searching synthetic" in run.win.research.status_label.text(), "slow search progress")
-    assert run.win.research.reset_button.isEnabled()
+    assert run.win.research.conversation.reset_button.isEnabled()
     assert run.win.width() == 900
     return {"cancel_visible": run.win.research.cancel_button.isVisible(), "width": run.win.width()}
 
@@ -243,9 +245,10 @@ def cancel_search(run: Run) -> dict[str, Any]:
     research = run.win.research
     QTest.keyClick(research.cancel_button, Qt.Key.Key_Space)
     run.wait(lambda: _research_idle(run.win), "cooperative search cancellation")
-    assert research.question_edit.text() == run.question
+    assert research.conversation.turns[0].question == run.question
+    assert research.conversation.turns[-1].state == "cancelled"
     assert research.result is not None
-    return {"restored_question": research.question_edit.text(), "answer": research.answer_text.toPlainText()}
+    return {"restored_question": research.conversation.turns[0].question, "answer": research.answer_text.toPlainText()}
 
 
 def research_failure(run: Run) -> dict[str, Any]:
@@ -378,7 +381,7 @@ def open_rules_from_button(run: Run) -> dict[str, Any]:
     research = run.win.research
     run.win.activateWindow()
     run.settle()
-    research.rules_button.click()
+    run.win.rail.button("rules").click()
     run.settle()
     assert research.rules_drawer.is_open
     return _drawer_facts(run)
@@ -533,7 +536,7 @@ def f_facts(run: Run) -> dict[str, Any]:
         "selected_rule_id": research.selected_rule_id,
         "cursor_minute": float(research._minute_rows.iloc[research.minute_slider.value()]["t_min"]) if pid else None,
         "chart_minute": research.detail_chart._minute,
-        "rule_detail": research.rule_detail.text(),
+        "rule_detail": research.selected_rule_text(),
         "signal_statistics": research.signal_statistics,
         "chart_track_names": research.chart_track_names,
         "lane_marks": len(research.detail_chart.lane_marks),
@@ -621,19 +624,21 @@ def f_follow_up(run: Run) -> dict[str, Any]:
     research.follow_up_edit.setFocus()
     QTest.keyClicks(research.follow_up_edit, "What do the rows show at this minute?")
     QTest.keyClick(research.follow_up_edit, Qt.Key.Key_Return)
-    run.wait(lambda: research._follow_up_active is None and research.follow_up_answer.isVisible(),
-             "the follow-up answer")
-    answer = research.follow_up_answer.toPlainText()
-    label = research.follow_up_label.text()
+    # The answer lands in the conversation thread as a minute turn; the Signal page points to it.
+    run.wait(lambda: research._follow_up_active is None and len(research.conversation.turns) == turns + 1
+             and research.conversation.turns[-1].state != "running", "the follow-up answer")
+    turn = research.conversation.turns[-1]
+    answer = turn.answer
+    label = turn.context_label
     assert label == f"Minute {minute:g} · {pid}", label
     if research.selected_model():
         assert answer and "Asking" not in answer, answer
     else:
         assert answer == FOLLOW_UP_NO_MODEL, answer
-    assert len(research.conversation.turns) == turns
-    research.signal_scroll.ensureWidgetVisible(research.follow_up_answer)
+    pointer = research.follow_up_label.text()
+    assert pointer == f"Answered in the conversation · {label}", pointer
     run.settle()
-    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer,
+    return {**f_facts(run), "follow_up_label": label, "follow_up_answer": answer, "follow_up_pointer": pointer,
             "conversation_turns": len(research.conversation.turns)}
 
 
@@ -657,8 +662,9 @@ def _overview_facts(run: Run, rows: int = 3) -> dict[str, Any]:
     return {
         "page": research.stack.currentIndex(),
         "scope": overview.scope_label.text(),
-        "scope_switch_visible": overview.scope_combo.isVisibleTo(overview),
-        "scope_choices": [overview.scope_combo.itemText(i) for i in range(overview.scope_combo.count())],
+        "scope_switch_visible": overview.scan_tab.isVisibleTo(overview),
+        "scope_choices": [tab.text() for tab in (overview.sample_tab, overview.scan_tab)
+                          if tab.isVisibleTo(overview)],
         "table_visible": overview.table.isVisibleTo(overview),
         "empty_message": overview.empty_label.text() if overview.empty_label.isVisibleTo(overview) else "",
         "rows": overview._proxy.rowCount(),
@@ -673,7 +679,7 @@ def open_cases(run: Run) -> dict[str, Any]:
     run.win.resize(900, 860)
     run.settle()
     research = run.win.research
-    research.cases_button.click()
+    research.show_cases()
     run.settle()
     if research.stack.currentIndex() != 2:
         raise RuntimeError("one click on Cases did not open the overview")
@@ -691,15 +697,23 @@ def _click_header(run: Run, column: int) -> None:
     run.frame(STEP_HOLD_FRAMES)
 
 
-def _click_row(run: Run, row: int) -> str:
+def _open_row(run: Run, row: int) -> str:
+    """Open a row's case as a person does: one click selects it, then a double-click opens it."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     table = run.win.research._cases_overview.table
     pid = table.model().index(row, 0).data()
     center = table.visualRect(table.model().index(row, 0)).center()
+    viewport, none = table.viewport(), Qt.KeyboardModifier.NoModifier
+    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, none, center)
+    run.settle()
+    overview = run.win.research._cases_overview
+    if overview.preview.kicker.text() != f"Preview · {pid}" or run.win.research.stack.currentIndex() != 2:
+        raise RuntimeError(f"one click did not only select {pid}: {overview.preview.kicker.text()!r}")
     run.frame(STEP_HOLD_FRAMES)
-    QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center)
+    QTest.mouseDClick(viewport, Qt.MouseButton.LeftButton, none, center)
+    QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, none, center)
     return str(pid)
 
 
@@ -721,11 +735,11 @@ def sort_cases_by_score(run: Run) -> dict[str, Any]:
 
 def open_top_case(run: Run) -> dict[str, Any]:
     research = run.win.research
-    pid = _click_row(run, 0)
+    pid = _open_row(run, 0)
     run.wait(lambda: research.stack.currentIndex() == 1 and _case_loaded(run.win), "the signal detail view")
-    if pid not in research.detail_title.text():
-        raise RuntimeError(f"F opened {research.detail_title.text()!r}, not {pid}")
-    return {"pid": pid, "detail": research.detail_title.text(), "back": research.back_button.text()}
+    if pid not in research.detail_context.text():
+        raise RuntimeError(f"F opened {research.detail_context.text()!r}, not {pid}")
+    return {"pid": pid, "detail": research.detail_context.text(), "back": research.back_button.text()}
 
 
 def sample_pipeline(run: Run) -> dict[str, Any]:
@@ -741,12 +755,12 @@ def full_scan(run: Run) -> dict[str, Any]:
 
 
 def switch_to_scan_scope(run: Run) -> dict[str, Any]:
-    run.win.research.cases_button.click()
+    run.win.research.show_cases()
     run.settle()
     overview = run.win.research._cases_overview
-    if overview.scope_combo.count() < 2:
+    if not overview.scan_tab.isVisibleTo(overview):
         raise RuntimeError("the scope switch does not offer the scan")
-    overview.scope_combo.setCurrentIndex(1)
+    overview.scan_tab.click()
     run.settle()
     return _overview_facts(run)
 
@@ -760,7 +774,7 @@ def request_scan_only_case(run: Run) -> dict[str, Any]:
     )
     if row is None:
         raise RuntimeError("every scanned case is also in the loaded sample")
-    pid = _click_row(run, row)
+    pid = _open_row(run, row)
     facts = {
         "pid": pid,
         "in_sample": pid in sample,
@@ -856,7 +870,9 @@ def conversation_ask(run: Run, *, question: str, narrow: bool = False, expect_em
         assert panel_top >= board_bottom - 2, (panel_top, board_bottom, geometry)
         assert research.conversation.height() >= 180
         assert research.board_scroll.height() >= 250
-        assert widget.show_button.isVisible() and widget.show_button.isEnabled()
+        # The turn just asked is the one on the board, so its button reads On board.
+        assert widget.show_button.isVisible()
+        assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
         assert research.question_edit.isEnabled()
         facts.update(width=run.win.width(), panel_below_board=True, panel_top=panel_top, board_bottom=board_bottom, geometry=list(geometry or ()))
     return facts
@@ -873,7 +889,7 @@ def conversation_restore(run: Run) -> dict[str, Any]:
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == scope
-    assert research.question_edit.text() == first.question
+    assert research.conversation.turn_widgets[first.request_id].question_label.text() == first.question
     return {**facts, "restored_first_shortlist": True}
 
 
@@ -901,7 +917,7 @@ def prototype_ask(run: Run) -> dict[str, Any]:
         expected = ({"analyzed case"} if candidate.pid in analyzed
                     else {"indexed surgery", "indexed surgery · no ventilator data"})
         assert label in expected, (candidate.pid, label)
-    assert [research.candidate_table.item(row, 2).text() for row in range(len(candidates))] == labels
+    assert [research.candidate_table.item(row, 4).text() for row in range(len(candidates))] == labels
     research.candidate_table.setCurrentCell(0, 0)
     research._select_candidate(0)
     run.wait(lambda: _case_loaded(run.win), "the top prototype candidate")
@@ -986,7 +1002,7 @@ def prototype_open(run: Run, *, signal: str) -> dict[str, Any]:
             if not inside.empty:
                 gaps[str(pid)] = [float(value) for value in inside]
         facts.update(first_missing_minute=first_missing, internal_etco2_gaps=gaps)
-    research.signal_scroll.ensureWidgetVisible(research.minute_label)
+    research.signal_scroll.ensureWidgetVisible(research.minute_stamp)
     return facts
 
 
@@ -1045,7 +1061,7 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
     research.cancel_button.click()
     run.wait(lambda: _research_idle(run.win), "the cancelled conversation request")
     assert research.conversation.turns[-1].state == "cancelled"
-    assert research.question_edit.text() == previous.question
+    assert previous.question == research.conversation.turns[0].question
     facts = conversation_facts(run)
     assert facts["shortlist_pids"] == expected
     assert facts["scope"] == previous.board.labels[1]
@@ -1053,17 +1069,25 @@ def conversation_cancel(run: Run) -> dict[str, Any]:
 
 
 def import_articles(run: Run) -> dict[str, Any]:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QFileDialog
 
     original = QFileDialog.getOpenFileName
     QFileDialog.getOpenFileName = lambda *args, **kwargs: (str(ROOT / "tests/fixtures/articles_sample.jsonl"), "")
     try:
-        menu = next(a.menu() for a in run.win.menuBar().actions() if a.text() == "&File")
-        next(a for a in menu.actions() if a.text() == "Import articles…").trigger()
+        # The File menu is gone: Ctrl+K lists the command, and Enter runs it after the palette closes
+        QTest.keyClick(run.win, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
+        run.settle()
+        palette = run.win._palette
+        assert palette is not None
+        QTest.keyClicks(palette.search, "Import articles")
+        QTest.keyClick(palette.search, Qt.Key.Key_Return)
+        run.settle()
     finally:
         QFileDialog.getOpenFileName = original
     research = run.win.research
-    research.scope_combo.setCurrentText("Articles")
+    research.scope_switch.set_scope("Articles")
     assert run.win._article_catalog.count == 12
     assert research.scope_label.text() == "Articles: 12 in the local catalog"
     return {"scope": research.scope_label.text(), "imported": 12}
@@ -1092,11 +1116,11 @@ def workspace_charts(run: Run) -> dict[str, Any]:
     research = run.win.research
     research.show_cases()
     overview = research._cases_overview
-    assert not overview.charts_button.isChecked()
-    overview.charts_button.click()
     run.settle()
-    assert overview.charts_panel.isVisible() and not overview._charts_dirty
-    return {"view": "cases", "charts_expanded": True, "scope": overview.scope_label.text()}
+    charts = (overview.score_block, overview.rules_block, overview.duration_block)
+    assert overview.charts_panel.isVisible() and all(not block.chart.rendered().isNull()
+                                                    for block in charts if block.chart.has_chart())
+    return {"view": "cases", "charts_shown": True, "scope": overview.scope_label.text()}
 
 
 def workspace_signal(run: Run) -> dict[str, Any]:
@@ -1319,10 +1343,8 @@ def install_llm(mode: str, drafts: Sequence[str]) -> None:
     models = [SCRIPTED_MODEL] if mode == "scripted" else []
 
     def refresh_models(self: Any, **_kwargs: Any) -> None:
-        self.research.model_combo.clear()
-        self.research.model_combo.addItems(models or ["(Ollama stopped — click Start)"])
-        self.research.model_status.setText(f"Ollama: replaced by the driver (--llm {mode})")
-        self.research.set_models(models, models[0] if models else None)
+        self.research.set_model_status(f"Ollama: replaced by the driver (--llm {mode})")
+        self.research.set_models(models, models[0] if models else None, placeholder="(Ollama stopped — choose Start Ollama)")
 
     def client_factory(*_args: Any, **_kwargs: Any) -> ScriptedChatClient:
         return ScriptedChatClient(drafts)
@@ -1362,11 +1384,20 @@ def record_dialogs(run: Run) -> None:
     kinds = {QMessageBox.Icon.Warning: "warning", QMessageBox.Icon.Critical: "critical"}
 
     def open_box(box: Any) -> None:
-        kind = kinds.get(box.icon(), "information")
-        run.dialogs.append({"kind": kind, "title": box.windowTitle(), "text": box.text()})
+        kind = getattr(box, "level", None) or kinds.get(box.icon(), "information")
+        text = box.words() if hasattr(box, "words") else box.text()
+        run.dialogs.append({"kind": kind, "title": box.windowTitle(), "text": text})
         box.close()
 
     QMessageBox.open = open_box
+
+    from src.desktop.error_card import ErrorCard
+
+    def exec_card(card: Any) -> int:
+        run.dialogs.append({"kind": card.level, "title": card.windowTitle(), "text": card.words()})
+        return 0
+
+    ErrorCard.exec = exec_card
 
 
 def _scrub(value: Any, replacements: Sequence[tuple[str, str]]) -> Any:
@@ -1414,10 +1445,12 @@ def _app() -> Any:
 
 def reject_emr(out: Path, reason: str) -> None:
     """Show the setup wizard the app would open, so the failure has a screenshot."""
-    from src.desktop.settings_ui import SetupWizard
+    from src.__version__ import get_version
+    from src.desktop.setup_flow import SetupFlow
 
     app = _app()
-    wizard = SetupWizard()
+    wizard = SetupFlow(get_version())
+    wizard.resize(1100, 760)
     wizard.show()
     app.processEvents()
     wizard.grab().save(str(out / "setup.png"))

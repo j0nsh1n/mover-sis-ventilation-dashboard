@@ -7,8 +7,10 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QPalette
+from collections import Counter
+
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -88,7 +90,7 @@ def test_turn_states_and_exact_gated_text(view, state, answer, failure):
     widget = view.conversation.turn_widgets[1]
     assert turn.state == state
     assert turn.model == "test-model"
-    assert widget.badge_label.text() == "test-model"
+    assert widget.badge_label.text().startswith("Question 1 · test-model")
     assert turn.answer == answer
     assert view.answer_text.toPlainText() == answer
     if failure:
@@ -152,7 +154,7 @@ def test_show_on_board_restores_shortlist_scope_selection_and_comparison(view):
     view.set_searching(False)
     view.conversation.turn_widgets[1].show_button.click()
     assert view.result is first
-    assert [view.candidate_table.item(i, 0).text() for i in range(2)] == ["caseA", "caseB"]
+    assert [view.candidate_table.item(i, 1).text() for i in range(2)] == ["caseA", "caseB"]
     assert view.scope_label.text() == scope
     assert view._selected_pid == "caseB"
     assert view.candidate_table.currentRow() == 1
@@ -209,7 +211,8 @@ def test_cancel_keeps_turn_and_restores_previous_board(window):
     win._on_research_shortlist(result("caseB"), win._active_research_request)
     win._cancel_research()
     assert [turn.state for turn in win.research.conversation.turns] == ["answered", "cancelled"]
-    assert win.research.question_edit.text() == "first"
+    assert win.research.conversation.turns[0].question == "first"
+    assert win.research.composer.text() == ""
     assert win.research.result.candidates[0].pid == "caseA"
     assert win.research.scope_label.text() == scope
 
@@ -243,7 +246,7 @@ def test_splitter_stacks_below_board_under_1100(view, qapp, width, orientation):
         panel_left = view.conversation.mapTo(view, QPoint(0, 0)).x()
         board_right = view.board_scroll.mapTo(view, QPoint(0, 0)).x() + view.board_scroll.width()
         assert panel_left >= board_right - 2
-        assert 300 <= view.conversation.width() <= 380
+        assert 460 <= view.conversation.width() <= 500
 
 
 def test_reset_clears_thread_and_board_and_drops_late_answers(window, monkeypatch):
@@ -251,7 +254,7 @@ def test_reset_clears_thread_and_board_and_drops_late_answers(window, monkeypatc
     monkeypatch.setattr(ResearchWorkspace, "_confirm_reset", lambda self: True)
     win._start_research_search("reset this")
     request = win._active_research_request
-    win.research.reset_button.click()
+    win.research.conversation.reset_button.click()
     win._on_research_answer(SimpleNamespace(answer="late answer"), request)
     assert win.research.conversation.turns == []
     assert win.research.conversation.turn_widgets == {}
@@ -298,29 +301,48 @@ def test_turn_controls_are_keyboard_reachable_with_contrasting_text(view, qapp, 
     view.activateWindow()
     qapp.processEvents()
     widget = view.conversation.turn_widgets[1]
-    controls = [widget.show_button, widget.ask_button, *widget.citation_buttons]
+    # On board is disabled, so Tab skips it. The other turn controls stay reachable.
+    assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
+    controls = [widget.copy_button, widget.ask_button, widget.sources_toggle]
     reached = set()
-    view.question_edit.setFocus()
+    view.composer.setFocus()
     for _ in range(100):
         QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
         reached.add(view.focusWidget())
+    assert widget.show_button not in reached
     assert all(control in reached for control in controls)
-    assert "QWidget#conversationPage QPushButton:focus" in view.styleSheet()
+    assert widget.citation_buttons[0] not in reached, "a folded source is not in the tab order"
+    widget.sources_toggle.click()
+    qapp.processEvents()
+    opened = set()
+    view.composer.setFocus()
+    for _ in range(100):
+        QTest.keyClick(view.focusWidget(), Qt.Key.Key_Tab)
+        opened.add(view.focusWidget())
+    assert widget.citation_buttons[0] in opened
+    # The focus rings come from the app stylesheet's tokens, not from a per-page copy.
+    for rule in ("QPushButton#citationLink:focus", "QPushButton#linkBtn:focus", "QTextBrowser#turnAnswer:focus"):
+        assert rule in qapp.styleSheet(), rule
 
     def luminance(color):
         rgb = [color.redF(), color.greenF(), color.blueF()]
         channels = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
         return sum(c * weight for c, weight in zip(channels, (0.2126, 0.7152, 0.0722), strict=True))
 
-    for control, fg, bg in [
-        (widget.question_label, QPalette.ColorRole.WindowText, QPalette.ColorRole.Window),
-        (widget.answer_text, QPalette.ColorRole.Text, QPalette.ColorRole.Base),
-        (widget.show_button, QPalette.ColorRole.ButtonText, QPalette.ColorRole.Button),
-    ]:
-        control.ensurePolished()
-        background = widget.palette().color(bg) if control is widget.question_label else control.palette().color(bg)
-        colors = sorted([luminance(control.palette().color(fg)), luminance(background)])
-        assert (colors[1] + 0.05) / (colors[0] + 0.05) >= 4.5
+    def contrast(first, second):
+        high, low = sorted((luminance(first), luminance(second)), reverse=True)
+        return (high + 0.05) / (low + 0.05)
+
+    # Read what is drawn: the text colour is the pixel furthest from the background colour.
+    panel = view.conversation
+    frame = panel.grab().toImage().convertToFormat(QImage.Format.Format_RGB32)
+    for control in (widget.question_label, widget.answer_text, widget.copy_button, widget.citation_buttons[0]):
+        origin = control.mapTo(panel, control.rect().topLeft())
+        crop = frame.copy(QRect(origin, control.size()))
+        pixels = Counter(memoryview(bytes(crop.constBits())).cast("I"))
+        background = QColor.fromRgb(pixels.most_common(1)[0][0])
+        text = max((QColor.fromRgb(pixel) for pixel in pixels), key=lambda color: contrast(color, background))
+        assert contrast(text, background) >= 4.5, (theme, control.objectName() or control.text(), background.name(), text.name())
     apply_theme(qapp, "light")
 
 
@@ -367,7 +389,9 @@ def test_reload_during_a_running_question_fails_it_and_frees_the_buttons(view):
     assert turn.state == "failed"
     assert turn.failure == "Processed data was reloaded during this question."
     assert turn.failure in widget.state_label.text()
-    assert widget.show_button.isEnabled() and widget.ask_button.isEnabled()
+    # The failed turn's shortlist is still the board, so Show stays On board. Ask is free again.
+    assert widget.show_button.text() == "On board" and not widget.show_button.isEnabled()
+    assert widget.ask_button.isEnabled()
     assert cancelled == [True]
     assert not view._searching
     view.set_answer("late answer", 1)
@@ -408,7 +432,7 @@ def test_new_question_clears_the_board_and_keeps_the_thread(view, qapp):
     assert view.focusWidget() is view.question_edit
     assert view.conversation.turns[1].board.result is not None
     view.conversation.turn_widgets[1].show_button.click()
-    assert [view.candidate_table.item(0, 0).text()] == ["caseA"]
+    assert [view.candidate_table.item(0, 1).text()] == ["caseA"]
 
 
 def _answer_box(monkeypatch, button):
@@ -426,13 +450,13 @@ def _answer_box(monkeypatch, button):
 def test_reset_asks_first_and_cancel_keeps_everything(view, monkeypatch):
     _answered_turn(view, 1, "first", "caseA")
     boxes = _answer_box(monkeypatch, "Cancel")
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert boxes == [("Clear the conversation and the board?", ["Cancel", "Clear"], "Cancel")]
     assert len(view.conversation.turns) == 1
     assert view.result is not None and view.candidate_table.rowCount() == 1
     assert view._primary_pid == "caseA"
     boxes = _answer_box(monkeypatch, "Clear")
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert len(boxes) == 1
     assert view.conversation.turns == [] and view.conversation.turn_widgets == {}
     assert view.result is None and view.candidate_table.rowCount() == 0
@@ -441,7 +465,7 @@ def test_reset_asks_first_and_cancel_keeps_everything(view, monkeypatch):
 def test_reset_with_an_empty_thread_does_not_ask(view, monkeypatch):
     boxes = _answer_box(monkeypatch, "Cancel")
     view.question_edit.setText("typed only")
-    view.reset_button.click()
+    view.conversation.reset_button.click()
     assert boxes == []
     assert view.question_edit.text() == ""
 

@@ -15,7 +15,7 @@ def test_desktop_package_exports_main():
 
 def test_chart_view_import():
     try:
-        from src.desktop.charts import ChartView, top_cases_figure  # noqa: F401
+        from src.desktop.charts import ChartView, score_histogram_figure  # noqa: F401
     except Exception as e:
         pytest.skip(f"Qt/matplotlib unavailable: {e}")
 

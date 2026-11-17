@@ -125,17 +125,17 @@ def _scope_line(session: SessionState, scope: str, requested: str | None = None)
     if emr:
         line += f" ({emr})"
     if str(requested or "").lower() == SCOPE_FULL:
-        line += ". A full-EMR scan was requested but none is loaded (File → Scan full EMR)"
+        line += ". A full-EMR scan was requested but none is loaded (press Ctrl+K and choose Scan full EMR)"
     elif session.has_corpus_scan():
         line += ". A full-EMR scan is loaded; pass scope='full' to use it"
     else:
-        line += ". No full-EMR scan loaded (File → Scan full EMR)"
+        line += ". No full-EMR scan loaded (press Ctrl+K and choose Scan full EMR)"
     return line + "."
 
 
 def tool_corpus_overview(session: SessionState, **_kwargs: Any) -> str:
     cases = session.cases
-    no_data = "NO_DATA: No processed cases loaded. User must load/run the pipeline (File → Reload processed data or Run pipeline)."
+    no_data = "NO_DATA: No processed cases loaded. User must load/run the pipeline (press Ctrl+K and choose Reload processed data or Run pipeline)."
     if (cases is None or cases.empty) and not session.has_corpus_scan():
         return no_data
     scope = _resolve_scope(session, "auto")

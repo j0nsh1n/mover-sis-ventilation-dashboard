@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from src.desktop.app import MainWindow, PipelineWorker, CorpusScanWorker
-from src.desktop.settings_ui import SettingsDialog, PathsForm
+from src.desktop.settings_page import SettingsPage
 from src.runtime_paths import clear_session_path_overrides, set_session_paths
 from src.user_settings import load_settings, update_settings
 
@@ -31,19 +31,6 @@ def settings(monkeypatch, tmp_path, synthetic_emr):
     clear_session_path_overrides()
 
 
-@pytest.mark.parametrize("saved,expected", [
-    ("default", "default"), ("lenient", "lenient"), ("strict", "strict"),
-    ("unknown", "default"), (None, "default"),
-])
-@pytest.mark.parametrize("compact", [False, True])
-def test_shared_form_loads_saved_preset(qapp, saved, expected, compact):
-    update_settings(preset=saved)
-    form = PathsForm(compact=compact)
-    assert form.combo_preset.currentData() == expected
-    assert [form.combo_preset.itemText(i) for i in range(3)] == ["Default", "Lenient", "Strict"]
-    form.close()
-
-
 @pytest.mark.parametrize("loaded", [False, True])
 def test_saving_strict_sets_next_runs_and_keeps_the_loaded_datas_preset(qapp, monkeypatch, loaded):
     monkeypatch.setattr(MainWindow, "_startup", lambda self: None)
@@ -52,12 +39,11 @@ def test_saving_strict_sets_next_runs_and_keeps_the_loaded_datas_preset(qapp, mo
     if loaded:
         win.cases = pd.DataFrame()
     applied = []
-    dialog = SettingsDialog(win)
-    dialog.settings_applied.connect(applied.append)
-    dialog.settings_applied.connect(win._on_settings_applied)
-    dialog.form.combo_preset.setCurrentIndex(dialog.form.combo_preset.findData("strict"))
-    dialog._save()
-    assert dialog.result() == dialog.DialogCode.Accepted
+    page = SettingsPage()
+    page.settings_applied.connect(lambda vals, _changed: applied.append(vals))
+    page.settings_applied.connect(lambda vals, _changed: win._on_settings_applied(vals))
+    page.combo_preset.setCurrentIndex(page.combo_preset.findData("strict"))
+    assert page.save() is True
     assert applied[0]["preset"] == load_settings()["preset"] == "strict"
     assert win._next_run_preset() == "strict"
     # Loaded data keeps its recorded preset; with no data, research fetches follow the saved one.

@@ -170,3 +170,45 @@ def test_tab_leaves_answer_and_rendered_height_fits(qapp):
     assert qapp.focusWidget() is next_button
     root.close()
     root.deleteLater()
+
+
+@pytest.mark.parametrize(("markdown", "expected"), [
+    ("Cases:\n\n1. a\n2. b", "Cases:\n\n1. a\n2. b"),
+    ("1. a\n2. b\n\n- c\n- d", "1. a\n2. b\n- c\n- d"),
+    ("1. a\n   1. x\n   2. y\n2. b", "1. a\n  1. x\n  2. y\n2. b"),
+    ("- outer\n  - inner\n- outer2", "- outer\n  - inner\n- outer2"),
+    ("```\ndef f():\n    return 1\n\n    x\n```", "def f():\n    return 1\n\n    x"),
+    # Qt keeps a hard line break as its own paragraph, and shows it as one.
+    ("Title\n\nline one  \nline two", "Title\n\nline one\n\nline two"),
+    ("Para.\n\n    indented code\n        deeper\n\nAfter.", "Para.\n\nindented code\n    deeper\n\nAfter."),
+    ("a&nbsp;b", "a b"),
+    ("", ""),
+])
+def test_plain_text_keeps_what_the_reader_sees(qapp, markdown, expected):
+    from src.desktop.answer_markdown import plain_text
+
+    assert plain_text(markdown) == expected
+
+
+_TABLE_ANSWER = "Rows near the minute:\n\n| t_min | PIP (cmH2O) |\n|---|---|\n| -45 | 38 |\n| -44 | 39 |\n\nPIP rose."
+
+
+def test_a_pipe_table_renders_as_a_table_not_raw_text(qapp):
+    view = MarkdownAnswer()
+    view.append_markdown(_TABLE_ANSWER)
+    tables = [frame for frame in view.document().rootFrame().childFrames() if hasattr(frame, "cellAt")]
+    assert len(tables) == 1 and (tables[0].rows(), tables[0].columns()) == (3, 2)
+    assert tables[0].cellAt(1, 0).firstCursorPosition().block().text() == "-45"
+    assert "|" not in view.toPlainText()
+
+
+def test_a_copied_table_keeps_its_rows():
+    from src.desktop.answer_markdown import plain_text
+
+    assert plain_text(_TABLE_ANSWER) == "Rows near the minute:\n\nt_min | PIP (cmH2O)\n-45 | 38\n-44 | 39\n\nPIP rose."
+
+
+def test_a_bare_web_address_stays_text(qapp):
+    view = MarkdownAnswer()
+    view.append_markdown("Visit http://example.com or www.example.com now.")
+    assert "<a " not in view.toHtml() and view.toPlainText() == "Visit http://example.com or www.example.com now."

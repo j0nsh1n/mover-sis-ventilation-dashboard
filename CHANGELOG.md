@@ -9,6 +9,35 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming. Research answers are a chat thread: the ask box sits at the bottom, with Cases/Articles and the AI menu beside it. Each turn folds Sources and Checks (amber when a check found a problem). Clear board empties the evidence and keeps the thread; New thread clears both. A minute question from the Signal page is a turn in that thread.
+
+- Cloud answers, while the local model is worked on: the research page's AI menu
+  lists Ollama's models, the Claude API's models (asked from the API), Claude Code
+  and Codex, grouped by service; a pick answers from the next question on and is
+  remembered. Rows that cannot answer now are greyed out with the reason (no key,
+  command not found, off for real cases). The Claude API key is pasted in Settings,
+  AI and kept in the system password store (KWallet / Secret Service, Windows
+  Credential Manager), never in the settings file; an exported `ANTHROPIC_API_KEY`
+  comes first. The CLIs answer with their own logins: an exported API key is not
+  passed to them. Each answer names the service and passes the same answer check. Real MOVER cases are not sent
+  unless real-data sending is switched on in Settings; then they go trimmed (case
+  aliases, 5-year age bands, minutes from incision, no clock times). Every cloud
+  answer is logged on this computer for training a local model, in the settings
+  folder's `ai-log`. The menu, the Settings section and the strings that point
+  there are named AI; Start, Stop and Unload name Ollama. A long Claude API list
+  keeps the first four models inline and puts the rest under More Claude API models.
+  When real MOVER cases are not sent, the menu shows one line instead of one per service.
+
+- Fictional demo data: setup (on first run, or "Run data setup…" in Settings)
+  offers "Try with fictional demo data", which builds a small invented dataset on this computer so the app
+  can be tried without the MOVER dataset. While it is in use, the top bar, the
+  footer, Settings and About say it is fictional demo data. Choosing a real EMR
+  folder in Settings removes the label and leaves the demo folder in place.
+  Each answer in Conversation says which data it was asked on, and copied
+  answers carry that line, so an answer keeps its label after a switch. Settings
+  refuses a demo EMR folder with a real processed folder, or the reverse; if
+  such a mix comes from elsewhere, the app names the data fictional.
+
 - View can open Handoff practice, Medication and vitals, or a fictional WHO
   checklist. Monitoring still opens first. Handoff practice grades fictional
   timelines as mentioned, missed, or unsupported. The medication page shows
@@ -20,6 +49,132 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   workspace, menus, and Settings gear stay in place.
 
 ### Changed
+
+- Cloud answers on real cases send less. The procedure goes as a category from a fixed list (for example Spine or Urology), never its text. More typed ages go as five-year bands ("he is 47", "60 yr-old", "47/F", "47 years of age"); weights, percentages and degrees next to them are left alone. For real cases the training log keeps only what went out and came back, not the question and answer as shown. Codex runs with its shell, file, browser, app, plugin and web-search tools switched off by name, in a fresh private folder outside the settings folder, and its answer is used only when its run shows a finished turn of text alone. An article question asked on real data sends its typed question and earlier turns trimmed like a case question (case numbers replaced, ages banded, no dates or times); the article abstracts go as published. It is logged as it was sent. The Claude API's note in the AI menu says another Claude model may answer a question the chosen one declines.
+- Research thread: each answer's number, service, state and data name share one quiet line. In a narrow window, Sources, Checks and the turn's buttons sit above the answer so they show without scrolling. Tab goes through the evidence board before the thread. Switching to another data folder starts a new thread; reloading the same folder keeps it.
+
+- New look, Settings and setup: Settings is a page of the window (left
+  navigation, Ctrl+, or Ctrl+K) instead of a dialog. Nothing is written until
+  Save; leaving with unsaved changes asks whether to save, discard or stay; a
+  save that is refused changes nothing and says why. Data setup moved from the
+  Local AI menu to Settings and Ctrl+K. First-time setup fills the window in
+  three steps (welcome, data, done) and can be left with "Not now". About shows
+  the version, license, font credits and the data in use. Failures show in one
+  restyled error box that says what failed, why, what to do next, and keeps the
+  code and log location folded away.
+
+- New look, rule reference: the Rules drawer uses the same colors as the other
+  pages (it was light in dark mode), groups the rules by signal with counts, and
+  shows each rule's shape and severity word, thresholds, hold time, skipped
+  phases and a threshold ruler. A rule with no single limit says why it has no
+  ruler. Opened from an episode, it scrolls to that episode's rule and marks it
+  in words as the rule of the selected episode. A screen reader reads each rule
+  as one sentence.
+
+- New look, Medication and vitals: drugs and vital signs are drawn on one
+  minute axis (a mark for a bolus, a bar for an infusion, missing readings
+  hatched and labelled, never joined across or drawn as zero) with a cursor, and
+  "Rows only" shows the same data as a table with a unit column and record
+  notes. A dose whose end is before its start is marked as such. With a case
+  open in Research the page shows that case, and the top bar and footer then
+  name the data in use instead of saying the page is invented.
+
+- New look, WHO checklist: the checklist is an index card with one tab per stage
+  that counts its marked lines ("Sign in 4 of 6"), real check boxes that work
+  from the keyboard, and Reset card.
+
+- Handoff grading: a negation word (no, not, never, without, denies, denied) now
+  denies a finding only inside its own sentence, so "Stable, no distress.
+  Hypotension from minute 10 to 16" counts the hypotension. A sentence ends at a
+  full stop, question mark, exclamation mark, semicolon or line break. The
+  "Situation awareness and contingency plans" box is saved but not graded, and
+  the page says so. A value is read for the measurement it follows, up to the
+  next measurement, drug or dose, so "SpO2 98, MAP 60" no longer reads 60 as the
+  SpO2. A written minute ("minute 21", "minutes 10 to 16", "minutes 0, 1, 2") is
+  never read as a value: "SpO2 86 at minute 21" and "SpO2 at minute 21 was 86"
+  both read 86.
+
+- Cases page: the preview is narrower and stays beside the list in the default
+  window (in a narrower window it sits under the list), with rule names wrapping instead of being cut; filtering a full-EMR
+  scan no longer pauses on every key; rules tied for the last place in the
+  rules chart are all shown.
+
+- New look, Handoff practice: the page shows the invented timeline on the left
+  as a chart (arterial MAP, noninvasive MAP and SpO2, a track with no readings
+  hatched and marked "no samples", traces that break at missing minutes, and a
+  lane of drug doses: a mark for a bolus, a bar for an infusion) and "Your
+  handoff" on the right, in light and dark. "Show as table" swaps the chart for
+  the same timeline minute by minute. The handoff has one text box for each I-PASS
+  section: Illness severity, Patient summary, Action list, Situation awareness
+  and contingency plans, and Synthesis by receiver. Checking an empty handoff
+  saves nothing. Feedback says "Matches the timeline", "Not on the timeline" or
+  "Left out" for each item, starts with "2 of 3 found", and a Show link marks the
+  item's minutes on the chart and in the table. Try again keeps your text; Next
+  fictional run moves to the next run and clears the boxes. History lists past
+  attempts, newest first. Attempts now keep the five sections apart as well as
+  the joined text; earlier attempts still load. Two grading rules changed; see
+  the Handoff grading entry below.
+
+- New look, Cases page: the list of cases uses the same paper and night ledger
+  colors as the other pages, in light and dark. The header is the title, one
+  sentence that stays true for what is on screen ("21 of 28 analyzed cases have
+  rule episodes · sorted by anomaly score"), a line stating the scope (the loaded
+  sample, or the full-EMR scan with the indexed-surgery count), "Analyzed" and
+  "Indexed" as text tabs, and a filter. Press / anywhere on the page to type in
+  the filter; it keeps the cases whose case ID, procedure or rule name contains
+  the text, says how many of how many show, and Escape clears it before Escape
+  goes back. The three summary charts (anomaly score per case, most frequent rules
+  by flagged minutes, surgery duration with its median) are always shown, drawn in
+  ink with a caption that says what they count; they describe every case in the
+  scope, not just the filtered ones. The table has no frame or grid lines, numbers
+  line up under right-aligned headings, a zero count is muted text, and the
+  anomaly score has a short bar scaled to the largest score in view. The table
+  shows nine columns (PID, Procedure, Age, Sex, Duration, Anomaly score, Warn
+  count, Critical count, Top rules) and never scrolls sideways: Procedure and Top
+  rules shorten with "…" (the full text is in the tooltip) and a heading wraps to
+  two lines before it is cut. Primary agent and the median tidal volume, PIP and
+  ETCO₂ moved out of the table into the preview, where they are listed as "label:
+  value" facts ("missing" when a case has none) and can no longer be sorted on.
+  A click on a row selects it; Enter, a double-click or Open case opens the case.
+  A preview panel at the right (under the list when the page is narrow) follows the
+  current row: procedure, duration, age, sex, small PIP, ETCO₂ and heart-rate
+  traces from data already loaded, its rule episodes, those facts and Open case.
+  For a case whose minutes are not loaded, such as one only the full-EMR scan
+  knows, it says signals show when the case is opened. The "Charts" button and the
+  scope drop-down are gone. Below about 800 px of page width the page itself
+  scrolls sideways, because nine columns no longer fit. When a full-EMR scan
+  scored no cases, the page now says to press Ctrl+K and choose Scan full EMR.
+
+- New look, case page: the page that shows one case now uses the same paper
+  and night ledger colors as the research page, in light and dark. The header
+  is the procedure with one line of facts (surgery or recording length, age, sampling, rule
+  preset and its 12-character hash, number of rule episodes) and the selected
+  minute at the right. The chart has no boxes: each track shows its name, unit
+  and the value at the cursor (or "missing"), every gap inside a recorded span is
+  hatched and says "no samples" where there is room, incision and closure are
+  dotted lines, and the rule episodes sit under the tracks as hatched bands
+  that you can click. The source row, rule episodes and selected rule are in a
+  panel at the right (below the chart when the window is narrow). The selected
+  rule has a threshold ruler that shows its limits and where the episode's
+  extreme fell. Back says where it returns, "More signals" is "+ Track", and the
+  keys line lists only keys that work. With the chart focused, Left and Right
+  move one minute, Shift with them ten, and E goes to the next rule episode.
+  Tab into the rule episodes list changes nothing; an arrow key, Enter or Space
+  picks an episode.
+
+- Narrow windows: the header never cuts its research-only line. The page path
+  and Find give up room first; then the line reads "Not for patient care" (on
+  practice pages, "Fictional practice"). The full sentence stays in the tooltip.
+  Footer fields shorten by whole words with "…" or hide. The window can now
+  shrink to fit a small screen at 200% scaling.
+
+- New look, first step: warm paper (light) and "night ledger" (dark) colors with
+  one indigo accent, Inter and Charter fonts bundled with the app, quieter
+  controls and tables, and a 2 px accent focus ring on every control that can
+  take focus. Rule flags are one ink in every theme: a circle, triangle or
+  diamond with the words info, warn or critical beside it, never red, amber or
+  blue. Missing values in the medication and vitals table and in the source
+  samples window are hatched and keep their text. Layouts are unchanged.
 
 - The app is now called MOVER Suite. The window title reads "MOVER Suite" with
   the version; About, the setup wizard, update messages, the menu entry, and
@@ -35,6 +190,36 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- On Windows, a long folder path in a Settings note now wraps instead of widening the page so it scrolls sideways. Copying the note still gives the path exactly as typed.
+- A real data folder placed inside the demo folder no longer saves its analyzed cases into the demo's own folder. It gets a folder of its own beside it, so its cases are never labelled fictional and the real-data lock on cloud answers applies to them.
+- The research thread keeps a minute question running when you leave the signal page for the conversation, and that page's "Answered in the conversation" line opens the turn. Source-row columns fit the board. The Evidence heading names the question on the board, and that turn's button reads On board. Trace the evidence no longer prints Ctrl+Enter on the button (the shortcut stays in the tip), so Send and Stop stay the same height. The model line sits under the composer and the search line sits under Evidence. A narrow window gives the thread more room, and each turn's buttons name their question.
+
+- A follow-up on fictional data no longer sends an earlier real-data answer to a cloud
+  service, and a real trimmed send no longer includes waveform paths or other absolute
+  paths. A wrong age or a wrong age band is still caught when the answer also states a
+  true band, checked against the named case. The training log and command-line work
+  files are readable only by the user. Typed ages and dates are banded or masked, and
+  an articles question sent to a cloud service has case numbers removed. A withheld
+  answer no longer says a local model wrote it. Cancelling or closing stops the next
+  Claude API call, and the tests cannot open a window on the desktop.
+- Answers no longer strike valid numbers as "[number not in sources]": a minute such as
+  -45 at the start of a source-table row kept its minus sign; a negative minute next to a
+  signal ("38 at -45") is checked as a minute; a heading number ("## 2.") is a label; an
+  age band holding the real age ("age 55-59") counts as true in both the number and age
+  checks. Tables in answers render as tables (and copy as rows), not raw "|" text.
+- No dialog at launch, after a Settings save or after a finished job when the
+  analysed cases have not been built yet: the research page says so quietly. The
+  dialog still opens when you choose Reload processed data, or when a load fails.
+- Claude Code and Codex on their own default model now get the same answer check
+  as every other answer; the empty model name had skipped it.
+- Handoff practice draws arterial and noninvasive MAP in the same colours as
+  the Medication and Signal pages; they were swapped.
+- Handoff practice: a wrong value for a missing MAP or SpO2 series now counts
+  ("0 of 1 found"); boxes up to eight lines no longer scroll; a check scrolls its
+  feedback into view; saved attempts that cannot be read are skipped and
+  reported, and a new attempt is never merged into a cut-off last line; History
+  says "not graded" for an attempt with text only in the ungraded box; the page
+  fits the narrowest window.
 - The local-AI answer check now ties each value, minute and flag to the case it
   is written about. An answer that still puts a detail on the wrong case, or names
   a case ID that was not retrieved (including a cut-off one), after one rewrite is

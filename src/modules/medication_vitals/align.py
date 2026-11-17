@@ -17,6 +17,7 @@ DISCLAIMER = (
 )
 PROVENANCE_MEDICATION = "patient_medication.csv"
 PROVENANCE_VITALS = "case timeseries"
+END_BEFORE_START = "end time is before the start time"
 _FORMATS = ("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M", "%m/%d/%y %H:%M:%S")
 _VITALS = (
     ("HR", "Heart rate", "bpm"),
@@ -28,12 +29,29 @@ _VITALS = (
 
 @dataclass(frozen=True)
 class DisplayRow:
+    """One row as the table writes it. The fields after ``provenance`` are the same row in numbers, for the chart.
+
+    ``start`` is the minute the row sits at on the shared axis (None when the drug has only a clock time) and
+    ``end`` the last minute of an infusion. ``number`` is the dose or reading (None when it is missing).
+    """
+
     time_text: str
     subject: str
     value_text: str
     unit: str
     kind: str
     provenance: str
+    start: int | None = None
+    end: int | None = None
+    number: float | None = None
+    note: str = ""
+
+    @property
+    def number_text(self) -> str:
+        """The value without its unit, so a table can give the unit its own column."""
+        if self.number is None or not self.unit or not self.value_text.endswith(self.unit):
+            return self.value_text
+        return self.value_text[: -len(self.unit)].strip()
 
 
 def align_rows(
@@ -88,7 +106,31 @@ def _medication_rows(frame: pd.DataFrame | None, origin: datetime | None) -> lis
             time_text = f"minute {start_minute} to {end_minute}"
         else:
             time_text = f"minute {start_minute}"
-        rows.append(DisplayRow(time_text, drug, amount, _unit(record.get("Drug_units")), kind, PROVENANCE_MEDICATION))
+        dose = record.get("Dose")
+        notes = []
+        if _missing(dose):
+            notes.append("dose field empty")
+        if drug == "drug name not recorded":
+            notes.append("drug name not recorded")
+        if start_minute is not None and end_minute is None:
+            notes.append("no end time recorded")
+        if kind == END_BEFORE_START:
+            # Which of the two times is right is not for the page to say; it names both as recorded.
+            notes.append(f"{END_BEFORE_START} (start minute {start_minute}, end minute {end_minute})")
+        rows.append(
+            DisplayRow(
+                time_text,
+                drug,
+                amount,
+                _unit(record.get("Drug_units")),
+                kind,
+                PROVENANCE_MEDICATION,
+                start=start_minute,
+                end=end_minute if kind == "infusion" else None,
+                number=None if _missing(dose) else _as_float(dose),
+                note="; ".join(notes),
+            )
+        )
     return rows
 
 
@@ -107,7 +149,18 @@ def _vital_rows(frame: pd.DataFrame | None) -> list[DisplayRow]:
                 continue
             value = record.get(column)
             shown = "missing" if _missing(value) else _number(_as_float(value))
-            rows.append(DisplayRow(label, name, shown, unit, "measurement", PROVENANCE_VITALS))
+            rows.append(
+                DisplayRow(
+                    label,
+                    name,
+                    shown,
+                    unit,
+                    "measurement",
+                    PROVENANCE_VITALS,
+                    start=_as_int(minute),
+                    number=None if _missing(value) else _as_float(value),
+                )
+            )
     return rows
 
 
@@ -134,7 +187,7 @@ def _kind(start: int | None, end: int | None) -> str:
         return "bolus"
     if end > start:
         return "infusion"
-    return "end time is before the start time"
+    return END_BEFORE_START
 
 
 def _amount(dose, unit) -> str:

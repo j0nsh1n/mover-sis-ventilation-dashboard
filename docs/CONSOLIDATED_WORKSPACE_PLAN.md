@@ -22,7 +22,7 @@ placement without changing the chosen G/F structure.
 | --- | --- | --- |
 | Research | G | Ask a research question, inspect retrieved cases and evidence, add a comparison, and open F at a cited minute. |
 | Ask | G, with a contextual prompt in F | Keep a visible local AI conversation. Scenario analysis and comparison become question intents in G. A follow-up in F uses the selected case and minute. |
-| Summary | G's Cases overview | Show the loaded cases-in-focus table and its case and rule charts. A single click selects a case and opens F. Label the analyzed subset separately from the indexed surgery count. |
+| Summary | G's Cases overview | Show the loaded cases-in-focus table and its case and rule charts. A click selects a case and shows its preview; Enter, a double-click or Open case opens F. Label the analyzed subset separately from the indexed surgery count. |
 | Case timeline | F | Show synchronized signals, episode and minute flags, source values, and the selected minute. |
 | Rule reference | G reference drawer and F flag details | Keep the complete rule list searchable in G. A flag in F opens its rule definition, measured values, units, missingness, and threshold version. |
 
