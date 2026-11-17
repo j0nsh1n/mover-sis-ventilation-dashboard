@@ -91,7 +91,8 @@ class TimelineTable(QTableWidget):
 
     def _set_two_lines(self, on: bool) -> None:
         metrics = self.horizontalHeader().fontMetrics()
-        for column, heading in enumerate(self._headings):
+        # The last column stretches into the room left over, so its heading never needs a second line.
+        for column, heading in enumerate(self._headings[:-1]):
             item = self.horizontalHeaderItem(column)
             if item is not None:
                 item.setText(two_line_heading(heading, metrics) if on else heading)

@@ -1120,6 +1120,7 @@ def test_headings_take_two_lines_only_where_one_line_would_scroll_and_come_back_
         if width == 640:
             assert any("\n" in text for text in texts()), "one line does not fit here, so the headings wrap"
             assert [text.replace("\n", " ") for text in texts()] == names, "the same words, only broken"
+            assert "\n" not in texts()[-1], "the stretched last column keeps its heading on one line"
             assert table.horizontalScrollBar().maximum() == 0, "two lines fit without sideways scroll"
             assert all(header.sectionSize(c) >= header.sectionSizeHint(c) for c in range(table.columnCount() - 1))
             assert header.height() >= header.sizeHint().height(), "both lines of every heading show"

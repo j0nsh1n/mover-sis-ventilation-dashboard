@@ -155,6 +155,7 @@ def test_probe_handoff_table_pictures(qapp, monkeypatch, tmp_path):
         print(f"SHOT {name} two_lines {table._two_lines} hbar {table.horizontalScrollBar().maximum()}")
     panel.resize(700, 820)
     QApplication.processEvents()
+    table._fit_headings = lambda: None  # type: ignore[method-assign]  # keep the old look while it is drawn
     table._set_two_lines(False)  # the old look, for comparison
     QApplication.processEvents()
     table.grab().save(str(out / "handoff-table-before-700.png"))
