@@ -53,7 +53,8 @@ def _inside(path: Path, parent: Path) -> bool:
 
 def _refuse_banned(path: Path, shown: Path) -> None:
     for banned in FORBIDDEN:
-        if _inside(path, banned):
+        # abspath is string-only, so a banned folder is never touched; on Windows it adds the drive the written path has.
+        if _inside(path, Path(os.path.abspath(banned))):
             raise Refused(f"{shown} is inside {banned}, which this tool never touches")
 
 
