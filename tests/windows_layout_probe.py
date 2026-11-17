@@ -50,6 +50,37 @@ def test_probe_cases_table(qapp):
     view.close()
 
 
+@pytest.mark.parametrize("scope", ["sample", "scan"])
+def test_probe_cases_table_at_the_layout_switch(qapp, scope):
+    """The sweep the failing test runs, with the scroll range read three ways at each width."""
+    import pandas as pd
+
+    from src.pipeline.corpus_scan import ScanResult
+    from tests.test_cases_page import _sweep_widths, _wide_cases, _workspace
+
+    cases = _wide_cases()
+    scan = ScanResult(cases.assign(PID=cases.PID.str.replace("SYN", "SCN")), pd.DataFrame(),
+                      {"n_indexed_surgeries": 19114, "preset": "default"})
+    view, overview = _workspace(1500, cases=cases, scan=scan)
+    overview.set_scope(scope)
+    table, header = overview.table, overview.table.horizontalHeader()
+    print(f"\nSWITCH {scope} least {overview.least_width()} side_by_side {overview.side_by_side_width()}")
+    for width in _sweep_widths(overview):
+        view.resize(width, 800)
+        QApplication.processEvents()
+        first = (table.horizontalScrollBar().maximum(), header.length(), table.viewport().width(),
+                 header.height(), table.verticalScrollBar().isVisible())
+        QApplication.processEvents()
+        second = (table.horizontalScrollBar().maximum(), header.length(), table.viewport().width())
+        table.updateGeometries()
+        third = (table.horizontalScrollBar().maximum(), header.length(), table.viewport().width())
+        if first[0] or second[0] or third[0] or abs(width - overview.side_by_side_width()) <= 2:
+            print(f"SWITCH {scope} width {width} page {overview.width()} table {table.width()}"
+                  f" first(max,len,vp,hdrH,vbar) {first} second {second} after-update {third}"
+                  f" sizes {[header.sectionSize(c) for c in range(header.count())]}")
+    view.close()
+
+
 def test_probe_handoff_box_and_table(qapp, monkeypatch, tmp_path):
     from src.modules.handoff_trainer.panel import HandoffPanel
 
