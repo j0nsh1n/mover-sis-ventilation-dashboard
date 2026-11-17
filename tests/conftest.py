@@ -18,26 +18,16 @@ import pytest  # noqa: E402
 
 from src.config import load_thresholds  # noqa: E402
 
-# Temporary, Windows CI only: the Windows job crashes before pytest prints why its tests failed, so each failure,
-# each test's start and the widgets left alive before a theme change are written out as they happen.
-_DIAGNOSE_WINDOWS_CI = bool(os.environ.get("CI")) and sys.platform == "win32"
+# Windows CI only: a test that runs ten minutes there is stuck. Every thread's stack is written out and the run
+# ends, rather than waiting out the job's six-hour limit.
+_HANG_GUARD = bool(os.environ.get("CI")) and sys.platform == "win32"
 
-
-# The real terminal, opened while pytest's capture is paused: pytest captures file descriptor 2 itself, so neither
-# sys.stderr nor sys.__stderr__ reaches the log while a test runs.
-_REAL_ERR: list = []
-
-
-def _diagnose(line: str) -> None:
-    out = _REAL_ERR[0] if _REAL_ERR else sys.__stderr__
-    out.write(line + "\n")
-    out.flush()
-
-
-if _DIAGNOSE_WINDOWS_CI:
+if _HANG_GUARD:
     import faulthandler
 
-    _fonts_told: list[bool] = []
+    # The real terminal, opened while pytest's capture is paused: pytest captures file descriptor 2 itself, and the
+    # run exits before a captured stack could be shown.
+    _REAL_ERR: list = []
 
     def pytest_configure(config):
         capture = config.pluginmanager.getplugin("capturemanager")
@@ -45,28 +35,7 @@ if _DIAGNOSE_WINDOWS_CI:
             _REAL_ERR.append(os.fdopen(os.dup(2), "w", buffering=1))
 
     def pytest_runtest_setup(item):
-        # past pytest's capture, so the line shows even when the run hangs or crashes
-        _diagnose(f">>> {item.nodeid}")
-        # a test that runs ten minutes is stuck: write every thread's stack and end the run, not wait six hours
         faulthandler.dump_traceback_later(600, exit=True, file=_REAL_ERR[0] if _REAL_ERR else sys.__stderr__)
-        if not _fonts_told:
-            from PySide6.QtGui import QFontDatabase, QFontInfo, QGuiApplication
-
-            app = QGuiApplication.instance()
-            if isinstance(app, QGuiApplication):
-                _fonts_told.append(True)
-                font = app.font()
-                screen = QGuiApplication.primaryScreen()
-                bundled = [name for name in QFontDatabase.families() if name in ("Inter", "Charter")]
-                _diagnose(
-                    f"### font {font.family()!r} pt {font.pointSizeF()} px {font.pixelSize()}"
-                    f" resolved {QFontInfo(font).family()!r}; bundled loaded {bundled};"
-                    f" dpi {screen.logicalDotsPerInch() if screen else None}"
-                    f" ratio {screen.devicePixelRatio() if screen else None}")
-
-    def pytest_runtest_logreport(report):
-        if report.failed:
-            _diagnose(f"=== FAILED {report.nodeid} ({report.when})\n{report.longreprtext[-4000:]}\n=== END")
 
 
 @pytest.fixture(scope="session")
@@ -341,12 +310,6 @@ def applied_theme(request, qapp):
 
     apply_theme(qapp, request.param)
     yield request.param
-    if _DIAGNOSE_WINDOWS_CI:
-        from PySide6.QtWidgets import QApplication
-
-        _diagnose(f"--- before the theme goes back to light: {len(QApplication.allWidgets())} widgets alive")
-        for widget in QApplication.topLevelWidgets():
-            _diagnose(f"--- top level {type(widget).__name__} {widget.objectName()!r} visible={widget.isVisible()}")
     apply_theme(qapp, "light")
 
 
@@ -497,8 +460,6 @@ def _reap_new_toplevels(before_ids: set[int], nodeid: str) -> None:
         )
         # A failure here would bury an assertion that already failed, and Qt also opens menus on its own.
         warnings.warn(message, UserWarning, stacklevel=2)
-        if _DIAGNOSE_WINDOWS_CI:
-            _diagnose("--- " + message)
     if leaked:
         _deferred_toplevels = _destroy_toplevels(leaked)
 

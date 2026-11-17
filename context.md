@@ -25,11 +25,15 @@
   break after each backslash, removed on copy). AppImage candidate
   `_work/appimage-fix-first/candidate-suite-cloud-r1` from `eadb5c9` bundles
   `anthropic` 2.8.0 and `keyring` 25.7.0; only the build's own smoke test ran.
-  Open: four Windows-only layout tests (Cases table 1-2 px sideways scroll,
-  Handoff table and text box 1 px, missing-cell hatch) that do not reproduce
-  on Linux; the temporary `_DIAGNOSE_WINDOWS_CI` report stays until they are
-  settled. The system Ollama service listens on `0.0.0.0:11434` (owner's
-  machine setup, raised with the owner).
+  Windows-only layout failures fixed through a temporary CI probe job
+  (removed): Settings path labels wrap (`bec2c17`, `ab8e4a9`), the handoff
+  box uses the laid-out line height (`44e2709`), the handoff table's
+  headings take a second line where one would scroll (`ee6e625`,
+  `17d2fc1`), and the cases table has no sideways range while its columns
+  fit (`ab31e50`). Open: the missing-cell hatch test fails on Windows when
+  run alone but passes in the full run (order-dependent; attempt saved in
+  `_scratch/pr40-merge/hatch-attempt.patch`). The system Ollama service stays
+  on `0.0.0.0:11434` by the owner's choice (other apps use it).
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** one-process
   offscreen pytest on this machine. Baseline on `2944502` reached 100% with no
   failure marks; wall clock from the start file to the log mtime is 6105 s.
