@@ -428,7 +428,8 @@ def test_show_as_table_swaps_the_chart_for_the_rows_and_back(panel):
 
 def test_the_table_has_the_same_numbers_and_hatches_what_is_missing(panel):
     table = panel.timeline_table
-    assert [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())] == [
+    # the names; a narrow table puts some on two lines (see the headings test below)
+    assert [table.horizontalHeaderItem(c).text().replace("\n", " ") for c in range(table.columnCount())] == [
         "Minute", "Arterial MAP mmHg", "Noninvasive MAP mmHg", "SpO₂ %", "Drug doses"]
     row = [table.item(12, c).text() for c in range(5)]
     assert row == ["12", "60", "missing", "98", "Phenylephrine 100 mcg at minute 12 (bolus)"]

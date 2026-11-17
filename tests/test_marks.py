@@ -239,24 +239,30 @@ def test_the_medication_table_hatches_exactly_its_missing_values(qapp):
 
 
 
-def test_the_text_of_a_missing_cell_has_a_clear_backing_so_the_hatch_never_crosses_the_letters(qapp, applied_theme):
-    plain = _table("", missing=False)
-    background = QColor(_paint(plain).pixel(150, 20))
+def test_the_text_of_a_missing_cell_has_a_clear_backing_so_the_hatch_never_crosses_the_letters(
+        qapp, applied_theme, monkeypatch):
+    import src.desktop.marks as marks
+
+    # The hatch is drawn pure green here. In the theme its gray sits on the same line between paper and the text's
+    # gray, so a text pixel about a third covered has the hatch's exact color; green is a hue no gray text pixel,
+    # nor a subpixel-rendering fringe, comes near, so only real hatch counts.
+    real = marks.token_color
+    monkeypatch.setattr(marks, "token_color", lambda name: QColor("#00FF00") if name == "hatch" else real(name))
+
+    def hatch(color: int) -> bool:
+        c = QColor(color)
+        return c.green() - max(c.red(), c.blue()) > 80
+
     empty = _paint(_table("", missing=True))
     with_text = _paint(_table("missing", missing=True))
-    # the hatch's own full-coverage color: the most common painted color of an empty hatched cell
-    counts: dict[int, int] = {}
-    for y in range(empty.height()):
-        for x in range(empty.width()):
-            if QColor(empty.pixel(x, y)) != background:
-                counts[empty.pixel(x, y)] = counts.get(empty.pixel(x, y), 0) + 1
-    hatch = max(counts, key=lambda color: counts[color])
+    assert sum(hatch(empty.pixel(x, y)) for y in range(empty.height()) for x in range(empty.width())) > 200
     changed = [(x, y) for y in range(with_text.height()) for x in range(with_text.width())
                if with_text.pixel(x, y) != empty.pixel(x, y)]
     assert changed
+    # the box the text and its backing take up: no hatch may show anywhere inside it
     left, right = min(x for x, _ in changed), max(x for x, _ in changed)
     top, bottom = min(y for _, y in changed), max(y for _, y in changed)
-    crossing = [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1) if with_text.pixel(x, y) == hatch]
+    crossing = [(x, y) for y in range(top, bottom + 1) for x in range(left, right + 1) if hatch(with_text.pixel(x, y))]
     assert crossing == [], "hatch lines must not run through the text"
 
 
