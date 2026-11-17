@@ -15,7 +15,7 @@ variety; Claude and Grok never write training text. Only training seeds are allo
 the output folder must sit under the local-model scratch folder.
 
 Writes into ``--out``: ``answers-<writer>.jsonl`` (every draft with its check results; a
-rerun skips ids already there, so a stopped run resumes) and ``train-<writer>.jsonl`` (the
+rerun skips ids already answered and asks again where a call failed, so a stopped run resumes) and ``train-<writer>.jsonl`` (the
 kept drafts as chat examples: the app's messages plus the draft as the assistant turn).
 """
 
@@ -175,7 +175,9 @@ def write(
     train_path = resolved / f"train-{writer}.jsonl"
     done_ids = set()
     if answers_path.exists():
-        done_ids = {json.loads(line)["id"] for line in answers_path.read_text(encoding="utf-8").splitlines() if line}
+        # A call that failed (rate limit, timeout) is asked again on the next run.
+        earlier = [json.loads(line) for line in answers_path.read_text(encoding="utf-8").splitlines() if line]
+        done_ids = {r["id"] for r in earlier if not r["error"]}
     asked = kept = 0
     work = resolved / "work"
     try:

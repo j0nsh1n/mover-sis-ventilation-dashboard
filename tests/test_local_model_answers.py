@@ -199,3 +199,26 @@ def test_a_slash_research_disclaimer_counts_as_the_fifth_part():
     answer = "**Cases used** **What the extracts show** **Flags & rule meaning** **Gaps** Research/education only."
     assert eval_heldout.has_structure(answer)
     assert not eval_heldout.has_structure(answer.replace("Research/education only.", "Done."))
+
+
+def test_a_failed_call_is_asked_again_on_the_next_run(tmp_path):
+    class Flaky:
+        def __init__(self, fail):
+            self.fail, self.calls = fail, 0
+
+        def chat_turn(self, model, messages, **kwargs):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("rate limited")
+            return ChatResult(content=good(messages))
+
+    out = tmp_path / "out"
+    first = write_answers.write("codex", [SEED], out, n_cases=N_CASES, limit=2, client=Flaky(True),
+                                allowed_roots=(tmp_path,))
+    assert first["asked"] == 2 and first["kept"] == 0
+    retry = Flaky(False)
+    second = write_answers.write("codex", [SEED], out, n_cases=N_CASES, limit=2, client=retry,
+                                 allowed_roots=(tmp_path,))
+    assert retry.calls == 2 and second["kept"] == 2
+    rows = [json.loads(line) for line in (out / "answers-codex.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["id"] for r in rows[:2]] == [r["id"] for r in rows[2:]]
