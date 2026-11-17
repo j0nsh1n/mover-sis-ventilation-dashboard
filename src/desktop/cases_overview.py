@@ -1077,10 +1077,12 @@ class CasesOverview(QWidget):
             header.setFixedHeight(height)
             changed = True
         if changed:
-            # Qt refreshes the scroll range on a zero-delay timer; until it runs the bar keeps the old layout's
-            # range and offers a pixel or two of sideways scroll (seen on Windows where the preview moves beside
-            # the list). Refreshed last, after the heading row's height, so the range matches what is shown.
             self.table.updateGeometries()
+        if sum(widths) <= available:
+            # The columns fit, so there is nothing to scroll to. Qt works the range out later, and while the page
+            # settles (the preview moving beside the list) it can keep the old layout's two columns of scroll on
+            # Windows; an update asked for from inside that settling is skipped, so the range is set here.
+            self.table.horizontalScrollBar().setRange(0, 0)
 
     # -- the preview ------------------------------------------------------------------------------------
 
