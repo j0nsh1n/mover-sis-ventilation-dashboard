@@ -1101,6 +1101,33 @@ def test_the_table_needs_no_sideways_scroll_where_the_page_is_wide_enough_for_it
     assert panel.timeline_table.horizontalScrollBar().maximum() == 0, width
 
 
+def test_headings_take_two_lines_only_where_one_line_would_scroll_and_come_back_with_room(panel, qapp):
+    """On Windows the semibold headings measure wider, so a width that fits them on one line here does not
+    there; a second line keeps the table from scrolling sideways on either."""
+    table = panel.timeline_table
+    header = table.horizontalHeader()
+    names = ["Minute", "Arterial MAP mmHg", "Noninvasive MAP mmHg", "SpO₂ %", "Drug doses"]
+    panel.table_toggle.click()
+
+    def texts() -> list[str]:
+        return [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
+
+    for width in (1300, 640, 1300):
+        panel.resize(width, 800)
+        qapp.processEvents()
+        qapp.processEvents()
+        one_line = sum(header.sectionSize(c) for c in range(table.columnCount() - 1)) + header.defaultSectionSize()
+        if width == 640:
+            assert any("\n" in text for text in texts()), "one line does not fit here, so the headings wrap"
+            assert [text.replace("\n", " ") for text in texts()] == names, "the same words, only broken"
+            assert table.horizontalScrollBar().maximum() == 0, "two lines fit without sideways scroll"
+            assert all(header.sectionSize(c) >= header.sectionSizeHint(c) for c in range(table.columnCount() - 1))
+            assert header.height() >= header.sizeHint().height(), "both lines of every heading show"
+        else:
+            assert texts() == names and one_line <= table.viewport().width()
+            assert table.horizontalScrollBar().maximum() == 0
+
+
 def test_a_page_too_narrow_for_the_table_scrolls_the_table_and_not_the_page(panel, qapp):
     panel.resize(480, 800)
     panel.table_toggle.click()

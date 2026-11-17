@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
 from src.desktop.marks import MISSING_ROLE, MissingCellDelegate, mark_missing
@@ -45,6 +46,17 @@ def table_rows(case: PracticeCase) -> list[TableRow]:
     return out
 
 
+def two_line_heading(heading: str, metrics: QFontMetrics) -> str:
+    """``heading`` broken at the space that leaves its longer line shortest, or unchanged when it is one word."""
+    words = heading.split(" ")
+    if len(words) < 2:
+        return heading
+    splits = [(" ".join(words[:i]), " ".join(words[i:])) for i in range(1, len(words))]
+    first, second = min(splits, key=lambda pair: max(metrics.horizontalAdvance(pair[0]),
+                                                     metrics.horizontalAdvance(pair[1])))
+    return f"{first}\n{second}"
+
+
 class TimelineTable(QTableWidget):
     """Read-only. Arrow keys move between cells; Tab leaves the table."""
 
@@ -54,6 +66,11 @@ class TimelineTable(QTableWidget):
         self.setAccessibleName("Invented timeline, minute by minute")
         headers = ["Minute", *[f"{track.label} {track.unit}" for track in TRACKS], "Drug doses"]
         self.setHorizontalHeaderLabels(headers)
+        self._headings = headers
+        # Headings go onto two lines only where one line would make the table scroll sideways; the length the
+        # one-line headings needed is kept so they come back once there is room.
+        self._two_lines = False
+        self._one_line_length: int | None = None
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -67,6 +84,38 @@ class TimelineTable(QTableWidget):
         header.setStretchLastSection(True)
         for column in range(self.columnCount() - 1):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_headings()
+
+    def _set_two_lines(self, on: bool) -> None:
+        metrics = self.horizontalHeader().fontMetrics()
+        for column, heading in enumerate(self._headings):
+            item = self.horizontalHeaderItem(column)
+            if item is not None:
+                item.setText(two_line_heading(heading, metrics) if on else heading)
+        self._two_lines = on
+        self.horizontalHeader().resizeSections()
+        self.updateGeometries()
+
+    def _fit_headings(self) -> None:
+        available = self.viewport().width()
+        if available <= 0:
+            return
+        header = self.horizontalHeader()
+        if not self._two_lines:
+            header.resizeSections()
+            # The stretched last column still has its old width during a resize, so the need is the other
+            # columns plus the least the last one takes (the header's default section size), not its length.
+            last = self.columnCount() - 1
+            least_last = max(header.minimumSectionSize(), header.defaultSectionSize())
+            need = sum(header.sectionSize(column) for column in range(last)) + least_last
+            if need > available:
+                self._one_line_length = need
+                self._set_two_lines(True)
+        elif self._one_line_length is not None and self._one_line_length <= available:
+            self._set_two_lines(False)
 
     def set_case(self, case: PracticeCase) -> None:
         self.clearSelection()
@@ -98,6 +147,11 @@ class TimelineTable(QTableWidget):
             doses = QTableWidgetItem("; ".join(row.doses))
             self.setItem(index, self.columnCount() - 1, doses)
         self.resizeRowsToContents()
+        # New readings change the columns' widths, so the headings are measured again on one line.
+        if self._two_lines:
+            self._set_two_lines(False)
+        self._one_line_length = None
+        self._fit_headings()
 
     def select_minutes(self, start: int, end: int) -> None:
         """Select the rows whose minute is inside ``start``..``end`` and scroll to the first."""

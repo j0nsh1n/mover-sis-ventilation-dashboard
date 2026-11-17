@@ -161,6 +161,14 @@ jobs:
           PYTHONPATH: .
         run: pytest -q -s -p no:cacheprovider tests/windows_layout_probe.py
 
+      - name: Pictures for the owner
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-layout-pictures
+          path: probe-shots/
+          if-no-files-found: warn
+
       - name: The four layout tests
         env:
           QT_QPA_PLATFORM: offscreen

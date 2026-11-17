@@ -129,3 +129,34 @@ def test_probe_missing_cell_backing(qapp, theme):
     print(f"\nHATCH {theme} background {background.name()} backing box {box(backing)} ink box {box(ink)}"
           f" changed box {box(changed)} rowHeight {table.rowHeight(0)} {_font(table)}")
     apply_theme(qapp, "light")
+
+
+def test_probe_handoff_table_pictures(qapp, monkeypatch, tmp_path):
+    """Pictures for the owner, who has no Windows machine: the table at 700 px with one-line headings (as before)
+    and with two-line headings (now), and at full width. Saved to probe-shots/ for the CI artifact."""
+    from pathlib import Path
+
+    from src.modules.handoff_trainer.panel import HandoffPanel
+
+    monkeypatch.setenv("MOVER_CONFIG_DIR", str(tmp_path / "config"))
+    out = Path("probe-shots")
+    out.mkdir(exist_ok=True)
+    panel = HandoffPanel()
+    panel.resize(1300, 820)
+    panel.show()
+    QApplication.processEvents()
+    panel.table_toggle.click()
+    table = panel.timeline_table
+    for width, name in ((700, "now-700"), (1300, "now-1300")):
+        panel.resize(width, 820)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        table.grab().save(str(out / f"handoff-table-{name}.png"))
+        print(f"SHOT {name} two_lines {table._two_lines} hbar {table.horizontalScrollBar().maximum()}")
+    panel.resize(700, 820)
+    QApplication.processEvents()
+    table._set_two_lines(False)  # the old look, for comparison
+    QApplication.processEvents()
+    table.grab().save(str(out / "handoff-table-before-700.png"))
+    print(f"SHOT before-700 hbar {table.horizontalScrollBar().maximum()}")
+    panel.close()
