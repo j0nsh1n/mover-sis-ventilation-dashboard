@@ -54,7 +54,7 @@ HEADINGS: dict[str, re.Pattern[str]] = {
     "extracts_show": re.compile(r"what the extracts show", re.I),
     "flags": re.compile(r"flags\s*(?:&|and)\s*rule meaning", re.I),
     "gaps": re.compile(r"\bgaps\b", re.I),
-    "disclaimer": re.compile(r"research\s*(?:and|&)\s*education|research use only|research only", re.I),
+    "disclaimer": re.compile(r"research\s*(?:and|&|/)\s*education|research use only|research only", re.I),
 }
 # What a held-out "absent" question asks for. Each group is one signal and its names.
 ABSENT_SIGNALS: tuple[tuple[str, ...], ...] = (
