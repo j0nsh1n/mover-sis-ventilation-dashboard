@@ -222,3 +222,18 @@ def test_a_failed_call_is_asked_again_on_the_next_run(tmp_path):
     assert retry.calls == 2 and second["kept"] == 2
     rows = [json.loads(line) for line in (out / "answers-codex.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [r["id"] for r in rows[:2]] == [r["id"] for r in rows[2:]]
+
+
+def test_a_run_stops_after_failures_in_a_row(tmp_path):
+    class Limited:
+        calls = 0
+
+        def chat_turn(self, model, messages, **kwargs):
+            Limited.calls += 1
+            raise RuntimeError("usage limit")
+
+    report = write_answers.write("codex", [SEED, SEED + 1], tmp_path / "out", n_cases=N_CASES, client=Limited(),
+                                 allowed_roots=(tmp_path,))
+    assert Limited.calls == report["asked"] == write_answers.MAX_FAILURES_IN_A_ROW
+    assert report["stopped"].startswith(f"{write_answers.MAX_FAILURES_IN_A_ROW} calls in a row failed")
+

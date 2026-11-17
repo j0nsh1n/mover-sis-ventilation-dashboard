@@ -46,6 +46,8 @@ from tools.local_model.eval_heldout import answer_one, has_structure, items_for 
 
 WRITERS = {"codex": "gpt-6.1-sol", "kimi": "kimi-code/k3.1-pro"}
 TIMEOUT_S = 300.0
+# Failures in a row that end a run: a usage limit fails every call until it resets, so a run stops instead.
+MAX_FAILURES_IN_A_ROW = 5
 # Sent to the writer only; the training example keeps the app's messages as they are, so the
 # small model learns the exact headings from the app's own prompt.
 WRITER_NOTE = (
@@ -178,7 +180,8 @@ def write(
         # A call that failed (rate limit, timeout) is asked again on the next run.
         earlier = [json.loads(line) for line in answers_path.read_text(encoding="utf-8").splitlines() if line]
         done_ids = {r["id"] for r in earlier if not r["error"]}
-    asked = kept = 0
+    asked = kept = failures = 0
+    stopped = ""
     work = resolved / "work"
     try:
         for seed in seeds:
@@ -192,7 +195,7 @@ def write(
                 for item in items:
                     if item.id in done_ids:
                         continue
-                    if limit is not None and asked >= limit:
+                    if (limit is not None and asked >= limit) or stopped:
                         break
                     probe = FirstDraftOnly(client)
                     started = time.perf_counter()
@@ -212,14 +215,17 @@ def write(
                         with train_path.open("a", encoding="utf-8") as fh:
                             fh.write(json.dumps(example, sort_keys=True, ensure_ascii=False) + "\n")
                     done_ids.add(item.id)
+                    failures = failures + 1 if record["error"] else 0
+                    if failures >= MAX_FAILURES_IN_A_ROW:
+                        stopped = f"{failures} calls in a row failed; last: {record['error'][:200]}"
                     print(f"{item.id}: {'kept' if not reasons else 'dropped (' + reasons[0][:80] + ')'}",
                           flush=True)
-            if limit is not None and asked >= limit:
+            if (limit is not None and asked >= limit) or stopped:
                 break
     finally:
         shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(calls_dir, ignore_errors=True)
-    report = {"writer": writer, "model": model, "seeds": list(seeds), "asked": asked, "kept": kept,
+    report = {"writer": writer, "model": model, "seeds": list(seeds), "asked": asked, "kept": kept, "stopped": stopped,
               "commit": build_prompts._git_commit(), "finished": datetime.now(UTC).isoformat(timespec="seconds")}
     with (resolved / "runs.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(report, sort_keys=True) + "\n")
