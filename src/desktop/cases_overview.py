@@ -1070,15 +1070,17 @@ class CasesOverview(QWidget):
             if self.table.columnWidth(column) != width:
                 self.table.setColumnWidth(column, width)
                 changed = True
-        if changed:
-            # Qt refreshes the scroll range on a zero-delay timer; until it runs the bar keeps the old columns'
-            # range and offers a pixel or two of sideways scroll (seen on Windows).
-            self.table.updateGeometries()
         wrapped = any(width < whole for width, whole in zip(widths, self._full, strict=True))
         height = HEADER_HEIGHT_WRAPPED if wrapped else HEADER_HEIGHT
         header = self.table.horizontalHeader()
         if header.height() != height:
             header.setFixedHeight(height)
+            changed = True
+        if changed:
+            # Qt refreshes the scroll range on a zero-delay timer; until it runs the bar keeps the old layout's
+            # range and offers a pixel or two of sideways scroll (seen on Windows where the preview moves beside
+            # the list). Refreshed last, after the heading row's height, so the range matches what is shown.
+            self.table.updateGeometries()
 
     # -- the preview ------------------------------------------------------------------------------------
 
