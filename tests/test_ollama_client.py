@@ -137,3 +137,68 @@ def test_embedder_construction_refuses_remote(monkeypatch):
     monkeypatch.delenv("MOVER_ALLOW_REMOTE_OLLAMA", raising=False)
     with pytest.raises(OllamaError):
         OllamaEmbedder("nomic-embed-text", client=OllamaClient(base_url="http://10.0.0.2:11434"))
+
+
+def _ok(payload):
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode()
+    resp.__iter__ = lambda self: iter([json.dumps({**payload, "done": True}).encode() + b"\n"])
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+@pytest.mark.parametrize("call", ["chat_turn", "chat_turn_stream", "chat_stream"])
+def test_every_chat_call_asks_for_a_window_that_fits_a_research_prompt(call):
+    """Ollama's own default is 4096 tokens; the app's extract prompts run past that."""
+    client = OllamaClient()
+    messages = [{"role": "user", "content": "hi"}]
+    with patch("urllib.request.urlopen", return_value=_ok({"message": {"content": "ok"}})) as opener:
+        if call == "chat_turn":
+            client.chat_turn("m", messages)
+        elif call == "chat_turn_stream":
+            client.chat_turn("m", messages, stream=True)
+        else:
+            list(client.chat_stream("m", messages))
+    body = json.loads(opener.call_args[0][0].data)
+    assert body["options"]["num_ctx"] == 8192
+
+
+def _turned_down(body: bytes | None):
+    import io
+    import urllib.error
+
+    fp = io.BytesIO(body) if body is not None else None
+    return urllib.error.HTTPError("http://127.0.0.1:11434/api/chat", 400, "Bad Request", {}, fp)
+
+
+TOO_LONG = b'{"error":"request (4314 tokens) exceeds the available context size (4096 tokens), try increasing it"}'
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_request_ollama_turns_down_gives_its_reason_not_cannot_reach(stream):
+    with patch("urllib.request.urlopen", side_effect=_turned_down(TOO_LONG)):
+        with pytest.raises(OllamaError) as raised:
+            OllamaClient().chat_turn("m", [{"role": "user", "content": "x"}], stream=stream)
+    text = str(raised.value)
+    assert "HTTP 400" in text and "exceeds the available context size (4096 tokens)" in text
+    assert "Cannot reach" not in text and "ollama serve" not in text
+
+
+def test_a_turned_down_request_without_a_reason_names_the_http_status():
+    with patch("urllib.request.urlopen", side_effect=_turned_down(b"not json")):
+        with pytest.raises(OllamaError, match=r"HTTP 400\): Bad Request"):
+            OllamaClient().list_models()
+    with patch("urllib.request.urlopen", side_effect=_turned_down(None)):
+        with pytest.raises(OllamaError, match=r"HTTP 400\): Bad Request"):
+            OllamaClient().list_models()
+
+
+def test_unloading_a_missing_model_is_not_reported_as_ollama_down():
+    from src.llm.service import unload_ollama_model
+
+    missing = _turned_down(b'{"error":"model \'nope\' not found"}')
+    missing.code = 404
+    with patch("urllib.request.urlopen", side_effect=missing):
+        ok, message = unload_ollama_model("nope")
+    assert not ok and "not found" in message and "isn't running" not in message
