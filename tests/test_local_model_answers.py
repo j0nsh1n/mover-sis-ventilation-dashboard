@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -169,6 +170,9 @@ def test_the_output_folder_must_sit_under_the_allowed_root(tmp_path):
                               allowed_roots=(tmp_path / "ok",)) == 2
 
 
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="stand-in commands are shell scripts")
+
+
 def _fake_kimi(tmp_path: Path, body: str) -> str:
     script = tmp_path / "kimi"
     script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
@@ -176,6 +180,7 @@ def _fake_kimi(tmp_path: Path, body: str) -> str:
     return str(script)
 
 
+@posix_only
 def test_kimi_reply_is_the_last_assistant_text_of_its_stream(tmp_path):
     events = [{"role": "meta", "type": "system.version"}, {"role": "assistant", "content": "thinking out loud"},
               {"role": "tool", "content": "x"}, {"role": "assistant", "content": "**Cases used**\n- SYN1"},
@@ -189,6 +194,7 @@ def test_kimi_reply_is_the_last_assistant_text_of_its_stream(tmp_path):
     assert not any((tmp_path / "calls").iterdir())
 
 
+@posix_only
 def test_a_failed_kimi_call_raises(tmp_path):
     client = write_answers.KimiCliClient(tmp_path / "calls", binary=_fake_kimi(tmp_path, "echo boom >&2; exit 3"))
     with pytest.raises(RuntimeError, match="kimi exited 3: boom"):
