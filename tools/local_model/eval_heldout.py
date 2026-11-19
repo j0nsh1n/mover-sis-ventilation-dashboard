@@ -47,6 +47,9 @@ from tools.local_model.build_prompts import (  # noqa: E402
 HELDOUT_SPLITS = ("valid", "test")
 # Repeat i asks Ollama with seed REPEAT_SEED_BASE + i, so a rerun repeats the same draws.
 REPEAT_SEED_BASE = 1000
+# Ollama's default window here is 4096 tokens and the app sets none, so its prompts (about
+# 4300 tokens) are refused with a 400; each candidate gets the window its Modelfile would set.
+NUM_CTX = 8192
 KINDS = ("question", "scenario", "compare")
 # The five parts of EXTRACT_SHAPE (src/llm/prompts.py); the last is the research disclaimer.
 HEADINGS: dict[str, re.Pattern[str]] = {
@@ -81,7 +84,7 @@ class Unavailable(Exception):
 
 
 class SeededOllamaClient(OllamaClient):
-    """OllamaClient that sends ``options.seed`` on every chat call (the base class sends none)."""
+    """OllamaClient that sends ``options.seed`` and ``options.num_ctx`` on every chat call (the base class sends neither)."""
 
     def __init__(self, seed: int, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -91,7 +94,7 @@ class SeededOllamaClient(OllamaClient):
         self, method: str, path: str, body: dict[str, Any] | None = None, *, timeout_s: float | None = None
     ) -> dict[str, Any]:
         if path == "/api/chat" and body is not None:
-            body = {**body, "options": {**body.get("options", {}), "seed": self.seed}}
+            body = {**body, "options": {**body.get("options", {}), "seed": self.seed, "num_ctx": NUM_CTX}}
         return super()._request_json(method, path, body, timeout_s=timeout_s)
 
 
@@ -442,6 +445,7 @@ def evaluate(
             "n_cases": n_cases,
             "repeats": repeats,
             "ollama_seeds": [repeat_seed(i) for i in range(repeats)],
+            "num_ctx": NUM_CTX,
             "per_family": per_family,
             "questions_per_repeat": len(records) // repeats,
             "skipped_questions": skipped,

@@ -241,7 +241,7 @@ def test_each_repeat_gets_its_own_seed_and_the_spread_is_reported(tmp_path):
     assert block["spread"]["grounding_rate"] == 1.0
     assert block["spread"]["structure_rate"] == 0.0
     saved = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    assert saved["ollama_seeds"] == [1000, 1001, 1002] and saved["repeats"] == 3
+    assert saved["ollama_seeds"] == [1000, 1001, 1002] and saved["repeats"] == 3 and saved["num_ctx"] == 8192
 
 
 def test_the_real_client_sends_the_seed_with_its_chat_calls(monkeypatch):
@@ -258,7 +258,7 @@ def test_the_real_client_sends_the_seed_with_its_chat_calls(monkeypatch):
     client.chat_turn("m", [{"role": "user", "content": "x"}], temperature=0.1, max_tokens=5)
     client.list_models()
     path, body = sent[0]
-    assert path == "/api/chat" and body["options"] == {"temperature": 0.1, "num_predict": 5, "seed": 1002}
+    assert path == "/api/chat" and body["options"] == {"temperature": 0.1, "num_predict": 5, "seed": 1002, "num_ctx": 8192}
     assert sent[1] == ("/api/tags", None)
 
 
