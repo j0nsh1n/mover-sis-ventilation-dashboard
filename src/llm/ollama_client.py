@@ -15,6 +15,20 @@ class OllamaError(RuntimeError):
     """Raised when Ollama is unreachable or returns an error."""
 
 
+# Ollama gives a model a 4096-token window unless asked, and a research prompt with its
+# extracts runs past that, so Ollama turns the request down. Every chat call asks for this.
+NUM_CTX = 8192
+
+
+def _turned_down(error: urllib.error.HTTPError) -> str:
+    """Ollama answered but would not run the request; give its own reason (it is running)."""
+    try:
+        detail = json.loads(error.read().decode("utf-8", "replace")).get("error")
+    except (AttributeError, OSError, TypeError, ValueError):
+        detail = None
+    return f"Ollama could not run the request (HTTP {error.code}): {detail or error.reason}"
+
+
 def _unreachable(base_url: str, error: urllib.error.URLError) -> str:
     """Name why the local Ollama API did not answer, without the raw exception text."""
     reason = error.reason
@@ -215,7 +229,7 @@ class OllamaClient:
         this call.
         """
         payload_messages = self._normalize_messages(messages)
-        options: dict[str, Any] = {"temperature": temperature}
+        options: dict[str, Any] = {"temperature": temperature, "num_ctx": NUM_CTX}
         if max_tokens is not None:
             options["num_predict"] = max_tokens
         body: dict[str, Any] = {
@@ -253,7 +267,7 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": True,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, "num_ctx": NUM_CTX},
         }
         for piece, _calls, done in self._iter_chat_stream(body):
             if piece:
@@ -300,6 +314,8 @@ class OllamaClient:
                     if not isinstance(tcs, list):
                         tcs = []
                     yield str(piece), list(tcs), bool(obj.get("done"))
+        except urllib.error.HTTPError as e:
+            raise OllamaError(_turned_down(e)) from e
         except urllib.error.URLError as e:
             raise OllamaError(_unreachable(self.base_url, e)) from e
 
@@ -339,6 +355,8 @@ class OllamaClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout_s or self.timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            raise OllamaError(_turned_down(e)) from e
         except urllib.error.URLError as e:
             raise OllamaError(_unreachable(self.base_url, e)) from e
         try:
