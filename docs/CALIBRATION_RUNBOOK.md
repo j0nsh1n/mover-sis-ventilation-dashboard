@@ -1,18 +1,22 @@
 # Calibration runbook (roadmap Phase 6)
 
-These steps run on the real MOVER data on this machine. Only the operator runs them.
-Agents never read the real data or its outputs. A model may see an aggregate report
-only after the operator has read it and decided it can be shared.
+These steps run on the real MOVER data on this machine. The operator runs them, or the
+lead agent when the operator says so (owner, 2026-11-25). An agent reads only the
+aggregate reports listed as shareable below, never the real data, the per-case output
+or a run's console output. Other models see an aggregate report only after the
+operator has read it and decided it can be shared.
 
 ## What stays local
+- The console output of `calibrate.sh` and `corpus_scan` lists top cases by PID. Send
+  it to a file under `calibration/` and never share or read it.
 - `calibration/<name>/processed/` holds per-case parquet (PIDs, minute rows, flags).
   Never share it.
 - `calibration/bench-*/w*/` holds full-EMR scan output with per-case scores. Never
   share it.
 - `scan-errors.log` in a scan's output folder can hold paths and values. Never share it.
 - Shareable after you read them: `calibration/<name>/profile.md` and `profile.json`, and
-  a scan's `corpus_profile.md` and `corpus_profile.json`. These are aggregate only, with
-  counts under 11 shown as `<11`.
+  a scan's `corpus_profile.md` and `corpus_profile.json`, `calibration/diff.md` and a
+  bench's `bench.md`. These are aggregate only, with counts under 11 shown as `<11`.
 
 ## 1. Baseline profile
 ```bash

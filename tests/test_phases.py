@@ -324,6 +324,16 @@ def test_skip_phases_is_configurable_per_rule(thresholds):
     assert set(flags[flags["rule_id"] == "spo2_low"]["phase"]) == {"induction", "maintenance"}
 
 
+def test_the_real_sis_airway_event_names_set_the_boundaries(thresholds):
+    # The names as the real MOVER SIS events record them (2026-11-25 profile); "LMA" is a laryngeal mask placed.
+    names = pd.Series(["Intubation", "LMA", " lma ", "Extubation", "MD Handoff", "Sedation", "Palmar block"])
+    roles = classify_event_names(names, thresholds["phases"]).tolist()
+    assert roles == ["intubation", "intubation", "intubation", "extubation", "", "", ""]
+    ev = pd.concat([_events(LMA=INTUB), _events(Extubation=EXTUB)])
+    out = assign_phases(_ts(), ev, thresholds)
+    assert set(out["phase_source"]) == {"events"}
+
+
 def test_default_skip_lists_name_valid_phases_and_leave_safety_rules_alone(thresholds):
     valid = {"pre_induction", "induction", "maintenance", "emergence", "post_emergence"}
     for rid, spec in thresholds["rules"].items():
