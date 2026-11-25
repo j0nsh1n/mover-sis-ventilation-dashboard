@@ -77,7 +77,8 @@ to publish.
   recorded with each run and shown in F, scan memory and phase-source counts,
   `scripts/bench_scan.sh`, the merged full-EMR profile, and
   `docs/CALIBRATION_RUNBOOK.md`. The real-data steps (run, read, patterns,
-  percentiles, before-and-after table, timing) are open for the operator.
+  percentiles, before-and-after table, timing) were then open for the operator (done
+  2026-11-25, below).
 - Status: [x] 2026-11-25 — real-data steps run by the lead agent on the owner's word,
   reading only the aggregate reports (results stay in the gitignored `calibration/`):
   - Event names: the real airway events are "Intubation", "Extubation" and "LMA".

@@ -85,12 +85,12 @@ phases:
     - "intubat"
     - '^\s*lma\s*$'
     - "airway (secured|placed|established)"
-    - "(lma|laryngeal mask).*(placed|inserted)"
+    - '\b(lma|laryngeal mask)\b.*(placed|inserted)'
   # Airway end. The latest matching event after the intubation counts.
   extubation_patterns:
     - "extubat"
     - "airway removed"
-    - "(lma|laryngeal mask).*removed"
+    - '\b(lma|laryngeal mask)\b.*removed'
   induction_after_min: 10    # induction lasts this long after the intubation event (agent wash-in)
   emergence_before_min: 10   # emergence starts this long before the extubation event (agent wash-out)
   event_pad_min: 5           # events this far outside the case's data are ignored (wrong-day / stray events)
