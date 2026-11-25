@@ -153,6 +153,10 @@ opt-in cloud answer services below.
   a truth file of injected anomalies; it never reads real data.
 - Profile report is **aggregate only**: no PIDs, timestamps or row-level values, and case
   counts below the small-cell threshold (default 11) are suppressed.
+- Calibration on real data (owner, 2026-11-25): the operator runs it, or the lead agent
+  on the operator's word. The lead agent reads only the aggregate reports that
+  `docs/CALIBRATION_RUNBOOK.md` lists, never the real data, per-case output or console
+  output; other models see a report only after the operator has read it.
 - Co-pilot corpus tools state their scope on every search or ranking result: the
   full-EMR scan when one is loaded, otherwise the loaded sample with the EMR's
   indexed and ventilated counts. Answers must not present the sample as the whole EMR.
