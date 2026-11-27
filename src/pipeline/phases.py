@@ -4,8 +4,8 @@ Boundaries come from procedure events (intubation / extubation, matched by the
 patterns in ``thresholds.yaml`` ``phases``) and fall back to the case times
 when a surgery has no usable event. ``phase_source`` records which.
 
-The event-name patterns are unverified against the real MOVER data; see the
-"Procedure event names" table of ``python -m src.pipeline.profile``.
+The event-name patterns were checked against the real MOVER SIS event names on
+2026-11-25 (see ``thresholds.yaml``); names in fewer than 11 cases were not visible.
 """
 
 from __future__ import annotations

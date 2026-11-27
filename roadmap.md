@@ -77,7 +77,20 @@ to publish.
   recorded with each run and shown in F, scan memory and phase-source counts,
   `scripts/bench_scan.sh`, the merged full-EMR profile, and
   `docs/CALIBRATION_RUNBOOK.md`. The real-data steps (run, read, patterns,
-  percentiles, before-and-after table, timing) are open for the operator.
+  percentiles, before-and-after table, timing) were then open for the operator (done
+  2026-11-25, below).
+- Status: [x] 2026-11-25 — real-data steps run by the lead agent on the owner's word,
+  reading only the aggregate reports (results stay in the gitignored `calibration/`):
+  - Event names: the real airway events are "Intubation", "Extubation" and "LMA".
+    Matching "LMA" as the airway start raised `phase_source = events` from 65.5% to
+    76.5% of a 200-case sample, and to 75.7% (4211 of 5563) on the full EMR scan
+    (mixed 681, fallback 671).
+  - Before-and-after table: `calibration/diff.md`. Synthetic anomalies still flag.
+  - Full-EMR scan, 5563 cases: 1 worker 324 s, 4 workers 117 s, 6 workers 83 s,
+    8 workers 76 s; peak memory under 400 MB per process.
+  - Thresholds kept at their clinical values (owner). In the 200-case sample nine rules
+    flag about half of all cases (tv_high_mlkg, etco2_high, etco2_low, rr_low,
+    spo2_low, map_low, pip_rising, tv_abs_extreme, pip_high); see the backlog.
 
 ## Phase 7 — One workspace, step 2 (v0.13.0)
 - Tasks:
@@ -221,6 +234,10 @@ as a completed mention, and an empty timeline still reports the missing
 MAP and SpO2 series. Not pushed.
 
 ## Backlog (unscheduled)
+- High flag rates on real data (Phase 6, 2026-11-25): nine rules flag about half of
+  all cases at their clinical cutoffs. Decide rule by rule (owner) whether to keep the
+  clinical value, add a phase skip, or move toward the hospital's percentiles; the
+  200-case profile in `calibration/after-phases/` has the per-phase shares.
 - Prototype the consolidation of Ask, Summary, Case timeline, and Rule reference
   into G/F (prototype built: `docs/prototypes/consolidated-workspace.html`, #21;
   reviewed 2026-10-14, side panel chosen; scheduled as Phases 5 and 7)

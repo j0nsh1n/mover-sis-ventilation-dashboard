@@ -2,6 +2,13 @@
 
 ## Current State
 
+- **Phase 6 calibration (2026-11-25, `feat/phase6-calibration`):** run on
+  the real SIS EMR by the lead agent on the owner's word, reading only the
+  aggregate reports (results in the gitignored `calibration/`). Real airway
+  event names are "Intubation", "Extubation" and "LMA"; "LMA" now counts as
+  the airway start. Events set the phases in 75.7% of the 5563 cases. The
+  owner kept the clinical thresholds; the high flag rates are in the roadmap
+  backlog. Gemini 4 Neon reviewed the change before push.
 - **Cloud answers and the chat thread (2026-11-14):** PR #41 (`feat/cloud-ai`)
   is merged into `feat/visual-overhaul` (`6fa4e2e`). Answers can come from the
   Claude API (key in the system password store), Claude Code or Codex next to
@@ -337,6 +344,13 @@ Wave root (optional) ──► wave_decode                   │
 
 ## Session Handoff
 
+- **Phase 6 and Epic (2026-11-25):** Phase 6 is done on
+  `feat/phase6-calibration` (not pushed until the owner says so). Next, after
+  it merges: the Epic part of MOVER as a second data source (owner OK to
+  change the spec). Its non-wave archives are unpacked at
+  `/var/mnt/games/mover-epic/` (records, cleaned flowsheets, raw flowsheet
+  exports; single files up to 160 GB, so any loader must read in chunks).
+  Agents read only file names there, never contents.
 - **Suite speed (2026-11-12, `feat/visual-overhaul`, `75a20bf`):** tests were
   leaving windows alive, and each theme change restyled every one. An autouse
   reap in `tests/conftest.py` closes and deletes new top-level widgets and

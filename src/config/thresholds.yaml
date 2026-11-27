@@ -74,21 +74,23 @@ n2o_mac_age40: 104
 # and runs to the end of the data. `phase_source` on the timeseries and cases
 # says which: events (both from events), mixed (one), fallback (neither).
 #
-# UNVERIFIED: these patterns are guesses. The real MOVER event names were not
-# available when they were written. Run `python -m src.pipeline.profile` and
-# read its "Procedure event names" table, then edit the patterns to match.
+# Checked against the real MOVER SIS event names on 2026-11-25 (profile of 200
+# cases): the airway events are recorded as "Intubation", "Extubation" and "LMA"
+# (a laryngeal mask placed; it has no removal event of its own). Rarer names
+# (fewer than 11 cases each) were not visible, so the older guesses stay.
 phases:
   # Airway start. The earliest matching event inside the case's data counts,
   # so a re-intubation later in the case does not move the boundary.
   intubation_patterns:
     - "intubat"
+    - '^\s*lma\s*$'
     - "airway (secured|placed|established)"
-    - "(lma|laryngeal mask).*(placed|inserted)"
+    - '\b(lma|laryngeal mask)\b.*(placed|inserted)'
   # Airway end. The latest matching event after the intubation counts.
   extubation_patterns:
     - "extubat"
     - "airway removed"
-    - "(lma|laryngeal mask).*removed"
+    - '\b(lma|laryngeal mask)\b.*removed'
   induction_after_min: 10    # induction lasts this long after the intubation event (agent wash-in)
   emergence_before_min: 10   # emergence starts this long before the extubation event (agent wash-out)
   event_pad_min: 5           # events this far outside the case's data are ignored (wrong-day / stray events)
