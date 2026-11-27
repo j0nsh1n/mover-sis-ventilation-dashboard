@@ -43,17 +43,21 @@ def _epic_cases(emr: str, mtime: float) -> dict[str, tuple[str, pd.Timestamp | N
     info = pd.read_csv(Path(emr) / "patient_information.csv", dtype=str, keep_default_na=False,
                        usecols=["PID", "OR_start", "OR_end"]).set_index("PID")
 
-    def utc(value: str) -> pd.Timestamp | None:
+    def utc(value: str, *, earlier: bool) -> pd.Timestamp | None:
+        """Local hospital time to UTC. In the repeated autumn hour the start takes the earlier reading and the end
+        the later one, so the window covers the whole hour instead of becoming undefined."""
         t = pd.to_datetime(value, errors="coerce")
         if pd.isna(t):
             return None
-        return t.tz_localize(HOSPITAL_TZ, ambiguous="NaT", nonexistent="shift_forward").tz_convert("UTC")
+        local = t.tz_localize(HOSPITAL_TZ, ambiguous=earlier, nonexistent="shift_forward")
+        return None if pd.isna(local) else local.tz_convert("UTC")
 
     out = {}
     for pid, wave_id in zip(ids["PID"], ids["Wave_ID"], strict=True):
         row = info.loc[pid] if pid in info.index else None
-        out[pid] = (wave_id.lower(), utc(row["OR_start"]) if row is not None else None,
-                    utc(row["OR_end"]) if row is not None else None)
+        out[pid] = (wave_id.strip().lower(),
+                    utc(row["OR_start"], earlier=True) if row is not None else None,
+                    utc(row["OR_end"], earlier=False) if row is not None else None)
     return out
 
 
@@ -62,14 +66,38 @@ def _waveform_dirs(root: str) -> tuple[Path, ...]:
     """Every ``Waveforms`` folder up to three levels below ``root`` (the Epic sets sit two levels down)."""
     found = []
     base = Path(root)
+    if base.name == "Waveforms":
+        return (base,)
     for dirpath, dirs, _files in os.walk(base):
         depth = len(Path(dirpath).relative_to(base).parts)
         if "Waveforms" in dirs:
             found.append(Path(dirpath) / "Waveforms")
         dirs[:] = [] if depth >= 2 else sorted(d for d in dirs if d != "Waveforms" and not d.startswith("."))
-    if base.name == "Waveforms":
-        found.append(base)
     return tuple(found)
+
+
+@lru_cache(maxsize=1024)
+def _prefix_index(root: str, prefix: str) -> dict[str, tuple[tuple[pd.Timestamp, Path], ...]]:
+    """Every file in one prefix folder across all wave sets, by patient id; built once, so ~50k case lookups do not
+    list the same folders again for each case."""
+    by_id: dict[str, list[tuple[pd.Timestamp, Path]]] = {}
+    for wdir in _waveform_dirs(root):
+        for folder in {wdir / prefix.lower(), wdir / prefix.upper()}:
+            try:
+                names = os.listdir(folder)
+            except OSError:
+                continue
+            for name in names:
+                m = _EPIC_FILE.match(name)
+                if not m:
+                    continue
+                try:
+                    t = pd.Timestamp(f"{m.group(2)}-{m.group(3)}-{m.group(4)} {m.group(5)}:{m.group(6)}:{m.group(7)}",
+                                     tz="UTC")
+                except ValueError:
+                    continue
+                by_id.setdefault(m.group(1).lower(), []).append((t, folder / name))
+    return {k: tuple(sorted(v, key=lambda item: item[0])) for k, v in by_id.items()}
 
 
 def _epic_files(pid: str, root: Path, emr: Path) -> list[Path]:
@@ -77,31 +105,20 @@ def _epic_files(pid: str, root: Path, emr: Path) -> list[Path]:
     if pid not in cases:
         return []
     wave_id, start, end = cases[pid]
+    # Files are per patient across all their admissions: without both room times there is no safe window.
+    if not wave_id or start is None or end is None:
+        return []
     files = []
-    for wdir in _waveform_dirs(str(root)):
-        prefix = wdir / wave_id[:2]
+    for t, path in _prefix_index(str(root), wave_id[:2]).get(wave_id, ()):
+        if t < start - WINDOW_BEFORE or t > end:
+            continue
         try:
-            names = os.listdir(prefix)
+            if path.stat().st_size == 0:
+                continue
         except OSError:
             continue
-        for name in names:
-            m = _EPIC_FILE.match(name)
-            if not m or m.group(1).lower() != wave_id:
-                continue
-            t = pd.Timestamp(f"{m.group(2)}-{m.group(3)}-{m.group(4)} {m.group(5)}:{m.group(6)}:{m.group(7)}",
-                             tz="UTC")
-            if start is not None and t < start - WINDOW_BEFORE:
-                continue
-            if end is not None and t > end:
-                continue
-            path = prefix / name
-            try:
-                if path.stat().st_size == 0:
-                    continue
-            except OSError:
-                continue
-            files.append(path)
-    return sorted(files, key=lambda p: p.name[18:])
+        files.append(path)
+    return files
 
 
 def case_wave_files(pid: str, wdir: Path | str | None = None, emr: Path | str | None = None) -> list[Path]:

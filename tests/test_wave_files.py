@@ -69,3 +69,34 @@ def test_an_sis_case_folder_still_works_and_skips_empty_files(tmp_path):
     _xml(case / "b.xml", "")
     assert case_wave_files("03e4d41adce6e85f", tmp_path / "waves", emr) == [good]
     assert has_case_waves("03e4d41adce6e85f", tmp_path / "waves", emr)
+
+
+def _one_case(tmp_path, or_start, or_end, files):
+    emr = tmp_path / "converted"
+    emr.mkdir()
+    pd.DataFrame([{"PID": PID, "OR_start": or_start, "OR_end": or_end}]).to_csv(emr / "patient_information.csv",
+                                                                             index=False)
+    pd.DataFrame([{"PID": PID, "Wave_ID": WAVE}]).to_csv(emr / "epic_wave_ids.csv", index=False)
+    folder = tmp_path / "wave_v2" / "wave_1" / "UCI_part1" / "Waveforms" / "ab"
+    made = {key: _xml(folder / f"{WAVE}IP-{stamp}-000Z.xml") for key, stamp in files.items()}
+    return emr, tmp_path / "wave_v2", made
+
+
+def test_summer_times_use_daylight_time(tmp_path):
+    # 07:50-10:10 Pacific daylight time is 14:50-17:10 UTC.
+    emr, root, f = _one_case(tmp_path, "2020-07-03 07:50:00", "2020-07-03 10:10:00",
+                             {"in": "2020-07-03-15-00-00", "before": "2020-07-03-14-00-00", "after": "2020-07-03-17-30-00"})
+    assert case_wave_files(PID, root, emr) == [f["in"]]
+
+
+def test_the_repeated_autumn_hour_keeps_a_bounded_window(tmp_path):
+    # 2020-11-01 01:30 happens twice in Los Angeles (08:30 and 09:30 UTC); the window covers both, nothing more.
+    emr, root, f = _one_case(tmp_path, "2020-11-01 01:30:00", "2020-11-01 01:45:00",
+                             {"first": "2020-11-01-08-40-00", "second": "2020-11-01-09-40-00",
+                              "other_day": "2020-11-03-09-00-00"})
+    assert case_wave_files(PID, root, emr) == [f["first"], f["second"]]
+
+
+def test_a_case_without_room_times_gets_no_files(tmp_path):
+    emr, root, _f = _one_case(tmp_path, "", "", {"any": "2020-02-03-16-00-00"})
+    assert case_wave_files(PID, root, emr) == []

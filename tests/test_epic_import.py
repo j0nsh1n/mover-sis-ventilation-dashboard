@@ -266,3 +266,92 @@ def test_a_converted_folder_gets_its_own_processed_folder(tmp_path):
     out = tmp_path / "games" / "mover-epic-sis"
     import_epic(_epic(tmp_path), out)
     assert default_processed_for_emr(out) == (tmp_path / "games" / "mover-epic-sis-processed").resolve()
+
+
+def _flow_row(case, name, minute, value, record="INTRA-OP"):
+    return {"Unnamed: 0": "0", "LOG_ID": case, "MRN": MRN[case], "FLO_NAME": "Data", "FLO_DISPLAY_NAME": name,
+            "RECORD_TYPE": record, "RECORDED_TIME": _t(minute), "MEAS_VALUE": value, "UNITS": ""}
+
+
+def test_parts_are_merged_in_part_order_not_name_order(tmp_path):
+    root = _epic(tmp_path)
+    flow = root / "flowsheets" / "flowsheets_cleaned"
+    for n in range(3, 11):  # parts 3..10; part 10 is read after part 2 and must win the shared minute
+        rows = [_flow_row(A, "Heart Rate", 50, "61" if n == 10 else "59")] if n in (2, 10) else \
+            [_flow_row(B, "Heart Rate", 1, "70", record="PRE-OP")]
+        pd.DataFrame(rows).to_csv(flow / f"flowsheet_part{n}.csv", index=False)
+    pd.DataFrame([_flow_row(A, "Heart Rate", 50, "59")]).to_csv(flow / "flowsheet_part2.csv", index=False)
+    out = tmp_path / "converted"
+    import_epic(root, out)
+    vitals = _read(out, "patient_vitals.csv")
+    assert float(vitals[(vitals["PID"] == A) & (vitals["Obs_time"] == _t(50))].iloc[0]["HRe"]) == 61
+
+
+def test_a_fresh_run_ignores_work_left_by_another_run(tmp_path):
+    root = _epic(tmp_path)
+    out = tmp_path / "converted"
+    stale = out / ".work" / "flowsheet_part1"
+    stale.mkdir(parents=True)
+    pd.DataFrame([{"LOG_ID": B, "name": "heart rate", "RECORDED_TIME": _t(3), "MEAS_VALUE": "200"}]).to_csv(
+        stale / "shard_000.csv", index=False)
+    (out / ".work" / "names.json").write_text(json.dumps({"stale name": [B]}), encoding="utf-8")
+    result = import_epic(root, out, min_cell=1)
+    assert result["cases"] == 2 and B not in set(_read(out, "patient_vitals.csv")["PID"])
+    names = json.loads((out / "epic_import_names.json").read_text())
+    assert "stale name" not in {n["name"] for n in names["names"]}
+
+
+def test_a_resume_whose_work_folder_is_gone_reads_the_parts_again(tmp_path):
+    import shutil
+
+    root = _epic(tmp_path)
+    out = tmp_path / "converted"
+    calls = {"n": 0}
+
+    def stop_after_first_part() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    import_epic(root, out, should_stop=stop_after_first_part)
+    shutil.rmtree(out / ".work")
+    done = import_epic(root, out)
+    assert done["finished"] and done["cases"] == 2
+    assert len(_read(out, "patient_ventilator.csv")[lambda d: d["PID"] == A]) == 3
+
+
+def test_an_inspired_agent_reading_alone_still_names_the_agent(tmp_path):
+    root = _epic(tmp_path)
+    flow = root / "flowsheets" / "flowsheets_cleaned"
+    pd.DataFrame([_flow_row(C, "ISO In", 70, "1.1")]).to_csv(flow / "flowsheet_part3.csv", index=False)
+    out = tmp_path / "converted"
+    import_epic(root, out)
+    vent = _read(out, "patient_ventilator.csv")
+    row = vent[(vent["PID"] == C) & (vent["Obs_time"] == _t(70))].iloc[0]
+    assert row["Agent"] == "I" and float(row["Agent_Fi"]) == 1.1 and row["Agent_Et"] == ""
+
+
+def test_a_closure_event_is_not_taken_for_the_incision(tmp_path):
+    root = _epic(tmp_path)
+    events_path = root / "emr" / "EPIC_EMR" / "EMR" / EPIC_EVENTS
+    events = pd.read_csv(events_path, dtype=str, keep_default_na=False)
+    events = pd.concat([events, pd.DataFrame([{"LOG_ID": C, "MRN": MRN[C], "EVENT_DISPLAY_NAME": "Skin Incision Closed",
+                                               "EVENT_TIME": "2/3/2020 9:40", "NOTE_TEXT": ""}])])
+    events.to_csv(events_path, index=False)
+    out = tmp_path / "converted"
+    import_epic(root, out)
+    info = _read(out, "patient_information.csv").set_index("PID")
+    assert info.loc[C, "Surgery_start"] == "2020-02-03 07:58:00"  # anesthesia start, not the closure
+
+
+def test_the_private_file_is_owner_only_even_over_an_old_temp_file(tmp_path):
+    import os
+
+    root = _epic(tmp_path)
+    out = tmp_path / "converted"
+    out.mkdir()
+    old = out / "epic_wave_ids.csv.tmp"
+    old.write_text("stale", encoding="utf-8")
+    os.chmod(old, 0o644)
+    import_epic(root, out)
+    assert stat.S_IMODE((out / "epic_wave_ids.csv").stat().st_mode) == 0o600
+    assert not old.exists()

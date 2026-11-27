@@ -87,7 +87,8 @@ MED_COLS = ["PID", "Drug_name", "Dose", "Drug_units", "Start_time", "End_time"]
 # Medication actions that record a dose going in; holds, cancellations and missed doses are not doses.
 GIVEN_ACTIONS = re.compile(r"^(given|new bag|bolus|bolus from bag|restarted|rate change|rate change dual sign|"
                            r"fluid - given by anesthesia|given by other|patch applied)$", re.I)
-INCISION = re.compile(r"\bskin incision\b", re.I)
+# The incision itself, not a closure or a pre-incision timeout that also names it.
+INCISION = re.compile(r"^(?!.*\b(?:close|closed|closure|pre[- ]|timeout)\b).*\bskin incision\b", re.I)
 OUT_TIME = "%Y-%m-%d %H:%M:%S"
 FLOW_COLS = ["LOG_ID", "FLO_DISPLAY_NAME", "RECORD_TYPE", "RECORDED_TIME", "MEAS_VALUE"]
 
@@ -103,7 +104,7 @@ def normalise_name(name: object) -> str:
 
 
 def _header(path: Path) -> list[str]:
-    with path.open("r", encoding="utf-8", errors="replace") as fh:
+    with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
         line = fh.readline()
     return [c.strip().strip('"') for c in line.rstrip("\r\n").split(",")]
 
@@ -114,7 +115,10 @@ def looks_like_epic_emr(path: Path | str) -> bool:
     info = p / EPIC_INFO
     if not info.is_file() or not (p / EPIC_EVENTS).is_file():
         return False
-    cols = {c.upper() for c in _header(info)}
+    try:
+        cols = {c.upper() for c in _header(info)}
+    except OSError:
+        return False
     return {"LOG_ID", "MRN"} <= cols and "PID" not in cols
 
 
@@ -265,6 +269,8 @@ def _wide_minutes(long: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     parts.append(pd.DataFrame({"PID": rest["LOG_ID"], "t": rest["t"], "col": target[~nibp],
                                "value": pd.to_numeric(rest["MEAS_VALUE"], errors="coerce")}))
     values = pd.concat(parts, ignore_index=True).dropna(subset=["value"])
+    if values.empty:
+        return pd.DataFrame(columns=VENT_COLS), pd.DataFrame(columns=VITALS_COLS)
     # Stable sort keeps the recorded order inside a minute, so the last reading is the one kept.
     wide = values.groupby(["PID", "t", "col"], sort=False)["value"].last().unstack("col")
     wide = wide.reset_index().sort_values(["PID", "t"])
@@ -273,20 +279,23 @@ def _wide_minutes(long: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         if col not in wide:
             wide[col] = np.nan
     wide["RR"] = wide["RR_measured"].where(wide["RR_measured"].notna(), wide["RR_set"])
-    et_cols = [c for c in wide.columns if str(c).startswith("Agent_Et:")]
-    if et_cols:
-        ets = wide[et_cols]
-        has = ets.notna().any(axis=1)
-        best = ets.fillna(-1).idxmax(axis=1).where(has)
-        wide["Agent"] = best.str.split(":").str[1]
-        wide["Agent_Et"] = ets.max(axis=1)
-        fi = {c.split(":")[1]: c for c in wide.columns if str(c).startswith("Agent_Fi:")}
-        wide["Agent_Fi"] = [wide.at[i, fi[a]] if isinstance(a, str) and a in fi else np.nan
-                            for i, a in zip(wide.index, wide["Agent"], strict=True)]
-    else:
-        wide["Agent"] = np.nan
-        wide["Agent_Et"] = np.nan
-        wide["Agent_Fi"] = np.nan
+    # The agent is the one with the highest end-tidal reading that minute, else the highest inspired one.
+    et_map = {str(c).split(":")[1]: c for c in wide.columns if str(c).startswith("Agent_Et:")}
+    fi_map = {str(c).split(":")[1]: c for c in wide.columns if str(c).startswith("Agent_Fi:")}
+
+    def strongest(cols: dict[str, Any]) -> pd.Series:
+        if not cols:
+            return pd.Series(np.nan, index=wide.index, dtype=object)
+        block = wide[list(cols.values())]
+        letters = block.fillna(-np.inf).idxmax(axis=1).map({c: a for a, c in cols.items()})
+        return letters.where(block.notna().any(axis=1))
+
+    agent = strongest(et_map)
+    agent = agent.where(agent.notna(), strongest(fi_map))
+    wide["Agent"] = agent
+    for col, cols in (("Agent_Et", et_map), ("Agent_Fi", fi_map)):
+        wide[col] = [wide.at[i, cols[a]] if isinstance(a, str) and a in cols else np.nan
+                     for i, a in zip(wide.index, agent, strict=True)]
     vent_cols = [c for c in VENT_COLS if c not in ("PID", "Obs_time", "Agent", "Agent_Fi", "Agent_Et")]
     vit_cols = [c for c in VITALS_COLS if c not in ("PID", "Obs_time")]
     vent = wide.reindex(columns=VENT_COLS)
@@ -306,7 +315,7 @@ def _names_report(name_cases: dict[str, set[str]], min_cell: int) -> dict[str, A
 
 
 def _info(emr: Path, keep: set[str], events: pd.DataFrame) -> pd.DataFrame:
-    df = pd.read_csv(emr / EPIC_INFO, dtype=str, keep_default_na=False)
+    df = pd.read_csv(emr / EPIC_INFO, dtype=str, keep_default_na=False, encoding_errors="replace")
     df = df[df["LOG_ID"].isin(keep)].drop_duplicates("LOG_ID")
     incision = events[events["Event_name"].map(lambda n: bool(INCISION.search(str(n))))]
     first_cut = incision.groupby("PID")["Event_time"].min()
@@ -327,7 +336,7 @@ def _info(emr: Path, keep: set[str], events: pd.DataFrame) -> pd.DataFrame:
 
 
 def _events(emr: Path, keep: set[str]) -> pd.DataFrame:
-    df = pd.read_csv(emr / EPIC_EVENTS, dtype=str, keep_default_na=False,
+    df = pd.read_csv(emr / EPIC_EVENTS, dtype=str, keep_default_na=False, encoding_errors="replace",
                      usecols=["LOG_ID", "EVENT_DISPLAY_NAME", "EVENT_TIME"])
     df = df[df["LOG_ID"].isin(keep)]
     return pd.DataFrame({"PID": df["LOG_ID"], "Event_time": _fmt(df["EVENT_TIME"]),
@@ -355,17 +364,26 @@ def _wave_ids(epic_root: Path, keep: set[str]) -> pd.DataFrame | None:
     found = _find_file(epic_root, ID_MAP)
     if found is None:
         return None
-    ids = pd.read_csv(found, dtype=str, keep_default_na=False, usecols=["LOG_ID", "PAT_ID"])
+    ids = pd.read_csv(found, dtype=str, keep_default_na=False, usecols=["LOG_ID", "PAT_ID"], encoding_errors="replace")
     ids = ids[ids["LOG_ID"].isin(keep)].drop_duplicates("LOG_ID")
     return pd.DataFrame({"PID": ids["LOG_ID"], "Wave_ID": ids["PAT_ID"].str.strip().str.lower()})
 
 
 def _write(df: pd.DataFrame, path: Path, *, private: bool = False) -> None:
+    """Write through a temporary file; a private one is created owner-only, so it is never readable by others."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    df.to_csv(tmp, index=False)
-    if private:
-        os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    try:
+        if private:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)  # an older tmp file keeps its mode through O_CREAT
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                df.to_csv(fh, index=False)
+        else:
+            df.to_csv(tmp, index=False)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHUNK_ROWS, min_cell: int = MIN_CELL,
@@ -392,7 +410,13 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         say("already converted")
         return state.data
     work = dest / ".work"
+    if not state.data["parts_done"] and work.exists():
+        shutil.rmtree(work)  # left by an older or different run; its shards must not mix into this one
+    work.mkdir(parents=True, exist_ok=True)
+    os.chmod(work, 0o700)  # it holds case ids per name and raw readings until the import ends
     names_path = work / "names.json"
+    if state.data["parts_done"] and not names_path.is_file():
+        state.data["parts_done"] = []  # the counts behind the finished parts are gone, so start over
     name_cases: dict[str, set[str]] = defaultdict(set)
     if names_path.is_file():
         for n, ids in json.loads(names_path.read_text(encoding="utf-8")).items():
@@ -404,12 +428,16 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     for part in parts:
         rel = str(part.relative_to(root))
         if rel in state.data["parts_done"]:
-            continue
+            if (work / part.stem).is_dir():
+                continue
+            state.data["parts_done"].remove(rel)  # its shards are gone: read the part again
         if should_stop and should_stop():
             say("stopped; run again to resume")
             return state.data
         _pass1_part(part, work, name_cases, chunk_rows, say)
-        names_path.write_text(json.dumps({n: sorted(ids) for n, ids in name_cases.items()}), encoding="utf-8")
+        tmp_names = names_path.with_suffix(".json.tmp")
+        tmp_names.write_text(json.dumps({n: sorted(ids) for n, ids in name_cases.items()}), encoding="utf-8")
+        tmp_names.replace(names_path)
         state.data["parts_done"].append(rel)
         state.save()
         step(len(state.data["parts_done"]), steps)
@@ -420,7 +448,8 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     pd.DataFrame(columns=VITALS_COLS).to_csv(tmp_vit, index=False)
     cases: set[str] = set()
     for k in range(N_SHARDS):
-        files = sorted(work.glob(f"*/shard_{k:03d}.csv"))
+        # Part order, not name order: flowsheet_part10 must come after flowsheet_part2.
+        files = [work / p.stem / f"shard_{k:03d}.csv" for p in parts if (work / p.stem / f"shard_{k:03d}.csv").is_file()]
         if not files:
             continue
         long = pd.concat((pd.read_csv(f, dtype=str, keep_default_na=False) for f in files), ignore_index=True)
@@ -440,10 +469,12 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     if waves is not None:
         _write(waves, dest / WAVE_IDS, private=True)
     (dest / NAMES_REPORT).write_text(json.dumps(_names_report(name_cases, min_cell), indent=2), encoding="utf-8")
-    shutil.rmtree(work, ignore_errors=True)
+    # Mark the import finished before removing the work folder: a crash in between must not leave a marker that
+    # lists every part done with no shards left, which a rerun would turn into empty tables.
     state.data.update(finished=True, cases=len(cases), seconds=round(time.time() - started, 1),
                       wave_ids=waves is not None)
     state.save()
+    shutil.rmtree(work, ignore_errors=True)
     step(steps, steps)
     say("done")
     return state.data

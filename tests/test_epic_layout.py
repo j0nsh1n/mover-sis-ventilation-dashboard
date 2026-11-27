@@ -114,11 +114,43 @@ def test_a_file_without_a_header_row_never_shows_its_first_row(tmp_path):
         assert private not in text, private
 
 
-def test_one_value_like_name_in_a_real_header_is_masked(tmp_path):
+def test_a_header_with_one_value_like_name_is_read_as_data(tmp_path):
+    # One cell that looks like a value is enough doubt: the whole first line is treated as data, never shown.
     path = tmp_path / "t.csv"
     pd.DataFrame({"PAT_ID": [f"P{1000000 + i}" for i in range(20)], "EVENT_NAME": ["Intubation"] * 20,
                   "2021-11-09 07:58:00": ["x"] * 20}).to_csv(path, index=False)
     t = profile_csv(path, min_cell=11)
-    assert t["header_row"] is True
-    assert [c["name"] for c in t["columns"]][2] == "column 3 (name looks like a value)"
+    assert t["header_row"] is False
+    assert [c["name"] for c in t["columns"]] == ["column 1", "column 2", "column 3"]
     assert "2021-11" not in json.dumps(t)
+
+
+def test_staff_and_free_text_columns_never_list_values(tmp_path):
+    path = tmp_path / "t.csv"
+    n = 30
+    pd.DataFrame({"PAT_ID": [f"P{1000000 + i}" for i in range(n)],
+                  "ATTENDING_PROV_NM": ["Dr Quillfeather"] * n, "SURGEON_EVENT_TYPE": ["Dr Ashgrove"] * n,
+                  "COMMENT": ["same short note"] * n, "MEAS_VALUE": ["120/80"] * n,
+                  "EVENT_NAME": ["Intubation"] * n}).to_csv(path, index=False)
+    t = profile_csv(path, min_cell=11)
+    text = json.dumps(t)
+    for private in ("Quillfeather", "Ashgrove", "same short note", "120/80"):
+        assert private not in text, private
+    cols = {c["name"]: c for c in t["columns"]}
+    assert cols["EVENT_NAME"]["names"] == {"Intubation": 30}
+
+
+def test_id_counts_under_the_small_cell_limit_are_hidden(tmp_path):
+    path = tmp_path / "t.csv"
+    pd.DataFrame({"PAT_ID": [f"P{1000000 + i}" for i in range(4)], "AGE": ["40", "50", "60", "70"]}).to_csv(
+        path, index=False)
+    cols = {c["name"]: c for c in profile_csv(path, min_cell=11)["columns"]}
+    assert cols["PAT_ID"]["distinct"] == "<11"
+
+
+def test_folder_shapes_hide_ids_inside_names():
+    from src.pipeline.epic_layout import _name_shape
+
+    assert _name_shape("03") == "<2 hex>" and _name_shape("0c ") == "<2 hex>"
+    assert _name_shape("PAT_3f2a9c41d07e55b1") == "PAT_<16 hex>"
+    assert _name_shape("UCI_deidentified_part1_EPIC_07_22") == "UCI_deidentified_part1_EPIC_07_22"

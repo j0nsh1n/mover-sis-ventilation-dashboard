@@ -151,12 +151,13 @@ def test_decode_case_builds_time_indexed_series(tmp_path):
     import src.wave_files as wf
 
     # The case's files are found through src.wave_files, which asks for the SIS case folder.
-    orig = wf.waveform_case_dir
+    orig, orig_emr = wf.waveform_case_dir, wf.emr_dir
     wf.waveform_case_dir = fake_case_dir
+    wf.emr_dir = lambda: None  # never this machine's saved EMR folder
     try:
         out = wd.decode_case("pid123", wdir=tmp_path)
     finally:
-        wf.waveform_case_dir = orig
+        wf.waveform_case_dir, wf.emr_dir = orig, orig_emr
 
     assert set(out) == {"GE_ART"}
     series = out["GE_ART"]

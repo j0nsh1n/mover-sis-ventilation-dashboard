@@ -213,6 +213,25 @@ def _epic_not_converted(found: Path) -> EpicRecordsNotConverted:
     )
 
 
+def _waveforms_one_below(folder: Path, limit: int = 64) -> bool:
+    """Whether one of the first ``limit`` subfolders of ``folder`` holds Waveforms/. Bounded, so a check on a large
+    folder the person typed stays quick; an unreadable folder counts as no."""
+    try:
+        with os.scandir(folder) as entries:
+            for i, entry in enumerate(entries):
+                if i >= limit:
+                    return False
+                try:
+                    if (not entry.name.startswith(".") and entry.is_dir(follow_symlinks=False)
+                            and (Path(entry.path) / "Waveforms").is_dir()):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
 def looks_like_wave_dir(path: Path) -> bool:
     """
     True if path looks like SIS wave data.
@@ -232,7 +251,7 @@ def looks_like_wave_dir(path: Path) -> bool:
         for child in path.iterdir():
             if child.is_dir() and (child / "Waveforms").is_dir():
                 return True
-            if child.is_dir() and any((g / "Waveforms").is_dir() for g in child.iterdir() if g.is_dir()):
+            if child.is_dir() and not child.name.startswith(".") and _waveforms_one_below(child):
                 return True
             if child.is_file() and "wave" in child.name.lower() and child.suffix in {
                 ".gz",

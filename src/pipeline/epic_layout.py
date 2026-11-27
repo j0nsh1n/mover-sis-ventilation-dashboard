@@ -48,8 +48,14 @@ XML_FILES = 3
 # A column whose name says it is a key is reported as an id whatever its values look like.
 _ID_NAME = re.compile(r"(^|_)(pat|patient|mrn|pid|log|csn|enc|encounter|visit|hsp|acct|account|order|id)(_|$)|_id$|^id_", re.I)
 # The patient key, in order of preference, used to count patients per name.
-# People's names are never listed, even when many patients share one.
-_PERSON_NAME = re.compile(r"name|provider|surgeon|physician|anesthesiologist|staff|author|user|employee|nurse|resident", re.I)
+# Staff columns are never listed, whatever else the column name says (Epic names them like PROV_NM, CRNA_NM).
+_STAFF = re.compile(r"provider|prov_|surgeon|physician|anesthesiologist|anesthetist|attending|crna|staff|author|"
+                    r"user|employee|nurse|resident|operator|signed_by|entered_by", re.I)
+# A plain "name" column is a person unless the name says what kind of thing it names.
+_PERSON_NAME = re.compile(r"name|_nm$", re.I)
+# Free text and measured values are never listed as names, even when short and repeated.
+_TEXT_COL = re.compile(r"note|comment|text|narrative|remark|memo|value", re.I)
+_HEADER_NAME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9_ ()/%.:-]{0,60}|Unnamed: \d+)$")
 _LABEL_HINT = re.compile(r"(event|flo|meas|measure|type|unit|desc|status|category|class|route|code)", re.I)
 _PATIENT_KEYS = ("PAT_ID", "MRN", "PID", "PATIENT_ID", "LOG_ID", "PAT_ENC_CSN_ID", "CSN")
 _KEYISH = re.compile(r"^(?:[0-9A-Fa-f]{8,}|\d{6,}|[A-Za-z]{0,3}\d{6,}|[0-9a-f-]{32,36})$")
@@ -91,10 +97,16 @@ def _looks_like_value(name: str) -> bool:
 
 
 def _has_header(path: Path) -> bool:
-    """False when the first line holds data, so no row is ever reported as column names."""
-    first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding_errors="replace")
-    names = [str(c) for c in first.columns]
-    return sum(_looks_like_value(n) for n in names) * 2 < len(names)
+    """True only when every first-line cell reads as a column name; otherwise the line is treated as data, so no
+    row is ever reported as column names."""
+    try:
+        first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding_errors="replace")
+    except pd.errors.EmptyDataError:
+        return False
+    names = [str(c).strip() for c in first.columns]
+    if not names:
+        return False
+    return all(_HEADER_NAME.match(n) and not _looks_like_value(n) for n in names)
 
 
 def _read_sample(path: Path, sample_rows: int, header: bool = True) -> pd.DataFrame:
@@ -121,9 +133,10 @@ def _column_report(name: str, values: pd.Series, patients: pd.Series | None, min
         out["kind"] = "empty"
         return out
     keyish = present.head(2000).str.match(_KEYISH).mean() >= 0.9
-    if _ID_NAME.search(name) or (keyish and distinct > MAX_LABEL_DISTINCT) or (
+    if _ID_NAME.search(name) or (keyish and distinct > MAX_LABEL_DISTINCT) or _STAFF.search(name) or (
             _PERSON_NAME.search(name) and not _LABEL_HINT.search(name)):
         out["kind"] = "id"
+        out["distinct"] = _count(int(distinct), min_cell)
         return out
     shape = _date_shape(present)
     if shape:
@@ -141,7 +154,8 @@ def _column_report(name: str, values: pd.Series, patients: pd.Series | None, min
         return out
     lengths = present.str.len()
     # A label repeats: free text that happens to be short is mostly one-off values.
-    if distinct <= MAX_LABEL_DISTINCT and lengths.max() <= MAX_LABEL_LENGTH and distinct <= len(present) / 2:
+    if (not _TEXT_COL.search(name) and distinct <= MAX_LABEL_DISTINCT and lengths.max() <= MAX_LABEL_LENGTH
+            and distinct <= len(present) / 2):
         out["kind"] = "label"
         if patients is None:
             out["names"] = "not listed: no patient key column"
@@ -184,7 +198,7 @@ def profile_csv(path: Path, *, sample_rows: int = SAMPLE_ROWS, min_cell: int = 1
                               / max(_mean_row_bytes(path, header_bytes if header else 0, len(df)), 1)),
         "patient_key": key,
         "sampled_patients": _count(int(patients.nunique()), min_cell) if patients is not None else None,
-        "columns": [_column_report(c, df[c], patients, min_cell) for c in columns],
+        "columns": [_column_report(c, df.iloc[:, i], patients, min_cell) for i, c in enumerate(columns)],
     }
 
 
@@ -202,13 +216,15 @@ def _mean_row_bytes(path: Path, header_bytes: int, n_rows: int) -> float:
 
 
 def _name_shape(name: str) -> str:
+    """A folder name with anything that could be an id replaced by its shape."""
+    if re.fullmatch(r"[0-9a-fA-F]{2}", name.strip()):
+        return "<2 hex>"
     if re.fullmatch(r"[0-9a-fA-F]+", name) and not name.isdigit():
         return f"<{len(name)} hex>"
     if name.isdigit():
         return f"<{len(name)} digits>"
-    if re.fullmatch(r"[0-9a-fA-F]{2}", name):
-        return "<2 hex>"
-    return name if not re.search(r"\d{4,}", name) else re.sub(r"\d", "9", name)
+    masked = re.sub(r"[0-9a-fA-F]{8,}", lambda m: f"<{len(m.group(0))} hex>", name)
+    return re.sub(r"\d{4,}", lambda m: "9" * len(m.group(0)), masked)
 
 
 def profile_waves(root: Path, *, xml_files: int = XML_FILES) -> dict[str, Any]:
@@ -243,13 +259,17 @@ def profile_waves(root: Path, *, xml_files: int = XML_FILES) -> dict[str, Any]:
         seen_attr: set[str] = set()
         seen_groups: set[str] = set()
         seen_measures: set[str] = set()
-        for _event, el in ET.iterparse(p, events=("start",)):
-            seen_tags.add(el.tag)
-            seen_attr.update(f"{el.tag}@{a}" for a in el.attrib)
-            if el.tag == "mg" and "name" in el.attrib:
-                seen_groups.add(el.attrib["name"])
-            if el.tag == "m" and "name" in el.attrib:
-                seen_measures.add(el.attrib["name"])
+        try:
+            for _event, el in ET.iterparse(p, events=("end",)):
+                seen_tags.add(el.tag)
+                seen_attr.update(f"{el.tag}@{a}" for a in el.attrib)
+                if el.tag == "mg" and "name" in el.attrib:
+                    seen_groups.add(el.attrib["name"])
+                if el.tag == "m" and "name" in el.attrib:
+                    seen_measures.add(el.attrib["name"])
+                el.clear()
+        except (OSError, ET.ParseError):
+            continue  # the file name can hold a patient id, so the error is not reported
         tags.update(seen_tags)
         attributes.update(seen_attr)
         groups.update(seen_groups)

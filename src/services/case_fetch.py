@@ -168,7 +168,7 @@ def emr_index(emr: Path | str | None = None, *, with_wave: bool = False) -> pd.D
     if with_wave:
         wdir = wave_dir()
         df["has_wave"] = (
-            [has_case_waves(pid, wdir) for pid in df["PID"]]
+            [has_case_waves(pid, wdir, emr=root) for pid in df["PID"]]
             if wdir is not None
             else False
         )
