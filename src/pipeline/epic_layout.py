@@ -84,10 +84,24 @@ def _patient_key(columns: list[str]) -> str | None:
     return None
 
 
-def _read_sample(path: Path, sample_rows: int) -> pd.DataFrame:
+def _looks_like_value(name: str) -> bool:
+    """A column name that is really a data value: a key, a date or a number."""
+    text = re.sub(r"\.\d+$", "", name.strip())  # pandas suffixes repeated names with .1, .2
+    return bool(_KEYISH.match(text) or _date_shape(pd.Series([text])) or re.fullmatch(r"-?\d+(\.\d+)?", text))
+
+
+def _has_header(path: Path) -> bool:
+    """False when the first line holds data, so no row is ever reported as column names."""
+    first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding_errors="replace")
+    names = [str(c) for c in first.columns]
+    return sum(_looks_like_value(n) for n in names) * 2 < len(names)
+
+
+def _read_sample(path: Path, sample_rows: int, header: bool = True) -> pd.DataFrame:
     parts = []
     reader = pd.read_csv(path, dtype=str, keep_default_na=False, chunksize=CHUNK_ROWS,
-                         on_bad_lines="skip", encoding_errors="replace", low_memory=True)
+                         on_bad_lines="skip", encoding_errors="replace", low_memory=True,
+                         header=0 if header else None)
     seen = 0
     for chunk in reader:
         parts.append(chunk)
@@ -147,7 +161,14 @@ def _column_report(name: str, values: pd.Series, patients: pd.Series | None, min
 
 def profile_csv(path: Path, *, sample_rows: int = SAMPLE_ROWS, min_cell: int = 11) -> dict[str, Any]:
     """Layout of one CSV from the first ``sample_rows`` rows; no value is copied out."""
-    df = _read_sample(path, sample_rows)
+    header = _has_header(path)
+    df = _read_sample(path, sample_rows, header=header)
+    if not header:
+        df.columns = [f"column {i + 1}" for i in range(len(df.columns))]
+    else:
+        # A single value-like name in a real header is masked too.
+        df.columns = [f"column {i + 1} (name looks like a value)" if _looks_like_value(str(c)) else str(c)
+                      for i, c in enumerate(df.columns)]
     columns = [str(c) for c in df.columns]
     key = _patient_key(columns)
     patients = df[key] if key else None
@@ -156,9 +177,11 @@ def profile_csv(path: Path, *, sample_rows: int = SAMPLE_ROWS, min_cell: int = 1
         header_bytes = len(fh.readline())
     return {
         "file": path.name,
+        "header_row": header,
         "bytes": size,
         "sampled_rows": int(len(df)),
-        "estimated_rows": int(len(df) and (size - header_bytes) / max(_mean_row_bytes(path, header_bytes, len(df)), 1)),
+        "estimated_rows": int(len(df) and (size - (header_bytes if header else 0))
+                              / max(_mean_row_bytes(path, header_bytes if header else 0, len(df)), 1)),
         "patient_key": key,
         "sampled_patients": _count(int(patients.nunique()), min_cell) if patients is not None else None,
         "columns": [_column_report(c, df[c], patients, min_cell) for c in columns],
@@ -168,7 +191,8 @@ def profile_csv(path: Path, *, sample_rows: int = SAMPLE_ROWS, min_cell: int = 1
 def _mean_row_bytes(path: Path, header_bytes: int, n_rows: int) -> float:
     """Average bytes per data row over the sampled rows, to estimate the file's row count."""
     with path.open("rb") as fh:
-        fh.readline()
+        if header_bytes:
+            fh.readline()
         total = 0
         for i, line in enumerate(fh):
             if i >= n_rows:
@@ -276,7 +300,8 @@ def render_markdown(report: dict[str, Any]) -> str:
     for t in report["tables"]:
         lines += [
             f"## {t['folder']}/{t['file']}", "",
-            f"{t['bytes'] / 1e9:.2f} GB, about {t['estimated_rows']:,} rows; patient key: {t['patient_key'] or 'none found'}; "
+            ("" if t["header_row"] else "No header row: the first line is data, so columns are numbered. ")
+            + f"{t['bytes'] / 1e9:.2f} GB, about {t['estimated_rows']:,} rows; patient key: {t['patient_key'] or 'none found'}; "
             f"patients in the sample: {t['sampled_patients']}.", "",
             "| Column | Kind | Empty % | Distinct | Detail |", "|---|---|---|---|---|",
         ]

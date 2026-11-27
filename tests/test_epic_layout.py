@@ -98,3 +98,27 @@ def test_cli_writes_markdown_and_json(tmp_path):
     out, js = tmp_path / "layout.md", tmp_path / "layout.json"
     main(["--root", str(tmp_path), "--out", str(out), "--json", str(js)])
     assert "patient_procedure events.csv" in out.read_text() and json.loads(js.read_text())["min_cell"] == 11
+
+
+def test_a_file_without_a_header_row_never_shows_its_first_row(tmp_path):
+    path = tmp_path / "raw.csv"
+    rows = [["4a12f7053d92ae68", "2021-11-09 07:58:00", "Surgery", "-1"],
+            ["5b23f8164e03bf79", "2021-11-10 08:10:00", "Surgery", "-1"]] * 30
+    pd.DataFrame(rows).to_csv(path, index=False, header=False)
+    t = profile_csv(path, min_cell=11)
+    text = json.dumps(t) + render_markdown({"min_cell": 11, "sample_rows": 1, "tables": [{"folder": ".", **t}], "waves": []})
+    assert t["header_row"] is False and t["sampled_rows"] == 60
+    assert [c["name"] for c in t["columns"]] == ["column 1", "column 2", "column 3", "column 4"]
+    assert "No header row" in text
+    for private in ("4a12f705", "5b23f816", "2021-11"):
+        assert private not in text, private
+
+
+def test_one_value_like_name_in_a_real_header_is_masked(tmp_path):
+    path = tmp_path / "t.csv"
+    pd.DataFrame({"PAT_ID": [f"P{1000000 + i}" for i in range(20)], "EVENT_NAME": ["Intubation"] * 20,
+                  "2021-11-09 07:58:00": ["x"] * 20}).to_csv(path, index=False)
+    t = profile_csv(path, min_cell=11)
+    assert t["header_row"] is True
+    assert [c["name"] for c in t["columns"]][2] == "column 3 (name looks like a value)"
+    assert "2021-11" not in json.dumps(t)
