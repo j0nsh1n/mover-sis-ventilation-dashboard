@@ -243,8 +243,13 @@ MAP and SpO2 series. Not pushed.
   - Run the converter on the real export; check phases and flags on a sample (aggregate only)
 - Complete when: a converted Epic folder runs through the pipeline with `phase_source = events`
   dominating, and Epic identifiers appear in no case table, report or request
-- Status: [~] 2026-11-26, branch `feat/epic-source`. Open: an in-app Convert button
-  (the converter is a command for now); Phase 6-style calibration on Epic.
+- Status: [~] 2026-11-26, branch `feat/epic-source`. The real export converted in about
+  21 minutes into 57,340 cases with intra-op readings (part 3 of 19 has none). On a 200-case
+  sample (aggregate profile) events set the phases in 54% of cases (mixed 5.5%, fallback
+  40.5%; 46 sample cases have no procedure events at all), and flag rates are close to SIS.
+  Unmapped intra-op names seen in many cases include arterial-line MAP, temperature and
+  expired minute volume. Open: an in-app Convert button (the converter is a command for
+  now); Phase 6-style calibration on Epic.
 
 ## Backlog (unscheduled)
 - High flag rates on real data (Phase 6, 2026-11-25): nine rules flag about half of
