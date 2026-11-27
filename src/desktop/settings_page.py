@@ -5,6 +5,8 @@ Nothing is written until Save. Leaving the page with edits asks whether to save 
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
@@ -30,6 +32,7 @@ from src.desktop.accessibility import announce
 from src.llm.cloud import KEY_FROM_STORE, KeyStoreError, api_key, forget_api_key, key_note, save_api_key
 from src.desktop.scroll_safe_combo import ScrollSafeComboBox
 from src.desktop.settings_ui import (
+    EpicConvertRow,
     FolderRow,
     NoteLabel,
     SettingRow,
@@ -244,10 +247,16 @@ class SettingsPage(QWidget):
             "Not set: Waveforms/ or sis_wave*.tar.gz", check_wave_folder,
         )
         self.row_emr.checked.connect(self._emr_checked)
+        self.row_epic = EpicConvertRow()
+        self.row_emr.checked.connect(lambda: self.row_epic.show_for(self.row_emr.text()))
+        self.row_epic.converted.connect(self._epic_converted)
         for row in (self.row_emr, self.row_processed, self.row_wave):
             layout.addWidget(row)
             row.changed.connect(self._edited)
             self._tab_stops += [row.edit, row.choose_button]
+            if row is self.row_emr:
+                layout.addWidget(self.row_epic)
+                self._tab_stops += [self.row_epic.out_edit, self.row_epic.convert_button, self.row_epic.stop_button]
         preset = SettingRow(
             "Rule preset for new runs", "",
             "Loaded data keeps the preset it was computed with.",
@@ -462,6 +471,14 @@ class SettingsPage(QWidget):
             )
         else:
             self.set_demo_note("")
+
+    def _epic_converted(self, out: str) -> None:
+        """The converted Epic folder becomes the EMR folder, with its own processed folder beside it."""
+        self.row_emr.touched = True
+        self.row_emr.set_text(out)
+        if not self.row_processed.touched:
+            self.row_processed.set_text(str(default_processed_for_emr(Path(out))))
+        self._edited()
 
     def _emr_checked(self) -> None:
         """Leaving the demo data: its processed folder would not match another EMR, so the field follows the new one."""

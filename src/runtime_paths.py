@@ -196,6 +196,45 @@ def looks_like_emr_dir(path: Path) -> bool:
     return (path / "patient_information.csv").is_file()
 
 
+class EpicRecordsNotConverted(FileNotFoundError):
+    """The folder holds Epic records, which the app reads only after a one-time conversion."""
+
+    def __init__(self, message: str, found: Path):
+        super().__init__(message)
+        self.found = found
+
+
+def _epic_not_converted(found: Path) -> EpicRecordsNotConverted:
+    return EpicRecordsNotConverted(
+        f"These are MOVER Epic records ({found}). Convert them once into the layout the app reads, then choose "
+        "the converted folder (Settings > Convert Epic records, or python -m src.pipeline.epic_import "
+        "--epic-root <Epic folder> --out <new folder>).",
+        found,
+    )
+
+
+def _waveforms_one_below(folder: Path, limit: int = 64) -> bool:
+    """Whether one of the first ``limit`` subfolders of ``folder`` holds Waveforms/. Bounded, so a check on a large
+    folder the person typed stays quick; an unreadable folder counts as no."""
+    try:
+        with os.scandir(folder) as entries:
+            checked = 0
+            for entry in entries:
+                try:
+                    if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
+                        continue
+                    checked += 1
+                    if checked > limit:
+                        return False
+                    if (Path(entry.path) / "Waveforms").is_dir():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
 def looks_like_wave_dir(path: Path) -> bool:
     """
     True if path looks like SIS wave data.
@@ -210,10 +249,12 @@ def looks_like_wave_dir(path: Path) -> bool:
         return False
     if (path / "Waveforms").is_dir():
         return True
-    # Nested one level
+    # Nested one level, or two (each Epic wave set: wave_N/<set>/Waveforms)
     try:
         for child in path.iterdir():
             if child.is_dir() and (child / "Waveforms").is_dir():
+                return True
+            if child.is_dir() and not child.name.startswith(".") and _waveforms_one_below(child):
                 return True
             if child.is_file() and "wave" in child.name.lower() and child.suffix in {
                 ".gz",
@@ -237,9 +278,17 @@ def resolve_emr_directory(path: Path | str) -> Path:
     p = Path(path).expanduser().resolve()
     if not p.is_dir():
         raise FileNotFoundError(f"Not a directory: {p}")
+    from src.pipeline.epic_import import looks_like_epic_emr
+
     for cand in (p, p / "EMR", p / "raw" / "EMR", p / "data" / "raw" / "EMR"):
         if looks_like_emr_dir(cand):
+            if looks_like_epic_emr(cand):
+                raise _epic_not_converted(cand.resolve())
             return cand.resolve()
+    # The Epic export's own layout; a fixed list keeps this check cheap on any folder the user types.
+    for cand in (p / "emr" / "EPIC_EMR" / "EMR", p / "EPIC_EMR" / "EMR"):
+        if looks_like_epic_emr(cand):
+            raise _epic_not_converted(cand.resolve())
     raise FileNotFoundError(
         f"No SIS EMR tables found under {p}. "
         "Select the folder that contains patient_information.csv "
@@ -265,6 +314,10 @@ def resolve_wave_directory(path: Path | str) -> Path:
 
 
 def default_processed_for_emr(emr: Path) -> Path:
+    # A converted Epic folder often sits beside an SIS EMR folder; a shared "processed" would mix the two caches.
+    if (emr / ".mover-epic-import").is_file():
+        resolved = emr.resolve()
+        return resolved.with_name(f"{resolved.name}-processed")
     if emr.name == "EMR" and emr.parent.name == "raw":
         processed = (emr.parent.parent / "processed").resolve()
     else:

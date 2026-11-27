@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- MOVER Epic records can be used: convert an Epic export once with `python -m src.pipeline.epic_import --epic-root <Epic folder> --out <new folder>`, then choose the converted folder in Settings. Cases, phases, flags, Monitoring, medications, waveforms and the co-pilot work on Epic cases as on SIS. Settings explains a raw Epic folder and labels a converted one "Epic records (converted)". Epic patient identifiers stay out of every case table, report and request.
+
 - Follow-up questions remember the earlier answers in the conversation; on real cases sent to a cloud service, earlier answers go trimmed and only those written under trimming. Research answers are a chat thread: the ask box sits at the bottom, with Cases/Articles and the AI menu beside it. Each turn folds Sources and Checks (amber when a check found a problem). Clear board empties the evidence and keeps the thread; New thread clears both. A minute question from the Signal page is a turn in that thread.
 
 - Cloud answers, while the local model is worked on: the research page's AI menu

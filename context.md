@@ -2,6 +2,11 @@
 
 ## Current State
 
+- **Epic as a second source (2026-11-26, `feat/epic-source`):** the summary-only layout
+  report, the one-time converter into the SIS layout, Settings detection and Epic waveform
+  lookup are built. The converter is a command (`python -m src.pipeline.epic_import`); an
+  in-app Convert button is not built yet. Real export: `/var/mnt/games/mover-epic/`,
+  converted output `/var/mnt/games/mover-epic-sis/`; agents read only aggregate reports.
 - **Phase 6 calibration (2026-11-25, `feat/phase6-calibration`):** run on
   the real SIS EMR by the lead agent on the owner's word, reading only the
   aggregate reports (results in the gitignored `calibration/`). Real airway

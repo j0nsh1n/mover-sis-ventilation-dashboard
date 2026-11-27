@@ -10,11 +10,12 @@ from __future__ import annotations
 import csv
 import json
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication, QKeyEvent, QKeySequence, QResizeEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -38,6 +40,7 @@ from src.runtime_paths import (
     configure_processed_directory,
     configure_wave_directory,
     data_dir,
+    EpicRecordsNotConverted,
     demo_root_of,
     emr_dir,
     processed_dir,
@@ -358,6 +361,9 @@ def check_emr_folder(text: str) -> FolderCheck:
         return FolderCheck("note", "No folder chosen yet.")
     try:
         found = resolve_emr_directory(text)
+    except EpicRecordsNotConverted:
+        return FolderCheck("problem", "These are MOVER Epic records. Convert them once below, then use the converted "
+                                      "folder.")
     except FileNotFoundError as exc:
         return FolderCheck("problem", f"Not usable: {exc}")
     present = [name for name in REQUIRED_EMR_FILES if (found / name).is_file() and (found / name).stat().st_size > 0]
@@ -367,7 +373,10 @@ def check_emr_folder(text: str) -> FolderCheck:
         return FolderCheck("problem", f"{tables} · missing or empty: {', '.join(missing)}")
     surgeries = _count_surgeries(found / REQUIRED_EMR_FILES[0])
     counted = f"{surgeries:,} surgeries indexed · " if surgeries is not None else ""
-    return FolderCheck("ok", f"{counted}{tables} · checked {_now()}")
+    from src.pipeline.epic_import import read_import_marker
+
+    source = "Epic records (converted) · " if read_import_marker(found) is not None else ""
+    return FolderCheck("ok", f"{source}{counted}{tables} · checked {_now()}")
 
 
 def check_processed_folder(text: str) -> FolderCheck:
@@ -596,3 +605,193 @@ class FolderRow(SettingRow):
             self.touched = True
             self.edit.setText(chosen)
             self.run_check()
+
+
+class EpicConvertWorker(QThread):
+    """Runs the one-time Epic conversion off the window's thread; reports counts and steps only."""
+
+    progress = Signal(str)
+    step = Signal(int, int)
+    finished_ok = Signal(str)
+    stopped = Signal()
+    failed = Signal(str, str)
+
+    def __init__(self, epic_root: Path, out: Path, parent=None):
+        super().__init__(parent)
+        self.epic_root = epic_root
+        self.out = out
+        self._stop = threading.Event()
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        from src.pipeline.epic_import import EpicImportError, import_epic
+
+        try:
+            result = import_epic(self.epic_root, self.out, progress=self.progress.emit,
+                                 should_stop=lambda: self._stop.is_set() or self.isInterruptionRequested(),
+                                 on_step=self.step.emit)
+        except EpicImportError as exc:
+            self.failed.emit(str(exc), "")
+            return
+        except Exception as exc:
+            from src.desktop.errors import error_message
+
+            # The exception text can hold paths and values; it goes to the log, the person gets the code.
+            self.failed.emit("The Epic records could not be converted.", error_message("epic-import", exc))
+            return
+        if result.get("finished"):
+            self.finished_ok.emit(str(self.out))
+        else:
+            self.stopped.emit()
+
+
+class EpicConvertRow(SettingRow):
+    """Shown only when the EMR folder holds raw Epic records: converts them once into a folder the app reads.
+
+    The conversion can be stopped and started again; it picks up from the last finished flowsheet part.
+    """
+
+    converted = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(
+            "Convert Epic records", "once",
+            "Epic records are read after a one-time conversion into the layout the app uses. "
+            "The full MOVER Epic export takes about 20 minutes.",
+            parent,
+        )
+        self._epic_root: Path | None = None
+        self._default_out = ""
+        self._worker: EpicConvertWorker | None = None
+        self.out_edit = QLineEdit()
+        self.out_edit.setAccessibleName("Converted folder")
+        self.out_edit.setPlaceholderText("Folder for the converted records")
+        self.convert_button = QPushButton("Convert")
+        self.convert_button.setAccessibleName("Convert Epic records")
+        self.convert_button.clicked.connect(self.start)
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setAccessibleName("Stop converting")
+        self.stop_button.clicked.connect(self.stop)
+        self.stop_button.hide()
+        controls = QWidget()
+        row = QHBoxLayout(controls)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(self.out_edit, 1)
+        row.addWidget(self.convert_button)
+        row.addWidget(self.stop_button)
+        self.add_control(controls)
+        self.bar = QProgressBar()
+        self.bar.setAccessibleName("Conversion progress")
+        self.bar.setTextVisible(False)
+        self.bar.hide()
+        self.add_control(self.bar)
+        self.hide()
+
+    def show_for(self, emr_text: str) -> None:
+        """Show the row when ``emr_text`` names raw Epic records; hide it otherwise (unless a conversion runs)."""
+        if self.running():
+            return
+        from src.pipeline.epic_import import default_output_for, epic_root_for, read_import_marker
+
+        root = None
+        epic = False
+        try:
+            resolve_emr_directory(emr_text) if emr_text.strip() else None
+        except EpicRecordsNotConverted as exc:
+            epic = True
+            root = epic_root_for(exc.found)
+        except FileNotFoundError:
+            root = None
+        self._epic_root = root
+        if not epic:
+            self.hide()
+            return
+        self.show()
+        if root is None:
+            self.convert_button.setEnabled(False)
+            self.set_note("✕ The Epic flowsheets were not found beside these records, so they cannot be converted "
+                          "here. Choose the top folder of the Epic export.", "problem")
+            return
+        self.convert_button.setEnabled(True)
+        # Follow the export: a folder the person typed stays, the default for a previous export does not.
+        default = str(default_output_for(root))
+        if not self.out_edit.text().strip() or self.out_edit.text().strip() == self._default_out:
+            self.out_edit.setText(default)
+        self._default_out = default
+        out = Path(self.out_edit.text().strip()).expanduser()
+        resumable = (out / ".mover-epic-import").is_file() and read_import_marker(out) is None
+        self.convert_button.setText("Continue" if resumable else "Convert")
+        self.set_note("Stopped earlier: Continue picks up where it left off." if resumable else "", "note")
+
+    def running(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def worker(self) -> EpicConvertWorker | None:
+        """The running conversion, for the window to stop before it closes."""
+        return self._worker if self.running() else None
+
+    def start(self) -> None:
+        if self._epic_root is None or self.running():
+            return
+        out = Path(self.out_edit.text().strip()).expanduser()
+        if not self.out_edit.text().strip():
+            self.set_note("✕ Choose a folder for the converted records.", "problem")
+            return
+        self._worker = EpicConvertWorker(self._epic_root, out, self)
+        self._worker.step.connect(self._on_step)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished_ok.connect(self._on_done)
+        self._worker.stopped.connect(self._on_stopped)
+        self._worker.failed.connect(self._on_failed)
+        self.convert_button.hide()
+        self.stop_button.show()
+        self.stop_button.setEnabled(True)
+        self.out_edit.setEnabled(False)
+        self.bar.setRange(0, 0)
+        self.bar.show()
+        self.set_note("Starting…", "note")
+        self._worker.start()
+
+    def stop(self) -> None:
+        if self.running() and self._worker is not None:
+            self._worker.request_stop()
+            self.stop_button.setEnabled(False)
+            self.set_note("Stopping after the flowsheet part in progress…", "note")
+
+    def _on_progress(self, text: str) -> None:
+        self.set_note(text, "note")
+
+    def _finish_worker(self) -> None:
+        """The worker's last signal arrives just before its thread ends; wait for that, then let it go."""
+        if self._worker is not None:
+            self._worker.wait()
+            self._worker.deleteLater()
+            self._worker = None
+
+    def _idle(self) -> None:
+        self._finish_worker()
+        self.stop_button.hide()
+        self.convert_button.show()
+        self.out_edit.setEnabled(True)
+        self.bar.hide()
+
+    def _on_step(self, done: int, total: int) -> None:
+        self.bar.setRange(0, total)
+        self.bar.setValue(done)
+
+    def _on_done(self, out: str) -> None:
+        self._idle()
+        self.set_note("✓ Converted · the EMR folder above now points to the converted records.", "ok")
+        self.converted.emit(out)
+
+    def _on_stopped(self) -> None:
+        self._idle()
+        self.convert_button.setText("Continue")
+        self.set_note("Stopped · Continue picks up where it left off.", "note")
+
+    def _on_failed(self, sentence: str, detail: str) -> None:
+        self._idle()
+        self.set_note("✕ " + sentence + (f" {detail}" if detail else ""), "problem")
