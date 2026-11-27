@@ -234,3 +234,27 @@ def test_the_sis_pipeline_runs_on_a_converted_folder(tmp_path, monkeypatch):
     cases = pd.read_parquet(processed / "cases.parquet").set_index("PID")
     assert cases.loc[A, "phase_source"] == "events"  # Intubation and Extubation events
     assert cases.loc[C, "phase_source"] == "events"  # "LMA  Placed" and "LMA Removed"
+
+
+def test_settings_say_raw_epic_records_need_converting_and_name_a_converted_folder(tmp_path):
+    from src.desktop.settings_ui import check_emr_folder
+    from src.runtime_paths import EpicRecordsNotConverted, resolve_emr_directory
+
+    root = _epic(tmp_path)
+    for chosen in (root, root / "emr" / "EPIC_EMR" / "EMR"):
+        with pytest.raises(EpicRecordsNotConverted):
+            resolve_emr_directory(chosen)
+        check = check_emr_folder(str(chosen))
+        assert check.state == "problem" and "Epic records" in check.text and "Convert them once" in check.text
+    out = tmp_path / "converted"
+    import_epic(root, out)
+    assert resolve_emr_directory(out) == out.resolve()
+    assert check_emr_folder(str(out)).text.startswith("Epic records (converted) · ")
+
+
+def test_the_epic_wave_root_is_accepted_with_waveforms_two_levels_down(tmp_path):
+    from src.runtime_paths import resolve_wave_directory
+
+    root = tmp_path / "wave_v2"
+    (root / "wave_1" / "UCI_part1" / "Waveforms" / "ab").mkdir(parents=True)
+    assert resolve_wave_directory(root) == root.resolve()

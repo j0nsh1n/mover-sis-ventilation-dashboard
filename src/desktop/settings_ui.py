@@ -367,7 +367,10 @@ def check_emr_folder(text: str) -> FolderCheck:
         return FolderCheck("problem", f"{tables} · missing or empty: {', '.join(missing)}")
     surgeries = _count_surgeries(found / REQUIRED_EMR_FILES[0])
     counted = f"{surgeries:,} surgeries indexed · " if surgeries is not None else ""
-    return FolderCheck("ok", f"{counted}{tables} · checked {_now()}")
+    from src.pipeline.epic_import import read_import_marker
+
+    source = "Epic records (converted) · " if read_import_marker(found) is not None else ""
+    return FolderCheck("ok", f"{source}{counted}{tables} · checked {_now()}")
 
 
 def check_processed_folder(text: str) -> FolderCheck:
