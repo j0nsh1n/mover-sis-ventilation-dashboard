@@ -56,7 +56,6 @@ from xml.etree import ElementTree as ET
 import numpy as np
 import pandas as pd
 
-from src.runtime_paths import wave_dir, waveform_case_dir
 
 # Signals whose XML Gain cannot be trusted (see module docstring).
 GAIN_OVERRIDES: dict[str, float] = {
@@ -267,13 +266,9 @@ def decode_archive(path: Path | str) -> list[WaveBlock]:
 
 
 def _case_files(pid: str, wdir: Path | str | None = None) -> list[Path]:
-    root = Path(wdir) if wdir is not None else wave_dir()
-    if root is None:
-        return []
-    case_dir = waveform_case_dir(pid, root)
-    if case_dir is None:
-        return []
-    return sorted(Path(case_dir).glob("*.xml"))
+    from src.wave_files import case_wave_files
+
+    return case_wave_files(pid, wdir)
 
 
 def decode_case(

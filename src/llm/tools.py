@@ -8,7 +8,8 @@ from typing import Any, Callable
 import pandas as pd
 
 from src.llm.case_context import build_case_context, phase_counts_line
-from src.runtime_paths import wave_dir, waveform_case_dir
+from src.runtime_paths import wave_dir
+from src.wave_files import wave_presence_text
 from src.search import filter_cases_by_keywords
 from src.rules import load_rule_catalog
 
@@ -464,14 +465,10 @@ def tool_wave_status(
         return "Wave root not configured."
     if not pid:
         return f"Wave root: {root} (no PID requested)."
-    path = waveform_case_dir(pid, root)
-    if path is None:
+    presence = wave_presence_text(pid, root)
+    if presence is None:
         return f"No waveform folder for PID={pid} under {root}."
-    try:
-        n = sum(1 for p in path.rglob("*") if p.is_file())
-    except OSError:
-        n = -1
-    return f"Waveform folder for {pid}: {path} ({n} files). Waveforms are not decoded here."
+    return f"Waveform folder for {pid}: {presence}. Waveforms are not decoded here."
 
 
 def tool_find_similar_cases(

@@ -27,7 +27,8 @@ from pathlib import Path
 import pandas as pd
 
 from src.guardrails.limits import MAX_N_CASES
-from src.runtime_paths import emr_dir, wave_dir, waveform_case_dir
+from src.runtime_paths import emr_dir, wave_dir
+from src.wave_files import has_case_waves
 
 _FRAME_KEYS = ("cases", "timeseries", "flags", "episodes", "events")
 
@@ -167,7 +168,7 @@ def emr_index(emr: Path | str | None = None, *, with_wave: bool = False) -> pd.D
     if with_wave:
         wdir = wave_dir()
         df["has_wave"] = (
-            [waveform_case_dir(pid, wdir) is not None for pid in df["PID"]]
+            [has_case_waves(pid, wdir) for pid in df["PID"]]
             if wdir is not None
             else False
         )

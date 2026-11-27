@@ -8,7 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from src.runtime_paths import emr_dir, wave_dir, waveform_case_dir
+from src.runtime_paths import emr_dir, wave_dir
+from src.wave_files import wave_presence_text
 
 
 # Plain names for the minute-level signals; shared with the research search text.
@@ -283,16 +284,12 @@ def build_case_context(
 
     # --- wave availability ---
     wdir = wave_dir()
-    wcase = waveform_case_dir(pid, wdir)
+    presence = wave_presence_text(pid, wdir) if wdir is not None else None
     lines.append("\n## Waveform data")
     if wdir is None:
         lines.append("- Wave root not configured in the app.")
-    elif wcase is not None:
-        try:
-            n_files = sum(1 for _ in wcase.rglob("*") if _.is_file())
-        except OSError:
-            n_files = -1
-        lines.append(f"- Waveform folder present: {wcase} ({n_files} files)")
+    elif presence is not None:
+        lines.append(f"- Waveform folder present: {presence}")
         lines.append(
             "- High-fidelity waveforms are not decoded in this text context; "
             "only path presence is noted."
