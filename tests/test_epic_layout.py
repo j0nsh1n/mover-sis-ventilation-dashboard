@@ -154,3 +154,16 @@ def test_folder_shapes_hide_ids_inside_names():
     assert _name_shape("03") == "<2 hex>" and _name_shape("0c ") == "<2 hex>"
     assert _name_shape("PAT_3f2a9c41d07e55b1") == "PAT_<16 hex>"
     assert _name_shape("UCI_deidentified_part1_EPIC_07_22") == "UCI_deidentified_part1_EPIC_07_22"
+
+
+def test_more_staff_columns_and_uuid_names_are_hidden(tmp_path):
+    from src.pipeline.epic_layout import _name_shape
+
+    path = tmp_path / "t.csv"
+    n = 30
+    pd.DataFrame({"PAT_ID": [f"P{1000000 + i}" for i in range(n)], "ORDERING_PROV": ["Dr Quillfeather"] * n,
+                  "RECORDED_BY": ["jdoe"] * n, "RESULT_CMT": ["same"] * n}).to_csv(path, index=False)
+    text = json.dumps(profile_csv(path, min_cell=11))
+    for private in ("Quillfeather", "jdoe", "same"):
+        assert private not in text, private
+    assert _name_shape("550e8400-e29b-41d4-a716-446655440000") == "<uuid>"

@@ -49,13 +49,14 @@ XML_FILES = 3
 _ID_NAME = re.compile(r"(^|_)(pat|patient|mrn|pid|log|csn|enc|encounter|visit|hsp|acct|account|order|id)(_|$)|_id$|^id_", re.I)
 # The patient key, in order of preference, used to count patients per name.
 # Staff columns are never listed, whatever else the column name says (Epic names them like PROV_NM, CRNA_NM).
-_STAFF = re.compile(r"provider|prov_|surgeon|physician|anesthesiologist|anesthetist|attending|crna|staff|author|"
-                    r"user|employee|nurse|resident|operator|signed_by|entered_by", re.I)
+_STAFF = re.compile(r"provider|(?:^|_)prov(?:_|$)|surgeon|physician|anesthesiologist|anesthetist|attending|crna|"
+                    r"staff|author|user|employee|nurse|resident|operator|clinician|_by$", re.I)
 # A plain "name" column is a person unless the name says what kind of thing it names.
 _PERSON_NAME = re.compile(r"name|_nm$", re.I)
 # Free text and measured values are never listed as names, even when short and repeated.
-_TEXT_COL = re.compile(r"note|comment|text|narrative|remark|memo|value", re.I)
-_HEADER_NAME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9_ ()/%.:-]{0,60}|Unnamed: \d+)$")
+_TEXT_COL = re.compile(r"note|comment|(?:^|_)cmt(?:_|$)|text|narrative|remark|memo|value|(?:^|_)val(?:_|$)", re.I)
+# An empty first header cell (a saved index) is allowed; empty cells elsewhere suggest a data row.
+_HEADER_NAME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9_ ()/%.:-]{0,60}|Unnamed: 0)$")
 _LABEL_HINT = re.compile(r"(event|flo|meas|measure|type|unit|desc|status|category|class|route|code)", re.I)
 _PATIENT_KEYS = ("PAT_ID", "MRN", "PID", "PATIENT_ID", "LOG_ID", "PAT_ENC_CSN_ID", "CSN")
 _KEYISH = re.compile(r"^(?:[0-9A-Fa-f]{8,}|\d{6,}|[A-Za-z]{0,3}\d{6,}|[0-9a-f-]{32,36})$")
@@ -101,7 +102,7 @@ def _has_header(path: Path) -> bool:
     row is ever reported as column names."""
     try:
         first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding_errors="replace")
-    except pd.errors.EmptyDataError:
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
         return False
     names = [str(c).strip() for c in first.columns]
     if not names:
@@ -217,13 +218,15 @@ def _mean_row_bytes(path: Path, header_bytes: int, n_rows: int) -> float:
 
 def _name_shape(name: str) -> str:
     """A folder name with anything that could be an id replaced by its shape."""
-    if re.fullmatch(r"[0-9a-fA-F]{2}", name.strip()):
+    name = name.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{2}", name):
         return "<2 hex>"
     if re.fullmatch(r"[0-9a-fA-F]+", name) and not name.isdigit():
         return f"<{len(name)} hex>"
     if name.isdigit():
         return f"<{len(name)} digits>"
-    masked = re.sub(r"[0-9a-fA-F]{8,}", lambda m: f"<{len(m.group(0))} hex>", name)
+    masked = re.sub(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", "<uuid>", name)
+    masked = re.sub(r"[0-9a-fA-F]{8,}", lambda m: f"<{len(m.group(0))} hex>", masked)
     return re.sub(r"\d{4,}", lambda m: "9" * len(m.group(0)), masked)
 
 

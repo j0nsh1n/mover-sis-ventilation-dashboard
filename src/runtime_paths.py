@@ -218,12 +218,15 @@ def _waveforms_one_below(folder: Path, limit: int = 64) -> bool:
     folder the person typed stays quick; an unreadable folder counts as no."""
     try:
         with os.scandir(folder) as entries:
-            for i, entry in enumerate(entries):
-                if i >= limit:
-                    return False
+            checked = 0
+            for entry in entries:
                 try:
-                    if (not entry.name.startswith(".") and entry.is_dir(follow_symlinks=False)
-                            and (Path(entry.path) / "Waveforms").is_dir()):
+                    if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
+                        continue
+                    checked += 1
+                    if checked > limit:
+                        return False
+                    if (Path(entry.path) / "Waveforms").is_dir():
                         return True
                 except OSError:
                     continue
@@ -313,7 +316,8 @@ def resolve_wave_directory(path: Path | str) -> Path:
 def default_processed_for_emr(emr: Path) -> Path:
     # A converted Epic folder often sits beside an SIS EMR folder; a shared "processed" would mix the two caches.
     if (emr / ".mover-epic-import").is_file():
-        return (emr.parent / f"{emr.name}-processed").resolve()
+        resolved = emr.resolve()
+        return resolved.with_name(f"{resolved.name}-processed")
     if emr.name == "EMR" and emr.parent.name == "raw":
         processed = (emr.parent.parent / "processed").resolve()
     else:

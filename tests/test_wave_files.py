@@ -100,3 +100,10 @@ def test_the_repeated_autumn_hour_keeps_a_bounded_window(tmp_path):
 def test_a_case_without_room_times_gets_no_files(tmp_path):
     emr, root, _f = _one_case(tmp_path, "", "", {"any": "2020-02-03-16-00-00"})
     assert case_wave_files(PID, root, emr) == []
+
+
+def test_an_upper_case_prefix_folder_is_found_once(tmp_path):
+    emr = _converted(tmp_path)
+    folder = tmp_path / "wave_v2" / "wave_1" / "UCI_part1" / "Waveforms" / "AB"
+    f = _xml(folder / f"{WAVE.upper()}IP-2020-02-03-16-00-00-000Z.xml")
+    assert case_wave_files(PID, tmp_path / "wave_v2", emr) == [f]

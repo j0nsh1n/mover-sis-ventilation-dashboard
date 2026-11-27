@@ -196,11 +196,10 @@ def test_small_chunks_and_a_resumed_run_give_the_same_result(tmp_path):
     whole = tmp_path / "whole"
     import_epic(root, whole)
     resumed = tmp_path / "resumed"
-    calls = {"n": 0}
 
     def stop_after_first_part() -> bool:
-        calls["n"] += 1
-        return calls["n"] > 1
+        marker = resumed / ".mover-epic-import"
+        return marker.is_file() and len(json.loads(marker.read_text())["parts_done"]) >= 1
 
     partial = import_epic(root, resumed, chunk_rows=2, should_stop=stop_after_first_part)
     assert not partial["finished"] and len(partial["parts_done"]) == 1
@@ -306,11 +305,10 @@ def test_a_resume_whose_work_folder_is_gone_reads_the_parts_again(tmp_path):
 
     root = _epic(tmp_path)
     out = tmp_path / "converted"
-    calls = {"n": 0}
 
     def stop_after_first_part() -> bool:
-        calls["n"] += 1
-        return calls["n"] > 1
+        marker = out / ".mover-epic-import"
+        return marker.is_file() and len(json.loads(marker.read_text())["parts_done"]) >= 1
 
     import_epic(root, out, should_stop=stop_after_first_part)
     shutil.rmtree(out / ".work")
@@ -355,3 +353,19 @@ def test_the_private_file_is_owner_only_even_over_an_old_temp_file(tmp_path):
     import_epic(root, out)
     assert stat.S_IMODE((out / "epic_wave_ids.csv").stat().st_mode) == 0o600
     assert not old.exists()
+
+
+def test_a_folder_holding_other_files_is_refused_as_output(tmp_path):
+    out = tmp_path / "someone-else"
+    out.mkdir()
+    (out / "notes.txt").write_text("keep me", encoding="utf-8")
+    with pytest.raises(EpicImportError, match="empty folder"):
+        import_epic(_epic(tmp_path), out)
+    assert (out / "notes.txt").read_text() == "keep me" and not (out / ".work").exists()
+
+
+def test_a_stop_inside_a_part_stops_at_once_and_writes_no_tables(tmp_path):
+    out = tmp_path / "converted"
+    result = import_epic(_epic(tmp_path), out, chunk_rows=2, should_stop=lambda: True)
+    assert not result["finished"] and result["parts_done"] == []
+    assert not (out / "patient_ventilator.csv").exists() and read_import_marker(out) is None

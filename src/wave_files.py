@@ -82,7 +82,13 @@ def _prefix_index(root: str, prefix: str) -> dict[str, tuple[tuple[pd.Timestamp,
     list the same folders again for each case."""
     by_id: dict[str, list[tuple[pd.Timestamp, Path]]] = {}
     for wdir in _waveform_dirs(root):
-        for folder in {wdir / prefix.lower(), wdir / prefix.upper()}:
+        # Match the prefix folder's name without regard to case, once: on a case-insensitive disk "AB" and "ab"
+        # are one folder, and listing both would count every file twice.
+        try:
+            folders = [Path(e.path) for e in os.scandir(wdir) if e.name.lower() == prefix.lower() and e.is_dir()]
+        except OSError:
+            continue
+        for folder in folders:
             try:
                 names = os.listdir(folder)
             except OSError:

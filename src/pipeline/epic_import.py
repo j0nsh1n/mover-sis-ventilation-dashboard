@@ -88,11 +88,18 @@ MED_COLS = ["PID", "Drug_name", "Dose", "Drug_units", "Start_time", "End_time"]
 GIVEN_ACTIONS = re.compile(r"^(given|new bag|bolus|bolus from bag|restarted|rate change|rate change dual sign|"
                            r"fluid - given by anesthesia|given by other|patch applied)$", re.I)
 # The incision itself, not a closure or a pre-incision timeout that also names it.
-INCISION = re.compile(r"^(?!.*\b(?:close|closed|closure|pre[- ]|timeout)\b).*\bskin incision\b", re.I)
+INCISION = re.compile(r"^(?!.*\b(?:clos(?:e|ed|ing|ure)|pre[- ]|time[- ]?out)\b).*\bskin incision\b", re.I)
 OUT_TIME = "%Y-%m-%d %H:%M:%S"
 FLOW_COLS = ["LOG_ID", "FLO_DISPLAY_NAME", "RECORD_TYPE", "RECORDED_TIME", "MEAS_VALUE"]
 
 Progress = Callable[[str], None]
+
+
+_OUTPUTS = ("patient_information.csv", "patient_procedure_events.csv", "patient_medication.csv",
+            "patient_ventilator.csv", "patient_vitals.csv", WAVE_IDS, NAMES_REPORT)
+# What an earlier run of this importer may leave in its output folder, so a rerun is not refused over its own files.
+_OWN_NAMES = {".work", MARKER, f"{MARKER}.tmp",
+              *_OUTPUTS, *(f"{n}.tmp" for n in _OUTPUTS)}
 
 
 class EpicImportError(RuntimeError):
@@ -223,16 +230,20 @@ class _State:
 
 
 def _pass1_part(part: Path, work: Path, name_cases: dict[str, set[str]], chunk_rows: int,
-                progress: Progress) -> int:
-    """Shard one part's mapped intra-op rows; count intra-op names per case. Returns rows kept."""
+                progress: Progress, label: str = "", should_stop: Callable[[], bool] | None = None) -> int | None:
+    """Shard one part's mapped intra-op rows; count intra-op names per case. Returns rows kept, or None when told
+    to stop (checked every chunk, so stopping takes seconds; the unfinished part is read again on resume)."""
     target = work / part.stem
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True)
     kept = 0
     reader = pd.read_csv(part, usecols=lambda c: c in FLOW_COLS, dtype=str, keep_default_na=False,
-                         chunksize=chunk_rows, encoding_errors="replace", on_bad_lines="skip")
+                         chunksize=chunk_rows, encoding="utf-8-sig", encoding_errors="replace", on_bad_lines="skip")
     for chunk in reader:
+        if should_stop and should_stop():
+            reader.close()
+            return None
         intra = chunk[chunk["RECORD_TYPE"].str.strip().str.upper() == "INTRA-OP"]
         if intra.empty:
             continue
@@ -247,7 +258,7 @@ def _pass1_part(part: Path, work: Path, name_cases: dict[str, set[str]], chunk_r
             f = target / f"shard_{int(k):03d}.csv"
             rows.to_csv(f, mode="a", header=not f.exists(), index=False)
         kept += len(mapped)
-    progress(f"{part.name}: {kept:,} intra-op readings kept")
+    progress(f"{label or 'Flowsheet part'}: {kept:,} intra-op readings kept")
     return kept
 
 
@@ -315,7 +326,7 @@ def _names_report(name_cases: dict[str, set[str]], min_cell: int) -> dict[str, A
 
 
 def _info(emr: Path, keep: set[str], events: pd.DataFrame) -> pd.DataFrame:
-    df = pd.read_csv(emr / EPIC_INFO, dtype=str, keep_default_na=False, encoding_errors="replace")
+    df = pd.read_csv(emr / EPIC_INFO, dtype=str, keep_default_na=False, encoding="utf-8-sig", encoding_errors="replace")
     df = df[df["LOG_ID"].isin(keep)].drop_duplicates("LOG_ID")
     incision = events[events["Event_name"].map(lambda n: bool(INCISION.search(str(n))))]
     first_cut = incision.groupby("PID")["Event_time"].min()
@@ -336,7 +347,7 @@ def _info(emr: Path, keep: set[str], events: pd.DataFrame) -> pd.DataFrame:
 
 
 def _events(emr: Path, keep: set[str]) -> pd.DataFrame:
-    df = pd.read_csv(emr / EPIC_EVENTS, dtype=str, keep_default_na=False, encoding_errors="replace",
+    df = pd.read_csv(emr / EPIC_EVENTS, dtype=str, keep_default_na=False, encoding="utf-8-sig", encoding_errors="replace",
                      usecols=["LOG_ID", "EVENT_DISPLAY_NAME", "EVENT_TIME"])
     df = df[df["LOG_ID"].isin(keep)]
     return pd.DataFrame({"PID": df["LOG_ID"], "Event_time": _fmt(df["EVENT_TIME"]),
@@ -350,7 +361,7 @@ def _medications(emr: Path, keep: set[str], chunk_rows: int) -> pd.DataFrame:
     want = ["LOG_ID", "MEDICATION_NM", "ADMIN_SIG", "DOSE_UNIT_NM", "MED_ACTION_TIME", "MAR_ACTION_NM", "RECORD_TYPE"]
     out = []
     for chunk in pd.read_csv(path, dtype=str, keep_default_na=False, usecols=lambda c: c in want,
-                             chunksize=chunk_rows, encoding_errors="replace"):
+                             chunksize=chunk_rows, encoding="utf-8-sig", encoding_errors="replace"):
         rows = chunk[chunk["LOG_ID"].isin(keep) & (chunk["RECORD_TYPE"].str.strip().str.upper() == "INTRA-OP")
                      & chunk["MAR_ACTION_NM"].str.strip().str.match(GIVEN_ACTIONS)]
         t = _fmt(rows["MED_ACTION_TIME"])
@@ -364,7 +375,8 @@ def _wave_ids(epic_root: Path, keep: set[str]) -> pd.DataFrame | None:
     found = _find_file(epic_root, ID_MAP)
     if found is None:
         return None
-    ids = pd.read_csv(found, dtype=str, keep_default_na=False, usecols=["LOG_ID", "PAT_ID"], encoding_errors="replace")
+    ids = pd.read_csv(found, dtype=str, keep_default_na=False, usecols=["LOG_ID", "PAT_ID"], encoding="utf-8-sig",
+                      encoding_errors="replace")
     ids = ids[ids["LOG_ID"].isin(keep)].drop_duplicates("LOG_ID")
     return pd.DataFrame({"PID": ids["LOG_ID"], "Wave_ID": ids["PAT_ID"].str.strip().str.lower()})
 
@@ -374,9 +386,14 @@ def _write(df: pd.DataFrame, path: Path, *, private: bool = False) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
         if private:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            os.fchmod(fd, 0o600)  # an older tmp file keeps its mode through O_CREAT
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            tmp.unlink(missing_ok=True)  # a new file, so it is owner-only from the first byte and never a symlink
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                fh = os.fdopen(fd, "w", encoding="utf-8", newline="")
+            except BaseException:
+                os.close(fd)
+                raise
+            with fh:
                 df.to_csv(fh, index=False)
         else:
             df.to_csv(tmp, index=False)
@@ -402,6 +419,8 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     parts = find_flowsheets(root)
     if not parts:
         raise EpicImportError(f"No Epic flowsheets (flowsheet_part*.csv) found under {root}.")
+    if dest.exists() and not (dest / MARKER).is_file() and any(p.name not in _OWN_NAMES for p in dest.iterdir()):
+        raise EpicImportError("Choose an empty folder for the converted records; this one already holds files.")
     dest.mkdir(parents=True, exist_ok=True)
     sources: dict[str, Any] = {"epic_root": str(root), "emr": str(emr.relative_to(root)),
                "flowsheets": [str(p.relative_to(root)) for p in parts]}
@@ -410,13 +429,13 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         say("already converted")
         return state.data
     work = dest / ".work"
-    if not state.data["parts_done"] and work.exists():
-        shutil.rmtree(work)  # left by an older or different run; its shards must not mix into this one
-    work.mkdir(parents=True, exist_ok=True)
-    os.chmod(work, 0o700)  # it holds case ids per name and raw readings until the import ends
     names_path = work / "names.json"
     if state.data["parts_done"] and not names_path.is_file():
         state.data["parts_done"] = []  # the counts behind the finished parts are gone, so start over
+    if not state.data["parts_done"] and work.exists():
+        shutil.rmtree(work)  # left by an older or different run; its shards must not mix into this one
+    work.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(work, 0o700)  # it holds case ids per name and raw readings until the import ends
     name_cases: dict[str, set[str]] = defaultdict(set)
     if names_path.is_file():
         for n, ids in json.loads(names_path.read_text(encoding="utf-8")).items():
@@ -425,7 +444,7 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     steps = len(parts) + 1  # one step per flowsheet part, one for building the tables
     step = on_step or (lambda _done, _total: None)
     step(len(state.data["parts_done"]), steps)
-    for part in parts:
+    for number, part in enumerate(parts, start=1):
         rel = str(part.relative_to(root))
         if rel in state.data["parts_done"]:
             if (work / part.stem).is_dir():
@@ -434,13 +453,19 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         if should_stop and should_stop():
             say("stopped; run again to resume")
             return state.data
-        _pass1_part(part, work, name_cases, chunk_rows, say)
+        if _pass1_part(part, work, name_cases, chunk_rows, say, f"Flowsheet part {number} of {len(parts)}",
+                       should_stop) is None:
+            say("stopped; run again to resume")
+            return state.data
         tmp_names = names_path.with_suffix(".json.tmp")
         tmp_names.write_text(json.dumps({n: sorted(ids) for n, ids in name_cases.items()}), encoding="utf-8")
         tmp_names.replace(names_path)
         state.data["parts_done"].append(rel)
         state.save()
         step(len(state.data["parts_done"]), steps)
+    if should_stop and should_stop():
+        say("stopped; run again to resume")
+        return state.data
     say("pass 1 done; building per-minute rows")
     vent_path, vit_path = dest / "patient_ventilator.csv", dest / "patient_vitals.csv"
     tmp_vent, tmp_vit = vent_path.with_suffix(".csv.tmp"), vit_path.with_suffix(".csv.tmp")
@@ -448,6 +473,11 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     pd.DataFrame(columns=VITALS_COLS).to_csv(tmp_vit, index=False)
     cases: set[str] = set()
     for k in range(N_SHARDS):
+        if should_stop and should_stop():
+            tmp_vent.unlink(missing_ok=True)
+            tmp_vit.unlink(missing_ok=True)
+            say("stopped; run again to resume")
+            return state.data
         # Part order, not name order: flowsheet_part10 must come after flowsheet_part2.
         files = [work / p.stem / f"shard_{k:03d}.csv" for p in parts if (work / p.stem / f"shard_{k:03d}.csv").is_file()]
         if not files:

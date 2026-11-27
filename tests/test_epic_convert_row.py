@@ -58,7 +58,8 @@ def test_convert_fills_the_emr_and_processed_folders(qapp, tmp_path):
     out = tmp_path / "converted"
     page.row_epic.out_edit.setText(str(out))
     page.row_epic.convert_button.click()
-    _wait_until(lambda: not page.row_epic.running() and read_import_marker(out) is not None)
+    # Wait for the row's own reaction, not just the thread: its last signal is delivered after the thread ends.
+    _wait_until(lambda: page.row_emr.text() == str(out))
     assert read_import_marker(out)["cases"] == 2
     assert page.row_emr.text() == str(out)
     assert page.row_emr.note.text().startswith("✓ Epic records (converted)")
@@ -80,7 +81,7 @@ def test_stop_then_continue_resumes_the_conversion(qapp, tmp_path, monkeypatch):
 
     def one_part_then_stop(*args, **kwargs):
         kept = real(*args, **kwargs)
-        page.row_epic.stop()
+        page.row_epic._worker.request_stop()  # this runs on the worker thread: no widget calls here
         return kept
 
     monkeypatch.setattr(ei, "_pass1_part", one_part_then_stop)
@@ -89,5 +90,5 @@ def test_stop_then_continue_resumes_the_conversion(qapp, tmp_path, monkeypatch):
     assert page.row_epic.convert_button.text() == "Continue" and read_import_marker(out) is None
     monkeypatch.setattr(ei, "_pass1_part", real)
     page.row_epic.convert_button.click()
-    _wait_until(lambda: not page.row_epic.running() and read_import_marker(out) is not None)
+    _wait_until(lambda: page.row_emr.text() == str(out))
     assert read_import_marker(out)["finished"] and page.row_emr.text() == str(out)

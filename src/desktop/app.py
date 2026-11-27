@@ -805,6 +805,7 @@ class MainWindow(QMainWindow):
             self._case_worker, self._ollama_worker, self._api_models_worker, *self._retired_api_workers,
             *self._research_workers.values(),
             *self.research.follow_up_workers(),
+            *self._settings_workers(),
         ) if w is not None and w.isRunning()]
         if running:
             self._closing = True
@@ -962,6 +963,12 @@ class MainWindow(QMainWindow):
         self._set_status("Setup required" if first_run else "Setup cancelled")
         if self._current_module == "monitoring":
             self._focus_research_question()
+
+    def _settings_workers(self) -> list[QThread]:
+        """Jobs the Settings page runs on its own, such as an Epic conversion."""
+        page = self._settings_page()
+        worker = page.row_epic.worker() if page is not None else None
+        return [worker] if worker is not None else []
 
     def _settings_page(self) -> SettingsPage | None:
         page = self._suite_pages.get("settings")
