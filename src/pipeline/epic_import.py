@@ -134,6 +134,21 @@ def find_epic_emr(root: Path | str) -> Path | None:
     return None
 
 
+def epic_root_for(emr: Path | str) -> Path | None:
+    """The Epic export's top folder for an Epic EMR folder: the nearest parent (up to three up) with flowsheets."""
+    p = Path(emr).resolve()
+    for parent in [p, *list(p.parents)[:3]]:
+        if find_flowsheets(parent):
+            return parent
+    return None
+
+
+def default_output_for(epic_root: Path | str) -> Path:
+    """Where a conversion goes unless the person picks another place: beside the export, never inside it."""
+    root = Path(epic_root).resolve()
+    return root.with_name(f"{root.name}-sis")
+
+
 def _part_number(path: Path) -> int:
     m = re.search(r"(\d+)$", path.stem)
     return int(m.group(1)) if m else 0
@@ -228,7 +243,7 @@ def _pass1_part(part: Path, work: Path, name_cases: dict[str, set[str]], chunk_r
             f = target / f"shard_{int(k):03d}.csv"
             rows.to_csv(f, mode="a", header=not f.exists(), index=False)
         kept += len(mapped)
-    progress(f"{part.name}: {kept} intra-op readings kept")
+    progress(f"{part.name}: {kept:,} intra-op readings kept")
     return kept
 
 
@@ -354,7 +369,8 @@ def _write(df: pd.DataFrame, path: Path, *, private: bool = False) -> None:
 
 
 def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHUNK_ROWS, min_cell: int = MIN_CELL,
-                progress: Progress | None = None, should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
+                progress: Progress | None = None, should_stop: Callable[[], bool] | None = None,
+                on_step: Callable[[int, int], None] | None = None) -> dict[str, Any]:
     """Convert ``epic_root`` into a SIS-layout EMR folder at ``out``; resumable. Returns the marker data."""
     say = progress or (lambda _msg: None)
     root = Path(epic_root).expanduser().resolve()
@@ -382,6 +398,9 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         for n, ids in json.loads(names_path.read_text(encoding="utf-8")).items():
             name_cases[n] = set(ids)
     started = time.time()
+    steps = len(parts) + 1  # one step per flowsheet part, one for building the tables
+    step = on_step or (lambda _done, _total: None)
+    step(len(state.data["parts_done"]), steps)
     for part in parts:
         rel = str(part.relative_to(root))
         if rel in state.data["parts_done"]:
@@ -393,6 +412,7 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         names_path.write_text(json.dumps({n: sorted(ids) for n, ids in name_cases.items()}), encoding="utf-8")
         state.data["parts_done"].append(rel)
         state.save()
+        step(len(state.data["parts_done"]), steps)
     say("pass 1 done; building per-minute rows")
     vent_path, vit_path = dest / "patient_ventilator.csv", dest / "patient_vitals.csv"
     tmp_vent, tmp_vit = vent_path.with_suffix(".csv.tmp"), vit_path.with_suffix(".csv.tmp")
@@ -424,6 +444,7 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     state.data.update(finished=True, cases=len(cases), seconds=round(time.time() - started, 1),
                       wave_ids=waves is not None)
     state.save()
+    step(steps, steps)
     say("done")
     return state.data
 

@@ -199,11 +199,17 @@ def looks_like_emr_dir(path: Path) -> bool:
 class EpicRecordsNotConverted(FileNotFoundError):
     """The folder holds Epic records, which the app reads only after a one-time conversion."""
 
+    def __init__(self, message: str, found: Path):
+        super().__init__(message)
+        self.found = found
+
 
 def _epic_not_converted(found: Path) -> EpicRecordsNotConverted:
     return EpicRecordsNotConverted(
         f"These are MOVER Epic records ({found}). Convert them once into the layout the app reads, then choose "
-        "the converted folder: python -m src.pipeline.epic_import --epic-root <Epic folder> --out <new folder>."
+        "the converted folder (Settings > Convert Epic records, or python -m src.pipeline.epic_import "
+        "--epic-root <Epic folder> --out <new folder>).",
+        found,
     )
 
 
@@ -286,6 +292,9 @@ def resolve_wave_directory(path: Path | str) -> Path:
 
 
 def default_processed_for_emr(emr: Path) -> Path:
+    # A converted Epic folder often sits beside an SIS EMR folder; a shared "processed" would mix the two caches.
+    if (emr / ".mover-epic-import").is_file():
+        return (emr.parent / f"{emr.name}-processed").resolve()
     if emr.name == "EMR" and emr.parent.name == "raw":
         processed = (emr.parent.parent / "processed").resolve()
     else:

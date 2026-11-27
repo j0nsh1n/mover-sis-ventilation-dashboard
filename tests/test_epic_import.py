@@ -245,7 +245,7 @@ def test_settings_say_raw_epic_records_need_converting_and_name_a_converted_fold
         with pytest.raises(EpicRecordsNotConverted):
             resolve_emr_directory(chosen)
         check = check_emr_folder(str(chosen))
-        assert check.state == "problem" and "Epic records" in check.text and "Convert them once" in check.text
+        assert check.state == "problem" and check.text.startswith("These are MOVER Epic records. Convert them once")
     out = tmp_path / "converted"
     import_epic(root, out)
     assert resolve_emr_directory(out) == out.resolve()
@@ -258,3 +258,11 @@ def test_the_epic_wave_root_is_accepted_with_waveforms_two_levels_down(tmp_path)
     root = tmp_path / "wave_v2"
     (root / "wave_1" / "UCI_part1" / "Waveforms" / "ab").mkdir(parents=True)
     assert resolve_wave_directory(root) == root.resolve()
+
+
+def test_a_converted_folder_gets_its_own_processed_folder(tmp_path):
+    from src.runtime_paths import default_processed_for_emr
+
+    out = tmp_path / "games" / "mover-epic-sis"
+    import_epic(_epic(tmp_path), out)
+    assert default_processed_for_emr(out) == (tmp_path / "games" / "mover-epic-sis-processed").resolve()
