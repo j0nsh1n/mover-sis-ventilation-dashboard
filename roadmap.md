@@ -233,6 +233,19 @@ a wrong minute, a normal saturation, and a generic word no longer count
 as a completed mention, and an empty timeline still reports the missing
 MAP and SpO2 series. Not pushed.
 
+## Phase 11 — MOVER Epic as a second source (owner, 2026-11-25/26)
+- Tasks:
+  - Summary-only layout report of the Epic export (`src/pipeline/epic_layout.py`)
+  - One-time converter into the SIS layout (`src/pipeline/epic_import.py`), streaming the
+    flowsheets with bounded memory and resumable
+  - Settings recognises raw and converted Epic folders; the wave check accepts the Epic wave root
+  - Epic waveforms by patient and operating-room time (`src/wave_files.py`)
+  - Run the converter on the real export; check phases and flags on a sample (aggregate only)
+- Complete when: a converted Epic folder runs through the pipeline with `phase_source = events`
+  dominating, and Epic identifiers appear in no case table, report or request
+- Status: [~] 2026-11-26, branch `feat/epic-source`. Open: an in-app Convert button
+  (the converter is a command for now); Phase 6-style calibration on Epic.
+
 ## Backlog (unscheduled)
 - High flag rates on real data (Phase 6, 2026-11-25): nine rules flag about half of
   all cases at their clinical cutoffs. Decide rule by rule (owner) whether to keep the

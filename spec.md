@@ -18,6 +18,13 @@ opt-in cloud answer services below.
 
 - Load SIS EMR tables from a user-chosen folder; optional wave root; write/read processed
   parquet (`cases`, `timeseries`, `flags`, `episodes`, and optional `events`).
+- MOVER Epic is a second source (owner, 2026-11-25/26). An Epic export is converted once by
+  `src/pipeline/epic_import.py` into a SIS-layout folder outside the export, so everything
+  downstream reads it unchanged. Only cases with intra-op flowsheet readings are kept; PID is the
+  Epic `LOG_ID`; surgery start is a skin-incision event, else anesthesia start (end: anesthesia
+  stop); RR is the measured capnography rate, else the set rate; PEEP is the set value. Settings
+  refuses a raw Epic folder with a sentence on converting it and labels a converted one. Epic
+  waveforms are found per patient and operating-room time (`src/wave_files.py`).
 - Desktop UI is primary. On first run or with an invalid EMR folder, first-time setup
   fills the window and validates the folder before data loading. Leaving first-run
   setup before it has saved leaves the Research workspace in the setup-required state
@@ -270,6 +277,11 @@ opt-in cloud answer services below.
   then checks package size and SHA256. Windows install and rollback run in CI.
   The private signing key stays in the GitHub Actions secret
   `MOVER_UPDATE_SIGNING_KEY_HEX`.
+- Epic patient identifiers (`MRN`, `PAT_ID`, `EPIC_MRN_PAT_ID.csv`) never enter the case tables,
+  processed output, logs, reports, the repo or any cloud request. The case-to-waveform link lives
+  only in the converted folder's `epic_wave_ids.csv` (mode 600), and text contexts give Epic
+  waveform counts, never paths. A converted Epic folder is real data: the cloud real-data lock and
+  the under-11 suppression apply, and helpers may not read the Epic or converted folders.
 - **Research / education only.** Not a medical device; not clinical decision support.
   Outputs discuss historical de-identified extracts; no live treatment orders.
 - Dependencies: pin new deps when added; prefer stdlib; `requirements.txt` pins every
