@@ -101,7 +101,8 @@ def _has_header(path: Path) -> bool:
     """True only when every first-line cell reads as a column name; otherwise the line is treated as data, so no
     row is ever reported as column names."""
     try:
-        first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding_errors="replace")
+        first = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=0, encoding="utf-8-sig",
+                            encoding_errors="replace")
     except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
         return False
     names = [str(c).strip() for c in first.columns]
@@ -113,7 +114,7 @@ def _has_header(path: Path) -> bool:
 def _read_sample(path: Path, sample_rows: int, header: bool = True) -> pd.DataFrame:
     parts = []
     reader = pd.read_csv(path, dtype=str, keep_default_na=False, chunksize=CHUNK_ROWS,
-                         on_bad_lines="skip", encoding_errors="replace", low_memory=True,
+                         on_bad_lines="skip", encoding="utf-8-sig", encoding_errors="replace", low_memory=True,
                          header=0 if header else None)
     seen = 0
     for chunk in reader:

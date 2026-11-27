@@ -95,13 +95,6 @@ FLOW_COLS = ["LOG_ID", "FLO_DISPLAY_NAME", "RECORD_TYPE", "RECORDED_TIME", "MEAS
 Progress = Callable[[str], None]
 
 
-_OUTPUTS = ("patient_information.csv", "patient_procedure_events.csv", "patient_medication.csv",
-            "patient_ventilator.csv", "patient_vitals.csv", WAVE_IDS, NAMES_REPORT)
-# What an earlier run of this importer may leave in its output folder, so a rerun is not refused over its own files.
-_OWN_NAMES = {".work", MARKER, f"{MARKER}.tmp",
-              *_OUTPUTS, *(f"{n}.tmp" for n in _OUTPUTS)}
-
-
 class EpicImportError(RuntimeError):
     """The folder is not an Epic export the importer can read, or the output place is unsafe."""
 
@@ -218,10 +211,13 @@ class _State:
         self.path = out / MARKER
         self.data: dict[str, Any] = {"made_by": "MOVER Suite", "importer_version": IMPORTER_VERSION,
                                      "sources": sources, "parts_done": [], "finished": False}
+        self.other_export = False
         if self.path.is_file():
             old = json.loads(self.path.read_text(encoding="utf-8"))
             if old.get("sources") == sources and old.get("importer_version") == IMPORTER_VERSION:
                 self.data = old
+            elif old.get("sources", {}).get("epic_root") != sources["epic_root"]:
+                self.other_export = True
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -419,12 +415,18 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
     parts = find_flowsheets(root)
     if not parts:
         raise EpicImportError(f"No Epic flowsheets (flowsheet_part*.csv) found under {root}.")
-    if dest.exists() and not (dest / MARKER).is_file() and any(p.name not in _OWN_NAMES for p in dest.iterdir()):
+    if dest.exists() and not dest.is_dir():
+        raise EpicImportError("Choose a folder for the converted records; this path is a file.")
+    # Only an empty folder, or one this importer already marked, is written to: an SIS EMR folder holds files with
+    # the very names the import writes, and must never be overwritten.
+    if dest.exists() and not (dest / MARKER).is_file() and any(p.name != f"{MARKER}.tmp" for p in dest.iterdir()):
         raise EpicImportError("Choose an empty folder for the converted records; this one already holds files.")
     dest.mkdir(parents=True, exist_ok=True)
     sources: dict[str, Any] = {"epic_root": str(root), "emr": str(emr.relative_to(root)),
                "flowsheets": [str(p.relative_to(root)) for p in parts]}
     state = _State(dest, sources)
+    if state.other_export:
+        raise EpicImportError("This folder holds a conversion of another Epic export; choose an empty folder.")
     if state.data["finished"]:
         say("already converted")
         return state.data
@@ -434,6 +436,7 @@ def import_epic(epic_root: Path | str, out: Path | str, *, chunk_rows: int = CHU
         state.data["parts_done"] = []  # the counts behind the finished parts are gone, so start over
     if not state.data["parts_done"] and work.exists():
         shutil.rmtree(work)  # left by an older or different run; its shards must not mix into this one
+    state.save()  # the marker comes first, so a work folder never exists without one saying it is unfinished
     work.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(work, 0o700)  # it holds case ids per name and raw readings until the import ends
     name_cases: dict[str, set[str]] = defaultdict(set)

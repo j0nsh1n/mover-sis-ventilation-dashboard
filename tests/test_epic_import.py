@@ -289,6 +289,11 @@ def test_parts_are_merged_in_part_order_not_name_order(tmp_path):
 def test_a_fresh_run_ignores_work_left_by_another_run(tmp_path):
     root = _epic(tmp_path)
     out = tmp_path / "converted"
+    # Work left by a run that was stopped before its first part finished: a marker with nothing done.
+    out.mkdir()
+    (out / ".mover-epic-import").write_text(json.dumps({"made_by": "MOVER Suite", "importer_version": 1,
+                                                        "sources": {"epic_root": str(root)}, "parts_done": [],
+                                                        "finished": False}), encoding="utf-8")
     stale = out / ".work" / "flowsheet_part1"
     stale.mkdir(parents=True)
     pd.DataFrame([{"LOG_ID": B, "name": "heart rate", "RECORDED_TIME": _t(3), "MEAS_VALUE": "200"}]).to_csv(
@@ -346,7 +351,7 @@ def test_the_private_file_is_owner_only_even_over_an_old_temp_file(tmp_path):
 
     root = _epic(tmp_path)
     out = tmp_path / "converted"
-    out.mkdir()
+    import_epic(root, out, should_stop=lambda: True)  # a stopped run: marked, unfinished
     old = out / "epic_wave_ids.csv.tmp"
     old.write_text("stale", encoding="utf-8")
     os.chmod(old, 0o644)
@@ -366,6 +371,31 @@ def test_a_folder_holding_other_files_is_refused_as_output(tmp_path):
 
 def test_a_stop_inside_a_part_stops_at_once_and_writes_no_tables(tmp_path):
     out = tmp_path / "converted"
-    result = import_epic(_epic(tmp_path), out, chunk_rows=2, should_stop=lambda: True)
-    assert not result["finished"] and result["parts_done"] == []
+    calls = {"n": 0}
+
+    def stop_inside_part() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 2  # call 1 is before part 1, call 2 inside it, between chunks
+
+    result = import_epic(_epic(tmp_path), out, chunk_rows=2, should_stop=stop_inside_part)
+    assert calls["n"] == 2 and not result["finished"] and result["parts_done"] == []
     assert not (out / "patient_ventilator.csv").exists() and read_import_marker(out) is None
+
+
+def test_an_sis_emr_folder_is_never_overwritten(tmp_path):
+    sis = tmp_path / "sis-emr"
+    sis.mkdir()
+    for name in ("patient_information.csv", "patient_ventilator.csv", "patient_vitals.csv",
+                 "patient_procedure_events.csv", "patient_medication.csv"):
+        (sis / name).write_text("PID\nreal\n", encoding="utf-8")
+    with pytest.raises(EpicImportError, match="empty folder"):
+        import_epic(_epic(tmp_path), sis)
+    assert (sis / "patient_information.csv").read_text() == "PID\nreal\n"
+
+
+def test_a_conversion_of_another_export_is_not_overwritten(tmp_path):
+    first = _epic(tmp_path / "one")
+    out = tmp_path / "converted"
+    import_epic(first, out)
+    with pytest.raises(EpicImportError, match="another Epic export"):
+        import_epic(_epic(tmp_path / "two"), out)

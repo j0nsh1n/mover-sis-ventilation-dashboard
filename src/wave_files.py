@@ -85,7 +85,8 @@ def _prefix_index(root: str, prefix: str) -> dict[str, tuple[tuple[pd.Timestamp,
         # Match the prefix folder's name without regard to case, once: on a case-insensitive disk "AB" and "ab"
         # are one folder, and listing both would count every file twice.
         try:
-            folders = [Path(e.path) for e in os.scandir(wdir) if e.name.lower() == prefix.lower() and e.is_dir()]
+            with os.scandir(wdir) as entries:
+                folders = [Path(e.path) for e in entries if e.name.lower() == prefix.lower() and e.is_dir()]
         except OSError:
             continue
         for folder in folders:

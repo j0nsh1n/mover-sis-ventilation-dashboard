@@ -755,12 +755,6 @@ class EpicConvertRow(SettingRow):
         self.set_note("Starting…", "note")
         self._worker.start()
 
-    def stop_and_wait(self) -> None:
-        """Ask a running conversion to stop and wait for it; it stops within one chunk of reading."""
-        if self._worker is not None:
-            self._worker.request_stop()
-            self._worker.wait()
-
     def stop(self) -> None:
         if self.running() and self._worker is not None:
             self._worker.request_stop()
